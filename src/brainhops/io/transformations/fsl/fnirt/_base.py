@@ -6,6 +6,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
@@ -211,7 +212,7 @@ class FnirtWarpField(
     encodes it into `rawdata`.
     """
 
-    @smartproperty(cache=True)
+    @dataproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The array of the file, as FSL stores it.
 
@@ -220,6 +221,10 @@ class FnirtWarpField(
         is returned as it is, and stays pending until [`consolidate`][] or
         a write encodes it. Otherwise the array is decoded from `rawdata`. The
         chain is built again from a new array.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -570,7 +575,7 @@ class FnirtWarpField(
     def _raw_field(self) -> tx.Any:
         # A 5-D vector field in the layout of the NIfTI standard is
         # collapsed to `(*grid, 3)`.
-        return _field_to_model(self.data)
+        return _field_to_model(_stored_data(self))
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
         """The field on its own grid, as scaled millimetre displacements.

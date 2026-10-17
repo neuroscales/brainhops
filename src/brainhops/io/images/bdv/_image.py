@@ -14,6 +14,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -104,7 +105,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     reversed.
     """
 
-    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
     """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
@@ -161,7 +162,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     It is the reader option `level`.
     """
 
-    @smartproperty(cache=True)
+    @dataproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels in the order x, y, z, assigned or decoded from `rawdata`.
 
@@ -170,6 +171,10 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         data is decoded from `rawdata` on first access and cached. Data
         decoded from a file is read-only. To change the voxels, assign
         `data`. Assigning `None` decodes `rawdata` again.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None

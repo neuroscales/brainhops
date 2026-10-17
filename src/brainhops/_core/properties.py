@@ -23,6 +23,7 @@ _Getter = tx.Callable[[tx.Self], tx.Any]
 _Setter = tx.Callable[[tx.Self, tx.Any], None]
 _Deleter = tx.Callable[[tx.Self], None]
 _IsUnset = tx.Callable[[tx.Any], bool]
+_Converter = tx.Callable[[tx.Any], tx.Any]
 _UnsetForm = tx.Union[None, _IsUnset]
 UnsetLike = tx.Union[_UnsetForm, tx.Tuple[_UnsetForm, ...]]
 """Accepted values of the `unset` argument of [`smartproperty`][].
@@ -180,6 +181,7 @@ def smartproperty(
     unset: UnsetLike = None,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
+    convert: tx.Optional[_Converter] = None,
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -193,6 +195,7 @@ def smartproperty(
     unset: UnsetLike = None,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
+    convert: tx.Optional[_Converter] = None,
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -206,6 +209,7 @@ def smartproperty(
     unset: UnsetLike = None,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
+    convert: tx.Optional[_Converter] = None,
 ) -> property:
     """Create a property backed by a private attribute.
 
@@ -232,6 +236,8 @@ def smartproperty(
       function shared by several classes.
     - `fset=False` makes the property read-only.
     - `unset=` says which stored values read as unset.
+    - `convert=` transforms the value at each read, without changing
+      what is stored or cached.
 
     Every setter, whether it is the default setter, a setter given with
     `fset=`, or a setter added with `@name.setter`, deletes the cached
@@ -273,6 +279,11 @@ def smartproperty(
         reads the names from the object, and a tuple may mix both. A
         setter given later with the `setter` decorator of the property
         deletes the same cached values.
+    convert : callable, optional
+        Function applied to the value at each read, whether the value was
+        stored or computed. Its result is returned and is neither stored
+        nor cached, so the stored or cached value stays as it was. A
+        value of `None` is returned as it is.
 
     Returns
     -------
@@ -298,6 +309,7 @@ def smartproperty(
     unset=None,
     cache=False,
     invalidates=(),
+    convert=None,
 ):
     # The form of unset is resolved once, at declaration, so that a wrong
     # value is refused there and the getter tests a single predicate.
@@ -315,6 +327,7 @@ def smartproperty(
                 unset=unset,
                 cache=cache,
                 invalidates=invalidates,
+                convert=convert,
             )
 
         return decorate
@@ -330,6 +343,8 @@ def smartproperty(
         name = fget.__name__
 
     fget = _make_fget(name, fget, is_unset, set=fset is not False, cache=cache)
+    if convert is not None:
+        fget = _converting_fget(fget, convert)
 
     if not callable(fset):
         fset = _make_fset(name, settable=fset is not False)
@@ -490,6 +505,20 @@ def _make_fget_settable_cacheable(
 
     fget.__name__ = name
     return fget
+
+
+def _converting_fget(fget: _Getter, convert: _Converter) -> _Getter:
+    # The conversion wraps the getter from outside, so the stored or cached
+    # value is the one before the conversion, and a value of None, which
+    # means that nothing is stored, is not converted.
+    def converted(self: tx.Self) -> tx.Any:
+        value = fget(self)
+        if value is None:
+            return value
+        return convert(value)
+
+    converted.__name__ = fget.__name__
+    return converted
 
 
 def _make_fset(name: str, settable: bool = True) -> tx.Optional[_Setter]:

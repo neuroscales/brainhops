@@ -154,11 +154,13 @@ defines a pair of pure functions, `to_model` and `to_disk`, with
 `data = to_model(rawdata)` and `rawdata = to_disk(data)`. Reading `data`
 decodes `rawdata` once and caches the result.
 
-Assigned data is pending. A format takes the `data` field of its model
-over under the private name `_data`, with
-`_data: ... = Inherit("data", default=None)`, and its `data` property is
-a `smartproperty(cache=True)`. An array stored in `_data` is returned as
-it is, and `None` means that `data` is decoded from `rawdata`. Assigning
+Assigned data is pending. A format takes the private `_data` field of
+its model over, with `_data: ... = Inherit("_data", default=None)`, and
+its `data` property is a `dataproperty`, which caches like
+`smartproperty(cache=True)` and converts the value with the backend
+setting in effect at each read. An array stored in `_data` is returned
+as it is under the default setting, and `None` means that `data` is
+decoded from `rawdata`. Assigning
 `data` stores the array in `_data` and clears the cache, and it never
 changes `rawdata`. The data model of a transformation already stores its
 data in `_data`, and a format whose model is a chain, such as a NIfTI

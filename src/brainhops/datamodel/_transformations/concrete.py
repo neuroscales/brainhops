@@ -37,7 +37,11 @@ from brainhops._core.typing import (
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.backends import _CURRENT, backend, get_array_backend
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _as_backend_data
+from brainhops.datamodel._backends import (
+    _as_backend_data,
+    _follow_setting,
+    _stored_data,
+)
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
@@ -327,7 +331,7 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", convert=_follow_setting)
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 
@@ -361,7 +365,9 @@ class TransformationField(ConcreteTransformation):
         It is `data` itself when `store` is `"values"`; otherwise it is decoded
         from the coefficients once and cached.
         """
-        return _data2values(self.data, self.store, self.degree, self.bound)
+        return _data2values(
+            _stored_data(self), self.store, self.degree, self.bound
+        )
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
@@ -380,7 +386,9 @@ class TransformationField(ConcreteTransformation):
         It is `data` itself when `store` is `"coefficients"`; otherwise it is
         fitted to a spline of degree `degree` once and cached.
         """
-        return _data2coeffs(self.data, self.store, self.degree, self.bound)
+        return _data2coeffs(
+            _stored_data(self), self.store, self.degree, self.bound
+        )
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:

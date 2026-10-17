@@ -15,6 +15,7 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
@@ -159,7 +160,7 @@ class AfniNiftiWarp(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
 
@@ -168,6 +169,10 @@ class AfniNiftiWarp(
         they are decoded from `rawdata`: AFNI stores the sub-bricks with shape
         (X, Y, Z, 1, n), and the singleton axis is dropped. Assigning the
         data drops the chain decoded from the previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -340,7 +345,9 @@ class AfniNiftiWarp(
         Assigning a chain overrides the decoded one, and the chain is
         pending until [`consolidate`][] or a write encodes it.
         """
-        return _dicom_chain(_dicom_vectors(self.data), _vox2dicom(self))
+        return _dicom_chain(
+            _dicom_vectors(_stored_data(self)), _vox2dicom(self)
+        )
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:

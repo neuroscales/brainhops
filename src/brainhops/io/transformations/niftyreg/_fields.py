@@ -15,6 +15,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
@@ -304,7 +305,7 @@ class NiftyRegSequence(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors as an (X, Y, Z, 3) array.
@@ -316,6 +317,10 @@ class NiftyRegSequence(
         vectors are positions or displacements, as the type of the file
         says. Assigning the data drops the chain decoded from the
         previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -354,7 +359,7 @@ class NiftyRegSequence(
 
     def _stored_vectors(self) -> ArrayProtocol:
         """Return the stored vectors as an (X, Y, Z, 3) array."""
-        data = self.data
+        data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
         if len(data.shape) != _NDIM + 1 or int(data.shape[-1]) != _NDIM:

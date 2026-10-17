@@ -7,8 +7,10 @@ __all__ = [
 import typing_extensions as tx
 from bagof.magic import Field, fields
 
+from brainhops import backends
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.images import Image
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     FileReader,
@@ -674,7 +676,10 @@ class _FileBasedModelMixin:
         # the file, so the levels of another pyramid are read here.
         for name in ("data", "images"):
             if not isinstance(other, cls) and _takes_over(cls, name):
-                value = getattr(other, name, None)
+                # The data are read as the other object stores them, not
+                # converted with the backend setting in effect.
+                with backends.backend(None):
+                    value = getattr(other, name, None)
                 if value is not None:
                     kwargs.setdefault(name, value)
         # The metadata of a data model, generic or of another format, is
@@ -809,8 +814,11 @@ def _takes_over(cls: type, name: str) -> bool:
     the public name `name`, while its data model, the first class in its
     MRO that is a data model but not a parser, declares the field under
     the name `name`. An image format that takes `data` over is an example.
-    A transformation model declares `_data` itself, so a transformation
-    format does not take `data` over.
+    The image model declares its data as `_data` with the public name
+    `data`, so that `data` follows the backend setting, and it counts as
+    declaring `data`. A transformation model declares `_data` itself, and
+    its own `from_instance` converts the data of another class, so a
+    transformation format does not take `data` over.
     """
     if not any(
         field.name == "_" + name and field.public_name == name
@@ -822,6 +830,8 @@ def _takes_over(cls: type, name: str) -> bool:
             continue
         if issubclass(klass, (FileFormat, FileReader, FileWriter)):
             continue
+        if issubclass(klass, Image) and name == "data":
+            return True
         return any(field.name == name for field in fields(klass))
     return False
 

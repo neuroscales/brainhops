@@ -17,6 +17,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.datamodel.metadata._vocabulary import FIELDS
@@ -146,7 +147,7 @@ class AfniBrikWarp(
     record.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
 
@@ -155,6 +156,10 @@ class AfniBrikWarp(
         they are decoded from `rawdata`, scaled, and are read-only. The first
         three are the `x`, `y` and `z` displacements. Assigning the data
         drops the chain decoded from the previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -367,7 +372,7 @@ class AfniBrikWarp(
         """
         record = _record(self)
         vox2dicom = np.eye(4) if record is None else record.cardinal_matrix
-        return _dicom_chain(_dicom_vectors(self.data), vox2dicom)
+        return _dicom_chain(_dicom_vectors(_stored_data(self)), vox2dicom)
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:

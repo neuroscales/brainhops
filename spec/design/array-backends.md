@@ -3,10 +3,11 @@
 This memo decides which array package holds the values of an image or
 a transformation, how a user moves an object from one package to
 another, and how a computation chooses the package of its result. It is
-agreed and tracked in #486. Its first three steps are implemented:
-the backend settings in `brainhops.backends` (#490), the conversion
-methods of lazy arrays (#491), and those of images and transformations
-(#492). The other steps are not implemented yet.
+agreed and tracked in #486. Its first four steps are implemented: the
+backend settings in `brainhops.backends` (#490), the conversion
+methods of lazy arrays (#491), those of images and transformations
+(#492), and the conversion of `data` at each read (#493). The other
+steps are not implemented yet.
 
 ## What a backend is for
 
@@ -237,7 +238,10 @@ NumPy array.
 3. Add the `to_*` and `as_*` methods to the classes of images and
    transformations. This step is implemented (#492).
 4. Make `data` convert its cached array with the setting in effect at
-   each access (#493).
+   each access (#493). This step is implemented. The formats declare
+   their `data` with `dataproperty`, and the conversion methods and the
+   attributes that only describe the data, such as `shape`, read the
+   array that is held.
 5. Apply the rules of computations: resolve the proxies of the inputs,
    create arrays in the backend of the result, and move small
    parameters to the device of the voxel data.

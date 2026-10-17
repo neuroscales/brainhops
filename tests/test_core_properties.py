@@ -411,3 +411,29 @@ def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
     model.data = 5
     assert model.data == 5 and Model.assigned == before + 1
     assert Model().data is None
+
+
+def test_convert_applies_at_each_read_without_changing_the_cache() -> None:
+    # convert transforms the value at each read, while the cached or
+    # stored value stays as it was, and None is not converted.
+    class Box:
+        computed = 0
+
+        @smartproperty(cache=True, convert=lambda value: value.upper())
+        def value(self) -> str:
+            type(self).computed += 1
+            return "computed"
+
+    box = Box()
+    assert box.value == "COMPUTED"
+    assert box.value == "COMPUTED"
+    assert Box.computed == 1
+    assert cached_value(box, "value") == "computed"
+    box.value = "stored"
+    assert box.value == "STORED"
+    assert box._value == "stored"
+
+    class Empty:
+        value = smartproperty("value", convert=lambda value: value.upper())
+
+    assert Empty().value is None

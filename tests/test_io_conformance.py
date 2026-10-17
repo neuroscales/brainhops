@@ -683,7 +683,7 @@ class ToyImage(
     # The image takes the `data` and `transformations` fields over under
     # private names, where `None` means that they are decoded from
     # `rawdata` and from the record.
-    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )
@@ -1028,7 +1028,7 @@ class ToyLevel(
     # and keeps those that were assigned.
     metadata = smartproperty("metadata", invalidates="transformations")
 
-    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
     _transformations: tx.Optional[tx.List[Transformation]] = Inherit(
         "transformations", default=None
     )

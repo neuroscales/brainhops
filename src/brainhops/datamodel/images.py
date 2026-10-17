@@ -6,12 +6,15 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
+from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import _CURRENT
 
 from ._backends import (
     _as_backend_data,
     _BackendsMixin,
+    _follow_setting,
+    _stored_data,
     _with_fields,
     as_backend_all,
 )
@@ -73,7 +76,9 @@ class Image(
         is converted as `other.to(cls)` converts it. Any other image is
         copied as
         [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance]
-        copies it.
+        copies it. A single-scale image of another class, such as an
+        image read from a file, gives its data as it holds them, without
+        converting them with the backend setting.
 
         Parameters
         ----------
@@ -103,6 +108,17 @@ class Image(
                     f"{type(other).__name__} with keyword arguments only."
                 )
             return other.to(cls, **kwargs)
+        # The data of a single-scale image are stored as `_data`, which a
+        # format leaves empty when it decodes its data from its file, so
+        # an image of another class gives its data as it holds them.
+        if (
+            not args
+            and type(other) is not cls
+            and isinstance(other, SingleScaleImage)
+        ):
+            data = _stored_data(other)
+            if data is not None:
+                kwargs.setdefault("data", data)
         return super().from_instance(other, *args, **kwargs)
 
     def to(
@@ -148,12 +164,12 @@ class Image(
 
     def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
         """Convert the data to a NumPy array, optionally of a given type."""
-        return np.asarray(self.data, dtype=dtype)
+        return np.asarray(_stored_data(self), dtype=dtype)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data."""
-        return self.data.shape
+        return _stored_data(self).shape
 
     @property
     def ndim(self) -> int:
@@ -163,7 +179,7 @@ class Image(
     @property
     def dtype(self) -> np.dtype:
         """The data type of the data."""
-        return self.data.dtype
+        return _stored_data(self).dtype
 
     @property
     def grid(self) -> CartesianField:
@@ -260,13 +276,13 @@ class SingleScaleImage(Image):
     `node` of a plain Zarr array, which follow `transformations`.
     """
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[ArrayProtocol],
         NotKwOnly(),
         NoRepr(),  # leave out from repr to avoid loading a whole file
     ] = None
     """
-    The image data.
+    The image data, as it is stored. The constructor takes it as `data`.
 
     Must be an array-like object that supports the array protocol (e.g.
     numpy, cupy or dask array).
@@ -275,6 +291,14 @@ class SingleScaleImage(Image):
     format reader typically holds a handle to the file and materializes
     the array on first access, and cannot supply it at construction time.
     This mirrors `Affine.matrix`, which is optional for the same reason.
+    """
+
+    data = smartproperty("data", convert=_follow_setting)
+    """The image data, in the backend of the setting in effect.
+
+    Under the default setting, the stored array is returned as it is.
+    Under any other setting, such as `with backend("dask"):`, a new array
+    of that backend is returned, and the stored array does not change.
     """
 
     transformations: NotKwOnly[tx.List[Transformation]] = ()
@@ -328,7 +352,7 @@ class SingleScaleImage(Image):
         return Geometry(
             (
                 CartesianField(
-                    shape=self.data.shape,
+                    shape=_stored_data(self).shape,
                     input=self.transformation.input,
                     output=self.transformation.input,
                 ),
@@ -476,7 +500,7 @@ class SingleScaleImage(Image):
         else:
             transformations = [transform]
         return SingleScaleImage(
-            data=self.data,
+            data=_stored_data(self),
             transformations=transformations,
             metadata=self.metadata,
         )

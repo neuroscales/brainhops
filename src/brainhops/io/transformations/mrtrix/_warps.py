@@ -27,6 +27,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -511,7 +512,7 @@ class MrtrixCoordinatesField(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The RAS coordinates as an (X, Y, Z, 3) array.
 
@@ -519,6 +520,10 @@ class MrtrixCoordinatesField(
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`, and are read-only. Assigning the data
         drops the chain decoded from the previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -788,7 +793,7 @@ class MrtrixDisplacementField(
     write encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The RAS displacements as an (X, Y, Z, 3) array.
 
@@ -796,6 +801,10 @@ class MrtrixDisplacementField(
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`, and are read-only. Assigning the data
         drops the chain decoded from the previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -1084,7 +1093,7 @@ class MrtrixWarpFull(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The four warps as an (X, Y, Z, 3, 4) array of RAS positions.
 
@@ -1092,6 +1101,10 @@ class MrtrixWarpFull(
         until [`consolidate`][] or a write encodes them. Otherwise they are
         decoded from `rawdata`, and are read-only. Assigning the data drops the
         chain decoded from the previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None

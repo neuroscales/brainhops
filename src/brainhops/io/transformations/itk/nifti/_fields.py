@@ -16,6 +16,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
@@ -187,7 +188,7 @@ class ItkNiftiField(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors, as an (X, Y, Z, 3) or (X, Y, 2) array.
@@ -198,6 +199,10 @@ class ItkNiftiField(
         layout, and they are those of the file, before the frame of a
         `DISPVECT` file is converted. Assigning the data drops the chain
         decoded from the previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -290,7 +295,7 @@ class ItkNiftiField(
         components are negated, as ITK 5.4 and later do on reading. A
         2-component `DISPVECT` field is left unconverted, as in ITK.
         """
-        data = self.data
+        data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
         backend = get_array_backend(data)

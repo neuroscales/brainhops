@@ -18,6 +18,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops import backends
+from brainhops._core.properties import smartproperty
 from brainhops.backends import _CURRENT, Setting
 
 _Default = tx.Union[Setting, tx.Any]
@@ -54,7 +55,7 @@ class _BackendsMixin:
         array or None
             The data.
         """
-        data = self.data
+        data = _stored_data(self)
         if data is None:
             return None
         return backends.to_backend(data, backend)
@@ -191,7 +192,7 @@ def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
     object
         The object, or a copy of it.
     """
-    data = obj.data
+    data = _stored_data(obj)
     if data is None:
         return obj
     converted = backends.to_backend(data, backend)
@@ -224,3 +225,63 @@ def _with_fields(obj: _T, inplace: bool, **changes: tx.Any) -> _T:
             setattr(obj, name, value)
         return obj
     return replace(obj, **changes)
+
+
+def _stored_data(obj: tx.Any) -> tx.Any:
+    """Return the `data` of an object as it is stored, without converting it.
+
+    The `data` of an image or a field follows the backend setting in
+    effect when it is read (see [`dataproperty`][]). The conversion
+    methods read it under the setting `None`, which returns the stored or
+    cached array itself, so that they convert it once, from what the
+    object holds.
+    """
+    with backends.backend(None):
+        return obj.data
+
+
+def _follow_setting(value: tx.Any) -> tx.Any:
+    """Convert an array with the backend setting in effect, if any.
+
+    Under the default setting, `None`, the array is returned as it is.
+    Under any other setting, it is converted as
+    [`to_backend`][brainhops.backends.to_backend] says, and a new array is
+    returned at each call.
+    """
+    if backends.get_backend() is None:
+        return value
+    return backends.to_backend(value)
+
+
+def dataproperty(
+    fget: tx.Optional[tx.Callable] = None, **kwargs: tx.Any
+) -> tx.Any:
+    """Declare the `data` of an image or a field, which follows the setting.
+
+    A format reads its `data` from the array of its file the first time
+    that `data` is read, and caches the result. At each read, the cached
+    array, or an array that was assigned, is returned converted with the
+    backend setting in effect: as it is under the default setting, and as
+    a new array of the requested backend under any other setting, such as
+    `with backend("dask"):`. The cached array does not change, so an
+    object that should hold another backend for good is converted with
+    an `as_*` method instead.
+
+    Parameters
+    ----------
+    fget : callable, optional
+        The getter that decodes the data from the file. Without it, the
+        function returns a decorator.
+    **kwargs : Any
+        Other options of [`smartproperty`][], such as `invalidates`.
+
+    Returns
+    -------
+    property
+        The property, or a decorator that makes one.
+    """
+    kwargs.setdefault("cache", True)
+    kwargs["convert"] = _follow_setting
+    if fget is None:
+        return smartproperty(**kwargs)
+    return smartproperty(fget, **kwargs)

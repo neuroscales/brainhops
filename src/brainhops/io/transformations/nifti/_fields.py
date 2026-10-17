@@ -19,6 +19,7 @@ from brainhops._core.properties import (
 )
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import _stored_data, dataproperty
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -119,7 +120,7 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
             return Confidence.MAYBE
         return Confidence.NO
 
-    @smartproperty(cache=True, invalidates=_FORGET_VIEWS)
+    @dataproperty(invalidates=_FORGET_VIEWS)
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The field as an (X, Y, Z, 3) array, which its `field` view reads.
@@ -130,6 +131,10 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
         shape (X, Y, Z, 1, 3), and the data is decoded without the
         singleton axis, since the array would otherwise be sampled as a
         4-D grid of vectors.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -315,7 +320,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
     encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The stored vectors as an (X, Y, Z, 3) array.
@@ -327,6 +332,10 @@ StationaryVelocityField], integrated with `steps` squaring steps
         vectors are the RAS displacements of the file, or its velocity
         with `log`. Assigning the data drops the chain decoded from the
         previous data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
@@ -448,7 +457,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         A field whose array is not a grid of vectors with three components
         is refused.
         """
-        data = self.data
+        data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
         if len(data.shape) != 4:

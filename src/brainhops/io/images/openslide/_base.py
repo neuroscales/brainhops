@@ -15,6 +15,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -242,7 +243,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
     is, and [`consolidate`][] stores the assigned array here.
     """
 
-    _data: tx.Optional[ArrayProtocol] = Inherit("data", default=None)
+    _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
     """The data given to the image, or `None` to decode it from `rawdata`.
 
     The image takes over the `data` field of [`SingleScaleImage`][] to
@@ -281,7 +282,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
     whole slide, in which it finds its level.
     """
 
-    @smartproperty(cache=True)
+    @dataproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The pixels of the level, assigned or decoded from `rawdata`.
 
@@ -292,6 +293,10 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
         indexed with and cannot be written to, or a dask array of whole
         tiles with the reader option `lazy`. To change the pixels,
         assign `data`. Assigning `None` decodes `rawdata` again.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None

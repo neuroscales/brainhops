@@ -12,6 +12,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from brainhops._core.properties import smartproperty
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
@@ -104,7 +105,7 @@ class SpmCoordinatesField(
     write encodes them into `rawdata`.
     """
 
-    @smartproperty(cache=True, invalidates="transformations")
+    @dataproperty(invalidates="transformations")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The RAS coordinates as an (X, Y, Z, 3) array.
@@ -115,6 +116,10 @@ class SpmCoordinatesField(
         shape (X, Y, Z, 1, 3), and the singleton axis is dropped.
         Assigning the data drops the chain decoded from the previous
         data.
+
+        Under a backend setting other than the default, such as
+        `with backend("dask"):`, each read returns the array converted
+        to that backend, and the array that is held does not change.
         """
         if self.rawdata is None:
             return None
