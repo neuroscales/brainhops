@@ -493,17 +493,32 @@ def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
     return "cupy" if gpu else "numpy"
 
 
-def _creation_options() -> tx.Dict[str, tx.Any]:
+def _creation_options(like: tx.Any = None) -> tx.Dict[str, tx.Any]:
     """Return the options that create Dask arrays of CuPy chunks.
 
     Dask creates NumPy chunks unless it is given a CuPy array as
-    `like`. Under the setting `"dask+cupy"`, the functions that create
-    arrays, such as `arange`, take these options so that their chunks
-    are created on the GPU.
+    `like`. When the new array goes with a Dask array of CuPy chunks,
+    given as `like`, or, without `like`, under the setting
+    `"dask+cupy"`, the functions that create arrays take these options
+    so that their chunks are created on the GPU. Of the creation
+    functions of Dask, only `arange` takes them, so `eye` and `zeros`
+    still create NumPy chunks, which are copied to the GPU right after.
+
+    Parameters
+    ----------
+    like : array, optional
+        The array with which the new array is combined.
+
+    Returns
+    -------
+    dict
+        The keyword arguments of `dask.array.arange`, or nothing.
     """
-    if _SETTING == "dask+cupy":
-        return {"like": cp.empty(0)}
-    return {}
+    if like is None:
+        gpu = _SETTING == "dask+cupy"
+    else:
+        gpu = da is not None and isinstance(like, da.Array) and _on_gpu(like)
+    return {"like": cp.empty(0)} if gpu else {}
 
 
 def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
@@ -524,6 +539,12 @@ def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
     array in memory is returned as it is, because Dask accepts NumPy
     operands. An argument that is not an array, such as `None` or a
     number, is returned as it is.
+
+    A function calls it as soon as it knows the arrays that it combines,
+    before it computes anything from them, and then creates its new
+    arrays in the backend of the moved arrays. Each array is then moved
+    at most once, and nothing is allocated in one backend only to be
+    moved to another.
 
     Parameters
     ----------

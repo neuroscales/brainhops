@@ -227,7 +227,6 @@ def _map_coordinates_1block(
     dtype = input.dtype
     if mode not in _LOCAL_MODES:
         whole = input.compute() if hasattr(input, "compute") else input
-        whole, coords = backends.match_backends(whole, coords)
         return backends.get_ndimage_backend(whole).map_coordinates(
             whole,
             coords,
@@ -267,9 +266,6 @@ def _map_coordinates_1block(
     window = _gather(input, signals, cval)
     if window is None:
         return nx.full((count,), cval, dtype=dtype)
-    # The window is on a GPU when the input is, and the coordinates may
-    # not be, or the other way round.
-    window, coords = backends.match_backends(window, coords)
     nd = backends.get_ndimage_backend(window)
     if prefilter:
         window = nd.spline_filter(
@@ -327,12 +323,17 @@ def map_coordinates(
     extended array rather than over the crop.
     """
     opts = dict(degree=order, mode=mode, cval=cval, prefilter=prefilter)
-    coords = coordinates
+    # The input and the coordinates are moved to one backend before the
+    # blocks are cut, so that every block of coordinates meets a window of
+    # the input in the same backend.
+    input, coords = backends.match_backends(input, coordinates)
     if isinstance(coords, da.Array):
         coords = coords.rechunk({0: -1})
     else:
         coords = da.from_array(
-            coords, chunks=(-1,) + ("auto",) * (coords.ndim - 1)
+            coords,
+            chunks=(-1,) + ("auto",) * (coords.ndim - 1),
+            asarray=False,
         )
     if isinstance(input, da.Array):
         source = dask.delayed(da.Array)(

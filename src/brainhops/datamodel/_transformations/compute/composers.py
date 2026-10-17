@@ -324,18 +324,22 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    x2 = Ti.to(CoordinatesField)
-    moved = pull_field(
-        # Read the displacement as spline coefficients. The conversion
-        # matters because a StationaryVelocityField stores its velocity,
-        # not its displacement, under `data`.
+    # Read the displacement as spline coefficients. The conversion matters
+    # because a StationaryVelocityField stores its velocity, not its
+    # displacement, under `data`. The three arrays are matched before
+    # anything is computed from them.
+    coeffs, coords, field = match_backends(
         To.to(log=False, store="coefficients").data,
-        coords=x2.field,
+        Ti.to(CoordinatesField).field,
+        Ti.field,
+    )
+    moved = pull_field(
+        coeffs,
+        coords=coords,
         degree=To.degree,
         bound=To.bound,
         coeff=True,
     )
-    moved, field = match_backends(moved, Ti.field)
     field = moved + field
     return DisplacementField(
         field=field,
@@ -350,16 +354,18 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    coords = Ti.to(CoordinatesField).field
-    moved = pull_field(
+    coeffs, coords = match_backends(
         To.to(log=False, store="coefficients").data,
+        Ti.to(CoordinatesField).field,
+    )
+    moved = pull_field(
+        coeffs,
         coords=coords,
         degree=To.degree,
         bound=To.bound,
         coeff=True,
     )
-    moved, field = match_backends(moved, coords)
-    field = moved + field
+    field = moved + coords
     return CoordinatesField(
         field=field,
         input=Ti.input,

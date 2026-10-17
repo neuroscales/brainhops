@@ -11,6 +11,7 @@ from bagof.hints.numpy import DTypeLike
 from brainhops._core.dependencies import da, np
 from brainhops._core.typing import Clip
 from brainhops.backends import (
+    _creation_options,
     best_backend,
     copy_array,
     get_array_backend,
@@ -449,12 +450,14 @@ def coeff2value(
     # would be meaningless for interpolation.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
+    # The grid is created in the backend of the input, with CuPy chunks
+    # when the chunks of the input are CuPy arrays.
+    options = _creation_options(input)
     grid = nx.meshgrid(
-        *(nx.arange(s) for s in input.shape[-ndim:]), indexing="ij"
+        *(nx.arange(s, **options) for s in input.shape[-ndim:]),
+        indexing="ij",
     )
-    # Dask creates NumPy chunks, even when the chunks of the input are
-    # CuPy arrays.
-    grid = match_backends(nx.stack(grid, axis=0), input)[0]
+    grid = nx.stack(grid, axis=0)
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
     opts = {"order": degree, "mode": mode, "cval": cval, "prefilter": False}
@@ -667,7 +670,7 @@ def _along(
     nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
     """Apply a matrix to an array along one axis."""
-    matrix = match_backends(nx.asarray(matrix, dtype=np.float64), x)[0]
+    matrix = nx.asarray(match_backends(matrix, x)[0], dtype=np.float64)
     return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
 
@@ -689,20 +692,21 @@ def _edge_terms(
     broadcasts to the corrected part of the array without materialising
     anything larger than `w`.
     """
-    u, v = pair
-    v = match_backends(nx.asarray(v, dtype=np.float64), slab)[0]
+    # The factors are small NumPy matrices, which are moved once to the
+    # backend of the slab, before anything is computed from them.
+    u, v = match_backends(*pair, slab)[:2]
     weights = nx.tensordot(v, slab, axes=([1], [axis]))
+    xp = get_array_backend(u)
     shape = [1] * slab.ndim
     shape[axis] = -1
     terms = []
     for j in range(u.shape[1]):
-        column = np.zeros(length)
+        column = xp.zeros(length)
         if at_end:
             column[length - u.shape[0] :] = u[:, j]
         else:
             column[: u.shape[0]] = u[:, j]
-        column = match_backends(column.reshape(shape), weights)[0]
-        terms.append((column, nx.expand_dims(weights[j], axis)))
+        terms.append((column.reshape(shape), nx.expand_dims(weights[j], axis)))
     return terms
 
 
@@ -873,17 +877,20 @@ def _interpolating_coefficients(
         all_ones.append(ones)
     if cval:
         if lazy:
+            # The vectors are moved once to the device of the coefficients,
+            # before the product is built from them.
+            all_ones = match_backends(*all_ones, coeff)[:-1]
             shape = [1] * coeff.ndim
             shape[0] = -1
             product = da.from_array(
                 all_ones[0].reshape(shape),
                 chunks=(coeff.chunks[0],) + (1,) * (coeff.ndim - 1),
+                asarray=False,
             )
             for d in range(1, coeff.ndim):
                 shape = [1] * coeff.ndim
                 shape[d] = -1
                 product = product * all_ones[d].reshape(shape)
-            product = match_backends(product, coeff)[0]
             coeff = coeff + cval * (1 - product)
         else:
             for region, correction in _constant_correction(all_ones, cval):

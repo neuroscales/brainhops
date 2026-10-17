@@ -235,12 +235,15 @@ follows these rules.
    read. A computation does not try to leave its inputs unchanged,
    because it would have to read `data` differently from a user.
 3. Small parameters, such as a matrix, are NumPy arrays and are moved to
-   the device of the voxels once, where they meet them. The functions
-   that combine arrays also call `match_backends`, which moves nothing
-   when the arrays already share a backend, so that a function called
-   outside a computation, with arrays of several backends, still works.
-   A grid that is combined with a field is built in the backend of the
-   field.
+   the device of the voxels once. A function that combines arrays calls
+   `match_backends` as soon as it knows them, before it computes
+   anything from them, and it creates its new arrays in the backend of
+   the moved arrays, so that each array is moved at most once.
+   `match_backends` moves nothing when the arrays already share a
+   backend, which is the case inside a computation, and it lets a
+   function called outside a computation, with arrays of several
+   backends, still work. A grid that is combined with a field is built
+   in the backend of the field.
 
 The `values` and `coefficients` of a field follow the setting as its
 `data` does, so the three are always arrays of the same package. The

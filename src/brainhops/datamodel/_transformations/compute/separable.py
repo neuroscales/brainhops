@@ -35,6 +35,7 @@ from brainhops._core.bsplines import (
 )
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import (
+    _creation_options,
     copy_array,
     get_array_backend,
     match_backends,
@@ -551,7 +552,7 @@ def _make_gather(
                 cval = 0.0 if isinstance(bound, str) else float(bound)
                 mask_shape = [1] * result.ndim
                 mask_shape[axis] = n_out
-                mask = ab.asarray(inbounds).reshape(tuple(mask_shape))
+                mask = inbounds.reshape(tuple(mask_shape))
                 mask = match_backends(mask, result)[0]
                 result = ab.where(mask, result, cval)
         labels = list(labels)
@@ -580,11 +581,11 @@ def _make_matrix(
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
-        coords = ab.arange(n_out) * scale + shift
+        # The coordinates are created in the backend of the data, with
+        # CuPy chunks when its chunks are CuPy arrays, so that the weights
+        # computed from them are there as well.
+        coords = ab.arange(n_out, **_creation_options(arr)) * scale + shift
         weights = spline_matrix(n_in, coords, degree, bound, coeff)
-        # Dask creates NumPy chunks, even when the chunks of the data are
-        # CuPy arrays.
-        weights = match_backends(weights, arr)[0]
         out = ab.moveaxis(
             ab.tensordot(arr, weights, axes=([axis], [1])), -1, axis
         )
@@ -662,7 +663,7 @@ def _apply_clip_masks(
     ab = get_array_backend(arr)
     for mask, axes in masks:
         order = sorted(range(len(axes)), key=lambda index: axes[index])
-        mask = ab.transpose(match_backends(ab.asarray(mask), arr)[0], order)
+        mask = ab.transpose(ab.asarray(match_backends(mask, arr)[0]), order)
         shape = [1] * arr.ndim
         for index, axis in enumerate(sorted(axes)):
             shape[axis] = mask.shape[index]
