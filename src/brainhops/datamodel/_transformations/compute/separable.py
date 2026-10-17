@@ -38,8 +38,8 @@ from brainhops.backends import (
     _creation_options,
     copy_array,
     get_array_backend,
-    match_backends,
     may_share_memory,
+    to_backend_of,
 )
 from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
@@ -553,7 +553,7 @@ def _make_gather(
                 mask_shape = [1] * result.ndim
                 mask_shape[axis] = n_out
                 mask = inbounds.reshape(tuple(mask_shape))
-                mask = match_backends(mask, result)[0]
+                mask = to_backend_of(mask, result)
                 result = ab.where(mask, result, cval)
         labels = list(labels)
         labels[axis] = ("grid", g)
@@ -663,7 +663,7 @@ def _apply_clip_masks(
     ab = get_array_backend(arr)
     for mask, axes in masks:
         order = sorted(range(len(axes)), key=lambda index: axes[index])
-        mask = ab.transpose(ab.asarray(match_backends(mask, arr)[0]), order)
+        mask = ab.transpose(ab.asarray(to_backend_of(mask, arr)), order)
         shape = [1] * arr.ndim
         for index, axis in enumerate(sorted(axes)):
             shape[axis] = mask.shape[index]

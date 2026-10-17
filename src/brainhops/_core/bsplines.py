@@ -17,6 +17,7 @@ from brainhops.backends import (
     get_array_backend,
     get_ndimage_backend,
     match_backends,
+    to_backend_of,
 )
 
 
@@ -670,7 +671,7 @@ def _along(
     nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
     """Apply a matrix to an array along one axis."""
-    matrix = nx.asarray(match_backends(matrix, x)[0], dtype=np.float64)
+    matrix = nx.asarray(to_backend_of(matrix, x), dtype=np.float64)
     return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
 
@@ -694,7 +695,7 @@ def _edge_terms(
     """
     # The factors are small NumPy matrices, which are moved once to the
     # backend of the slab, before anything is computed from them.
-    u, v = match_backends(*pair, slab)[:2]
+    u, v = (to_backend_of(factor, slab) for factor in pair)
     weights = nx.tensordot(v, slab, axes=([1], [axis]))
     xp = get_array_backend(u)
     shape = [1] * slab.ndim
@@ -879,7 +880,7 @@ def _interpolating_coefficients(
         if lazy:
             # The vectors are moved once to the device of the coefficients,
             # before the product is built from them.
-            all_ones = match_backends(*all_ones, coeff)[:-1]
+            all_ones = [to_backend_of(ones, coeff) for ones in all_ones]
             shape = [1] * coeff.ndim
             shape[0] = -1
             product = da.from_array(
@@ -894,7 +895,7 @@ def _interpolating_coefficients(
             coeff = coeff + cval * (1 - product)
         else:
             for region, correction in _constant_correction(all_ones, cval):
-                coeff[region] += match_backends(correction, coeff)[0]
+                coeff[region] += to_backend_of(correction, coeff)
     return coeff
 
 

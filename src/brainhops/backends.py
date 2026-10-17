@@ -556,18 +556,54 @@ def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
     tuple
         The arrays, in the same order.
     """
-    loaded = [x for x in arrays if _is_loaded(x)]
-    gpu = any(_on_gpu(x) for x in loaded)
-    if not gpu:
+    if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
         return arrays
-    moved = []
-    for x in arrays:
-        if da is not None and isinstance(x, da.Array):
-            x = x if _on_gpu(x) else _to_dask(x, gpu=True)
-        elif isinstance(x, np.ndarray):
-            x = cp.asarray(x)
-        moved.append(x)
-    return tuple(moved)
+    return tuple(_to_device(x, gpu=True) for x in arrays)
+
+
+def to_backend_of(x: tx.Any, reference: tx.Any) -> tx.Any:
+    """Move an array to the device of a reference array.
+
+    This is the one-way form of [`match_backends`][], for an array that
+    a function creates or receives, such as a mask or a small matrix, and
+    combines with a reference that is already where the result lives,
+    such as the voxels of an image. The reference is not moved. The
+    array is copied to the GPU when the reference is on a GPU, and to
+    memory when the reference is in memory. A NumPy array that goes with
+    a Dask array in memory is returned as it is, because Dask accepts
+    NumPy operands.
+
+    Parameters
+    ----------
+    x : Any
+        The array to move. An argument that is not an array is returned
+        as it is.
+    reference : Any
+        The array whose device `x` takes.
+
+    Returns
+    -------
+    Any
+        The moved array.
+    """
+    if not _is_loaded(x) or not _is_loaded(reference):
+        return x
+    return _to_device(x, gpu=_on_gpu(reference))
+
+
+def _to_device(x: tx.Any, gpu: bool) -> tx.Any:
+    """Copy an array to a GPU or to memory, keeping its package kind.
+
+    A Dask array stays a Dask array, with CuPy or NumPy chunks, and an
+    array in memory becomes a CuPy or a NumPy array. An array that is
+    already on that device, or that is not an array, is returned as it
+    is.
+    """
+    if not _is_loaded(x) or _on_gpu(x) == gpu:
+        return x
+    if da is not None and isinstance(x, da.Array):
+        return _to_dask(x, gpu=gpu)
+    return _to_cupy(x) if gpu else _to_numpy(x)
 
 
 # ----------------------------------------------------------------------

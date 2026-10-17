@@ -11,7 +11,12 @@ import pytest
 from dask.callbacks import Callback
 
 from brainhops._core import bsplines
-from brainhops.backends import backend, match_backends, output_backend
+from brainhops.backends import (
+    backend,
+    match_backends,
+    output_backend,
+    to_backend_of,
+)
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine, DisplacementField
 
@@ -56,6 +61,8 @@ def test_arrays_in_memory_are_not_moved() -> None:
     assert moved[0] is lazy
     assert moved[1] is matrix
     assert moved[2:] == (None, 2.0)
+    assert to_backend_of(matrix, lazy) is matrix
+    assert to_backend_of(lazy, matrix) is lazy
 
 
 def test_the_output_backend_follows_the_inputs() -> None:
@@ -167,6 +174,15 @@ def test_cupy_arrays_attract_the_others() -> None:
     assert moved[0] is on_gpu
     assert isinstance(moved[1], cp.ndarray)
     assert isinstance(moved[2]._meta, cp.ndarray)
+
+
+def test_only_the_moved_array_goes_to_the_gpu() -> None:
+    # The one-way form moves the array to the device of the reference
+    # and leaves the reference where it is.
+    cp = pytest.importorskip("cupy")
+    on_gpu = cp.asarray(VOLUME)
+    assert isinstance(to_backend_of(VOLUME, on_gpu), cp.ndarray)
+    assert isinstance(to_backend_of(on_gpu, VOLUME), np.ndarray)
 
 
 def test_a_cupy_image_is_resliced_on_the_gpu() -> None:

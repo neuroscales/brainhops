@@ -238,12 +238,14 @@ follows these rules.
    the device of the voxels once. A function that combines arrays calls
    `match_backends` as soon as it knows them, before it computes
    anything from them, and it creates its new arrays in the backend of
-   the moved arrays, so that each array is moved at most once.
-   `match_backends` moves nothing when the arrays already share a
-   backend, which is the case inside a computation, and it lets a
-   function called outside a computation, with arrays of several
-   backends, still work. A grid that is combined with a field is built
-   in the backend of the field.
+   the moved arrays, so that each array is moved at most once. When only
+   one array may move, such as a mask that goes with the voxels, it
+   calls `to_backend_of`, which moves that array to the device of the
+   other and leaves the other where it is. `match_backends` moves
+   nothing when the arrays already share a backend, which is the case
+   inside a computation, and it lets a function called outside a
+   computation, with arrays of several backends, still work. A grid that
+   is combined with a field is built in the backend of the field.
 
 The `values` and `coefficients` of a field follow the setting as its
 `data` does, so the three are always arrays of the same package. The
