@@ -58,6 +58,7 @@ import brainhops.io as io
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -688,10 +689,15 @@ class ToyImage(
         "transformations", default=None
     )
 
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[np.ndarray]:
-        # An assigned array is returned as it is, and the array decoded
-        # from `rawdata` is cached.
+    # `data` reads `dataobj` once and caches the result, so a format
+    # defines only `dataobj`: an assigned array, or else a view of
+    # `rawdata` in the layout of the data.
+    data = dataproperty()
+
+    @property
+    def dataobj(self) -> tx.Optional[np.ndarray]:
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _toy_to_model(self.rawdata)
@@ -1033,8 +1039,12 @@ class ToyLevel(
         "transformations", default=None
     )
 
-    @smartproperty(cache=True)
-    def data(self) -> tx.Optional[np.ndarray]:
+    data = dataproperty()
+
+    @property
+    def dataobj(self) -> tx.Optional[np.ndarray]:
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _toy_to_model(self.rawdata)

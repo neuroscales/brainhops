@@ -282,22 +282,34 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
     whole slide, in which it finds its level.
     """
 
-    @dataproperty
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The pixels of the level, assigned or decoded from `rawdata`.
+    data = dataproperty()
+    """The pixels of the level, assigned or decoded from `rawdata`.
 
-        An array assigned to the image is returned as it is, and stays
-        pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
-        data is decoded from `rawdata` on first access and cached: the
-        lazy array itself, which reads only the region that it is
-        indexed with and cannot be written to, or a dask array of whole
-        tiles with the reader option `lazy`. To change the pixels,
-        assign `data`. Assigning `None` decodes `rawdata` again.
+    An array assigned to the image is returned as it is, and stays
+    pending until [`consolidate`][] moves it into `rawdata`. Otherwise the
+    data is decoded from `rawdata` on first access and cached: the
+    lazy array itself, which reads only the region that it is
+    indexed with and cannot be written to, or a dask array of whole
+    tiles with the reader option `lazy`. To change the pixels,
+    assign `data`. Assigning `None` decodes `rawdata` again.
 
-        Under a backend setting other than the default, such as
-        `with backend("dask"):`, each read returns the array converted
-        to that backend, and the array that is held does not change.
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the image in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _image_to_model(self.rawdata)

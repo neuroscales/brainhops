@@ -12,24 +12,17 @@ lazy array. The functions invert each other, so that
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.base._utils_proxies import load_proxy
 
 # this format
-from ._data import _ImarisProxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the file stores.
 
-    The axes are reversed. A lazy array is first read with the array
-    backend, which loads it with NumPy and keeps it lazy with Dask. The
-    NumPy array that it gives is made read-only, because the file cannot
-    be written, so an edit in place could never be saved. Any other array
-    is reversed as it is, so that the data of an image whose data were
-    set is a view of `rawdata`.
+    The axes are reversed with a transpose, so that the lazy array
+    of a file stays lazy and reads nothing. The `data` of the object
+    reads it once, as the backend setting says.
     """
-    if isinstance(raw, _ImarisProxy):
-        raw = load_proxy(raw)
     return raw.T
 
 

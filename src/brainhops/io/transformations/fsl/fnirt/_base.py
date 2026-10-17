@@ -212,20 +212,32 @@ class FnirtWarpField(
     encodes it into `rawdata`.
     """
 
-    @dataproperty
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """The array of the file, as FSL stores it.
+    data = dataproperty()
+    """The array of the file, as FSL stores it.
 
-        A deformation field has shape (X, Y, Z, 3), and a coefficient field
-        holds the coefficients on its knot grid. An array that is assigned
-        is returned as it is, and stays pending until [`consolidate`][] or
-        a write encodes it. Otherwise the array is decoded from `rawdata`. The
-        chain is built again from a new array.
+    A deformation field has shape (X, Y, Z, 3), and a coefficient field
+    holds the coefficients on its knot grid. An array that is assigned
+    is returned as it is, and stays pending until [`consolidate`][] or
+    a write encodes it. Otherwise the array is decoded from `rawdata`. The
+    chain is built again from a new array.
 
-        Under a backend setting other than the default, such as
-        `with backend("dask"):`, each read returns the array converted
-        to that backend, and the array that is held does not change.
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the field in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _image_to_model(self.rawdata)

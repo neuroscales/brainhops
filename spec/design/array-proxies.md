@@ -210,12 +210,14 @@ will return a description of the bytes that a writer may copy as they
 are, or `None` for a view, and replace the `isinstance` and `is_view`
 checks of the writers.
 
-The format views share one function,
-`brainhops.io.base._utils_proxies.load_proxy`, which returns the proxy
-as a read-only NumPy array, or as `to_dask()` with the Dask backend.
+The format views only index and transpose the proxy, so the `dataobj`
+of an object read from a file is a proxy in the layout of its `data`,
+and `data` reads it with the backend setting (see
+[Array backends](array-backends.md)). The NIfTI and MGH views wrap the
+proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
 The views of TIFF and OpenSlide keep their own functions, because
 tifffile can give a memory map or a Dask array itself, and an
-OpenSlide level stays a proxy with the NumPy backend.
+OpenSlide level is kept as a Dask array when it is read lazily.
 
 ### Third layer: strided data behind a file
 

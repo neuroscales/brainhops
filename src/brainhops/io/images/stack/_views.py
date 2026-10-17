@@ -20,31 +20,19 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.base._utils_proxies import load_proxy
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
-from ._data import _StackProxy
 from ._raw import PLANES
 
 
 def _image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     """Return the data of an image from the stacked files.
 
-    A lazy array is first read with the array backend. With NumPy, every
-    file is read, and the array is made read-only, because it is a view
-    that is never written back, so an edit in place would be lost. With
-    Dask, the array is a Dask array with one chunk per slice, and a file
-    is read only when a chunk that it fills is computed. Any other array
-    is permuted as it is, so that the data of an image whose data were set
-    are a view of `rawdata`.
+    The axes are permuted with a transpose, so that the lazy array
+    of the files stays lazy and reads nothing. The `data` of the
+    object reads it once, as the backend setting says.
     """
-    if isinstance(raw, _StackProxy):
-        # `name=False` gives Dask a random name instead of a hash of the
-        # proxy, which Dask computes only to recognize two arrays of the
-        # same source (docstring of `dask.array.from_array`, dask
-        # 2023.5.0), and which says nothing about the files.
-        raw = load_proxy(raw, name=False)
     return raw.transpose(_permutation(raw.ndim, axis))
 
 

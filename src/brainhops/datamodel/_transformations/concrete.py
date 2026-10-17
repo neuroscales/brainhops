@@ -331,7 +331,17 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = dataproperty("data", invalidates=_FORGET_VIEWS)
+    data = dataproperty(invalidates=_FORGET_VIEWS)
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The stored field, without reading it.
+
+        It is the array that the field holds, which a field built from
+        an array or assigned `data` keeps as it was given.
+        """
+        return self._data
+
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 
@@ -670,6 +680,11 @@ class CartesianField(CoordinatesField):
     def data(self) -> tx.Optional[ArrayProtocol]:
         """Coordinates of the grid points, encoded according to the flags."""
         return _values2data(self.field, self.store, self.degree, self.bound)
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """Coordinates of the grid points, which a grid computes."""
+        return self.data
 
     # --- methods ------------------------------------------------------
 

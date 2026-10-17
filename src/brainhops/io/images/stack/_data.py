@@ -66,6 +66,28 @@ class _StackProxy(ArrayProxy):
         """The shape of the block that one file fills: one plane."""
         return (1,) + self.base_shape[1:]
 
+    def to_dask(self, *, cupy: bool = False, **kwargs: tx.Any) -> tx.Any:
+        """Return a Dask array with one chunk per slice, reading nothing.
+
+        Parameters
+        ----------
+        cupy : bool, default=False
+            Whether each chunk is moved to the GPU once it is read.
+        **kwargs : Any
+            Options of `dask.array.from_array`.
+
+        Returns
+        -------
+        dask.array.Array
+            The lazy array.
+        """
+        # `name=False` gives Dask a random name instead of a hash of the
+        # proxy, which Dask computes only to recognize two arrays of the
+        # same source (docstring of `dask.array.from_array`, dask
+        # 2023.5.0), and which says nothing about the files.
+        kwargs.setdefault("name", False)
+        return super().to_dask(cupy=cupy, **kwargs)
+
     def filenames(self) -> tx.List[str]:
         """Return the paths of the files that the proxy reads.
 

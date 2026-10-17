@@ -3,11 +3,12 @@
 This memo decides which array package holds the values of an image or
 a transformation, how a user moves an object from one package to
 another, and how a computation chooses the package of its result. It is
-agreed and tracked in #486. Its first four steps are implemented: the
-backend settings in `brainhops.backends` (#490), the conversion
-methods of lazy arrays (#491), those of images and transformations
-(#492), and the conversion of `data` at each read (#493). The other
-steps are not implemented yet.
+agreed and tracked in #486. All its steps but the fifth are
+implemented: the backend settings in `brainhops.backends` (#490), the
+conversion methods of lazy arrays (#491), those of images and
+transformations (#492), the conversion of `data` at each read (#493),
+and `dataobj` (#514). The rules of computations (#494) are not
+implemented yet.
 
 ## What a backend is for
 
@@ -23,7 +24,7 @@ NumPy or should run on a GPU. Images and transformation fields hold
 large arrays of voxels. Affine transformations, scalings and the like
 hold small parameters, such as a matrix of a few rows.
 
-## What the code does today
+## What the code did before this design
 
 The module `brainhops.backends` keeps one global setting, which
 `set_backend` and the `backend()` context manager change. At import,
@@ -38,10 +39,10 @@ An image built from an array (`SingleScaleImage`) keeps that array as
 a lazy array of the file, called a proxy, as `rawdata` (see
 [Lazy arrays of file data](array-proxies.md)). Its `data` property
 decodes `rawdata` the first time it is read and caches the result
-(`io/images/afni/_image.py:289` for example). The format views convert
-the proxy with the global setting at that time
-(`io/base/_utils_proxies.py`), so reading `data` either reads the
-whole file with NumPy or wraps the proxy in a Dask array.
+(`io/images/afni/_image.py` for example). The format views converted
+the proxy with the global setting at that time, so reading `data`
+either read the whole file with NumPy or wrapped the proxy in a Dask
+array.
 
 Transformation fields keep their array as it is given. Affine
 transformations, linear maps, scalings, translations and permutations
@@ -83,35 +84,35 @@ CuPy refuses to be converted to NumPy implicitly.
 
 ### What an object holds
 
-An object built by the readers of `brainhops.io` holds the array of its
-file as it is stored, in `rawdata`, which is usually a proxy. `data`
-decodes `rawdata` the first time it is read and caches the result,
-which is a NumPy array for a small file and a Dask array for a large
-one under the default setting. `data` therefore always supports NumPy
-arithmetic, so that an expression such as `image.data + 1` works.
+An object holds two arrays. `rawdata` is the array of its file as it
+is stored, usually a proxy, and the writers rely on it. `_data` is an
+array that a user assigned as `data`, or `None` when nothing was
+assigned. Two properties are derived from them.
 
-At each access, `data` converts the cached array with the setting in
-effect at that time. Under the default setting, `None`, it returns the
-cached array itself. Under an explicit setting, such as
-`with backend("dask"):`, it returns the cached array converted to that
-backend, and the converted array is not cached. A user who wants the
-object to hold another backend for good calls an `as_*` method, or
-sets the backend before the first access.
+`dataobj` is the array of the object without reading it. It is the
+assigned array when there is one. Otherwise it is the lazy array of the
+file in the layout of `data`. `rawdata` and `data` can differ in
+layout, because a reader may reverse or permute the axes, drop an axis
+of length 1, or move the vector axis of a field to the end. Every
+format turns `rawdata` into `data` with such a view only, while the
+decoding of values happens inside the proxy, so `dataobj` applies the
+view to `rawdata` and reads nothing. The NIfTI and MGH formats wrap the
+proxy of nibabel in a proxy of brainhops for that purpose. `shape`,
+`dtype` and `geometry` read `dataobj`, so describing an object never
+reads its file, and a user can read a part of a large file in the
+layout of `data`.
 
-An object that a user builds keeps the array that it was given, and
-`data` converts it in the same way.
-
-A second property, `dataobj`, gives the lazy array of the file in the
-layout of `data`. `rawdata` and `data` can differ in layout, because a
-reader may reverse or permute the axes, drop an axis of length 1, or
-move the vector axis of a field to the end. Every format turns
-`rawdata` into `data` with such a view only, while the decoding of
-values happens inside the proxy. `dataobj` applies the same view to
-`rawdata` without reading anything, so a user can read a part of a
-large file in the layout of `data`. `rawdata` keeps the layout of the
-file, because the writers rely on it to decide whether they may copy
-the stored bytes as they are. `dataobj` is computed from `rawdata`
-rather than stored, and the first access to `data` reads `dataobj`.
+`data` is the array of values. It always supports NumPy arithmetic, so
+that an expression such as `image.data + 1` works. An assigned array
+is returned converted with the setting in effect. Otherwise, the first
+read converts `dataobj` with the setting in effect and caches the
+result: under the default setting, a small file is read with NumPy and
+a large one is kept lazy as a Dask array, and under
+`with backend("dask"):` the file is kept lazy whatever its size. Each
+later read returns the cached array converted with the setting in
+effect at that read, and the converted array is not cached. A user who
+wants the object to hold another backend for good calls an `as_*`
+method, or chooses the backend before the first read.
 
 ### Conversion methods
 
@@ -238,17 +239,19 @@ NumPy array.
 3. Add the `to_*` and `as_*` methods to the classes of images and
    transformations. This step is implemented (#492).
 4. Make `data` convert its cached array with the setting in effect at
-   each access (#493). This step is implemented. The formats declare
-   their `data` with `dataproperty`, and the conversion methods and the
-   attributes that only describe the data, such as `shape`, read the
-   array that is held.
+   each access (#493). This step is implemented. Images, fields and
+   the formats of fields declare their `data` with `dataproperty`, and
+   the conversion methods read the array that is held.
 5. Apply the rules of computations: resolve the proxies of the inputs,
    create arrays in the backend of the result, and move small
    parameters to the device of the voxel data.
 6. Add `dataobj`, the lazy array of the file in the layout of `data`
-   (#514). NIfTI and MGH need a proxy over the nibabel proxy, and the
-   view of the ITK fields must index its axis of length 1 rather than
-   reshape it.
+   (#514). This step is implemented. Each format defines `dataobj`
+   rather than `data`, its views no longer read anything, NIfTI and MGH
+   wrap the nibabel proxy in `NibabelProxy`, and the view of the ITK
+   fields indexes its axes of length 1 rather than reshape them. A TIFF
+   level that tifffile must decode, because it can neither map nor
+   chunk it, is read when `dataobj` is built.
 
 ## Open questions
 

@@ -305,23 +305,35 @@ class NiftyRegSequence(
     encodes them into `rawdata`.
     """
 
-    @dataproperty(invalidates="transformations")
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        """
-        The stored vectors as an (X, Y, Z, 3) array.
+    data = dataproperty(invalidates="transformations")
+    """
+    The stored vectors as an (X, Y, Z, 3) array.
 
-        Vectors that are assigned are returned as they are, and stay
-        pending until [`consolidate`][] or a write encodes them. Otherwise
-        they are decoded from `rawdata`: NiftyReg stores a field with
-        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
-        vectors are positions or displacements, as the type of the file
-        says. Assigning the data drops the chain decoded from the
-        previous data.
+    Vectors that are assigned are returned as they are, and stay
+    pending until [`consolidate`][] or a write encodes them. Otherwise
+    they are decoded from `rawdata`: NiftyReg stores a field with
+    shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
+    vectors are positions or displacements, as the type of the file
+    says. Assigning the data drops the chain decoded from the
+    previous data.
 
-        Under a backend setting other than the default, such as
-        `with backend("dask"):`, each read returns the array converted
-        to that backend, and the array that is held does not change.
+    The first read converts the lazy array of the file with the
+    backend setting in effect and caches the result. Each later read
+    returns the cached array converted to the setting in effect then,
+    such as `with backend("dask"):`, and the cached array does not
+    change.
+    """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the field in the layout of `data`, without reading it.
+
+        An array assigned as `data` is returned as it is. Otherwise, the
+        lazy array of the file is returned through the same view that
+        `data` reads, and nothing is read until it is converted.
         """
+        if self._data is not None:
+            return self._data
         if self.rawdata is None:
             return None
         return _field_to_model(self.rawdata)

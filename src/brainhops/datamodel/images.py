@@ -168,7 +168,7 @@ class Image(
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the data."""
-        return _stored_data(self).shape
+        return tuple(self.dataobj.shape)
 
     @property
     def ndim(self) -> int:
@@ -178,7 +178,7 @@ class Image(
     @property
     def dtype(self) -> np.dtype:
         """The data type of the data."""
-        return _stored_data(self).dtype
+        return self.dataobj.dtype
 
     @property
     def grid(self) -> CartesianField:
@@ -292,13 +292,24 @@ class SingleScaleImage(Image):
     This mirrors `Affine.matrix`, which is optional for the same reason.
     """
 
-    data = dataproperty("data")
+    data = dataproperty()
     """The image data, in the backend of the setting in effect.
 
     Under the default setting, the stored array is returned as it is.
     Under any other setting, such as `with backend("dask"):`, a new array
     of that backend is returned, and the stored array does not change.
     """
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the image, without reading it.
+
+        An image built from an array returns that array. An image read
+        from a file returns a lazy array of the file in the layout of
+        `data`, which reads nothing until it is converted, unless an array
+        was assigned as `data`.
+        """
+        return self._data
 
     transformations: NotKwOnly[tx.List[Transformation]] = ()
     """
@@ -351,7 +362,7 @@ class SingleScaleImage(Image):
         return Geometry(
             (
                 CartesianField(
-                    shape=_stored_data(self).shape,
+                    shape=tuple(self.dataobj.shape),
                     input=self.transformation.input,
                     output=self.transformation.input,
                 ),
@@ -576,6 +587,11 @@ class MultiScaleImage(Image):
     def data(self) -> ArrayProtocol:
         """The data of the highest-resolution level."""
         return self.images[0].data
+
+    @property
+    def dataobj(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the highest-resolution level, without reading it."""
+        return self.images[0].dataobj
 
     # --- conversion to another backend -------------------------------
 

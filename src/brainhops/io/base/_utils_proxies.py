@@ -1,4 +1,13 @@
-"""How the format views turn a lazy array of a file into data."""
+"""A lazy array over the array proxy of nibabel.
+
+The NIfTI and MGH formats read their voxels with nibabel, whose
+`ArrayProxy` reads a selection when it is indexed and returns a NumPy
+array. The `dataobj` of an object read from a file is a lazy array that
+reads nothing until it is converted (see
+[`ArrayProxy`][brainhops._core.proxy.ArrayProxy]), so the views of these
+formats wrap the nibabel proxy in the class below, which brainhops can
+index and transpose without reading anything.
+"""
 
 # dependencies
 import numpy as np
@@ -6,40 +15,44 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.proxy import ArrayProxy
-from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import resolve_backend, to_backend
 
 
-def load_proxy(raw: ArrayProxy, **kwargs: tx.Any) -> ArrayProtocol:
-    """Return the data of a lazy array with the current backend setting.
+class NibabelProxy(ArrayProxy):
+    """A lazy array that reads its values through a nibabel proxy.
 
-    The format views call this function when the `rawdata` of an object
-    is a lazy array of its file. The setting decides the backend (see
-    [`resolve_backend`][brainhops.backends.resolve_backend]). Under the
-    default setting `None`, a small array is read with NumPy and a large
-    one becomes a Dask array. A Dask array has the blocks that the
-    storage prefers (see
-    [`ArrayProxy.to_dask`][brainhops._core.proxy.ArrayProxy.to_dask]),
-    and nothing is read. A NumPy array that the read gives is made
-    read-only, because the writer writes `rawdata` and not the data, so
-    an edit in place would be lost.
+    The class gives the nibabel proxy the lazy indexing of
+    [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]. A box that a view
+    selects is read by indexing the nibabel proxy, which reads only the
+    bytes of that box and applies the scaling of the header.
 
     Parameters
     ----------
-    raw : ArrayProxy
-        The lazy array.
-    **kwargs : dict
-        Options of `to_dask`, used only when the data is a Dask array.
-
-    Returns
-    -------
-    ArrayProtocol
-        The data, as an array of the current backend.
+    proxy : nibabel.arrayproxy.ArrayProxy
+        The proxy of nibabel.
     """
-    target = resolve_backend(raw)
-    if target in ("dask", "dask+cupy"):
-        return raw.to_dask(cupy=target == "dask+cupy", **kwargs)
-    data = to_backend(raw, target)
-    if isinstance(data, np.ndarray):
-        data.flags.writeable = False
-    return data
+
+    def __init__(self, proxy: tx.Any) -> None:
+        self.proxy = proxy
+        """The proxy of nibabel."""
+
+    @property
+    def base_shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the stored array."""
+        return tuple(int(n) for n in self.proxy.shape)
+
+    @property
+    def dtype(self) -> np.dtype:
+        """The type of the values once the scaling of the header applies.
+
+        The type is computed as nibabel computes it, by scaling an empty
+        array of the stored type, so no voxel is read.
+        """
+        from nibabel.volumeutils import apply_read_scaling
+
+        empty = np.empty(0, self.proxy.dtype)
+        return apply_read_scaling(
+            empty, self.proxy.slope, self.proxy.inter
+        ).dtype
+
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        return np.asanyarray(self.proxy[index])

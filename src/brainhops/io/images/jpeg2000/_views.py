@@ -11,32 +11,22 @@ that `_image_to_model(_image_to_disk(data))` gives `data` back.
 """
 
 # dependencies
-import numpy as np
 
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-from brainhops.io.base._utils_proxies import load_proxy
 
 # this format
-from ._data import _Jpeg2000Proxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the samples that Pillow decodes.
 
-    A proxy is read with the array backend. The data is a view of the
-    samples with the columns first, and a NumPy view is made read-only,
-    because the writer writes the file that `rawdata` reads and not the data,
-    so an edit made in place would be lost. A Dask array stays lazy.
+    The data are the samples with the columns first. The axes are swapped
+    with a transpose, so a lazy array stays lazy and reads nothing.
     """
-    if isinstance(raw, _Jpeg2000Proxy):
-        raw = load_proxy(raw)
     perm = [1, 0] + list(range(2, len(raw.shape)))
-    data = get_array_backend(raw).transpose(raw, perm)
-    if isinstance(data, np.ndarray):
-        data.flags.writeable = False
-    return data
+    return raw.transpose(perm)
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
