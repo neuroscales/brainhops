@@ -297,16 +297,14 @@ class SingleScaleImage(Image):
     of that backend is returned, and the stored array does not change.
     """
 
-    @property
-    def dataobj(self) -> tx.Optional[ArrayProtocol]:
-        """The array of the image, without reading it.
+    dataobj = alias("_data", readonly=True)
+    """The array of the image, without reading it.
 
-        An image built from an array returns that array. An image read
-        from a file returns a lazy array of the file in the layout of
-        `data`, which reads nothing until it is converted, unless an array
-        was assigned as `data`.
-        """
-        return self._data
+    An image built from an array returns that array. An image read
+    from a file returns a lazy array of the file in the layout of
+    `data`, which reads nothing until it is converted, unless an array
+    was assigned as `data`.
+    """
 
     transformations: NotKwOnly[tx.List[Transformation]] = ()
     """
