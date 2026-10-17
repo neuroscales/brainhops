@@ -82,22 +82,35 @@ CuPy refuses to be converted to NumPy implicitly.
 
 ### What an object holds
 
-An object built by the readers of `brainhops.io` holds either a NumPy
-array or a proxy, and `data` returns what the object holds, without
-converting it. A proxy is lazy: indexing or transposing it returns
-another proxy and reads nothing (see
-[Lazy arrays of file data](array-proxies.md)). The format views mostly
-transpose or select axes, so they return a proxy as well, and `data`
-no longer needs a cache. The values are read only when the user asks
-for them, as described below, or when a computation needs them.
+An object built by the readers of `brainhops.io` holds the array of its
+file as it is stored, in `rawdata`, which is usually a proxy. `data`
+decodes `rawdata` the first time it is read and caches the result,
+which is a NumPy array for a small file and a Dask array for a large
+one under the default setting. `data` therefore always supports NumPy
+arithmetic, so that an expression such as `image.data + 1` works.
 
-An object that a user builds keeps the array that it was given, as it
-does today.
+At each access, `data` converts the cached array with the setting in
+effect at that time. Under the default setting, `None`, it returns the
+cached array itself. Under an explicit setting, such as
+`with backend("dask"):`, it returns the cached array converted to that
+backend, and the converted array is not cached. A user who wants the
+object to hold another backend for good calls an `as_*` method, or
+sets the backend before the first access.
 
-This choice changes the code that computes directly on `data`. An
-expression such as `image.data + 1` fails when `data` is a proxy, so
-that code, inside brainhops and in the tests, must first call
-`to_numpy()` or `np.asarray`.
+An object that a user builds keeps the array that it was given, and
+`data` converts it in the same way.
+
+A second property, `dataobj`, gives the lazy array of the file in the
+layout of `data`. `rawdata` and `data` can differ in layout, because a
+reader may reverse or permute the axes, drop an axis of length 1, or
+move the vector axis of a field to the end. Every format turns
+`rawdata` into `data` with such a view only, while the decoding of
+values happens inside the proxy. `dataobj` applies the same view to
+`rawdata` without reading anything, so a user can read a part of a
+large file in the layout of `data`. `rawdata` keeps the layout of the
+file, because the writers rely on it to decide whether they may copy
+the stored bytes as they are. `dataobj` is computed from `rawdata`
+rather than stored, and the first access to `data` reads `dataobj`.
 
 ### Conversion methods
 
@@ -223,16 +236,18 @@ NumPy array.
    and `to_dask(cupy=True)` gives the chunks of `"dask+cupy"`.
 3. Add the `to_*` and `as_*` methods to the classes of images and
    transformations. This step is implemented (#492).
-4. Make `data` return what the object holds, and update the code and
-   the tests that compute on it.
+4. Make `data` convert its cached array with the setting in effect at
+   each access (#493).
 5. Apply the rules of computations: resolve the proxies of the inputs,
    create arrays in the backend of the result, and move small
    parameters to the device of the voxel data.
+6. Add `dataobj`, the lazy array of the file in the layout of `data`
+   (#514). NIfTI and MGH need a proxy over the nibabel proxy, and the
+   view of the ITK fields must index its axis of length 1 rather than
+   reshape it.
 
 ## Open questions
 
-- On a multi-scale image, `to_*` could return the finest level, as
-  `data` does, while `as_*` converts every level.
 - Readers could take a `backend=` argument, but
   `io.load(path).as_dask()` already says the same thing, so the memo
   proposes no such argument.
