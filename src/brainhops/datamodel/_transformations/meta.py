@@ -7,7 +7,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import npvector
 from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _with_fields
+from brainhops.datamodel._backends import _with_fields, voxel_arrays_of
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError
@@ -147,6 +147,10 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         if self.transformation is not None:
             obj = self.to(transformation=self.transformation.sqrt())
         return obj.compute(**kwargs) if compute else obj
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The inner transformation decides the backend.
+        return voxel_arrays_of([self.transformation])
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
@@ -329,6 +333,10 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
             backward=None if backward is None else backward.sqrt(),
         )
         return obj.compute(**kwargs) if compute else obj
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # Both sides take part in the choice.
+        return voxel_arrays_of([self.forward, self.backward])
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False

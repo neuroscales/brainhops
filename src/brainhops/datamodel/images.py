@@ -16,7 +16,9 @@ from ._backends import (
     _stored_data,
     _with_fields,
     as_backend_all,
+    computing_with,
     dataproperty,
+    voxel_arrays_of,
 )
 from ._transformations.multiscale import (
     _as_affine_ignoring_fields,
@@ -316,6 +318,12 @@ class SingleScaleImage(Image):
 
     # --- conversion to another backend -------------------------------
 
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The voxels of the image decide its backend.
+        dataobj = self.dataobj
+        if dataobj is not None:
+            yield dataobj
+
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
     ) -> tx.Self:
@@ -470,9 +478,13 @@ class SingleScaleImage(Image):
         # imported here to avoid an import cycle.
         from ._transformations.compute.separable import pull_separable
 
-        new2old = preferred.inverse() @ geometry.transformation
-        transformation = new2old @ geometry.grid
-        new_data = pull_separable(self.data, transformation, **opt)
+        # The backend of the result is chosen once, from the voxels of the
+        # image and of the fields, so that the voxels are read and the
+        # coordinates are created in that backend.
+        with computing_with(self, preferred, geometry.transformation):
+            new2old = preferred.inverse() @ geometry.transformation
+            transformation = new2old @ geometry.grid
+            new_data = pull_separable(self.data, transformation, **opt)
         metadata = self.metadata
         if metadata is not None:
             # The grid is left out of the map of the voxels: it is the
@@ -589,6 +601,10 @@ class MultiScaleImage(Image):
         return self.images[0].dataobj
 
     # --- conversion to another backend -------------------------------
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # Every level of the image takes part in the choice.
+        return voxel_arrays_of(self.images)
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False

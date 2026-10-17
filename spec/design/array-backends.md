@@ -214,24 +214,32 @@ objects without testing their type.
 A computation, such as reslicing an image or composing transformations,
 follows these rules.
 
-1. It reads the `data` of its inputs, which follows the setting in
-   effect. An input read from a file is therefore read as any first
-   read of `data` is, and its cache keeps the array of that read. A
-   computation does not try to leave its inputs unchanged, because it
-   would have to read `data` differently from a user.
-2. It computes with the package that `best_backend` chooses among the
-   arrays that it combines: Dask if one of them is a Dask array, CuPy if
-   one is a CuPy array, and NumPy otherwise. With the setting `None`,
-   this is the package of the inputs. With any other setting, the
-   inputs are converted to that setting, and so is the result.
-3. Before it combines arrays, it moves them to that package with
-   `match_backends`. When one of the arrays is on a GPU, a NumPy array
-   becomes a CuPy array, and a Dask array of NumPy chunks becomes a
-   Dask array of CuPy chunks. A NumPy array that meets a Dask array in
-   memory is left as it is, because Dask accepts NumPy operands. The
-   arrays that the computation creates, such as a coordinate grid, and
-   the small parameters, such as a matrix, are moved in this way. A
-   grid that is combined with a field is built in the package of the
+1. It decides once, when it starts, in which backend its result
+   lives, and it runs under the setting that names that backend
+   (`computing_with`, with `output_backend`). Under an explicit setting,
+   that setting is kept. Under the setting `None`, the result is lazy
+   when one of the voxel arrays of the inputs is a Dask array, and on a
+   GPU when one of them is on a GPU, as `best_backend` chooses. A lazy
+   array of a file counts as the array that `"auto"` makes of it, and
+   small parameters take no part in the choice. The reslice of an image
+   and the composition of two transformations start this way.
+2. Because it runs under that setting, it reads the `data` of its inputs
+   directly in the backend of the result, and the arrays that it
+   creates, such as a grid of coordinates, are created there, with CuPy
+   chunks under `"dask+cupy"`, rather than created in one backend and
+   moved to another later. The exceptions are small arrays, such as the
+   weight matrices of splines, which are built with NumPy, and the
+   arrays that Dask creates in the spline filters under `"dask+cupy"`,
+   whose chunks are copied to the GPU. An input read from a file is read
+   as any first read of `data` is, and its cache keeps the array of that
+   read. A computation does not try to leave its inputs unchanged,
+   because it would have to read `data` differently from a user.
+3. Small parameters, such as a matrix, are NumPy arrays and are moved to
+   the device of the voxels once, where they meet them. The functions
+   that combine arrays also call `match_backends`, which moves nothing
+   when the arrays already share a backend, so that a function called
+   outside a computation, with arrays of several backends, still works.
+   A grid that is combined with a field is built in the backend of the
    field.
 
 The `values` and `coefficients` of a field follow the setting as its
@@ -262,10 +270,12 @@ NumPy array.
    the formats of fields declare their `data` with `dataproperty`, and
    the conversion methods read the array that is held.
 5. Apply the rules of computations (#494). This step is implemented.
-   `match_backends` moves the arrays that a computation combines to
-   one package, the sampling, the spline filters, the separable
-   reslice and the composition of fields call it, small parameters are
-   built with NumPy, and the views of a field follow the setting.
+   The reslice of an image and the composition of transformations run
+   under the setting of their result, which `computing_with` chooses
+   from the voxel arrays of the inputs. Grids are created in that
+   backend, small parameters are built with NumPy, the views of a field
+   follow the setting, and `match_backends` aligns the arrays where
+   they are combined.
 6. Add `dataobj`, the lazy array of the file in the layout of `data`
    (#514). This step is implemented. Each format defines `dataobj`
    rather than `data`, its views no longer read anything, NIfTI and MGH

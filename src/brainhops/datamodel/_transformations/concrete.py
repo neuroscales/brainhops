@@ -38,9 +38,9 @@ from brainhops._core.typing import (
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.backends import (
     _CURRENT,
+    _creation_options,
     backend,
     get_array_backend,
-    match_backends,
     resolve_backend,
     to_backend,
 )
@@ -400,6 +400,12 @@ class TransformationField(ConcreteTransformation):
 
     # --- conversion to another backend --------------------------------
 
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The voxels of the field decide its backend.
+        dataobj = self.dataobj
+        if dataobj is not None:
+            yield dataobj
+
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
     ) -> tx.Self:
@@ -655,8 +661,11 @@ class CartesianField(CoordinatesField):
         """
         if self.shape is None:
             return None
+        # The grid is created in the backend of the setting in effect,
+        # which a computation sets to the backend of its result.
         ab = get_array_backend()
-        grid = [ab.arange(s, dtype=float) for s in self.shape]
+        options = _creation_options()
+        grid = [ab.arange(s, dtype=float, **options) for s in self.shape]
         return ab.stack(ab.meshgrid(*grid, indexing="ij"), -1)
 
     values = alias("field", readonly=True)
@@ -697,6 +706,11 @@ class CartesianField(CoordinatesField):
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         require_endomorphism(self, "square root")
         return self.compute(**kwargs) if compute else self
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # A grid creates its coordinates in the backend of the computation,
+        # so it decides nothing.
+        return iter(())
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
@@ -1389,13 +1403,12 @@ def _grid_like(field: ArrayProtocol) -> ArrayProtocol:
 
     The grid holds the coordinates of the voxels of the field, as
     [`CartesianField.field`][brainhops.datamodel.transformations.CartesianField.field]
-    does. That property creates its grid with the backend setting, while
-    a computation that combines the grid with a field needs it in the
-    package of the field, and on the GPU when the field is on a GPU.
+    does. That property creates its grid with the backend setting, so
+    the grid is created under the setting that names the backend of the
+    field, including its device, and it is born where the field is.
     """
-    with backend(get_array_backend(field)):
-        grid = CartesianField(shape=field.shape[:-1]).field
-    return match_backends(grid, field)[0]
+    with backend(resolve_backend(field, None)):
+        return CartesianField(shape=field.shape[:-1]).field
 
 
 def _refuse_log(

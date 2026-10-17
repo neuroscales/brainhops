@@ -236,8 +236,9 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    grid = _grid_like(Ti.field)
-    field, scale = match_backends(Ti.field, To.scale)
+    field = Ti.field
+    grid = _grid_like(field)
+    field, scale = match_backends(field, To.scale)
     field = scale * field + (scale - 1) * grid
     return DisplacementField(
         field=field,
@@ -252,8 +253,9 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    grid = _grid_like(Ti.field)
-    field = (grid + Ti.field)[..., To.permutation] - grid
+    field = Ti.field
+    grid = _grid_like(field)
+    field = (grid + field)[..., To.permutation] - grid
     return DisplacementField(
         field=field,
         input=Ti.input,
@@ -282,8 +284,9 @@ def _check_square(To: tx.Union[Linear, Affine]) -> None:
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    grid = _grid_like(Ti.field)
-    field, matrix = match_backends(Ti.field, To.matrix)
+    field = Ti.field
+    grid = _grid_like(field)
+    field, matrix = match_backends(field, To.matrix)
     field = (grid + field) @ matrix.T - grid
     return DisplacementField(
         field=field,
@@ -299,8 +302,9 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    grid = _grid_like(Ti.field)
-    field, matrix = match_backends(Ti.field, To.matrix)
+    field = Ti.field
+    grid = _grid_like(field)
+    field, matrix = match_backends(field, To.matrix)
     field = (grid + field) @ matrix[:, :-1].T + matrix[:, -1] - grid
     return DisplacementField(
         field=field,
@@ -346,15 +350,15 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    x2 = Ti.to(CoordinatesField)
+    coords = Ti.to(CoordinatesField).field
     moved = pull_field(
         To.to(log=False, store="coefficients").data,
-        coords=x2.field,
+        coords=coords,
         degree=To.degree,
         bound=To.bound,
         coeff=True,
     )
-    moved, field = match_backends(moved, x2.field)
+    moved, field = match_backends(moved, coords)
     field = moved + field
     return CoordinatesField(
         field=field,

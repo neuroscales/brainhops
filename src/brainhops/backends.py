@@ -456,6 +456,56 @@ def to_backend(
     return _to_dask(x, gpu=target == "dask+cupy")
 
 
+def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
+    """Return the setting under which a computation on arrays runs.
+
+    A computation, such as the reslice of an image, decides once where
+    its result lives, so that it reads its inputs and creates its arrays
+    there directly rather than moving them later. Under an explicit
+    setting, the result follows that setting, which is returned. Under
+    the setting `None`, the result is lazy when one of the arrays is a
+    Dask array, and on a GPU when one of them is on a GPU, as
+    [`best_backend`][] chooses. A lazy array of a file counts as the
+    array that `"auto"` would make of it.
+
+    Parameters
+    ----------
+    *arrays : Any
+        The voxel arrays of the inputs, or lazy arrays of files. `None`
+        is ignored.
+
+    Returns
+    -------
+    str or None
+        One of `"numpy"`, `"cupy"`, `"dask"` and `"dask+cupy"`, the
+        current setting when it is not `None`, or `None` when there is
+        no array.
+    """
+    if _SETTING is not None:
+        return _SETTING
+    names = [resolve_backend(x, None) for x in arrays if x is not None]
+    if not names:
+        return None
+    lazy = any(name.startswith("dask") for name in names)
+    gpu = any(name.endswith("cupy") for name in names)
+    if lazy:
+        return "dask+cupy" if gpu else "dask"
+    return "cupy" if gpu else "numpy"
+
+
+def _creation_options() -> tx.Dict[str, tx.Any]:
+    """Return the options that create Dask arrays of CuPy chunks.
+
+    Dask creates NumPy chunks unless it is given a CuPy array as
+    `like`. Under the setting `"dask+cupy"`, the functions that create
+    arrays, such as `arange`, take these options so that their chunks
+    are created on the GPU.
+    """
+    if _SETTING == "dask+cupy":
+        return {"like": cp.empty(0)}
+    return {}
+
+
 def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
     """Move arrays to the backend in which a computation combines them.
 

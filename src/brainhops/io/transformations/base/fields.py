@@ -88,6 +88,12 @@ class StoredFieldMixin:
         """
         return _BackendsMixin.to_backend(self, backend)
 
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The stored field decides the backend.
+        dataobj = self.dataobj
+        if dataobj is not None:
+            yield dataobj
+
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
     ) -> tx.Self:

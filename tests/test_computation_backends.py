@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 from dask.callbacks import Callback
 
-from brainhops.backends import backend, match_backends
+from brainhops._core import bsplines
+from brainhops.backends import backend, match_backends, output_backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine, DisplacementField
 
@@ -55,6 +56,38 @@ def test_arrays_in_memory_are_not_moved() -> None:
     assert moved[0] is lazy
     assert moved[1] is matrix
     assert moved[2:] == (None, 2.0)
+
+
+def test_the_output_backend_follows_the_inputs() -> None:
+    # Without a setting, a computation is lazy when one of its inputs is
+    # lazy. An explicit setting is kept, and no array gives no setting.
+    lazy = da.from_array(FIELD, chunks=6)
+    assert output_backend(VOLUME, None) == "numpy"
+    assert output_backend(VOLUME, lazy) == "dask"
+    assert output_backend() is None
+    with backend("numpy"):
+        assert output_backend(lazy) == "numpy"
+
+
+def test_coordinates_are_created_in_the_output_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The reslice of a Dask image creates the coordinates at which it
+    # samples the voxels as a Dask array, rather than with NumPy and then
+    # moving them. The small weight matrices of `spline_matrix` are also
+    # sampled with `pull`, from NumPy arrays, and are not counted.
+    seen = []
+    original = bsplines.pull
+
+    def pull(input, coords, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if isinstance(input, da.Array):
+            seen.append(type(coords))
+        return original(input, coords, *args, **kwargs)
+
+    monkeypatch.setattr(bsplines, "pull", pull)
+    SingleScaleImage(da.from_array(VOLUME, chunks=6)).reslice(_target())
+    assert seen
+    assert all(issubclass(kind, da.Array) for kind in seen)
 
 
 def test_a_lazy_reslice_computes_nothing() -> None:

@@ -32,7 +32,7 @@ from bagof.magic import Forget, NotKwOnly, fields
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import alias, smartproperty
 from brainhops.backends import _CURRENT
-from brainhops.datamodel._backends import _with_fields
+from brainhops.datamodel._backends import _with_fields, voxel_arrays_of
 
 from . import nocycles
 from .base import Transformation, _copied
@@ -223,6 +223,10 @@ class DerivedTransformation(Transformation):
         # Converting to any other type, even the family's own, resolves the
         # operator first.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The operation derives its parameter from its forward.
+        return voxel_arrays_of([self.forward])
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False

@@ -12,6 +12,9 @@ need more than the default conversion overrides `to_backend` or
 `as_backend`, and the methods named after each backend call them.
 """
 
+# stdlib
+from contextlib import contextmanager
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -49,6 +52,17 @@ class _BackendsMixin:
         type of the values are read from it without reading the file.
         """
         return _stored_data(self)
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        """Yield the voxel arrays of the object, without reading them.
+
+        The voxel arrays decide in which backend a computation on the
+        object runs (see [`computing_with`][]). By default, an object
+        holds only small parameters, which decide nothing, and yields
+        nothing. Images and fields yield their `dataobj`, and the
+        objects that hold other objects yield the arrays of those.
+        """
+        return iter(())
 
     def to_backend(self, backend: _Default = _CURRENT) -> tx.Any:
         """Return the data as a bare array of the backend of a setting.
@@ -156,6 +170,60 @@ class _BackendsMixin:
             An object of the same class.
         """
         return self.as_backend("dask", inplace=inplace)
+
+
+@contextmanager
+def computing_with(*objects: tx.Any) -> tx.Iterator[tx.Optional[str]]:
+    """Run a computation under the setting of its result.
+
+    A computation, such as the reslice of an image or the composition of
+    two transformations, decides once in which backend its result lives,
+    with [`output_backend`][brainhops.backends.output_backend], and runs
+    under that setting. The `data` of its inputs is then read directly in
+    that backend, and the arrays that it creates, such as a grid of
+    coordinates, are created there, so that nothing is moved from one
+    backend to another later. Under an explicit setting, the setting is
+    kept. Objects that hold no voxels, such as affine transformations, do
+    not take part in the choice, and `None` is ignored.
+
+    Parameters
+    ----------
+    *objects : Any
+        The images and transformations that the computation reads.
+
+    Yields
+    ------
+    str or None
+        The setting under which the computation runs.
+    """
+    arrays = [
+        array
+        for obj in objects
+        if obj is not None and hasattr(obj, "_voxel_arrays")
+        for array in obj._voxel_arrays()
+    ]
+    setting = backends.output_backend(*arrays)
+    with backends.backend(setting):
+        yield setting
+
+
+def voxel_arrays_of(objects: tx.Iterable[tx.Any]) -> tx.Iterator[tx.Any]:
+    """Yield the voxel arrays of several objects, for the containers.
+
+    Parameters
+    ----------
+    objects : iterable of object
+        The objects held by a container, such as the members of a
+        sequence. `None` is skipped.
+
+    Yields
+    ------
+    array
+        The voxel arrays, without reading them.
+    """
+    for obj in objects:
+        if obj is not None and hasattr(obj, "_voxel_arrays"):
+            yield from obj._voxel_arrays()
 
 
 def as_backend_all(

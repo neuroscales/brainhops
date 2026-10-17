@@ -7,7 +7,11 @@ from bagof.magic import NotKwOnly, replace
 from brainhops._core.properties import smartproperty
 from brainhops.backends import _CURRENT
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _with_fields, as_backend_all
+from brainhops.datamodel._backends import (
+    _with_fields,
+    as_backend_all,
+    voxel_arrays_of,
+)
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
@@ -429,6 +433,10 @@ class Sequence(SequenceMixin, Transformation):
             "data. Convert it with as_backend, or convert its "
             "transformations."
         )
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The fields among the members decide the backend.
+        return voxel_arrays_of(self.transformations)
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
