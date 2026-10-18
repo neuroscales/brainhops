@@ -249,9 +249,9 @@ follows these rules.
 
 The `values` and `coefficients` of a field follow the setting as its
 `data` does, so the three are always arrays of the same package. The
-inversion of a displacement field is only implemented with NumPy, so a
-field on a GPU is copied to memory, a Dask field is computed, and the
-inverse is converted back to the package of the field.
+inversion of a displacement field runs with NumPy or with CuPy, on the
+device of the field. It needs the whole field at once, so a Dask field
+is computed and its inverse is converted back to a Dask array.
 
 For example, `with backend("cupy"): moved = image.reslice(target)`
 copies the voxels of `image` to the GPU, reslices them there and

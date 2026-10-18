@@ -1386,15 +1386,16 @@ def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
 def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
     """Invert a field of displacements, in the package of the field.
 
-    The inversion is only implemented with NumPy
-    ([`brainhops._ext.invfield`][]), and it needs the whole field at
-    once. A field on a GPU is therefore copied to memory, and a Dask
-    field is computed. The inverse is then converted back to the package
-    of the field, so that the computations that use it do not mix
-    packages.
+    The inversion ([`brainhops._ext.invfield`][]) runs with NumPy or with
+    CuPy, on the device of the field. It needs the whole field at once,
+    so a Dask field is computed, with NumPy or with CuPy depending on its
+    chunks, and its inverse is converted back to a Dask array.
     """
     target = resolve_backend(disp, None)
-    inverse = inverse_disp(to_backend(disp, "numpy"))
+    if target in ("numpy", "cupy"):
+        return inverse_disp(disp)
+    loaded = "cupy" if target == "dask+cupy" else "numpy"
+    inverse = inverse_disp(to_backend(disp, loaded))
     return to_backend(inverse, target)
 
 

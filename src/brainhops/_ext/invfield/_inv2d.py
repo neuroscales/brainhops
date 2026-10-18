@@ -1,6 +1,7 @@
 import numpy as np
 import typing_extensions as _tx
-from scipy.ndimage import gaussian_filter
+
+from brainhops.backends import get_array_backend, get_ndimage_backend
 
 
 def inverse2d(disp: np.ndarray) -> np.ndarray:
@@ -29,8 +30,10 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     ValueError
         If the last axis of `disp` does not have length 2.
     """
-    disp = np.asanyarray(disp)
-    out = np.full_like(disp, np.nan)
+    xp = get_array_backend(disp)
+    ndi = get_ndimage_backend(xp)
+    disp = xp.asanyarray(disp)
+    out = xp.full_like(disp, np.nan)
 
     (Nx, Ny, Nd) = disp.shape
     if Nd != 2:
@@ -39,8 +42,8 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
             f"but got shape {disp.shape}"
         )
 
-    src = np.meshgrid(*(np.arange(s) for s in (Nx, Ny)), indexing="ij")
-    src = np.stack(src, axis=-1)
+    src = xp.meshgrid(*(xp.arange(s) for s in (Nx, Ny)), indexing="ij")
+    src = xp.stack(src, axis=-1)
 
     dst = src + disp
 
@@ -51,17 +54,17 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
 
     # Fill the points that no triangle covers by iterative Gaussian
     # smoothing, normalised by the smoothed mask.
-    msk = msk0 = np.isfinite(out)
+    msk = msk0 = xp.isfinite(out)
     while not msk.all():
         out[~msk] = 0
         wgt = msk.astype(np.float64)
         sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM of one voxel
         sigma = (sigma, sigma, 0)
-        smo = gaussian_filter(out, sigma=sigma, mode="nearest")
-        wgt = gaussian_filter(wgt, sigma=sigma, mode="nearest")
+        smo = ndi.gaussian_filter(out, sigma=sigma, mode="nearest")
+        wgt = ndi.gaussian_filter(wgt, sigma=sigma, mode="nearest")
         smo /= wgt
         out[~msk0] = smo[~msk0]
-        msk = np.isfinite(out)
+        msk = xp.isfinite(out)
 
     return out
 
@@ -78,12 +81,13 @@ def _process_triangle(
     The vertices `src` and `dst`, in the source and target domains, have
     shape `(N, 3, 2)`, and `out` has shape `(Nx, Ny, 2)`.
     """
-    idx = np.argsort(dst[:, :, Y : Y + 1], axis=VERTEX_AXIS)
-    tri = np.take_along_axis(dst, idx, axis=VERTEX_AXIS)
+    xp = get_array_backend(src)
+    idx = xp.argsort(dst[:, :, Y : Y + 1], axis=VERTEX_AXIS)
+    tri = xp.take_along_axis(dst, idx, axis=VERTEX_AXIS)
 
     # Scan the horizontal lines that cross each triangle, from the smallest
     # integer y inside it.
-    y = np.ceil(tri[:, 0, Y]).astype(np.int64)
+    y = xp.ceil(tri[:, 0, Y]).astype(np.int64)
     while True:
         mask0 = (0 <= y) & (y < out.shape[Y]) & (y <= tri[:, 2, Y])
         if not mask0.any():
@@ -126,23 +130,24 @@ def _process_segment(
     coordinates of the end points of each segment in the target domain.
     The output `out` has shape `(Nx, Ny, 2)` and is written in place.
     """
+    xp = get_array_backend(src)
 
-    idx = np.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
-    seg = np.take_along_axis(seg, idx, axis=VERTEX_AXIS)
+    idx = xp.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
+    seg = xp.take_along_axis(seg, idx, axis=VERTEX_AXIS)
 
-    x = np.ceil(seg[:, 0, X]).astype(np.int64)
+    x = xp.ceil(seg[:, 0, X]).astype(np.int64)
     while True:
         mask = (0 <= x) & (x < out.shape[X]) & (x <= seg[:, 1, X])
         if not mask.any():
             break
 
         xm, ym = x[mask], y[mask]
-        vdst = np.stack((xm, ym), axis=-1)
+        vdst = xp.stack((xm, ym), axis=-1)
         bary = _barycoord(vdst, dst[mask])
 
         # The source point is the mean of the source vertices, weighted by
         # the barycentric coordinates of the target point.
-        vsrc = np.einsum("ijk,ij->ik", src[mask], bary)
+        vsrc = xp.einsum("ijk,ij->ik", src[mask], bary)
 
         out[xm, ym] = vsrc
 
@@ -152,6 +157,7 @@ def _process_segment(
 def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
     # Compute the barycentric coordinates, of shape (N, 3), of the points
     # x, of shape (N, 2), in the triangles tri, of shape (N, 3, 2).
+    xp = get_array_backend(x)
 
     v0 = tri[:, 0]
     v1 = tri[:, 1]
@@ -161,21 +167,22 @@ def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
     v02 = v2 - v0
     v0x = x - v0
 
-    d00 = np.einsum("ij,ij->i", v01, v01)
-    d01 = np.einsum("ij,ij->i", v01, v02)
-    d11 = np.einsum("ij,ij->i", v02, v02)
-    d20 = np.einsum("ij,ij->i", v0x, v01)
-    d21 = np.einsum("ij,ij->i", v0x, v02)
+    d00 = xp.einsum("ij,ij->i", v01, v01)
+    d01 = xp.einsum("ij,ij->i", v01, v02)
+    d11 = xp.einsum("ij,ij->i", v02, v02)
+    d20 = xp.einsum("ij,ij->i", v0x, v01)
+    d21 = xp.einsum("ij,ij->i", v0x, v02)
     dt = d00 * d11 - d01 * d01
     v = (d11 * d20 - d01 * d21) / dt
     w = (d00 * d21 - d01 * d20) / dt
     u = 1 - v - w
 
-    return np.stack((u, v, w), axis=-1)
+    return xp.stack((u, v, w), axis=-1)
 
 
 def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
-    out = np.empty_like(tri, shape=(len(tri), 2, 1))
+    xp = get_array_backend(tri)
+    out = xp.empty_like(tri, shape=(len(tri), 2, 1))
 
     p1x, p1y = tri[:, 0].T
     p2x, p2y = tri[:, 1].T
@@ -197,10 +204,11 @@ def _truncate_and_stack2d(
     The result has shape `(N, 3, 2)`, with one triangle per point of the
     common `(Nx, Ny)` grid.
     """
+    xp = get_array_backend(a)
     vertices = (a, b, c)
     nx, ny = (min(x.shape[i] for x in vertices) for i in range(2))
     vertices = (vertex[:nx, :ny].reshape(-1, 2) for vertex in vertices)
-    return np.stack(tuple(vertices), axis=1)
+    return xp.stack(tuple(vertices), axis=1)
 
 
 def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:

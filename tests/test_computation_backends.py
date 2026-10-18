@@ -194,6 +194,15 @@ def test_a_cupy_image_is_resliced_on_the_gpu() -> None:
     np.testing.assert_allclose(moved.dataobj.get(), expected, atol=1e-5)
 
 
+def test_a_cupy_field_is_inverted_on_the_gpu() -> None:
+    # The inversion runs with CuPy and gives the NumPy values.
+    cp = pytest.importorskip("cupy")
+    expected = DisplacementField(FIELD).inverse().data
+    inverse = DisplacementField(cp.asarray(FIELD)).inverse().data
+    assert isinstance(inverse, cp.ndarray)
+    np.testing.assert_allclose(inverse.get(), expected)
+
+
 def test_fields_are_composed_on_the_gpu() -> None:
     # Two fields stored with NumPy are composed under the CuPy setting.
     cp = pytest.importorskip("cupy")
