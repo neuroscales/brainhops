@@ -193,16 +193,19 @@ backend, so that installing Dask no longer changes any result.
 ### Small parameters
 
 The settings apply to voxel arrays, the data of images and of
-transformation fields. Small parameters, such as the matrix of an
-affine transformation, are NumPy arrays where they are stored, as
-their declarations already require, and they are built with NumPy when
-the code creates them, as the matrix of a slice of an image is. A
-computation moves them to the device of the voxel data that it works
-on, at the moment it combines them with the voxels. With CuPy, the matrix is
-copied to the GPU for the call, which costs little next to the work on
-the voxels. With Dask, it enters the graph as a NumPy array. The code
-that checks, factors and inverts small parameters keeps using NumPy,
-which is also faster than a GPU for a matrix of a few rows.
+transformation fields. Small parameters, such as the matrix of an affine
+transformation, are NumPy arrays where they are stored, as their
+declarations already require, and they are built with NumPy when the
+code creates them, as the matrix of a slice of an image is. Their
+declarations (`npvector`, `npmatrix` and `npscalar`) carry a converter
+that copies an array from the GPU and computes a Dask array before NumPy
+checks it, so a parameter given as an array of another backend is moved
+to memory. A computation moves them to the device of the voxel data that
+it works on, at the moment it combines them with the voxels. With CuPy,
+the matrix is copied to the GPU for the call, which costs little next to
+the work on the voxels. With Dask, it enters the graph as a NumPy array.
+The code that checks, factors and inverts small parameters keeps using
+NumPy, which is also faster than a GPU for a matrix of a few rows.
 
 `to_cupy()` and `to_dask()` still convert the parameters of an affine
 transformation when they are called, and `as_cupy()` and `as_dask()`
