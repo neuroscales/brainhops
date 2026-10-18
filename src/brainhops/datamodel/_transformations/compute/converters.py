@@ -3,7 +3,7 @@ import typing_extensions as tx
 
 from brainhops._core.magic import replace, stores
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.backends import _creation_options, get_array_backend
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import (
     CompositionError,
@@ -448,7 +448,7 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
     ]
     if t.transformation is None:
         inner_matrix = None
-        ba = get_array_backend()
+        ba = np
     else:
         inner_affine = t.transformation.compute().to(Affine)
         if not isinstance(inner_affine, Affine):
@@ -571,7 +571,11 @@ def _encoded_grid(t: TransformationField) -> ArrayProtocol:
     """Return the identity grid of the nodes of `t`, encoded like its data."""
     data = t.data
     ba = get_array_backend(data)
-    grid = ba.meshgrid(*(ba.arange(s) for s in data.shape[:-1]), indexing="ij")
+    # The grid is created in the backend of the data, with CuPy chunks when
+    # its chunks are CuPy arrays.
+    options = _creation_options(data)
+    axes = (ba.arange(s, **options) for s in data.shape[:-1])
+    grid = ba.meshgrid(*axes, indexing="ij")
     grid = ba.stack(grid, axis=-1).astype(data.dtype)
     return _values2data(grid, t.store, t.degree, t.bound)
 

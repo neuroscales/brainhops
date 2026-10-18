@@ -3,12 +3,13 @@
 This memo decides which array package holds the values of an image or
 a transformation, how a user moves an object from one package to
 another, and how a computation chooses the package of its result. It is
-agreed and tracked in #486. All its steps but the fifth are
-implemented: the backend settings in `brainhops.backends` (#490), the
-conversion methods of lazy arrays (#491), those of images and
-transformations (#492), the conversion of `data` at each read (#493),
-and `dataobj` (#514). The rules of computations (#494) are not
-implemented yet.
+agreed and tracked in #486, and all its steps are implemented: the
+backend settings in `brainhops.backends` (#490), the conversion methods
+of lazy arrays (#491), those of images and transformations (#492), the
+conversion of `data` at each read (#493), the rules of computations
+(#494) and `dataobj` (#514). The paths that involve CuPy are written
+from a reading of the code and are tested only where CuPy is installed,
+which excludes the continuous integration.
 
 ## What a backend is for
 
@@ -181,10 +182,10 @@ The settings apply as follows.
   host.
 - `"numpy"`, `"cupy"`, `"dask"` and `"dask+cupy"` convert every array to
   that backend. `"dask+cupy"` is a Dask array whose chunks are CuPy
-  arrays. The Dask versions of the `ndimage` functions already choose
-  the `ndimage` package of each block (`_core/dask_ndimage.py:269` and
-  `:372`), so they should work on CuPy chunks, which has not been
-  tested.
+  arrays. The Dask versions of the `ndimage` functions choose the
+  `ndimage` package of each block, move the coordinates of a block to
+  the package of its window of the input, and declare CuPy blocks to
+  Dask when the input or the coordinates are on a GPU.
 
 The global setting becomes `None` instead of the first installed
 backend, so that installing Dask no longer changes any result.
@@ -193,9 +194,11 @@ backend, so that installing Dask no longer changes any result.
 
 The settings apply to voxel arrays, the data of images and of
 transformation fields. Small parameters, such as the matrix of an
-affine transformation, stay NumPy arrays where they are stored, as
-their declarations already require. A computation moves them to the
-device of the voxel data that it works on. With CuPy, the matrix is
+affine transformation, are NumPy arrays where they are stored, as
+their declarations already require, and they are built with NumPy when
+the code creates them, as the matrix of a slice of an image is. A
+computation moves them to the device of the voxel data that it works
+on, at the moment it combines them with the voxels. With CuPy, the matrix is
 copied to the GPU for the call, which costs little next to the work on
 the voxels. With Dask, it enters the graph as a NumPy array. The code
 that checks, factors and inverts small parameters keeps using NumPy,
@@ -211,15 +214,44 @@ objects without testing their type.
 A computation, such as reslicing an image or composing transformations,
 follows these rules.
 
-1. Every proxy among its inputs is resolved with the setting in effect.
-   The input object does not change.
-2. With the setting `None`, the result takes the backend of highest
-   priority among the inputs, as `best_backend` does today. With any
-   other setting, the inputs are converted to that setting and so is
-   the result.
-3. An array that the computation creates, such as a coordinate grid,
-   takes the backend of the result, and never the global setting. This
-   rule fixes the reslice of a NumPy image that returns a Dask array.
+1. It decides once, when it starts, in which backend its result
+   lives, and it runs under the setting that names that backend
+   (`computing_with`, with `output_backend`). Under an explicit setting,
+   that setting is kept. Under the setting `None`, the result is lazy
+   when one of the voxel arrays of the inputs is a Dask array, and on a
+   GPU when one of them is on a GPU, as `best_backend` chooses. A lazy
+   array of a file counts as the array that `"auto"` makes of it, and
+   small parameters take no part in the choice. The reslice of an image
+   and the composition of two transformations start this way.
+2. Because it runs under that setting, it reads the `data` of its inputs
+   directly in the backend of the result, and the arrays that it
+   creates, such as a grid of coordinates, are created there, with CuPy
+   chunks under `"dask+cupy"`, rather than created in one backend and
+   moved to another later. The exceptions are small arrays, such as the
+   weight matrices of splines, which are built with NumPy, and the
+   arrays that Dask creates in the spline filters under `"dask+cupy"`,
+   whose chunks are copied to the GPU. An input read from a file is read
+   as any first read of `data` is, and its cache keeps the array of that
+   read. A computation does not try to leave its inputs unchanged,
+   because it would have to read `data` differently from a user.
+3. Small parameters, such as a matrix, are NumPy arrays and are moved to
+   the device of the voxels once. A function that combines arrays calls
+   `match_backends` as soon as it knows them, before it computes
+   anything from them, and it creates its new arrays in the backend of
+   the moved arrays, so that each array is moved at most once. When only
+   one array may move, such as a mask that goes with the voxels, it
+   calls `to_backend_of`, which moves that array to the device of the
+   other and leaves the other where it is. `match_backends` moves
+   nothing when the arrays already share a backend, which is the case
+   inside a computation, and it lets a function called outside a
+   computation, with arrays of several backends, still work. A grid that
+   is combined with a field is built in the backend of the field.
+
+The `values` and `coefficients` of a field follow the setting as its
+`data` does, so the three are always arrays of the same package. The
+inversion of a displacement field runs with NumPy or with CuPy, on the
+device of the field. It needs the whole field at once, so a Dask field
+is computed and its inverse is converted back to a Dask array.
 
 For example, `with backend("cupy"): moved = image.reslice(target)`
 copies the voxels of `image` to the GPU, reslices them there and
@@ -242,9 +274,13 @@ NumPy array.
    each access (#493). This step is implemented. Images, fields and
    the formats of fields declare their `data` with `dataproperty`, and
    the conversion methods read the array that is held.
-5. Apply the rules of computations: resolve the proxies of the inputs,
-   create arrays in the backend of the result, and move small
-   parameters to the device of the voxel data.
+5. Apply the rules of computations (#494). This step is implemented.
+   The reslice of an image and the composition of transformations run
+   under the setting of their result, which `computing_with` chooses
+   from the voxel arrays of the inputs. Grids are created in that
+   backend, small parameters are built with NumPy, the views of a field
+   follow the setting, and `match_backends` aligns the arrays where
+   they are combined.
 6. Add `dataobj`, the lazy array of the file in the layout of `data`
    (#514). This step is implemented. Each format defines `dataobj`
    rather than `data`, its views no longer read anything, NIfTI and MGH

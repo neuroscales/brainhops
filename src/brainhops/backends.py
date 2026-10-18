@@ -456,6 +456,156 @@ def to_backend(
     return _to_dask(x, gpu=target == "dask+cupy")
 
 
+def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
+    """Return the setting under which a computation on arrays runs.
+
+    A computation, such as the reslice of an image, decides once where
+    its result lives, so that it reads its inputs and creates its arrays
+    there directly rather than moving them later. Under an explicit
+    setting, the result follows that setting, which is returned. Under
+    the setting `None`, the result is lazy when one of the arrays is a
+    Dask array, and on a GPU when one of them is on a GPU, as
+    [`best_backend`][] chooses. A lazy array of a file counts as the
+    array that `"auto"` would make of it.
+
+    Parameters
+    ----------
+    *arrays : Any
+        The voxel arrays of the inputs, or lazy arrays of files. `None`
+        is ignored.
+
+    Returns
+    -------
+    str or None
+        One of `"numpy"`, `"cupy"`, `"dask"` and `"dask+cupy"`, the
+        current setting when it is not `None`, or `None` when there is
+        no array.
+    """
+    if _SETTING is not None:
+        return _SETTING
+    names = [resolve_backend(x, None) for x in arrays if x is not None]
+    if not names:
+        return None
+    lazy = any(name.startswith("dask") for name in names)
+    gpu = any(name.endswith("cupy") for name in names)
+    if lazy:
+        return "dask+cupy" if gpu else "dask"
+    return "cupy" if gpu else "numpy"
+
+
+def _creation_options(like: tx.Any = None) -> tx.Dict[str, tx.Any]:
+    """Return the options that create Dask arrays of CuPy chunks.
+
+    Dask creates NumPy chunks unless it is given a CuPy array as
+    `like`. When the new array goes with a Dask array of CuPy chunks,
+    given as `like`, or, without `like`, under the setting
+    `"dask+cupy"`, the functions that create arrays take these options
+    so that their chunks are created on the GPU. Of the creation
+    functions of Dask, only `arange` takes them, so `eye` and `zeros`
+    still create NumPy chunks, which are copied to the GPU right after.
+
+    Parameters
+    ----------
+    like : array, optional
+        The array with which the new array is combined.
+
+    Returns
+    -------
+    dict
+        The keyword arguments of `dask.array.arange`, or nothing.
+    """
+    if like is None:
+        gpu = _SETTING == "dask+cupy"
+    else:
+        gpu = da is not None and isinstance(like, da.Array) and _on_gpu(like)
+    return {"like": cp.empty(0)} if gpu else {}
+
+
+def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
+    """Move arrays to the backend in which a computation combines them.
+
+    A computation that combines several arrays, such as the voxels of an
+    image, a grid of coordinates and the matrix of an affine
+    transformation, computes with the package that [`best_backend`][]
+    chooses: Dask if one of the arrays is a Dask array, CuPy if one of
+    them is a CuPy array, and NumPy otherwise. This function moves the
+    other arrays to that package, so that the operations of the
+    computation do not mix packages, and it does not change the setting
+    or the choice of the package.
+
+    When one of the arrays is on a GPU, the others are copied to it:
+    a NumPy array becomes a CuPy array, and a Dask array of NumPy chunks
+    becomes a Dask array of CuPy chunks. A NumPy array that meets a Dask
+    array in memory is returned as it is, because Dask accepts NumPy
+    operands. An argument that is not an array, such as `None` or a
+    number, is returned as it is.
+
+    A function calls it as soon as it knows the arrays that it combines,
+    before it computes anything from them, and then creates its new
+    arrays in the backend of the moved arrays. Each array is then moved
+    at most once, and nothing is allocated in one backend only to be
+    moved to another.
+
+    Parameters
+    ----------
+    *arrays : Any
+        The arrays that the computation combines.
+
+    Returns
+    -------
+    tuple
+        The arrays, in the same order.
+    """
+    if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
+        return arrays
+    return tuple(_to_device(x, gpu=True) for x in arrays)
+
+
+def to_backend_of(x: tx.Any, reference: tx.Any) -> tx.Any:
+    """Move an array to the device of a reference array.
+
+    This is the one-way form of [`match_backends`][], for an array that
+    a function creates or receives, such as a mask or a small matrix, and
+    combines with a reference that is already where the result lives,
+    such as the voxels of an image. The reference is not moved. The
+    array is copied to the GPU when the reference is on a GPU, and to
+    memory when the reference is in memory. A NumPy array that goes with
+    a Dask array in memory is returned as it is, because Dask accepts
+    NumPy operands.
+
+    Parameters
+    ----------
+    x : Any
+        The array to move. An argument that is not an array is returned
+        as it is.
+    reference : Any
+        The array whose device `x` takes.
+
+    Returns
+    -------
+    Any
+        The moved array.
+    """
+    if not _is_loaded(x) or not _is_loaded(reference):
+        return x
+    return _to_device(x, gpu=_on_gpu(reference))
+
+
+def _to_device(x: tx.Any, gpu: bool) -> tx.Any:
+    """Copy an array to a GPU or to memory, keeping its package kind.
+
+    A Dask array stays a Dask array, with CuPy or NumPy chunks, and an
+    array in memory becomes a CuPy or a NumPy array. An array that is
+    already on that device, or that is not an array, is returned as it
+    is.
+    """
+    if not _is_loaded(x) or _on_gpu(x) == gpu:
+        return x
+    if da is not None and isinstance(x, da.Array):
+        return _to_dask(x, gpu=gpu)
+    return _to_cupy(x) if gpu else _to_numpy(x)
+
+
 # ----------------------------------------------------------------------
 #   PACKAGES
 # ----------------------------------------------------------------------

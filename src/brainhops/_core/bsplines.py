@@ -11,10 +11,13 @@ from bagof.hints.numpy import DTypeLike
 from brainhops._core.dependencies import da, np
 from brainhops._core.typing import Clip
 from brainhops.backends import (
+    _creation_options,
     best_backend,
     copy_array,
     get_array_backend,
     get_ndimage_backend,
+    match_backends,
+    to_backend_of,
 )
 
 
@@ -199,6 +202,7 @@ def pull(
     """
     nx = best_backend(input, coords)
     nd = get_ndimage_backend(nx)
+    input, coords = match_backends(input, coords)
     if dtype is not None:
         dtype = np.dtype(dtype)
         input = input.astype(_sampling_dtype(input.dtype, dtype), copy=False)
@@ -400,6 +404,7 @@ def pull_field(
         The interpolated field, with shape `(*batch, *spatial_out, ndim)`.
     """
     nx = best_backend(field, coords)
+    field, coords = match_backends(field, coords)
     field = nx.moveaxis(field, -1, 0)
     field = pull(field, coords, degree, bound, coeff)
     field = nx.moveaxis(field, 0, -1)
@@ -446,8 +451,12 @@ def coeff2value(
     # would be meaningless for interpolation.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
+    # The grid is created in the backend of the input, with CuPy chunks
+    # when the chunks of the input are CuPy arrays.
+    options = _creation_options(input)
     grid = nx.meshgrid(
-        *(nx.arange(s) for s in input.shape[-ndim:]), indexing="ij"
+        *(nx.arange(s, **options) for s in input.shape[-ndim:]),
+        indexing="ij",
     )
     grid = nx.stack(grid, axis=0)
     mode, cval = _scipy_boundary(bound)
@@ -662,7 +671,7 @@ def _along(
     nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
     """Apply a matrix to an array along one axis."""
-    matrix = nx.asarray(matrix, dtype=np.float64)
+    matrix = nx.asarray(to_backend_of(matrix, x), dtype=np.float64)
     return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
 
@@ -684,15 +693,16 @@ def _edge_terms(
     broadcasts to the corrected part of the array without materialising
     anything larger than `w`.
     """
-    u, v = pair
-    weights = nx.tensordot(
-        nx.asarray(v, dtype=np.float64), slab, axes=([1], [axis])
-    )
+    # The factors are small NumPy matrices, which are moved once to the
+    # backend of the slab, before anything is computed from them.
+    u, v = (to_backend_of(factor, slab) for factor in pair)
+    weights = nx.tensordot(v, slab, axes=([1], [axis]))
+    xp = get_array_backend(u)
     shape = [1] * slab.ndim
     shape[axis] = -1
     terms = []
     for j in range(u.shape[1]):
-        column = np.zeros(length)
+        column = xp.zeros(length)
         if at_end:
             column[length - u.shape[0] :] = u[:, j]
         else:
@@ -839,10 +849,10 @@ def _interpolating_coefficients(
             )
             if not lazy:
                 low = _edge_terms(
-                    np, low[0], low[1], axis, low[0][0].shape[0], False
+                    nx, low[0], low[1], axis, low[0][0].shape[0], False
                 )
                 high = _edge_terms(
-                    np, high[0], high[1], axis, high[0][0].shape[0], True
+                    nx, high[0], high[1], axis, high[0][0].shape[0], True
                 )
             inplace = not lazy and coeff is not values
             filtered = nd.spline_filter1d(
@@ -868,11 +878,15 @@ def _interpolating_coefficients(
         all_ones.append(ones)
     if cval:
         if lazy:
+            # The vectors are moved once to the device of the coefficients,
+            # before the product is built from them.
+            all_ones = [to_backend_of(ones, coeff) for ones in all_ones]
             shape = [1] * coeff.ndim
             shape[0] = -1
             product = da.from_array(
                 all_ones[0].reshape(shape),
                 chunks=(coeff.chunks[0],) + (1,) * (coeff.ndim - 1),
+                asarray=False,
             )
             for d in range(1, coeff.ndim):
                 shape = [1] * coeff.ndim
@@ -881,7 +895,7 @@ def _interpolating_coefficients(
             coeff = coeff + cval * (1 - product)
         else:
             for region, correction in _constant_correction(all_ones, cval):
-                coeff[region] += correction
+                coeff[region] += to_backend_of(correction, coeff)
     return coeff
 
 

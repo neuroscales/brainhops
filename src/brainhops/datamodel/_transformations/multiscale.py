@@ -1,3 +1,4 @@
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Forget, NotKwOnly, replace
 
@@ -5,7 +6,6 @@ from brainhops._core.affines import axis_scales
 from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.errors import ConversionError
 
@@ -266,11 +266,10 @@ def _nearest_resolution_index(
     target = axis_scales(voxel2world.matrix)
     if target is None:
         return 0
-    ab = get_array_backend()
-    log_target = float(ab.log(ab.abs(ab.asarray(target))).mean())
+    log_target = float(np.log(np.abs(np.asarray(target))).mean())
     best_index, best_distance = 0, None
     for index, resolution in enumerate(resolutions):
-        log_resolution = float(ab.log(ab.abs(ab.asarray(resolution))).mean())
+        log_resolution = float(np.log(np.abs(np.asarray(resolution))).mean())
         distance = abs(log_resolution - log_target)
         if best_distance is None or distance < best_distance:
             best_index, best_distance = index, distance

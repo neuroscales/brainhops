@@ -36,10 +36,18 @@ from brainhops._core.typing import (
     npvector,
 )
 from brainhops._ext.invfield import inverse as inverse_disp
-from brainhops.backends import _CURRENT, backend, get_array_backend
+from brainhops.backends import (
+    _CURRENT,
+    _creation_options,
+    backend,
+    get_array_backend,
+    resolve_backend,
+    to_backend,
+)
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _as_backend_data,
+    _follow_setting,
     _stored_data,
     dataproperty,
 )
@@ -338,12 +346,14 @@ class TransformationField(ConcreteTransformation):
 
     # --- derived views ------------------------------------------------
 
-    @lazyproperty
+    @smartproperty(fset=False, cache=True, convert=_follow_setting)
     def values(self) -> tx.Optional[ArrayProtocol]:
         """Field as values, of shape `(*shape, ndim)`.
 
         It is `data` itself when `store` is `"values"`; otherwise it is decoded
-        from the coefficients once and cached.
+        from the coefficients once and cached. Like `data`, it is returned
+        converted with the backend setting in effect, so that `data`,
+        `values` and `coefficients` are always arrays of the same package.
         """
         return _data2values(
             _stored_data(self), self.store, self.degree, self.bound
@@ -359,12 +369,13 @@ class TransformationField(ConcreteTransformation):
 
     field = alias("values")
 
-    @lazyproperty
+    @smartproperty(fset=False, cache=True, convert=_follow_setting)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
         """Field as spline coefficients, of shape `(*shape, ndim)`.
 
         It is `data` itself when `store` is `"coefficients"`; otherwise it is
-        fitted to a spline of degree `degree` once and cached.
+        fitted to a spline of degree `degree` once and cached. Like `data`,
+        it is returned converted with the backend setting in effect.
         """
         return _data2coeffs(
             _stored_data(self), self.store, self.degree, self.bound
@@ -388,6 +399,12 @@ class TransformationField(ConcreteTransformation):
         raise NotImplementedError
 
     # --- conversion to another backend --------------------------------
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # The voxels of the field decide its backend.
+        dataobj = self.dataobj
+        if dataobj is not None:
+            yield dataobj
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
@@ -501,7 +518,11 @@ class DisplacementField(TransformationField, polymorphic=True):
         """
         if self.data is None:
             return None
-        ifield = inverse_disp(self.field)
+        # The inverse is cached, so it is computed from the stored values
+        # rather than from values converted for a temporary setting.
+        with backend(None):
+            field = self.field
+        ifield = _inverse_disp(field)
         return _values2data(ifield, self.store, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
@@ -640,8 +661,11 @@ class CartesianField(CoordinatesField):
         """
         if self.shape is None:
             return None
+        # The grid is created in the backend of the setting in effect,
+        # which a computation sets to the backend of its result.
         ab = get_array_backend()
-        grid = [ab.arange(s, dtype=float) for s in self.shape]
+        options = _creation_options()
+        grid = [ab.arange(s, dtype=float, **options) for s in self.shape]
         return ab.stack(ab.meshgrid(*grid, indexing="ij"), -1)
 
     values = alias("field", readonly=True)
@@ -682,6 +706,11 @@ class CartesianField(CoordinatesField):
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         require_endomorphism(self, "square root")
         return self.compute(**kwargs) if compute else self
+
+    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
+        # A grid creates its coordinates in the backend of the computation,
+        # so it decides nothing.
+        return iter(())
 
     def as_backend(
         self, backend: tx.Any = _CURRENT, *, inplace: bool = False
@@ -1350,13 +1379,37 @@ def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
     # normalized field is close to voxel space (minimize ||aff @ field -
     # idgrid||_F).
 
-    # Build the identity grid on the backend of the field, not on the selected
-    # one.
-    ab = get_array_backend(coords)
-    with backend(ab):
-        idgrid = CartesianField(shape=coords.shape[:-1]).field
+    idgrid = _grid_like(coords)
+    return _inverse_disp(coords - idgrid) + idgrid
 
-    return inverse_disp(coords - idgrid) + idgrid
+
+def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
+    """Invert a field of displacements, in the package of the field.
+
+    The inversion ([`brainhops._ext.invfield`][]) runs with NumPy or with
+    CuPy, on the device of the field. It needs the whole field at once,
+    so a Dask field is computed, with NumPy or with CuPy depending on its
+    chunks, and its inverse is converted back to a Dask array.
+    """
+    target = resolve_backend(disp, None)
+    if target in ("numpy", "cupy"):
+        return inverse_disp(disp)
+    loaded = "cupy" if target == "dask+cupy" else "numpy"
+    inverse = inverse_disp(to_backend(disp, loaded))
+    return to_backend(inverse, target)
+
+
+def _grid_like(field: ArrayProtocol) -> ArrayProtocol:
+    """Return the identity grid of a field, in the package of the field.
+
+    The grid holds the coordinates of the voxels of the field, as
+    [`CartesianField.field`][brainhops.datamodel.transformations.CartesianField.field]
+    does. That property creates its grid with the backend setting, so
+    the grid is created under the setting that names the backend of the
+    field, including its device, and it is born where the field is.
+    """
+    with backend(resolve_backend(field, None)):
+        return CartesianField(shape=field.shape[:-1]).field
 
 
 def _refuse_log(

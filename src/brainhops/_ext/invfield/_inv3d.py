@@ -44,7 +44,8 @@
 # https://pmc.ncbi.nlm.nih.gov/articles/PMC6871943/pdf/HBM-9-212.pdf
 import numpy as np
 import typing_extensions as _tx
-from scipy.ndimage import gaussian_filter
+
+from brainhops.backends import get_array_backend, get_ndimage_backend
 
 
 def inverse3d(disp: np.ndarray) -> np.ndarray:
@@ -72,8 +73,10 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
     ValueError
         If the last dimension of `disp` does not have length 3.
     """
-    disp = np.asanyarray(disp)
-    out = np.full_like(disp, np.nan)
+    xp = get_array_backend(disp)
+    ndi = get_ndimage_backend(xp)
+    disp = xp.asanyarray(disp)
+    out = xp.full_like(disp, np.nan)
 
     (Nx, Ny, Nz, Nd) = disp.shape
     if Nd != 3:
@@ -82,8 +85,8 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
             f"but got shape {disp.shape}"
         )
 
-    src = np.meshgrid(*(np.arange(s) for s in (Nx, Ny, Nz)), indexing="ij")
-    src = np.stack(src, axis=-1)
+    src = xp.meshgrid(*(xp.arange(s) for s in (Nx, Ny, Nz)), indexing="ij")
+    src = xp.stack(src, axis=-1)
 
     dst = src + disp
 
@@ -96,17 +99,17 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
 
     # Fill the voxels that no tetrahedron covers by normalized
     # Gaussian smoothing, repeated until every voxel is finite.
-    msk = msk0 = np.isfinite(out)
+    msk = msk0 = xp.isfinite(out)
     while not msk.all():
         out[~msk] = 0
         wgt = msk.astype(np.float64)
         sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM of one voxel
         sigma = (sigma, sigma, sigma, 0)
-        smo = gaussian_filter(out, sigma=sigma, mode="nearest")
-        wgt = gaussian_filter(wgt, sigma=sigma, mode="nearest")
+        smo = ndi.gaussian_filter(out, sigma=sigma, mode="nearest")
+        wgt = ndi.gaussian_filter(wgt, sigma=sigma, mode="nearest")
         smo /= wgt
         out[~msk0] = smo[~msk0]
-        msk = np.isfinite(out)
+        msk = xp.isfinite(out)
 
     return out
 
@@ -127,13 +130,14 @@ def _process_tetrahedron(
     the tetrahedra in the source and target domains, and `out` is written
     in place.
     """
-    idx = np.argsort(dst[:, :, Z : Z + 1], axis=VERTEX_AXIS)
-    ttr = np.take_along_axis(dst, idx, axis=VERTEX_AXIS)
+    xp = get_array_backend(src)
+    idx = xp.argsort(dst[:, :, Z : Z + 1], axis=VERTEX_AXIS)
+    ttr = xp.take_along_axis(dst, idx, axis=VERTEX_AXIS)
 
     # Sweep the integer z planes upwards. Depending on which vertices
     # a plane falls between, its section through the tetrahedron is a
     # lower triangle, a quadrilateral or an upper triangle.
-    z = np.ceil(ttr[:, 0, Z]).astype(np.int64)
+    z = xp.ceil(ttr[:, 0, Z]).astype(np.int64)
     while True:
         mask0 = (0 <= z) & (z < out.shape[Z]) & (z <= ttr[:, 3, Z])
         if not mask0.any():
@@ -187,11 +191,12 @@ def _process_triangle(
     the vertices of the triangles in the target domain. The other arguments
     are the same as in `_process_tetrahedron`.
     """
+    xp = get_array_backend(src)
 
-    idx = np.argsort(tri[:, :, Y : Y + 1], axis=VERTEX_AXIS)
-    tri = np.take_along_axis(tri, idx, axis=VERTEX_AXIS)
+    idx = xp.argsort(tri[:, :, Y : Y + 1], axis=VERTEX_AXIS)
+    tri = xp.take_along_axis(tri, idx, axis=VERTEX_AXIS)
 
-    y = np.ceil(tri[:, 0, Y]).astype(np.int64)
+    y = xp.ceil(tri[:, 0, Y]).astype(np.int64)
     while True:
         mask0 = (0 <= y) & (y < out.shape[Y]) & (y <= tri[:, 2, Y])
         if not mask0.any():
@@ -236,11 +241,12 @@ def _process_segment(
     endpoints in the target domain. The other arguments are the same as in
     `_process_triangle`.
     """
+    xp = get_array_backend(src)
 
-    idx = np.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
-    seg = np.take_along_axis(seg, idx, axis=VERTEX_AXIS)
+    idx = xp.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
+    seg = xp.take_along_axis(seg, idx, axis=VERTEX_AXIS)
 
-    x = np.ceil(seg[:, 0, X]).astype(np.int64)
+    x = xp.ceil(seg[:, 0, X]).astype(np.int64)
     while True:
         mask = (0 <= x) & (x < out.shape[X]) & (x <= seg[:, 1, X])
         if not mask.any():
@@ -249,12 +255,12 @@ def _process_segment(
         # Compute the barycentric coordinates of each voxel in its
         # tetrahedron.
         xm, ym, zm = x[mask], y[mask], z[mask]
-        vdst = np.stack((xm, ym, zm), axis=-1)  # (N, 3)
+        vdst = xp.stack((xm, ym, zm), axis=-1)  # (N, 3)
         bary = _barycoord(vdst, dst[mask])  # (N, 4)
 
         # The source-domain point is the mean of the source vertices,
         # weighted by the barycentric coordinates.
-        vsrc = np.einsum("ijk,ij->ik", src[mask], bary)  # (N, 3)
+        vsrc = xp.einsum("ijk,ij->ik", src[mask], bary)  # (N, 3)
 
         out[xm, ym, zm] = vsrc
 
@@ -265,6 +271,7 @@ def _barycoord(x: np.ndarray, tetra: np.ndarray) -> np.ndarray:
     # Return the barycentric coordinates, of shape (N, 4), of the points
     # `x`, of shape (N, 3), with respect to the tetrahedra `tetra`, of
     # shape (N, 4, 3).
+    xp = get_array_backend(x)
 
     v0 = tetra[:, 0]
     v1 = tetra[:, 1]
@@ -276,17 +283,18 @@ def _barycoord(x: np.ndarray, tetra: np.ndarray) -> np.ndarray:
     v03 = v3 - v0
     v0x = x - v0
 
-    dt = np.einsum("ij,ij->i", v01, np.cross(v02, v03))
-    b1 = np.einsum("ij,ij->i", v0x, np.cross(v02, v03)) / dt
-    b2 = np.einsum("ij,ij->i", v01, np.cross(v0x, v03)) / dt
-    b3 = np.einsum("ij,ij->i", v01, np.cross(v02, v0x)) / dt
+    dt = xp.einsum("ij,ij->i", v01, xp.cross(v02, v03))
+    b1 = xp.einsum("ij,ij->i", v0x, xp.cross(v02, v03)) / dt
+    b2 = xp.einsum("ij,ij->i", v01, xp.cross(v0x, v03)) / dt
+    b3 = xp.einsum("ij,ij->i", v01, xp.cross(v02, v0x)) / dt
     b0 = 1.0 - b1 - b2 - b3
-    bb = np.stack((b0, b1, b2, b3), axis=-1)
+    bb = xp.stack((b0, b1, b2, b3), axis=-1)
     return bb
 
 
 def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
-    out = np.empty_like(tri, shape=(len(tri), 2, 1))
+    xp = get_array_backend(tri)
+    out = xp.empty_like(tri, shape=(len(tri), 2, 1))
 
     p1x, p1y = tri[:, 0].T
     p2x, p2y = tri[:, 1].T
@@ -301,12 +309,13 @@ def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
+    xp = get_array_backend(dst)
     # Return the triangle in which the plane `z` cuts each tetrahedron,
     # when the plane lies between the lowest vertex and the next one. The
     # corners of the triangle lie on the three edges that leave the lowest
     # vertex.
 
-    out = np.empty_like(dst, shape=(len(dst), 3, 2))
+    out = xp.empty_like(dst, shape=(len(dst), 3, 2))
 
     v0x, v0y, v0z = dst[:, 0].T
     v1x, v1y, v1z = dst[:, 1].T
@@ -327,11 +336,12 @@ def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
 
 
 def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
+    xp = get_array_backend(dst)
     # This function is the counterpart of `_find_lower_triangle` for a
     # plane that lies between the two highest vertices. The corners of
     # the triangle lie on the three edges that leave the highest vertex.
 
-    out = np.empty_like(dst, shape=(len(dst), 3, 2))
+    out = xp.empty_like(dst, shape=(len(dst), 3, 2))
 
     v0x, v0y, v0z = dst[:, 0].T
     v1x, v1y, v1z = dst[:, 1].T
@@ -352,8 +362,9 @@ def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
 
 
 def _find_quadrilateral(tetra: np.ndarray, z: np.ndarray) -> np.ndarray:
+    xp = get_array_backend(tetra)
 
-    out = np.empty_like(tetra, shape=(len(tetra), 4, 2))
+    out = xp.empty_like(tetra, shape=(len(tetra), 4, 2))
 
     v0x, v0y, v0z = tetra[:, 0].T
     v1x, v1y, v1z = tetra[:, 1].T
@@ -384,10 +395,11 @@ def _truncate_and_stack3d(
     Each input has shape (Nx, Ny, Nz, 3). The result has shape (N, 4, 3),
     where N is the number of voxels in the truncated shape.
     """
+    xp = get_array_backend(a)
     vertices = (a, b, c, d)
     nx, ny, nz = (min(x.shape[i] for x in vertices) for i in range(3))
     vertices = (vertex[:nx, :ny, :nz].reshape(-1, 3) for vertex in vertices)
-    return np.stack(tuple(vertices), axis=1)
+    return xp.stack(tuple(vertices), axis=1)
 
 
 def _yield_tetrahedra(field: np.ndarray) -> _tx.Iterator[np.ndarray]:

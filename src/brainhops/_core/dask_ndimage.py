@@ -323,12 +323,17 @@ def map_coordinates(
     extended array rather than over the crop.
     """
     opts = dict(degree=order, mode=mode, cval=cval, prefilter=prefilter)
-    coords = coordinates
+    # The input and the coordinates are moved to one backend before the
+    # blocks are cut, so that every block of coordinates meets a window of
+    # the input in the same backend.
+    input, coords = backends.match_backends(input, coordinates)
     if isinstance(coords, da.Array):
         coords = coords.rechunk({0: -1})
     else:
         coords = da.from_array(
-            coords, chunks=(-1,) + ("auto",) * (coords.ndim - 1)
+            coords,
+            chunks=(-1,) + ("auto",) * (coords.ndim - 1),
+            asarray=False,
         )
     if isinstance(input, da.Array):
         source = dask.delayed(da.Array)(
@@ -336,6 +341,12 @@ def map_coordinates(
         )
     else:
         source = dask.delayed(input)
+    # The blocks of the result are on a GPU when the input or the
+    # coordinates are, and Dask must know it to choose the right package.
+    gpu = backends._on_gpu(input) or backends._on_gpu(coords)
+    meta = backends.get_array_backend("cupy" if gpu else "numpy").empty(
+        (0,) * (coords.ndim - 1), dtype=input.dtype
+    )
     return da.map_blocks(
         _map_coordinates_block,
         coords,
@@ -343,6 +354,7 @@ def map_coordinates(
         dtype=input.dtype,
         chunks=coords.chunks[1:],
         drop_axis=0,
+        meta=meta,
         **opts,
     )
 

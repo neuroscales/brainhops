@@ -22,16 +22,19 @@ def inverse(field: np.ndarray) -> np.ndarray:
     interpolant. The result is approximate between nodes, and more so near
     the border, where the mesh is clipped by the field of view.
 
+    The inversion runs with the package of the field, NumPy or CuPy, so
+    that a field on a GPU is inverted on the GPU.
+
     Parameters
     ----------
-    field : np.ndarray
+    field : np.ndarray or cupy.ndarray
         Displacements in voxels, with shape `(Nx, Ny, Nz, 3)` or
         `(Nx, Ny, 2)`. The last axis is ordered `[x, y, z]` or `[x, y]`.
 
     Returns
     -------
-    np.ndarray
-        The inverse field, with the same shape as `field`.
+    np.ndarray or cupy.ndarray
+        The inverse field, with the same shape and package as `field`.
 
     Raises
     ------
