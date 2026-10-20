@@ -320,11 +320,11 @@ def apply_affine(matrix: np.ndarray, values: ArrayProtocol) -> ArrayProtocol:
         Each vector `x` mapped to `matrix @ [x, 1]`. The array keeps the
         backend of `values`.
     """
-    backend = get_array_backend(values)
+    xp = get_array_backend(values)
     ndim = matrix.shape[0] - 1
-    linear = backend.asarray(matrix[:ndim, :ndim])
-    offset = backend.asarray(matrix[:ndim, ndim])
-    return backend.matmul(linear, values[..., None])[..., 0] + offset
+    linear = xp.asarray(matrix[:ndim, :ndim])
+    offset = xp.asarray(matrix[:ndim, ndim])
+    return xp.matmul(linear, values[..., None])[..., 0] + offset
 
 
 # ----------------------------------------------------------------------

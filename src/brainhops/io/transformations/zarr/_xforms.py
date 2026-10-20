@@ -15,7 +15,7 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
-from brainhops.backends import get_array_backend, to_backend
+from brainhops.backends import get_array_backend, to_numpy
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
@@ -273,7 +273,7 @@ class OmeZarrField(
             # Zarr writes arrays from memory, so an array on a GPU is copied
             # to memory first, whatever the backend setting.
             node.create_array(
-                dataset_path, data=to_backend(array, "numpy"), **kwargs
+                dataset_path, data=to_numpy(array), **kwargs
             )
         node.ome = ome
         return node

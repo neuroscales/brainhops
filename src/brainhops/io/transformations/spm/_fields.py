@@ -10,7 +10,6 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
-from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._backends import dataproperty
 from brainhops.datamodel.metadata import ConversionReport
@@ -354,8 +353,7 @@ def _spm_encoded(
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        backend = get_array_backend(coordinates)
-        coordinates = _field_to_disk(backend.asarray(coordinates))
+        coordinates = _field_to_disk(coordinates)
         record = None if base is None else base.copy()
         image = _record_image(coordinates, record, vox2ras, overrides)
     _set_coordinates_intent(image.header)

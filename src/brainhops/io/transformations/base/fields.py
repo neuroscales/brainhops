@@ -177,13 +177,13 @@ def ras_displacement_chain(
     vox2ras = np.asarray(vox2ras, dtype=np.float64)
     ndim = vox2ras.shape[0] - 1
     compact = vox2ras[:ndim]
-    backend = get_array_backend(vectors)
+    xp = get_array_backend(vectors)
     ras2vox = np.linalg.inv(vox2ras[:ndim, :ndim])
     # The matrix is cast by NumPy, because Dask ignores the `dtype` of
     # `asarray` and would compute a single-precision field in double
     # precision.
-    rotate = backend.asarray(ras2vox.astype(vectors.dtype))
-    field = backend.matmul(rotate, vectors[..., None])[..., 0]
+    rotate = xp.asarray(ras2vox.astype(vectors.dtype))
+    field = xp.matmul(rotate, vectors[..., None])[..., 0]
     voxel = _systems.VoxelCoordinateSystem()
     # `steps` is passed only when set, so that a field without `log`
     # refuses it.

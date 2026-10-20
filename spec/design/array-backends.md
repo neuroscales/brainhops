@@ -216,7 +216,7 @@ follows these rules.
 
 1. It decides once, when it starts, in which backend its result
    lives, and it runs under the setting that names that backend
-   (`computing_with`, with `output_backend`). Under an explicit setting,
+   (`computing_with`, with `promote_backends`). Under an explicit setting,
    that setting is kept. Under the setting `None`, the result is lazy
    when one of the voxel arrays of the inputs is a Dask array, and on a
    GPU when one of them is on a GPU, as `best_backend` chooses. A lazy
@@ -236,12 +236,12 @@ follows these rules.
    because it would have to read `data` differently from a user.
 3. Small parameters, such as a matrix, are NumPy arrays and are moved to
    the device of the voxels once. A function that combines arrays calls
-   `match_backends` as soon as it knows them, before it computes
+   `to_promoted_backend` as soon as it knows them, before it computes
    anything from them, and it creates its new arrays in the backend of
    the moved arrays, so that each array is moved at most once. When only
    one array may move, such as a mask that goes with the voxels, it
    calls `to_backend_of`, which moves that array to the device of the
-   other and leaves the other where it is. `match_backends` moves
+   other and leaves the other where it is. `to_promoted_backend` moves
    nothing when the arrays already share a backend, which is the case
    inside a computation, and it lets a function called outside a
    computation, with arrays of several backends, still work. A grid that

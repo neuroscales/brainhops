@@ -310,14 +310,14 @@ class ItkNiftiField(
         data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
-        backend = get_array_backend(data)
+        xp = get_array_backend(data)
         shape = tuple(int(d) for d in data.shape)
         if len(shape) != ndim + 1:
-            data = backend.reshape(data, (*shape[:ndim], ndim))
+            data = xp.reshape(data, (*shape[:ndim], ndim))
         dispvect = _nifti_intent(_header(self)) == _NIFTI_INTENT_DISPVECT
         if dispvect and ndim == 3:
             flip = np.diag(_RAS_LPS)[:ndim]
-            data = data * backend.asarray(flip, dtype=data.dtype)
+            data = data * xp.asarray(flip, dtype=data.dtype)
         return data
 
     @staticmethod

@@ -11,7 +11,7 @@ from brainhops.backends import (
     get_auto_threshold,
     get_backend,
     get_ndimage_backend,
-    is_lazy,
+    _is_lazy,
     resolve_backend,
     set_backend,
     to_backend,
@@ -152,9 +152,9 @@ def test_gpu_settings_need_cupy() -> None:
 
 def test_is_lazy() -> None:
     # A reader asks whether an array of a given size stays lazy.
-    assert not is_lazy(10)
-    assert is_lazy(get_auto_threshold() + 1)
-    assert is_lazy(10, "dask")
-    assert not is_lazy(10**12, "numpy")
+    assert not _is_lazy(10)
+    assert _is_lazy(get_auto_threshold() + 1)
+    assert _is_lazy(10, "dask")
+    assert not _is_lazy(10**12, "numpy")
     with backend(threshold=4):
-        assert is_lazy(10)
+        assert _is_lazy(10)

@@ -19,6 +19,8 @@ __all__ = [
     "ContrastMethod",
 ]
 
+import typing_extensions as tx
+
 from brainhops._core.enum import IntEnum, StrEnum
 
 
@@ -84,6 +86,12 @@ class BoundaryCondition(StrEnum):
 # ruff: enable[E501]
 
 
+BoundaryName: tx.TypeAlias = tx.Literal[
+    "nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant"
+]
+BoundaryLike: tx.TypeAlias = tx.Union[BoundaryCondition, BoundaryName, float]
+
+
 # ruff: disable[E501]
 # fmt: off
 class StoreEnum(StrEnum):
@@ -116,6 +124,10 @@ class StoreEnum(StrEnum):
 # ruff: enable[E501]
 
 
+StoreName: tx.TypeAlias = tx.Literal["coefficients", "values"]
+StoreLike: tx.TypeAlias = tx.Union[StoreEnum, StoreName]
+
+
 class InterpolationOrder(IntEnum):
     """Interpolation order for interpolation and resampling.
 
@@ -141,6 +153,18 @@ class InterpolationOrder(IntEnum):
     fourier = -2
 
 
+InterpolationName: tx.TypeAlias = tx.Literal[
+    "zeroth", "nearest", "first", "linear", "second", "quadratic",
+    "third", "cubic", "fourth", "fifth", "barycentric", "fourier"
+]
+InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5]
+InterpolationLike: tx.TypeAlias = tx.Union[
+    InterpolationOrder,
+    InterpolationName,
+    InterpolationValue,
+]
+
+
 class AxisType(StrEnum):
     """Types of the axes of coordinate systems and transformations.
 
@@ -160,6 +184,12 @@ class AxisType(StrEnum):
     coordinate = "coordinate"
 
 
+AxisTypeName: tx.TypeAlias = tx.Literal[
+    "space", "time", "channel", "displacement", "coordinate"
+]
+AxisTypeLike: tx.TypeAlias = tx.Union[AxisType, AxisTypeName]
+
+
 class OrientationType(StrEnum):
     """Types of orientation, of which only `anatomical` exists for now.
 
@@ -169,6 +199,12 @@ class OrientationType(StrEnum):
     """
 
     anatomical = "anatomical"
+
+
+OrientationTypeName: tx.TypeAlias = tx.Literal["anatomical"]
+OrientationTypeLike: tx.TypeAlias = tx.Union[
+    OrientationType, OrientationTypeName
+]
 
 
 # ruff: disable[E501]
@@ -236,6 +272,25 @@ class AnatomicalOrientationValue(StrEnum):
     base_to_apex = "base-to-apex"
 # fmt: on
 # ruff: enable[E501]
+
+
+AnatomicalOrientationName: tx.TypeAlias = tx.Literal[
+    "left-to-right", "right-to-left",
+    "proximal-to-distal", "distal-to-proximal",
+    "anterior-to-posterior", "posterior-to-anterior",
+    "inferior-to-superior", "superior-to-inferior",
+    "dorsal-to-palmar", "palmar-to-dorsal",
+    "dorsal-to-plantar", "plantar-to-dorsal",
+    "rostral-to-caudal", "caudal-to-rostral",
+    "cranial-to-caudal", "caudal-to-cranial",
+    "dorsal-to-ventral", "ventral-to-dorsal",
+    "superficial-to-deep", "deep-to-superficial",
+    "apical-to-basal", "basal-to-apical",
+    "apex-to-base", "base-to-apex"
+]
+AnatomicalOrientationLike: tx.TypeAlias = tx.Union[
+    AnatomicalOrientationValue, AnatomicalOrientationName
+]
 
 
 # ----------------------------------------------------------------------
@@ -395,6 +450,20 @@ class SpaceEnum(StrEnum):
     study = "study"
 
 
+SpaceName: tx.TypeAlias = tx.Literal[
+    "scanner", "aligned", "talairach", "mni", "template",
+    "ICBM452AirSpace", "ICBM452Warp5Space", "IXI549Space",
+    "MNI152Lin", "MNI152NLin2009aAsym", "MNI152NLin2009aSym",
+    "MNI152NLin2009bAsym", "MNI152NLin2009bSym", "MNI152NLin2009cAsym",
+    "MNI152NLin2009cSym", "MNI152NLin6Asym", "MNI152NLin6Sym",
+    "MNI305", "MNIColin27", "MNIInfant", "MNIPediatricAsym", "NMT31Sym",
+    "OASIS30AntsOASISAnts", "OASIS30Atropos", "Talairach", "UNCInfant",
+    "fsaverage", "fsaverage3", "fsaverage4", "fsaverage5", "fsaverage6",
+    "fsaveragesym", "fsLR", "fsnative", "orig", "anat", "T1w", "T2w", "individual", "study"
+]
+SpaceLike: tx.TypeAlias  = tx.Union[SpaceEnum, SpaceName]
+
+
 class IntentEnum(StrEnum):
     """Known values of the `intent` metadata field.
 
@@ -549,6 +618,21 @@ class IntentEnum(StrEnum):
 # ruff: enable[E501]
 
 
+IntentName: tx.TypeAlias = tx.Literal[
+    "correlation", "t test", "f test", "z score", "chi2", "beta", "binomial",
+    "gamma", "poisson", "normal", "non central f test", "non central chi2",
+    "logistic", "laplace", "uniform", "non central t test", "weibull", "chi",
+    "inverse gaussian", "extreme value 1", "p value", "log p value",
+    "log10 p value", "estimate", "label", "neuroname", "general matrix",
+    "symmetric matrix", "displacement vector", "vector", "pointset",
+    "triangle", "quaternion", "dimensionless", "time series", "node index",
+    "rgb vector", "rgba vector", "shape", "fnirt disp field",
+    "fnirt cubic spline coef", "fnirt dct coef", "fnirt quad spline coef",
+    "topup field"
+]
+IntentLike: tx.TypeAlias = tx.Union[IntentEnum, IntentName]
+
+
 class Manufacturer(StrEnum):
     """Known values of the `manufacturer` metadata field.
 
@@ -592,6 +676,13 @@ class Manufacturer(StrEnum):
     MRSolutions = "MRSolutions"
 
 
+ManufacturerName: tx.TypeAlias = tx.Literal[
+    "Siemens", "GE", "Philips", "Canon", "Toshiba", "Hitachi", "Bruker",
+    "UIH", "MRSolutions"
+]
+ManufacturerLike: tx.TypeAlias = tx.Union[Manufacturer, ManufacturerName]
+
+
 class IlluminationType(StrEnum):
     """Known values of the `illumination_type` metadata field.
 
@@ -620,6 +711,12 @@ class IlluminationType(StrEnum):
     Oblique = "Oblique"
     NonLinear = "NonLinear"
     Other = "Other"
+
+
+IlluminationName: tx.TypeAlias = tx.Literal[
+    "Transmitted", "Epifluorescence", "Oblique", "NonLinear", "Other"
+]
+IlluminationLike: tx.TypeAlias = tx.Union[IlluminationType, IlluminationName]
 
 
 class ContrastMethod(StrEnum):
@@ -662,3 +759,11 @@ class ContrastMethod(StrEnum):
     Darkfield = "Darkfield"
     Fluorescence = "Fluorescence"
     Other = "Other"
+
+
+ContrastMethodName: tx.TypeAlias = tx.Literal[
+    "Brightfield", "Phase", "DIC", "HoffmanModulation",
+    "ObliqueIllumination", "PolarizedLight", "Darkfield",
+    "Fluorescence", "Other"
+]
+ContrastMethodLike: tx.TypeAlias = tx.Union[ContrastMethod, ContrastMethodName]

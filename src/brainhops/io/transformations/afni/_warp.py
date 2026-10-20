@@ -687,11 +687,11 @@ def _dicom_vectors(data: tx.Optional[ArrayProtocol]) -> ArrayProtocol:
     """
     if data is None:
         raise ParserContentError("This warp has no data to read.")
-    backend = get_array_backend(data)
+    xp = get_array_backend(data)
     shape = tuple(int(d) for d in data.shape)
     if len(shape) == _NDIM + 2 and shape[_NDIM] == 1:
         # The NIfTI layout, (X, Y, Z, 1, n), keeps a singleton axis.
-        data = backend.reshape(data, shape[:_NDIM] + shape[_NDIM + 1 :])
+        data = xp.reshape(data, shape[:_NDIM] + shape[_NDIM + 1 :])
         shape = shape[:_NDIM] + shape[_NDIM + 1 :]
     if len(shape) != _NDIM + 1 or shape[-1] < _NDIM:
         raise ParserContentError(

@@ -25,11 +25,11 @@ import typing_extensions as tx
 # internals
 from brainhops import backends
 
-_Selection = tx.Union[int, range, np.ndarray]
+_Selection: tx.TypeAlias = tx.Union[int, range, np.ndarray]
 """What a view selects along one axis of the stored array: a position,
 which drops the axis, or the ordered positions that the axis keeps."""
 
-_ReadIndex = tx.Tuple[tx.Union[int, slice], ...]
+_ReadIndex: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 """The index that [`ArrayProxy._read`][] receives."""
 
 
@@ -480,7 +480,7 @@ class ArrayProxy(abc.ABC):
         """
         return np.asarray(self)
 
-    def to_cupy(self) -> tx.Any:
+    def to_cupy(self, device: tx.Optional[int] = None) -> tx.Any:
         """Read the values of the proxy into a CuPy array on the GPU.
 
         Returns
@@ -493,13 +493,13 @@ class ArrayProxy(abc.ABC):
         ImportError
             If CuPy is not installed.
         """
-        return backends.to_backend(self, "cupy")
+        return backends.to_cupy(self, device=device)
 
     def to_backend(self, backend: tx.Any = backends._CURRENT) -> tx.Any:
         """Convert the proxy as a backend setting says.
 
-        The settings are described in [`brainhops.backends`][]. Under
-        `None`, and under `"auto"`, a proxy of at most the threshold of
+        The settings are described in [`brainhops.backends`][].
+        Under `None`, and under `"auto"`, a proxy of at most the threshold of
         `"auto"` is read with NumPy and a larger one becomes a Dask array.
         A Dask array has the blocks that
         [`to_dask`][brainhops._core.proxy.ArrayProxy.to_dask] gives, and
@@ -522,7 +522,9 @@ class ArrayProxy(abc.ABC):
         """
         return backends.to_backend(self, backend)
 
-    def to_dask(self, *, cupy: bool = False, **kwargs: tx.Any) -> tx.Any:
+    def to_dask(
+        self, *, device: tx.Union[str, int, None] = "cpu", **kwargs
+    ) -> tx.Any:
         """Return a Dask array that reads the proxy block by block.
 
         The blocks are the `chunks` of the proxy when the storage
@@ -561,15 +563,7 @@ class ArrayProxy(abc.ABC):
         }
         options.update(kwargs)
         lazy = da.from_array(self, **options)
-        if not cupy:
-            return lazy
-        cp = backends.cp
-        if cp is None:
-            raise ImportError(
-                "CuPy is needed to place the blocks of a proxy on a GPU."
-            )
-        meta = cp.empty((0,) * lazy.ndim, lazy.dtype)
-        return lazy.map_blocks(cp.asarray, meta=meta)
+        return backends.to_dask(lazy, device=device)
 
 
 def _expand(index: tx.Any, ndim: int) -> tx.List[tx.Any]:

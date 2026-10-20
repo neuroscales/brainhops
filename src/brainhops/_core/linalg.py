@@ -2,7 +2,7 @@ import numpy as np
 import scipy.linalg
 import typing_extensions as tx
 
-from brainhops.backends import get_array_backend, to_backend
+from brainhops.backends import get_array_backend, to_numpy
 from brainhops.errors import DomainError
 
 if tx.TYPE_CHECKING:
@@ -26,8 +26,8 @@ error of the boundary are refused rather than given an inaccurate answer.
 
 def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
     """Return the inverse of a square matrix."""
-    nx = get_array_backend(matrix)
-    return nx.linalg.inv(matrix)
+    xp = get_array_backend(matrix)
+    return xp.linalg.inv(matrix)
 
 
 def sqrtm(
@@ -151,16 +151,16 @@ def is_principal(linear: ArrayProtocol, return_reason: bool = False):
     rejected too. With `return_reason=True`, the result is a boolean-like
     object whose string gives the reason, for use in error messages.
     """
-    nx = get_array_backend(linear)
-    if not bool(nx.isfinite(linear).all()):
+    xp = get_array_backend(linear)
+    if not bool(xp.isfinite(linear).all()):
         return _BoolWithMessage(False, "is not finite", return_reason)
-    eigenvalues = nx.linalg.eigvals(linear)
-    size = nx.abs(eigenvalues)
+    eigenvalues = xp.linalg.eigvals(linear)
+    size = xp.abs(eigenvalues)
     scale = size.max(initial=0.0)
     if bool(scale == 0.0) or bool((size <= _RTOL * scale).any()):
         return _BoolWithMessage(False, "is singular", return_reason)
     negative = (eigenvalues.real < 0) & (
-        nx.abs(eigenvalues.imag) <= _RTOL * size
+        xp.abs(eigenvalues.imag) <= _RTOL * size
     )
     if bool(negative.any()):
         return _BoolWithMessage(
@@ -188,7 +188,7 @@ def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:
     # backend of the input.
     # A Dask array is computed, and its chunks are copied from the GPU when
     # they are CuPy arrays.
-    return np.asarray(to_backend(array, "numpy"), **kwargs)
+    return np.asarray(to_numpy(array), **kwargs)
 
 
 def to(result: np.ndarray, like: ArrayProtocol, **kwargs) -> ArrayProtocol:
@@ -198,10 +198,10 @@ def to(result: np.ndarray, like: ArrayProtocol, **kwargs) -> ArrayProtocol:
 
 def dtype_or_float64(like: ArrayProtocol) -> np.dtype:
     """Return the dtype of `like` if it is floating, and float64 otherwise."""
-    nx = get_array_backend(like)
-    dtype = nx.dtype(getattr(like, "dtype", nx.float64))
-    if not nx.issubdtype(dtype, nx.floating):
-        dtype = nx.dtype(nx.float64)
+    xp = get_array_backend(like)
+    dtype = xp.dtype(getattr(like, "dtype", xp.float64))
+    if not xp.issubdtype(dtype, xp.floating):
+        dtype = xp.dtype(xp.float64)
     return dtype
 
 
@@ -212,10 +212,10 @@ def ensure_real(result: ArrayProtocol) -> ArrayProtocol:
     the larger of one and the largest magnitude in the array. Otherwise, a
     [`DomainError`][] is raised.
     """
-    nx = get_array_backend(result)
-    if nx.iscomplexobj(result):
-        scale = max(1.0, float(nx.abs(result).max(initial=0.0)))
-        if float(nx.abs(result.imag).max(initial=0.0)) > _RTOL * scale:
+    xp = get_array_backend(result)
+    if xp.iscomplexobj(result):
+        scale = max(1.0, float(xp.abs(result).max(initial=0.0)))
+        if float(xp.abs(result.imag).max(initial=0.0)) > _RTOL * scale:
             raise DomainError("Matrix is not real.")
         result = result.real
     return result

@@ -609,8 +609,7 @@ class NiftyRegSequence(
         affines replace the extensions of that header, because NiftyReg
         reads its affines from the first extensions.
         """
-        backend = get_array_backend(vectors)
-        vectors = _field_to_disk(backend.asarray(vectors))
+        vectors = _field_to_disk(vectors)
         image = _record_image(vectors, self._record(), vox2world, overrides)
         header = image.header
         header.set_intent(
@@ -690,11 +689,11 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        backend = get_array_backend(positions)
+        xp = get_array_backend(positions)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
-        return positions - backend.asarray(grid, dtype=positions.dtype)
+        return positions - xp.asarray(grid, dtype=positions.dtype)
 
     def _encoded(
         self, like: tx.Any = None, **overrides

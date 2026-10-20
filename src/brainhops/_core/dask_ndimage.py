@@ -29,7 +29,7 @@ from bagof.hints.array import ArrayProtocol
 # brainhops.backends imports this module while it is itself being
 # imported, so the functions of brainhops.backends are looked up when they
 # are called.
-import brainhops.backends as backends
+from brainhops import backends
 
 __all__ = ["map_coordinates", "spline_filter", "spline_filter1d"]
 
@@ -154,24 +154,26 @@ def _take(
     cval: float,
 ) -> ArrayProtocol:
     """Return `array[np.ix_(*positions)]`, where -1 reads `cval`."""
-    nx = backends.get_array_backend(array)
+    xp = backends.get_array_backend(array)
     mask = None
     for axis, pos in enumerate(positions):
-        array = nx.take(array, nx.asarray(np.maximum(pos, 0)), axis=axis)
+        array = xp.take(array, xp.asarray(np.maximum(pos, 0)), axis=axis)
         if (pos < 0).any():
             shape = [1] * len(positions)
             shape[axis] = -1
             outside = (pos < 0).reshape(shape)
             mask = outside if mask is None else mask | outside
     if mask is not None:
-        array = nx.where(
-            nx.asarray(mask), nx.asarray(cval, dtype=array.dtype), array
+        array = xp.where(
+            xp.asarray(mask), xp.asarray(cval, dtype=array.dtype), array
         )
     return array
 
 
 def _gather(
-    input: ArrayProtocol, indices: tx.Sequence[np.ndarray], cval: float
+    input: ArrayProtocol,
+    indices: tx.Sequence[np.ndarray],
+    cval: float
 ) -> tx.Optional[ArrayProtocol]:
     """Return `input[np.ix_(*indices)]` as a concrete array.
 
@@ -236,19 +238,19 @@ def _map_coordinates_1block(
             prefilter=prefilter,
         )
 
-    nx = backends.get_array_backend(coords)
+    xp = backends.get_array_backend(coords)
     count = int(coords.shape[1])
-    finite = nx.all(nx.isfinite(coords), axis=0)
-    if not bool(nx.all(finite)):
+    finite = xp.all(xp.isfinite(coords), axis=0)
+    if not bool(xp.all(finite)):
         fill = np.nan if np.issubdtype(np.dtype(dtype), np.floating) else cval
-        output = nx.full((count,), fill, dtype=dtype)
-        if bool(nx.any(finite)):
+        output = xp.full((count,), fill, dtype=dtype)
+        if bool(xp.any(finite)):
             output[finite] = _map_coordinates_1block(
                 coords[:, finite], input, **opts
             )
         return output
     if count == 0:
-        return nx.empty((0,), dtype=dtype)
+        return xp.empty((0,), dtype=dtype)
 
     margin = degree // 2 + 1
     starts, signals, halos, locals_ = [], [], [], []
@@ -265,20 +267,18 @@ def _map_coordinates_1block(
 
     window = _gather(input, signals, cval)
     if window is None:
-        return nx.full((count,), cval, dtype=dtype)
-    nd = backends.get_ndimage_backend(window)
+        return xp.full((count,), cval, dtype=dtype)
+    xd = backends.get_ndimage_backend(window)
     if prefilter:
-        window = nd.spline_filter(
+        window = xd.spline_filter(
             window, degree, output=np.float64, mode="mirror"
         )
         window = window[
             tuple(slice(h, window.shape[i] - h) for i, h in enumerate(halos))
         ]
         window = _take(window, locals_, cval)
-    offset = backends.get_array_backend(coords).asarray(
-        starts, dtype=coords.dtype
-    )
-    output = nd.map_coordinates(
+    offset = xp.asarray(starts, dtype=coords.dtype)
+    output = xd.map_coordinates(
         window,
         coords - offset[:, None],
         order=degree,
@@ -326,7 +326,7 @@ def map_coordinates(
     # The input and the coordinates are moved to one backend before the
     # blocks are cut, so that every block of coordinates meets a window of
     # the input in the same backend.
-    input, coords = backends.match_backends(input, coordinates)
+    input, coords = backends.to_promoted_backend(input, coordinates)
     if isinstance(coords, da.Array):
         coords = coords.rechunk({0: -1})
     else:
@@ -343,10 +343,9 @@ def map_coordinates(
         source = dask.delayed(input)
     # The blocks of the result are on a GPU when the input or the
     # coordinates are, and Dask must know it to choose the right package.
-    gpu = backends._on_gpu(input) or backends._on_gpu(coords)
-    meta = backends.get_array_backend("cupy" if gpu else "numpy").empty(
-        (0,) * (coords.ndim - 1), dtype=input.dtype
-    )
+    on_gpu = backends.get_device(input) or backends.get_device(coordinates)
+    xp = backends.get_array_backend("cupy" if on_gpu else "numpy")
+    meta = xp.empty((0,) * (coords.ndim - 1), dtype=input.dtype)
     return da.map_blocks(
         _map_coordinates_block,
         coords,
@@ -381,8 +380,8 @@ def _spline_filter1d_block(
     block: ArrayProtocol, degree: int, dim: int
 ) -> ArrayProtocol:
     """Prefilter one concrete block along one axis, in float64."""
-    nd = backends.get_ndimage_backend(block)
-    return nd.spline_filter1d(
+    xd = backends.get_ndimage_backend(block)
+    return xd.spline_filter1d(
         block, degree, axis=dim, output=np.float64, mode="mirror"
     )
 

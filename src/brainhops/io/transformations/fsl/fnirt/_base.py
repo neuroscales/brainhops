@@ -596,13 +596,13 @@ class FnirtWarpField(
         relative. The array backend is preserved.
         """
         field = self._raw_field()
-        backend = get_array_backend(field)
+        xp = get_array_backend(field)
         if self._is_coeff():
             return field
 
         shape = tuple(int(s) for s in field.shape[:3])
         grid_to_scaled = ref.vox2fsl @ np.linalg.inv(self._ref_to_field(ref))
-        ref_scaled = _voxel_grid_in_scaled_mm(shape, grid_to_scaled, backend)
+        ref_scaled = _voxel_grid_in_scaled_mm(shape, grid_to_scaled, xp)
 
         deformation_type = self.deformation_type
         if deformation_type is None:

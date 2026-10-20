@@ -12,7 +12,10 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 from brainhops._core.bsplines import pull_field
-from brainhops.backends import get_array_backend, match_backends
+from brainhops.backends import (
+    get_array_backend,
+    to_promoted_backend,
+)
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import CompositionError
 
@@ -142,7 +145,7 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 @composer
 def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    field, translation = match_backends(Ti.field, To.translation)
+    field, translation = to_promoted_backend(Ti.field, To.translation)
     field = field + translation
     return CoordinatesField(
         field=field,
@@ -157,7 +160,7 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    data, scale = match_backends(Ti.data, To.scale)
+    data, scale = to_promoted_backend(Ti.data, To.scale)
     data = data * scale
     return CoordinatesField(
         data=data,
@@ -186,7 +189,7 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    field, matrix = match_backends(Ti.field, To.matrix)
+    field, matrix = to_promoted_backend(Ti.field, To.matrix)
     field = field @ matrix.T
     return CoordinatesField(
         field=field,
@@ -201,7 +204,7 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    field, matrix = match_backends(Ti.field, To.matrix)
+    field, matrix = to_promoted_backend(Ti.field, To.matrix)
     field = field @ matrix[:, :-1].T + matrix[:, -1]
     return CoordinatesField(
         field=field,
@@ -221,7 +224,7 @@ def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
 @composer
 def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    field, translation = match_backends(Ti.field, To.translation)
+    field, translation = to_promoted_backend(Ti.field, To.translation)
     field = field + translation
     return DisplacementField(
         field=field,
@@ -238,7 +241,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
     field = Ti.field
     grid = _grid_like(field)
-    field, scale = match_backends(field, To.scale)
+    field, scale = to_promoted_backend(field, To.scale)
     field = scale * field + (scale - 1) * grid
     return DisplacementField(
         field=field,
@@ -286,7 +289,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
     field = Ti.field
     grid = _grid_like(field)
-    field, matrix = match_backends(field, To.matrix)
+    field, matrix = to_promoted_backend(field, To.matrix)
     field = (grid + field) @ matrix.T - grid
     return DisplacementField(
         field=field,
@@ -304,7 +307,7 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
     field = Ti.field
     grid = _grid_like(field)
-    field, matrix = match_backends(field, To.matrix)
+    field, matrix = to_promoted_backend(field, To.matrix)
     field = (grid + field) @ matrix[:, :-1].T + matrix[:, -1] - grid
     return DisplacementField(
         field=field,
@@ -328,7 +331,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     # because a StationaryVelocityField stores its velocity, not its
     # displacement, under `data`. The three arrays are matched before
     # anything is computed from them.
-    coeffs, coords, field = match_backends(
+    coeffs, coords, field = to_promoted_backend(
         To.to(log=False, store="coefficients").data,
         Ti.to(CoordinatesField).field,
         Ti.field,
@@ -354,7 +357,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute()
-    coeffs, coords = match_backends(
+    coeffs, coords = to_promoted_backend(
         To.to(log=False, store="coefficients").data,
         Ti.to(CoordinatesField).field,
     )

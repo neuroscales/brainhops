@@ -27,6 +27,7 @@ bytes, and a Dask array to a larger one when Dask is installed. A module
 # stdlib
 import math
 from contextlib import contextmanager
+from numbers import Integral
 from types import ModuleType
 
 # dependencies
@@ -34,7 +35,41 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
 # internals
+from brainhops._core import partial
 from brainhops._core.dependencies import cp, cpndi, da, dkndi, np, npndi
+from brainhops._core.typing import ArrayLike
+
+# typing
+if tx.TYPE_CHECKING:
+    from cupy import ndarray as cparray
+    from cupy.cuda import Device as CudaDevice
+    from dask.array import Array as daarray
+    from numpy import ndarray as nparray
+
+BackendName: tx.TypeAlias = tx.Literal["numpy", "cupy", "dask"]
+"""
+The name of a backend supported by `brainhops`.
+"""
+
+BackendSetting: tx.TypeAlias = tx.Literal[
+    "auto", "auto+cupy", "numpy", "cupy", "dask", "dask+cupy"
+]
+"""
+A backend settings supported by `brainhops`:
+
+- `"numpy"` performs all computations in memory with NumPy, on the CPU.
+- `"cupy"` performs all computations in memory, with CuPy, on the GPU.
+- `"dask"` performs all computations lazily with Dask, on the CPU.
+- `"dask+cupy"` performs all computations lazily with Dask, on the GPU.
+- `"auto"` selects either `"numpy"` or `"dask"` based on array size.
+- `"auto+cupy"` selects either `"cupy"` or `"dask+cupy"` based on array size.
+"""
+
+BackendLike: tx.TypeAlias = tx.Optional[tx.Union[BackendSetting, ModuleType]]
+"""
+A value that defines a backend: the name of a setting, or a ackend module.
+"""
+
 
 # A backend needs both its array package and its ndimage package.
 _MODULES = {
@@ -50,9 +85,14 @@ _NDIMAGE_PACKAGE = {
     "dask": "dask",
 }
 
+# When computing on arrays spread across multiple backends, move them
+# all on the same backend with this order of preference.
 _PRIORITY = ("dask", "cupy", "numpy")
 
-_SETTINGS = ("auto", "auto+cupy", "numpy", "cupy", "dask", "dask+cupy")
+_BACKEND_MODULES = BackendName.__args__
+"""The name of the backend modules."""
+
+_BACKEND_SETTINGS = BackendSetting.__args__
 """The names of the backend settings, besides `None`."""
 
 _CREATED = {
@@ -65,9 +105,6 @@ _CREATED = {
     "dask+cupy": "dask",
 }
 """The backend in which a setting creates new arrays."""
-
-Setting = tx.Optional[tx.Union[str, ModuleType]]
-"""A backend setting: one of the names of `_SETTINGS`, a module, or `None`."""
 
 _SETTING: tx.Optional[str] = None
 """The current backend setting."""
@@ -101,87 +138,17 @@ def available_backends() -> tx.Tuple[str, ...]:
     )
 
 
-def best_backend(*backends) -> ModuleType:
-    """Return the array module of the most preferred of the given backends.
-
-    Each argument is anything accepted by [`get_array_backend`][].
-
-    Raises
-    ------
-    ValueError
-        If none of the given backends is installed.
-    """
-    references = map(get_array_backend, available_backends())
-    backends = tuple(map(get_array_backend, backends))
-    for ref in references:
-        if ref in backends:
-            return ref
-    raise ValueError(f"No supported backends found in {backends}")
-
-
 # ----------------------------------------------------------------------
 #   SETTINGS
 # ----------------------------------------------------------------------
 
 
-def _setting_name(setting: Setting) -> tx.Optional[str]:
-    """Return the name of a setting given by name, by module or as `None`.
-
-    Raises
-    ------
-    ValueError
-        If the argument is not a setting.
-    """
-    if setting is None:
-        return None
-    if isinstance(setting, str):
-        if setting not in _SETTINGS:
-            raise ValueError(
-                f"Unsupported backend: {setting!r}. The settings are None, "
-                + ", ".join(repr(name) for name in _SETTINGS)
-                + "."
-            )
-        return setting
-    if isinstance(setting, ModuleType):
-        return backend_name(setting)
-    raise ValueError(f"Unsupported backend: {setting!r}")
-
-
-def _require(setting: tx.Optional[str]) -> None:
-    """Check that the packages that a setting needs are installed.
-
-    `"auto"` needs nothing besides NumPy, because it falls back on NumPy
-    when Dask is missing.
-
-    Raises
-    ------
-    ImportError
-        If a package that the setting needs is not installed.
-    """
-    needed = {
-        "auto+cupy": ("cupy",),
-        "numpy": ("numpy",),
-        "cupy": ("cupy",),
-        "dask": ("dask",),
-        "dask+cupy": ("dask", "cupy"),
-    }.get(setting, ())
-    for name in needed:
-        array, image = _MODULES[name]
-        if array is None:
-            raise ImportError(f"The {name} backend is not installed")
-        if image is None:
-            raise ImportError(
-                f"The {name} backend needs {_NDIMAGE_PACKAGE[name]}, "
-                "which is not installed, so it cannot interpolate"
-            )
-
-
-def get_backend() -> tx.Optional[str]:
+def get_backend() -> tx.Optional[BackendSetting]:
     """Return the current backend setting, a name or `None`."""
     return _SETTING
 
 
-def set_backend(backend: Setting) -> None:
+def set_backend(backend: BackendLike) -> None:
     """Set the current backend setting, given by name, by module or as `None`.
 
     Passing the result of [`get_array_backend`][] selects the backend of an
@@ -222,7 +189,7 @@ def set_auto_threshold(nbytes: int) -> None:
 
 @contextmanager
 def backend(
-    backend: tx.Union[Setting, _Current] = _CURRENT,
+    backend: tx.Union[BackendLike, _Current] = _CURRENT,
     threshold: tx.Optional[int] = None,
 ) -> tx.Generator[tx.Optional[str], None, None]:
     """Select a backend setting inside a `with` block.
@@ -231,13 +198,20 @@ def backend(
     argument, the current setting is kept, whereas `backend(None)` selects
     the setting `None`.
 
+    !!! example
+        ```pycon
+        with backend("cupy"):
+            x = np.arange(3)
+            y = to_backend(x)
+        ```
+
     Parameters
     ----------
     backend : str or module, optional
         The setting to select. By default, the current setting is kept.
     threshold : int, optional
-        The number of bytes up to which `"auto"` keeps arrays at once. By
-        default, the current threshold is kept.
+        The number of bytes up to which `"auto"` keeps arrays at once.
+        By default, the current threshold is kept.
 
     Yields
     ------
@@ -256,7 +230,7 @@ def backend(
         _SETTING, _THRESHOLD = old_setting, old_threshold
 
 
-def backend_name(
+def _backend_name(
     backend: tx.Union[str, ModuleType, ArrayProtocol],
 ) -> str:
     """Return the name of the package of a name, module or array.
@@ -273,10 +247,64 @@ def backend_name(
             raise ValueError(f"Unsupported backend: {backend}")
         return backend
     module = get_array_backend(backend)
-    for name, (array, _image) in _MODULES.items():
+    for name, (array, image) in _MODULES.items():
         if module is array:
             return name
+        if module is image:
+            return name
     raise ValueError(f"Unsupported backend: {backend}")
+
+
+def _setting_name(setting: BackendLike) -> tx.Optional[str]:
+    """Return the name of a setting given by name, by module or as `None`.
+
+    Raises
+    ------
+    ValueError
+        If the argument is not a setting.
+    """
+    if setting is None:
+        return None
+    if isinstance(setting, str):
+        if setting not in _BACKEND_SETTINGS:
+            raise ValueError(
+                f"Unsupported backend: {setting!r}. The settings are None, "
+                + ", ".join(repr(name) for name in _BACKEND_SETTINGS)
+                + "."
+            )
+        return setting
+    if isinstance(setting, ModuleType):
+        return _backend_name(setting)
+    raise ValueError(f"Unsupported backend: {setting!r}")
+
+
+def _require(setting: tx.Optional[BackendSetting]) -> None:
+    """Check that the packages that a setting needs are installed.
+
+    `"auto"` needs nothing besides NumPy, because it falls back on NumPy
+    when Dask is missing.
+
+    Raises
+    ------
+    ImportError
+        If a package that the setting needs is not installed.
+    """
+    needed = {
+        "auto+cupy": ("cupy",),
+        "numpy": ("numpy",),
+        "cupy": ("cupy",),
+        "dask": ("dask",),
+        "dask+cupy": ("dask", "cupy"),
+    }.get(setting, ())
+    for name in needed:
+        array, image = _MODULES[name]
+        if array is None:
+            raise ImportError(f"The {name} backend is not installed")
+        if image is None:
+            raise ImportError(
+                f"The {name} backend needs {_NDIMAGE_PACKAGE[name]}, "
+                "which is not installed, so it cannot interpolate"
+            )
 
 
 # ----------------------------------------------------------------------
@@ -284,70 +312,10 @@ def backend_name(
 # ----------------------------------------------------------------------
 
 
-def _is_loaded(x: tx.Any) -> bool:
-    """Tell whether an object is a NumPy, CuPy or Dask array."""
-    return (
-        (np is not None and isinstance(x, np.ndarray))
-        or (cp is not None and isinstance(x, cp.ndarray))
-        or (da is not None and isinstance(x, da.Array))
-    )
-
-
-def _on_gpu(x: tx.Any) -> bool:
-    """Tell whether an array is a CuPy array or a Dask array of CuPy chunks."""
-    if cp is None:
-        return False
-    if isinstance(x, cp.ndarray):
-        return True
-    return (
-        da is not None
-        and isinstance(x, da.Array)
-        and isinstance(getattr(x, "_meta", None), cp.ndarray)
-    )
-
-
-def _nbytes(x: tx.Any) -> int:
-    """Return the number of bytes that the values of an array take."""
-    shape = tuple(int(n) for n in x.shape)
-    return math.prod(shape) * np.dtype(x.dtype).itemsize
-
-
-def _current(setting: tx.Union[Setting, _Current]) -> tx.Optional[str]:
-    """Return the name of a setting, or the current one by default."""
-    if isinstance(setting, _Current):
-        return _SETTING
-    return _setting_name(setting)
-
-
-def is_lazy(
-    nbytes: int, backend: tx.Union[Setting, _Current] = _CURRENT
-) -> bool:
-    """Tell whether a setting reads a lazy array of a given size lazily.
-
-    Readers that can give either a loaded array or a lazy one ask this
-    question about the array of a file that they have not read yet.
-
-    Parameters
-    ----------
-    nbytes : int
-        The number of bytes that the values take.
-    backend : str or module, optional
-        The setting. By default, the current setting is used.
-
-    Returns
-    -------
-    bool
-        Whether the array is resolved to a Dask array.
-    """
-    name = _current(backend)
-    if name in (None, "auto", "auto+cupy"):
-        return da is not None and nbytes > _THRESHOLD
-    return name in ("dask", "dask+cupy")
-
-
 def resolve_backend(
-    x: tx.Any, backend: tx.Union[Setting, _Current] = _CURRENT
-) -> str:
+    x: ArrayProtocol,
+    backend: tx.Union[BackendLike, _Current] = _CURRENT
+) -> BackendSetting:
     """Return the backend to which a setting converts an array.
 
     Parameters
@@ -359,15 +327,14 @@ def resolve_backend(
 
     Returns
     -------
-    str
-        One of `"numpy"`, `"cupy"`, `"dask"` and `"dask+cupy"`.
+    backend : literal["numpy", "cupy", "dask", "dask+cupy"]
     """
-    name = _current(backend)
+    name = _backend_or_current(backend)
     if name is None:
         if _is_loaded(x):
             if da is not None and isinstance(x, da.Array):
-                return "dask+cupy" if _on_gpu(x) else "dask"
-            return "cupy" if _on_gpu(x) else "numpy"
+                return "dask+cupy" if get_device(x) is not None else "dask"
+            return "cupy" if get_device(x) is not None else "numpy"
         name = "auto"
     if name in ("auto", "auto+cupy"):
         gpu = name == "auto+cupy"
@@ -377,8 +344,20 @@ def resolve_backend(
     return name
 
 
-def _to_numpy(x: tx.Any) -> tx.Any:
-    """Return the values of an array as a NumPy array."""
+def to_numpy(x: ArrayLike) -> "nparray":
+    """
+    Return the values of an array as a NumPy array.
+
+    Parameters
+    ----------
+    x : array-like
+        A NumPy, CuPy or Dask array, or a lazy array of a file.
+
+    Returns
+    -------
+    numpy.ndarray
+        The values of the array, on the CPU.
+    """
     if da is not None and isinstance(x, da.Array):
         x = x.compute()
     if cp is not None and isinstance(x, cp.ndarray):
@@ -386,44 +365,118 @@ def _to_numpy(x: tx.Any) -> tx.Any:
     return np.asarray(x)
 
 
-def _to_cupy(x: tx.Any) -> tx.Any:
-    """Return the values of an array as a CuPy array."""
-    if da is not None and isinstance(x, da.Array):
+def to_cupy(
+    x: ArrayProtocol,
+    device: tx.Union[int, "CudaDevice", None] = None
+) -> "cparray":
+    """Return the values of an array as a CuPy array.
+
+    Parameters
+    ----------
+    x : array-like
+        A NumPy, CuPy or Dask array, or a lazy array of a file.
+    device : int, optional
+        The device to use. If not specified, the current device is used.
+
+    Returns
+    -------
+    cupy.ndarray
+        The values of the array, on the GPU.
+    """
+    if da and isinstance(x, da.Array):
         x = x.compute()
-    if isinstance(x, cp.ndarray):
-        return x
-    return cp.asarray(np.asarray(x))
-
-
-def _to_dask(x: tx.Any, gpu: bool) -> tx.Any:
-    """Return an array as a Dask array, of CuPy chunks when `gpu` is true."""
-    if isinstance(x, da.Array):
-        lazy = x
-    elif cp is not None and isinstance(x, cp.ndarray):
-        if gpu:
-            return da.from_array(x, chunks="auto", asarray=False)
-        lazy = da.from_array(x.get(), chunks="auto")
-    elif isinstance(x, np.ndarray):
-        lazy = da.from_array(x, chunks="auto")
-    elif hasattr(x, "to_dask"):
-        lazy = x.to_dask()
+    if not isinstance(x, cp.ndarray):
+        x = np.asarray(x)
+    if device is not None:
+        device = _normalize_device(device)[1]
+        with device:
+            x = cp.asarray(x)
     else:
+        x = cp.asarray(x)
+    return x
+
+
+def to_dask(
+    x: ArrayProtocol,
+    device: tx.Union[str, int, "CudaDevice", None] = "cpu"
+) -> "daarray":
+    """
+    Return an array as a Dask array, of CuPy chunks when `gpu` is true.
+
+    Parameters
+    ----------
+    x : array-like
+        A NumPy, CuPy or Dask array, or a lazy array of a file.
+    device : {"cpu", "cuda", "cuda:{index}"} or int or None, optional
+        The device to use for the chunks.
+    """
+    to_gpu, device = _normalize_device(device)
+
+    if da and isinstance(x, da.Array):
+        lazy = x
+
+    elif cp and isinstance(x, cp.ndarray):
+        if to_gpu:
+            # Wrap cupy array
+            x = to_cupy(x, device=device)
+            return da.from_array(x, chunks="auto", asarray=False)
+
+        # Wrap numpy array
+        lazy = da.from_array(x.get(), chunks="auto")
+
+    elif isinstance(x, np.ndarray):
+        # Wrap numpy array
+        lazy = da.from_array(x, chunks="auto")
+
+    elif hasattr(x, "to_dask"):
+        # Get dask view
+        lazy = x.to_dask()
+
+    else:
+        # Wrap any array-like object
         meta = np.empty((0,) * len(x.shape), np.dtype(x.dtype))
         lazy = da.from_array(
             x, chunks="auto", asarray=True, fancy=False, meta=meta
         )
-    if gpu and not _on_gpu(lazy):
-        meta = cp.empty((0,) * lazy.ndim, lazy.dtype)
-        return lazy.map_blocks(cp.asarray, meta=meta)
-    if not gpu and _on_gpu(lazy):
-        meta = np.empty((0,) * lazy.ndim, lazy.dtype)
-        return lazy.map_blocks(cp.asnumpy, meta=meta)
-    return lazy
+
+    current_device = get_device(lazy)
+    if _compatible_device(current_device, device):
+        return lazy
+
+    if to_gpu:
+        device = device if device is not None else current_device
+        with cp.cuda.Device(device):
+            meta = cp.empty((0,) * lazy.ndim, lazy.dtype)
+        return lazy.map_blocks(partial(to_cupy, device=device), meta=meta)
+
+    return lazy.map_blocks(cp.asnumpy, meta=meta)
+
+
+def to_device(
+    x: ArrayProtocol,
+    device: tx.Union[str, int, None] = "cpu"
+) -> ArrayProtocol:
+    """Copy an array to a GPU or to memory, keeping its package kind.
+
+    A Dask array stays a Dask array, with CuPy or NumPy chunks, and an
+    array in memory becomes a CuPy or a NumPy array. An array that is
+    already on that device, or that is not an array, is returned as it
+    is.
+    """
+    if not _is_loaded(x):
+        return x
+    if _compatible_device(x, device):
+        return x
+    to_gpu, device = _normalize_device(device)
+    if da is not None and isinstance(x, da.Array):
+        return to_dask(x, device=device)
+    return to_cupy(x, device=device) if to_gpu else to_numpy(x)
 
 
 def to_backend(
-    x: tx.Any, backend: tx.Union[Setting, _Current] = _CURRENT
-) -> tx.Any:
+    x: ArrayProtocol,
+    backend: tx.Union[BackendLike, _Current] = _CURRENT
+) -> ArrayProtocol:
     """Convert an array, or a lazy array of a file, as a setting says.
 
     Under `None`, a loaded array is returned as it is, and a lazy array is
@@ -450,13 +503,13 @@ def to_backend(
     target = resolve_backend(x, backend)
     _require(target)
     if target == "numpy":
-        return _to_numpy(x)
+        return to_numpy(x)
     if target == "cupy":
-        return _to_cupy(x)
-    return _to_dask(x, gpu=target == "dask+cupy")
+        return to_cupy(x)
+    return to_dask(x, device=target == "dask+cupy")
 
 
-def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
+def promote_backends(*arrays_or_backends: tx.Any) -> tx.Optional[str]:
     """Return the setting under which a computation on arrays runs.
 
     A computation, such as the reslice of an image, decides once where
@@ -464,13 +517,13 @@ def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
     there directly rather than moving them later. Under an explicit
     setting, the result follows that setting, which is returned. Under
     the setting `None`, the result is lazy when one of the arrays is a
-    Dask array, and on a GPU when one of them is on a GPU, as
-    [`best_backend`][] chooses. A lazy array of a file counts as the
-    array that `"auto"` would make of it.
+    Dask array, and on a GPU when one of them is on a GPU.
+    A lazy array of a file counts as the array that `"auto"` would make
+    of it.
 
     Parameters
     ----------
-    *arrays : Any
+    *arrays_or_backends : Any
         The voxel arrays of the inputs, or lazy arrays of files. `None`
         is ignored.
 
@@ -483,7 +536,11 @@ def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
     """
     if _SETTING is not None:
         return _SETTING
-    names = [resolve_backend(x, None) for x in arrays if x is not None]
+    names = [
+        x if isinstance(x, str) else resolve_backend(x, None)
+        for x in arrays_or_backends
+        if x is not None
+    ]
     if not names:
         return None
     lazy = any(name.startswith("dask") for name in names)
@@ -493,35 +550,23 @@ def output_backend(*arrays: tx.Any) -> tx.Optional[str]:
     return "cupy" if gpu else "numpy"
 
 
-def _creation_options(like: tx.Any = None) -> tx.Dict[str, tx.Any]:
-    """Return the options that create Dask arrays of CuPy chunks.
-
-    Dask creates NumPy chunks unless it is given a CuPy array as
-    `like`. When the new array goes with a Dask array of CuPy chunks,
-    given as `like`, or, without `like`, under the setting
-    `"dask+cupy"`, the functions that create arrays take these options
-    so that their chunks are created on the GPU. Of the creation
-    functions of Dask, only `arange` takes them, so `eye` and `zeros`
-    still create NumPy chunks, which are copied to the GPU right after.
-
-    Parameters
-    ----------
-    like : array, optional
-        The array with which the new array is combined.
-
-    Returns
-    -------
-    dict
-        The keyword arguments of `dask.array.arange`, or nothing.
+def promote_dtypes(*arrays_or_dtypes) -> np.dtype:
     """
-    if like is None:
-        gpu = _SETTING == "dask+cupy"
-    else:
-        gpu = da is not None and isinstance(like, da.Array) and _on_gpu(like)
-    return {"like": cp.empty(0)} if gpu else {}
+    Return the dtype that a computation on arrays promotes to.
+    """
+    root, *arrays_or_dtypes = arrays_or_dtypes
+    if hasattr(root, "dtype"):
+        root = root.dtype
+    root = np.dtype(root)
+    for x in arrays_or_dtypes:
+        if hasattr(x, "dtype"):
+            x = x.dtype
+        x = np.dtype(x)
+        root = np.promote_types(root, x)
+    return root
 
 
-def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
+def to_promoted_backend(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
     """Move arrays to the backend in which a computation combines them.
 
     A computation that combines several arrays, such as the voxels of an
@@ -558,26 +603,17 @@ def match_backends(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
     """
     if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
         return arrays
-    return tuple(_to_device(x, gpu=True) for x in arrays)
+    return tuple(to_device(x, "cuda") for x in arrays)
 
 
-def to_backend_of(x: tx.Any, reference: tx.Any) -> tx.Any:
-    """Move an array to the device of a reference array.
-
-    This is the one-way form of [`match_backends`][], for an array that
-    a function creates or receives, such as a mask or a small matrix, and
-    combines with a reference that is already where the result lives,
-    such as the voxels of an image. The reference is not moved. The
-    array is copied to the GPU when the reference is on a GPU, and to
-    memory when the reference is in memory. A NumPy array that goes with
-    a Dask array in memory is returned as it is, because Dask accepts
-    NumPy operands.
+def to_backend_of(x: ArrayProtocol, reference: ArrayProtocol) -> ArrayProtocol:
+    """Move an array to the backend of a reference array.
 
     Parameters
     ----------
     x : Any
-        The array to move. An argument that is not an array is returned
-        as it is.
+        The array to move.
+        An argument that is not an array is returned as it is.
     reference : Any
         The array whose device `x` takes.
 
@@ -588,22 +624,89 @@ def to_backend_of(x: tx.Any, reference: tx.Any) -> tx.Any:
     """
     if not _is_loaded(x) or not _is_loaded(reference):
         return x
-    return _to_device(x, gpu=_on_gpu(reference))
+    return to_device(x, device=get_device(reference))
 
 
-def _to_device(x: tx.Any, gpu: bool) -> tx.Any:
-    """Copy an array to a GPU or to memory, keeping its package kind.
+def _is_loaded(x: ArrayProtocol) -> bool:
+    """Tell whether an object is a NumPy, CuPy or Dask array."""
+    return (
+        (np is not None and isinstance(x, np.ndarray))
+        or (cp is not None and isinstance(x, cp.ndarray))
+        or (da is not None and isinstance(x, da.Array))
+    )
 
-    A Dask array stays a Dask array, with CuPy or NumPy chunks, and an
-    array in memory becomes a CuPy or a NumPy array. An array that is
-    already on that device, or that is not an array, is returned as it
-    is.
+
+def _nbytes(x: ArrayProtocol) -> int:
+    """Return the number of bytes that the values of an array take."""
+    shape = tuple(int(n) for n in x.shape)
+    return math.prod(shape) * np.dtype(x.dtype).itemsize
+
+
+def _backend_or_current(
+    setting: tx.Union[BackendLike, _Current]
+) -> tx.Optional[str]:
+    """Return the name of a setting, or the current one by default."""
+    if isinstance(setting, _Current):
+        return _SETTING
+    return _setting_name(setting)
+
+
+def _is_lazy(
+    nbytes: tx.Union[int, ArrayProtocol],
+    backend: tx.Union[BackendLike, _Current] = _CURRENT
+) -> bool:
+    """Tell whether a setting reads a lazy array of a given size lazily.
+
+    Readers that can give either a loaded array or a lazy one ask this
+    question about the array of a file that they have not read yet.
+
+    Parameters
+    ----------
+    nbytes : int or array-like
+        The number of bytes that the values take.
+        If an array, `nbytes` is computed from its shape and dtype.
+    backend : str or module, optional
+        The setting. By default, the current setting is used.
+
+    Returns
+    -------
+    bool
+        Whether the array is resolved to a Dask array.
     """
-    if not _is_loaded(x) or _on_gpu(x) == gpu:
-        return x
-    if da is not None and isinstance(x, da.Array):
-        return _to_dask(x, gpu=gpu)
-    return _to_cupy(x) if gpu else _to_numpy(x)
+    name = _backend_or_current(backend)
+    if not isinstance(nbytes, Integral):
+        nbytes = _nbytes(nbytes)
+    if name in (None, "auto", "auto+cupy"):
+        return da is not None and nbytes > _THRESHOLD
+    return name in ("dask", "dask+cupy")
+
+
+def _creation_options(like: tx.Any = None) -> tx.Dict[str, tx.Any]:
+    """Return the options that create Dask arrays of CuPy chunks.
+
+    Dask creates NumPy chunks unless it is given a CuPy array as
+    `like`. When the new array goes with a Dask array of CuPy chunks,
+    given as `like`, or, without `like`, under the setting
+    `"dask+cupy"`, the functions that create arrays take these options
+    so that their chunks are created on the GPU. Of the creation
+    functions of Dask, only `arange` takes them, so `eye` and `zeros`
+    still create NumPy chunks, which are copied to the GPU right after.
+
+    Parameters
+    ----------
+    like : array, optional
+        The array with which the new array is combined.
+
+    Returns
+    -------
+    dict
+        The keyword arguments of `dask.array.arange`, or nothing.
+    """
+    if like is None:
+        gpu = _SETTING == "dask+cupy"
+    else:
+        gpu = da is not None and isinstance(like, da.Array) and _on_gpu(like)
+    return {"like": cp.empty(0)} if gpu else {}
 
 
 # ----------------------------------------------------------------------
@@ -774,3 +877,72 @@ def get_ndimage_backend(
         return _ndimage_of("dask")
 
     return get_ndimage_backend()
+
+
+# ----------------------------------------------------------------------
+#   CUPY
+# ----------------------------------------------------------------------
+
+
+def _on_gpu(x: ArrayLike) -> bool:
+    """Tell whether an array is a CuPy array or a Dask array of CuPy chunks."""
+    return get_device(x) is not None
+
+
+def get_device(x: ArrayLike) -> tx.Optional["CudaDevice"]:
+    """Return the device of a CuPy array or a Dask array of CuPy chunks."""
+    if cp is None:
+        return None
+    if isinstance(x, cp.ndarray):
+        return x.device
+    if da is not None and isinstance(x, da.Array):
+        meta = getattr(x, "_meta", None)
+        if isinstance(meta, cp.ndarray):
+            return meta.device
+    return None
+
+
+def _normalize_device(
+    device: tx.Union["CudaDevice", str, int, bool, None]
+) -> tx.Tuple[bool, "CudaDevice"]:
+    # returns (cuda->True|cpu->False, index)
+    if isinstance(device, str):
+        if device == "cpu":
+            return (False, None)
+        elif device == "cuda":
+            return (True, None)
+
+        device, index = device.split(":")
+        if device != "cuda":
+            raise ValueError(f"Invalid device: {device}")
+        return (True, int(index))
+
+    if device is None:
+        return (True, None)
+
+    if isinstance(device, bool):
+        return (device, None)
+
+    return (True, cp.cuda.Device(device))
+
+
+def _compatible_device(
+    array_device: tx.Union[ArrayLike, tx.Optional["CudaDevice"]],
+    target_device: tx.Optional["CudaDevice"]
+) -> bool:
+    if (
+        array_device is not None
+        and cp and not isinstance(array_device, cp.cuda.Device)
+    ):
+        array_device = get_device(array_device)
+    if target_device is not None:
+        to_gpu, target_device = _normalize_device(target_device)
+    else:
+        to_gpu, target_device = (None, None)
+    if array_device is None:
+        # array == cpu | target must be cpu
+        return to_gpu is not True
+    if target_device is None:
+        # target == any cuda, array = cuda
+        return True
+    return array_device == target_device

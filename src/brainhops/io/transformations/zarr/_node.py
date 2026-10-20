@@ -11,7 +11,7 @@ axes as they need.
 
 import typing_extensions as tx
 
-from brainhops.backends import get_array_backend
+from brainhops.backends import to_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.io.transformations.zarr._axes import _to_axis
 
@@ -80,4 +80,4 @@ def dimension_names(field_node: tx.Any) -> tx.Optional[tx.List[str]]:
 
 def read_array(field_node: tx.Any) -> tx.Any:
     """Read the field's array through the active array backend."""
-    return get_array_backend().asarray(field_node[...])
+    return to_backend(field_node[...])

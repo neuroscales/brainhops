@@ -23,9 +23,9 @@ from bagof.magic import replace
 # internals
 from brainhops import backends
 from brainhops._core.properties import smartproperty
-from brainhops.backends import _CURRENT, Setting
+from brainhops.backends import _CURRENT, BackendSetting
 
-_Default = tx.Union[Setting, tx.Any]
+_Default = tx.Union[BackendSetting, tx.Any]
 """The type of a backend argument, whose default is the current setting."""
 
 _T = tx.TypeVar("_T")
@@ -79,7 +79,7 @@ class _BackendsMixin:
 
         Returns
         -------
-        array or None
+        array or Noneq
             The data.
         """
         data = _stored_data(self)
@@ -115,13 +115,13 @@ class _BackendsMixin:
         """Return the data as a NumPy array, reading or computing them."""
         return self.to_backend("numpy")
 
-    def to_cupy(self) -> tx.Any:
+    def to_cupy(self, device: tx.Union[str, int, None] = None) -> tx.Any:
         """Return the data as a CuPy array on the GPU."""
-        return self.to_backend("cupy")
+        return self.to_backend("cupy", device=device)
 
-    def to_dask(self) -> tx.Any:
+    def to_dask(self, device: tx.Union[str, int, None] = None) -> tx.Any:
         """Return the data as a Dask array, without reading them."""
-        return self.to_backend("dask")
+        return self.to_backend("dask", device=device)
 
     def as_numpy(self, *, inplace: bool = False) -> tx.Self:
         """Return the object with its data as NumPy arrays.
@@ -141,11 +141,16 @@ class _BackendsMixin:
         """
         return self.as_backend("numpy", inplace=inplace)
 
-    def as_cupy(self, *, inplace: bool = False) -> tx.Self:
+    def as_cupy(
+        self, device: tx.Union[str, int, None] = None,
+        *, inplace: bool = False
+    ) -> tx.Self:
         """Return the object with its data as CuPy arrays on the GPU.
 
         Parameters
         ----------
+        device : str | int | None, optional
+            The GPU device, such as `"cuda:0"` or `0`. By default,
         inplace : bool, default=False
             Whether this object holds the converted data and is returned.
 
@@ -154,13 +159,18 @@ class _BackendsMixin:
         object
             An object of the same class.
         """
-        return self.as_backend("cupy", inplace=inplace)
+        return self.as_backend("cupy", device=device, inplace=inplace)
 
-    def as_dask(self, *, inplace: bool = False) -> tx.Self:
+    def as_dask(
+        self, device: tx.Union[str, int, None] = None,
+        *, inplace: bool = False
+    ) -> tx.Self:
         """Return the object with its data as Dask arrays.
 
         Parameters
         ----------
+        device : str | int | None, optional
+            The GPU device, such as `"cuda:0"` or `0`. By default,
         inplace : bool, default=False
             Whether this object holds the converted data and is returned.
 
@@ -169,16 +179,18 @@ class _BackendsMixin:
         object
             An object of the same class.
         """
-        return self.as_backend("dask", inplace=inplace)
+        return self.as_backend("dask", device=device, inplace=inplace)
 
 
 @contextmanager
-def computing_with(*objects: tx.Any) -> tx.Iterator[tx.Optional[str]]:
+def computing_with(
+    *objects: tx.Any
+) -> tx.Generator[tx.Optional[str], None, None]:
     """Run a computation under the setting of its result.
 
     A computation, such as the reslice of an image or the composition of
     two transformations, decides once in which backend its result lives,
-    with [`output_backend`][brainhops.backends.output_backend], and runs
+    with [`promote_backends`][brainhops.backends.promote_backends], and runs
     under that setting. The `data` of its inputs is then read directly in
     that backend, and the arrays that it creates, such as a grid of
     coordinates, are created there, so that nothing is moved from one
@@ -202,7 +214,7 @@ def computing_with(*objects: tx.Any) -> tx.Iterator[tx.Optional[str]]:
         if obj is not None and hasattr(obj, "_voxel_arrays")
         for array in obj._voxel_arrays()
     ]
-    setting = backends.output_backend(*arrays)
+    setting = backends.promote_backends(*arrays)
     with backends.backend(setting):
         yield setting
 
