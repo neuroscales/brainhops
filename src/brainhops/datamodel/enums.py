@@ -154,8 +154,18 @@ class InterpolationOrder(IntEnum):
 
 
 InterpolationName: tx.TypeAlias = tx.Literal[
-    "zeroth", "nearest", "first", "linear", "second", "quadratic",
-    "third", "cubic", "fourth", "fifth", "barycentric", "fourier"
+    "zeroth",
+    "nearest",
+    "first",
+    "linear",
+    "second",
+    "quadratic",
+    "third",
+    "cubic",
+    "fourth",
+    "fifth",
+    "barycentric",
+    "fourier",
 ]
 InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5]
 InterpolationLike: tx.TypeAlias = tx.Union[
@@ -275,18 +285,30 @@ class AnatomicalOrientationValue(StrEnum):
 
 
 AnatomicalOrientationName: tx.TypeAlias = tx.Literal[
-    "left-to-right", "right-to-left",
-    "proximal-to-distal", "distal-to-proximal",
-    "anterior-to-posterior", "posterior-to-anterior",
-    "inferior-to-superior", "superior-to-inferior",
-    "dorsal-to-palmar", "palmar-to-dorsal",
-    "dorsal-to-plantar", "plantar-to-dorsal",
-    "rostral-to-caudal", "caudal-to-rostral",
-    "cranial-to-caudal", "caudal-to-cranial",
-    "dorsal-to-ventral", "ventral-to-dorsal",
-    "superficial-to-deep", "deep-to-superficial",
-    "apical-to-basal", "basal-to-apical",
-    "apex-to-base", "base-to-apex"
+    "left-to-right",
+    "right-to-left",
+    "proximal-to-distal",
+    "distal-to-proximal",
+    "anterior-to-posterior",
+    "posterior-to-anterior",
+    "inferior-to-superior",
+    "superior-to-inferior",
+    "dorsal-to-palmar",
+    "palmar-to-dorsal",
+    "dorsal-to-plantar",
+    "plantar-to-dorsal",
+    "rostral-to-caudal",
+    "caudal-to-rostral",
+    "cranial-to-caudal",
+    "caudal-to-cranial",
+    "dorsal-to-ventral",
+    "ventral-to-dorsal",
+    "superficial-to-deep",
+    "deep-to-superficial",
+    "apical-to-basal",
+    "basal-to-apical",
+    "apex-to-base",
+    "base-to-apex",
 ]
 AnatomicalOrientationLike: tx.TypeAlias = tx.Union[
     AnatomicalOrientationValue, AnatomicalOrientationName
@@ -619,16 +641,50 @@ class IntentEnum(StrEnum):
 
 
 IntentName: tx.TypeAlias = tx.Literal[
-    "correlation", "t test", "f test", "z score", "chi2", "beta", "binomial",
-    "gamma", "poisson", "normal", "non central f test", "non central chi2",
-    "logistic", "laplace", "uniform", "non central t test", "weibull", "chi",
-    "inverse gaussian", "extreme value 1", "p value", "log p value",
-    "log10 p value", "estimate", "label", "neuroname", "general matrix",
-    "symmetric matrix", "displacement vector", "vector", "pointset",
-    "triangle", "quaternion", "dimensionless", "time series", "node index",
-    "rgb vector", "rgba vector", "shape", "fnirt disp field",
-    "fnirt cubic spline coef", "fnirt dct coef", "fnirt quad spline coef",
-    "topup field"
+    "correlation",
+    "t test",
+    "f test",
+    "z score",
+    "chi2",
+    "beta",
+    "binomial",
+    "gamma",
+    "poisson",
+    "normal",
+    "non central f test",
+    "non central chi2",
+    "logistic",
+    "laplace",
+    "uniform",
+    "non central t test",
+    "weibull",
+    "chi",
+    "inverse gaussian",
+    "extreme value 1",
+    "p value",
+    "log p value",
+    "log10 p value",
+    "estimate",
+    "label",
+    "neuroname",
+    "general matrix",
+    "symmetric matrix",
+    "displacement vector",
+    "vector",
+    "pointset",
+    "triangle",
+    "quaternion",
+    "dimensionless",
+    "time series",
+    "node index",
+    "rgb vector",
+    "rgba vector",
+    "shape",
+    "fnirt disp field",
+    "fnirt cubic spline coef",
+    "fnirt dct coef",
+    "fnirt quad spline coef",
+    "topup field",
 ]
 IntentLike: tx.TypeAlias = tx.Union[IntentEnum, IntentName]
 
@@ -677,8 +733,15 @@ class Manufacturer(StrEnum):
 
 
 ManufacturerName: tx.TypeAlias = tx.Literal[
-    "Siemens", "GE", "Philips", "Canon", "Toshiba", "Hitachi", "Bruker",
-    "UIH", "MRSolutions"
+    "Siemens",
+    "GE",
+    "Philips",
+    "Canon",
+    "Toshiba",
+    "Hitachi",
+    "Bruker",
+    "UIH",
+    "MRSolutions",
 ]
 ManufacturerLike: tx.TypeAlias = tx.Union[Manufacturer, ManufacturerName]
 
@@ -762,8 +825,14 @@ class ContrastMethod(StrEnum):
 
 
 ContrastMethodName: tx.TypeAlias = tx.Literal[
-    "Brightfield", "Phase", "DIC", "HoffmanModulation",
-    "ObliqueIllumination", "PolarizedLight", "Darkfield",
-    "Fluorescence", "Other"
+    "Brightfield",
+    "Phase",
+    "DIC",
+    "HoffmanModulation",
+    "ObliqueIllumination",
+    "PolarizedLight",
+    "Darkfield",
+    "Fluorescence",
+    "Other",
 ]
 ContrastMethodLike: tx.TypeAlias = tx.Union[ContrastMethod, ContrastMethodName]

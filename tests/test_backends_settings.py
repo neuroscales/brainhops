@@ -6,12 +6,12 @@ import pytest
 from brainhops import backends
 from brainhops._core.proxy import ArrayProxy
 from brainhops.backends import (
+    _is_lazy,
     backend,
     get_array_backend,
     get_auto_threshold,
     get_backend,
     get_ndimage_backend,
-    _is_lazy,
     resolve_backend,
     set_backend,
     to_backend,

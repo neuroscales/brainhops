@@ -12,6 +12,7 @@ from brainhops._core.dependencies import da, np
 from brainhops._core.typing import Clip
 from brainhops.backends import (
     _creation_options,
+    backend,
     copy_array,
     get_array_backend,
     get_ndimage_backend,
@@ -375,7 +376,10 @@ def spline_matrix(
     bound0 = bound if isinstance(bound, str) else 0.0
     basis = xp.eye(n_in)
     coords = xp.reshape(coords_1d, (-1, 1))
-    return pull(basis, coords, degree, bound0, coeff).T
+    # Weight matrices follow their coordinates, independently of the
+    # backend selected for the image that will use these weights.
+    with backend(xp):
+        return pull(basis, coords, degree, bound0, coeff).T
 
 
 def pull_field(

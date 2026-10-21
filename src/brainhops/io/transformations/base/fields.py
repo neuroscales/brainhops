@@ -73,7 +73,12 @@ class StoredFieldMixin:
     The mixin must come before the sequence among the bases of the class.
     """
 
-    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
+    def to_backend(
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+    ) -> tx.Any:
         """Return the stored field as a bare array of a backend.
 
         Parameters
@@ -81,12 +86,15 @@ class StoredFieldMixin:
         backend : str or module, optional
             The setting. By default, the current setting is used.
 
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
+
         Returns
         -------
         array or None
             The stored field.
         """
-        return _BackendsMixin.to_backend(self, backend)
+        return _BackendsMixin.to_backend(self, backend, device=device)
 
     def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
         # The stored field decides the backend.
@@ -95,7 +103,11 @@ class StoredFieldMixin:
             yield dataobj
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the format with its stored field converted.
 
@@ -103,6 +115,8 @@ class StoredFieldMixin:
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this object holds the converted field and is
             returned, instead of a new object.
@@ -112,7 +126,7 @@ class StoredFieldMixin:
         object
             An object of the same class.
         """
-        return _as_backend_data(self, backend, inplace)
+        return _as_backend_data(self, backend, inplace, device=device)
 
 
 # ----------------------------------------------------------------------

@@ -199,3 +199,37 @@ def test_conversions_read_what_the_object_holds() -> None:
         assert image.shape == VOLUME.shape
     assert isinstance(lazy.data, da.Array)
     assert values is VOLUME
+
+
+def test_nested_conversions_forward_the_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from brainhops import backends
+
+    original = backends.to_backend
+    devices = []
+
+    def tracked(data, target, *, device=None):  # noqa: ANN001, ANN202
+        devices.append(device)
+        return original(data, target, device=device)
+
+    monkeypatch.setattr(backends, "to_backend", tracked)
+    field = DisplacementField(FIELD)
+    wrapped = SubspaceTransformation(field, [0, 1, 2], [0, 1, 2])
+    sequence = Sequence([wrapped])
+    lazy = sequence.as_dask(device="cpu")
+    assert isinstance(lazy[0].transformation.dataobj, da.Array)
+    assert devices and all(device == "cpu" for device in devices)
+
+
+def test_explicit_cpu_conversion_keeps_dask_lazy() -> None:
+    from dask.callbacks import Callback
+
+    from brainhops import backends
+
+    lazy = da.from_array(VOLUME, chunks=2)
+    executed = []
+    with Callback(posttask=lambda *args: executed.append(True)):
+        assert backends.to_device(lazy, "cpu") is lazy
+        assert SingleScaleImage(lazy).to_dask(device="cpu") is lazy
+    assert not executed

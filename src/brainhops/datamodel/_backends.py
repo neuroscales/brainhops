@@ -64,7 +64,12 @@ class _BackendsMixin:
         """
         return iter(())
 
-    def to_backend(self, backend: _Default = _CURRENT) -> tx.Any:
+    def to_backend(
+        self,
+        backend: _Default = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+    ) -> tx.Any:
         """Return the data as a bare array of the backend of a setting.
 
         The object does not change. Small parameters, such as the matrix
@@ -77,18 +82,25 @@ class _BackendsMixin:
         backend : str or module, optional
             The setting. By default, the current setting is used.
 
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
+
         Returns
         -------
-        array or Noneq
+        array or None
             The data.
         """
         data = _stored_data(self)
         if data is None:
             return None
-        return backends.to_backend(data, backend)
+        return backends.to_backend(data, backend, device=device)
 
     def as_backend(
-        self, backend: _Default = _CURRENT, *, inplace: bool = False
+        self,
+        backend: _Default = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the object with its voxels converted as a setting says.
 
@@ -100,6 +112,8 @@ class _BackendsMixin:
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this object holds the converted data and is returned,
             instead of a new object.
@@ -142,15 +156,15 @@ class _BackendsMixin:
         return self.as_backend("numpy", inplace=inplace)
 
     def as_cupy(
-        self, device: tx.Union[str, int, None] = None,
-        *, inplace: bool = False
+        self, device: tx.Union[str, int, None] = None, *, inplace: bool = False
     ) -> tx.Self:
         """Return the object with its data as CuPy arrays on the GPU.
 
         Parameters
         ----------
         device : str | int | None, optional
-            The GPU device, such as `"cuda:0"` or `0`. By default,
+            The device, such as `"cuda:0"` or `0`. By default, the
+            backend supplies its device.
         inplace : bool, default=False
             Whether this object holds the converted data and is returned.
 
@@ -162,15 +176,15 @@ class _BackendsMixin:
         return self.as_backend("cupy", device=device, inplace=inplace)
 
     def as_dask(
-        self, device: tx.Union[str, int, None] = None,
-        *, inplace: bool = False
+        self, device: tx.Union[str, int, None] = None, *, inplace: bool = False
     ) -> tx.Self:
         """Return the object with its data as Dask arrays.
 
         Parameters
         ----------
         device : str | int | None, optional
-            The GPU device, such as `"cuda:0"` or `0`. By default,
+            The device, such as `"cuda:0"` or `0`. By default, the
+            backend supplies its device.
         inplace : bool, default=False
             Whether this object holds the converted data and is returned.
 
@@ -184,7 +198,7 @@ class _BackendsMixin:
 
 @contextmanager
 def computing_with(
-    *objects: tx.Any
+    *objects: tx.Any,
 ) -> tx.Generator[tx.Optional[str], None, None]:
     """Run a computation under the setting of its result.
 
@@ -239,7 +253,10 @@ def voxel_arrays_of(objects: tx.Iterable[tx.Any]) -> tx.Iterator[tx.Any]:
 
 
 def as_backend_all(
-    objects: tx.Optional[tx.Sequence[_BackendsMixin]], backend: _Default
+    objects: tx.Optional[tx.Sequence[_BackendsMixin]],
+    backend: _Default,
+    *,
+    device: tx.Union[str, int, None] = None,
 ) -> tx.Any:
     """Convert every object of a list or a tuple with its `as_backend`.
 
@@ -251,6 +268,8 @@ def as_backend_all(
         The objects, such as the members of a sequence.
     backend : str or module
         The setting.
+    device : str or int, optional
+        The device for converted arrays. The backend supplies its default.
 
     Returns
     -------
@@ -259,13 +278,19 @@ def as_backend_all(
     """
     if not objects:
         return objects
-    converted = [obj.as_backend(backend) for obj in objects]
+    converted = [obj.as_backend(backend, device=device) for obj in objects]
     if all(new is old for new, old in zip(converted, objects)):
         return objects
     return type(objects)(converted)
 
 
-def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
+def _as_backend_data(
+    obj: _T,
+    backend: _Default,
+    inplace: bool,
+    *,
+    device: tx.Union[str, int, None] = None,
+) -> _T:
     """Return an object with its `data` converted, for the overrides.
 
     The object is returned as it is when the conversion keeps the array,
@@ -279,6 +304,8 @@ def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
         The setting.
     inplace : bool
         Whether the object itself holds the converted array.
+    device : str or int, optional
+        The device for converted arrays. The backend supplies its default.
 
     Returns
     -------
@@ -288,7 +315,7 @@ def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
     data = _stored_data(obj)
     if data is None:
         return obj
-    converted = backends.to_backend(data, backend)
+    converted = backends.to_backend(data, backend, device=device)
     if converted is data:
         return obj
     return _with_fields(obj, inplace, data=converted)

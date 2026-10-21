@@ -407,7 +407,11 @@ class TransformationField(ConcreteTransformation):
             yield dataobj
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the field with its stored array converted.
 
@@ -418,6 +422,8 @@ class TransformationField(ConcreteTransformation):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this field holds the converted array and is returned,
             instead of a new field.
@@ -427,7 +433,7 @@ class TransformationField(ConcreteTransformation):
         TransformationField
             A field of the same class.
         """
-        return _as_backend_data(self, backend, inplace)
+        return _as_backend_data(self, backend, inplace, device=device)
 
 
 class DisplacementField(TransformationField, polymorphic=True):
@@ -713,7 +719,11 @@ class CartesianField(CoordinatesField):
         return iter(())
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the grid as it is.
 
@@ -724,6 +734,8 @@ class CartesianField(CoordinatesField):
         ----------
         backend : str or module, optional
             The setting, which is not used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether the grid itself is returned, which it always is.
 

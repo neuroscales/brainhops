@@ -325,7 +325,11 @@ class SingleScaleImage(Image):
             yield dataobj
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the image with its data converted as a setting says.
 
@@ -338,6 +342,8 @@ class SingleScaleImage(Image):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this image holds the converted data and is returned,
             instead of a new image.
@@ -347,9 +353,9 @@ class SingleScaleImage(Image):
         SingleScaleImage
             An image of the same class.
         """
-        obj = _as_backend_data(self, backend, inplace)
+        obj = _as_backend_data(self, backend, inplace, device=device)
         transformations = obj.transformations
-        converted = as_backend_all(transformations, backend)
+        converted = as_backend_all(transformations, backend, device=device)
         if converted is transformations:
             return obj
         return _with_fields(obj, inplace, transformations=converted)
@@ -607,7 +613,11 @@ class MultiScaleImage(Image):
         return voxel_arrays_of(self.images)
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the pyramid with the data of every level converted.
 
@@ -615,6 +625,8 @@ class MultiScaleImage(Image):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this pyramid holds the converted levels and is
             returned, instead of a new pyramid.
@@ -627,7 +639,7 @@ class MultiScaleImage(Image):
         changes = {}
         for name in ("images", "transformations"):
             value = getattr(self, name)
-            converted = as_backend_all(value, backend)
+            converted = as_backend_all(value, backend, device=device)
             if converted is not value:
                 changes[name] = converted
         return _with_fields(self, inplace, **changes)

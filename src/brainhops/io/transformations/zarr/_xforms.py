@@ -272,9 +272,7 @@ class OmeZarrField(
             )
             # Zarr writes arrays from memory, so an array on a GPU is copied
             # to memory first, whatever the backend setting.
-            node.create_array(
-                dataset_path, data=to_numpy(array), **kwargs
-            )
+            node.create_array(dataset_path, data=to_numpy(array), **kwargs)
         node.ome = ome
         return node
 

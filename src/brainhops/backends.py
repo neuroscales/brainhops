@@ -55,7 +55,7 @@ BackendSetting: tx.TypeAlias = tx.Literal[
     "auto", "auto+cupy", "numpy", "cupy", "dask", "dask+cupy"
 ]
 """
-A backend settings supported by `brainhops`:
+A backend setting supported by `brainhops`:
 
 - `"numpy"` performs all computations in memory with NumPy, on the CPU.
 - `"cupy"` performs all computations in memory, with CuPy, on the GPU.
@@ -67,7 +67,7 @@ A backend settings supported by `brainhops`:
 
 BackendLike: tx.TypeAlias = tx.Optional[tx.Union[BackendSetting, ModuleType]]
 """
-A value that defines a backend: the name of a setting, or a ackend module.
+A value that defines a backend: the name of a setting, or a backend module.
 """
 
 
@@ -313,8 +313,7 @@ def _require(setting: tx.Optional[BackendSetting]) -> None:
 
 
 def resolve_backend(
-    x: ArrayProtocol,
-    backend: tx.Union[BackendLike, _Current] = _CURRENT
+    x: ArrayProtocol, backend: tx.Union[BackendLike, _Current] = _CURRENT
 ) -> BackendSetting:
     """Return the backend to which a setting converts an array.
 
@@ -366,8 +365,7 @@ def to_numpy(x: ArrayLike) -> "nparray":
 
 
 def to_cupy(
-    x: ArrayProtocol,
-    device: tx.Union[int, "CudaDevice", None] = None
+    x: ArrayProtocol, device: tx.Union[int, "CudaDevice", None] = None
 ) -> "cparray":
     """Return the values of an array as a CuPy array.
 
@@ -383,7 +381,8 @@ def to_cupy(
     cupy.ndarray
         The values of the array, on the GPU.
     """
-    if da and isinstance(x, da.Array):
+    _require("cupy")
+    if da is not None and isinstance(x, da.Array):
         x = x.compute()
     if not isinstance(x, cp.ndarray):
         x = np.asarray(x)
@@ -397,11 +396,10 @@ def to_cupy(
 
 
 def to_dask(
-    x: ArrayProtocol,
-    device: tx.Union[str, int, "CudaDevice", None] = "cpu"
+    x: ArrayProtocol, device: tx.Union[str, int, "CudaDevice", None] = "cpu"
 ) -> "daarray":
     """
-    Return an array as a Dask array, of CuPy chunks when `gpu` is true.
+    Return an array as a Dask array on the requested device.
 
     Parameters
     ----------
@@ -411,6 +409,7 @@ def to_dask(
         The device to use for the chunks.
     """
     to_gpu, device = _normalize_device(device)
+    _require("dask+cupy" if to_gpu else "dask")
 
     if da and isinstance(x, da.Array):
         lazy = x
@@ -440,7 +439,10 @@ def to_dask(
         )
 
     current_device = get_device(lazy)
-    if _compatible_device(current_device, device):
+    target_device = (
+        device if device is not None else ("cuda" if to_gpu else "cpu")
+    )
+    if _compatible_device(current_device, target_device):
         return lazy
 
     if to_gpu:
@@ -449,12 +451,12 @@ def to_dask(
             meta = cp.empty((0,) * lazy.ndim, lazy.dtype)
         return lazy.map_blocks(partial(to_cupy, device=device), meta=meta)
 
-    return lazy.map_blocks(cp.asnumpy, meta=meta)
+    meta = np.empty((0,) * lazy.ndim, lazy.dtype)
+    return lazy.map_blocks(to_numpy, meta=meta)
 
 
 def to_device(
-    x: ArrayProtocol,
-    device: tx.Union[str, int, None] = "cpu"
+    x: ArrayProtocol, device: tx.Union[str, int, None] = "cpu"
 ) -> ArrayProtocol:
     """Copy an array to a GPU or to memory, keeping its package kind.
 
@@ -469,13 +471,16 @@ def to_device(
         return x
     to_gpu, device = _normalize_device(device)
     if da is not None and isinstance(x, da.Array):
-        return to_dask(x, device=device)
+        target = device if to_gpu else "cpu"
+        return to_dask(x, device=target)
     return to_cupy(x, device=device) if to_gpu else to_numpy(x)
 
 
 def to_backend(
     x: ArrayProtocol,
-    backend: tx.Union[BackendLike, _Current] = _CURRENT
+    backend: tx.Union[BackendLike, _Current] = _CURRENT,
+    *,
+    device: tx.Union[str, int, None] = None,
 ) -> ArrayProtocol:
     """Convert an array, or a lazy array of a file, as a setting says.
 
@@ -489,6 +494,9 @@ def to_backend(
         A NumPy, CuPy or Dask array, or a lazy array of a file.
     backend : str or module, optional
         The setting. By default, the current setting is used.
+
+    device : str or int, optional
+        The device for converted arrays. The backend supplies its default.
 
     Returns
     -------
@@ -505,8 +513,10 @@ def to_backend(
     if target == "numpy":
         return to_numpy(x)
     if target == "cupy":
-        return to_cupy(x)
-    return to_dask(x, device=target == "dask+cupy")
+        return to_cupy(x, device=device)
+    if device is None:
+        device = "cuda" if target == "dask+cupy" else "cpu"
+    return to_dask(x, device=device)
 
 
 def promote_backends(*arrays_or_backends: tx.Any) -> tx.Optional[str]:
@@ -571,12 +581,12 @@ def to_promoted_backend(*arrays: tx.Any) -> tx.Tuple[tx.Any, ...]:
 
     A computation that combines several arrays, such as the voxels of an
     image, a grid of coordinates and the matrix of an affine
-    transformation, computes with the package that [`best_backend`][]
-    chooses: Dask if one of the arrays is a Dask array, CuPy if one of
-    them is a CuPy array, and NumPy otherwise. This function moves the
-    other arrays to that package, so that the operations of the
-    computation do not mix packages, and it does not change the setting
-    or the choice of the package.
+    transformation, computes with the package that
+    [`promote_backends`][] chooses: Dask if one of the arrays is a Dask
+    array, CuPy if one of them is a CuPy array, and NumPy otherwise.
+    This function moves the other arrays to that package, so that the
+    computation does not mix packages. The setting and the choice of
+    package stay unchanged.
 
     When one of the arrays is on a GPU, the others are copied to it:
     a NumPy array becomes a CuPy array, and a Dask array of NumPy chunks
@@ -624,7 +634,7 @@ def to_backend_of(x: ArrayProtocol, reference: ArrayProtocol) -> ArrayProtocol:
     """
     if not _is_loaded(x) or not _is_loaded(reference):
         return x
-    return to_device(x, device=get_device(reference))
+    return to_device(x, device=get_device(reference) or "cpu")
 
 
 def _is_loaded(x: ArrayProtocol) -> bool:
@@ -643,7 +653,7 @@ def _nbytes(x: ArrayProtocol) -> int:
 
 
 def _backend_or_current(
-    setting: tx.Union[BackendLike, _Current]
+    setting: tx.Union[BackendLike, _Current],
 ) -> tx.Optional[str]:
     """Return the name of a setting, or the current one by default."""
     if isinstance(setting, _Current):
@@ -653,7 +663,7 @@ def _backend_or_current(
 
 def _is_lazy(
     nbytes: tx.Union[int, ArrayProtocol],
-    backend: tx.Union[BackendLike, _Current] = _CURRENT
+    backend: tx.Union[BackendLike, _Current] = _CURRENT,
 ) -> bool:
     """Tell whether a setting reads a lazy array of a given size lazily.
 
@@ -903,46 +913,34 @@ def get_device(x: ArrayLike) -> tx.Optional["CudaDevice"]:
 
 
 def _normalize_device(
-    device: tx.Union["CudaDevice", str, int, bool, None]
-) -> tx.Tuple[bool, "CudaDevice"]:
-    # returns (cuda->True|cpu->False, index)
+    device: tx.Union["CudaDevice", str, int, bool, None],
+) -> tx.Tuple[bool, tx.Optional["CudaDevice"]]:
+    """Return whether a device uses CUDA and its explicit CUDA device."""
+    if device == "cpu" or device is False:
+        return False, None
+    if device is None or device is True or device == "cuda":
+        return True, None
     if isinstance(device, str):
-        if device == "cpu":
-            return (False, None)
-        elif device == "cuda":
-            return (True, None)
-
-        device, index = device.split(":")
-        if device != "cuda":
-            raise ValueError(f"Invalid device: {device}")
-        return (True, int(index))
-
-    if device is None:
-        return (True, None)
-
-    if isinstance(device, bool):
-        return (device, None)
-
-    return (True, cp.cuda.Device(device))
+        prefix, separator, index = device.partition(":")
+        if prefix != "cuda" or not separator or not index.isdigit():
+            raise ValueError(f"Invalid device: {device!r}")
+        device = int(index)
+    _require("cupy")
+    return True, cp.cuda.Device(device)
 
 
 def _compatible_device(
     array_device: tx.Union[ArrayLike, tx.Optional["CudaDevice"]],
-    target_device: tx.Optional["CudaDevice"]
+    target_device: tx.Union["CudaDevice", str, int, None],
 ) -> bool:
-    if (
-        array_device is not None
-        and cp and not isinstance(array_device, cp.cuda.Device)
+    """Tell whether an array or device is already on the target device."""
+    if array_device is not None and not (
+        cp is not None and isinstance(array_device, cp.cuda.Device)
     ):
         array_device = get_device(array_device)
-    if target_device is not None:
-        to_gpu, target_device = _normalize_device(target_device)
-    else:
-        to_gpu, target_device = (None, None)
+    to_gpu, target_device = _normalize_device(target_device)
     if array_device is None:
-        # array == cpu | target must be cpu
-        return to_gpu is not True
-    if target_device is None:
-        # target == any cuda, array = cuda
-        return True
-    return array_device == target_device
+        return not to_gpu
+    if not to_gpu:
+        return False
+    return target_device is None or array_device == target_device

@@ -171,9 +171,7 @@ def _take(
 
 
 def _gather(
-    input: ArrayProtocol,
-    indices: tx.Sequence[np.ndarray],
-    cval: float
+    input: ArrayProtocol, indices: tx.Sequence[np.ndarray], cval: float
 ) -> tx.Optional[ArrayProtocol]:
     """Return `input[np.ix_(*indices)]` as a concrete array.
 

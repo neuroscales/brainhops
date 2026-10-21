@@ -412,7 +412,12 @@ class Sequence(SequenceMixin, Transformation):
 
     # --- conversion to another backend --------------------------------
 
-    def to_backend(self, backend: tx.Any = _CURRENT) -> tx.Any:
+    def to_backend(
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+    ) -> tx.Any:
         """Refuse to return data, because a sequence holds none.
 
         A sequence holds transformations rather than data. Its members
@@ -439,7 +444,11 @@ class Sequence(SequenceMixin, Transformation):
         return voxel_arrays_of(self.transformations)
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the sequence with its members converted.
 
@@ -451,6 +460,8 @@ class Sequence(SequenceMixin, Transformation):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this transformation holds the converted members and
             is returned, instead of a new transformation.
@@ -461,7 +472,7 @@ class Sequence(SequenceMixin, Transformation):
             A transformation of the same class.
         """
         members = self.transformations
-        converted = as_backend_all(members, backend)
+        converted = as_backend_all(members, backend, device=device)
         if converted is members:
             return self
         return _with_fields(self, inplace, transformations=converted)

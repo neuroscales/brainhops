@@ -153,7 +153,11 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return voxel_arrays_of([self.transformation])
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the subspace with its inner transformation converted.
 
@@ -164,6 +168,8 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this subspace holds the converted transformation and
             is returned, instead of a new subspace.
@@ -176,7 +182,7 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         inner = self.transformation
         if inner is None:
             return self
-        converted = inner.as_backend(backend)
+        converted = inner.as_backend(backend, device=device)
         if converted is inner:
             return self
         return _with_fields(self, inplace, transformation=converted)
@@ -339,7 +345,11 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return voxel_arrays_of([self.forward, self.backward])
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the bijection with both of its sides converted.
 
@@ -350,6 +360,8 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this transformation holds the converted sides and
             is returned, instead of a new transformation.
@@ -364,7 +376,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
             side = getattr(self, name)
             if side is None:
                 continue
-            converted = side.as_backend(backend)
+            converted = side.as_backend(backend, device=device)
             if converted is not side:
                 changes[name] = converted
         return _with_fields(self, inplace, **changes)

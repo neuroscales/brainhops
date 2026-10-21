@@ -229,7 +229,11 @@ class DerivedTransformation(Transformation):
         return voxel_arrays_of([self.forward])
 
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Any = _CURRENT,
+        *,
+        device: tx.Union[str, int, None] = None,
+        inplace: bool = False,
     ) -> tx.Self:
         """Return the operation with its forward converted.
 
@@ -241,6 +245,8 @@ class DerivedTransformation(Transformation):
         ----------
         backend : str or module, optional
             The setting. By default, the current setting is used.
+        device : str or int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this transformation holds the converted forward and
             is returned, instead of a new transformation.
@@ -253,7 +259,7 @@ class DerivedTransformation(Transformation):
         forward = self.forward
         if forward is None:
             return self
-        converted = forward.as_backend(backend)
+        converted = forward.as_backend(backend, device=device)
         if converted is forward:
             return self
         return _with_fields(self, inplace, forward=converted)

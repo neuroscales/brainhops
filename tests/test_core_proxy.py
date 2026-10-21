@@ -284,6 +284,6 @@ def test_gpu_conversions_need_cupy() -> None:
     with pytest.raises(ImportError):
         proxy.to_cupy()
     with pytest.raises(ImportError):
-        proxy.to_dask(cupy=True)
+        proxy.to_dask(device="cuda")
     with pytest.raises(ImportError):
         proxy.to_backend("dask+cupy")

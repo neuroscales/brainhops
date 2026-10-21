@@ -530,14 +530,14 @@ class ArrayProxy(abc.ABC):
         The blocks are the `chunks` of the proxy when the storage
         prefers some, and the default blocks of Dask otherwise. Dask
         receives the type of the values through its `meta` argument, so
-        it does not read the proxy to learn it. With `cupy=True`, each
+        it does not read the proxy to learn it. With a CUDA device, each
         block is moved to the GPU once it is read, which gives the
         setting `"dask+cupy"`.
 
         Parameters
         ----------
-        cupy : bool, default=False
-            Whether the blocks are CuPy arrays.
+        device : str or int, default="cpu"
+            The device for the chunks.
         **kwargs : dict
             Options passed to `dask.array.from_array`, which take
             precedence over the ones that this method sets.
@@ -550,7 +550,7 @@ class ArrayProxy(abc.ABC):
         Raises
         ------
         ImportError
-            If Dask is not installed, or CuPy when `cupy` is true.
+            If Dask is not installed, or CuPy when a CUDA device is requested.
         """
         da = backends.da
         if da is None:
