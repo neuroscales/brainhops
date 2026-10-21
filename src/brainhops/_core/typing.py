@@ -23,6 +23,8 @@ __all__ = [
     "dkt",
     "is_instance_or_subclass",
 ]
+import sys
+
 import typing_extensions as tx
 from bagof.core.magic import safe_get_origin
 from bagof.hints import array as art
@@ -32,6 +34,11 @@ from bagof.hints import numpy as npt
 from bagof.hints.array import ArrayLike, ArrayProtocol
 from bagof.hints.numpy import dtype, ndarray
 from bagof.magic import Frozen, NoInit, NoRepr
+
+if sys.version_info >= (3, 10):
+    from types import EllipsisType
+else:
+    EllipsisType = type(Ellipsis)
 
 T = tx.TypeVar("T")
 
@@ -65,7 +72,6 @@ npvector = ndarray[tx.Tuple[int], dtype[T]]
 npmatrix = ndarray[tx.Tuple[int, int], dtype[T]]
 """Two-dimensional array."""
 
-
 Clip = tx.Optional[
     tx.Union[
         float,
@@ -74,3 +80,19 @@ Clip = tx.Optional[
     ]
 ]
 """Voxel margin: symmetric scalar, shared pair, per-axis pairs, or None."""
+
+CartesianIndexElement: tx.TypeAlias = tx.Union[
+    tx.SupportsIndex, slice, None, EllipsisType
+]
+"""
+Element of a Cartesian index, which can be an integer, a slice, or `...`.
+"""
+
+CartesianIndex: tx.TypeAlias = tx.Union[
+    CartesianIndexElement, tx.Tuple[CartesianIndexElement, ...]
+]
+"""
+Cartesian index, which can be a single index or a tuple of indices.
+"""
+
+Shape: tx.TypeAlias = tx.Tuple[int, ...]

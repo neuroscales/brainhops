@@ -3,7 +3,6 @@
 __all__ = [
     "LPSCoordinatesField",
     "RASCoordinatesField",
-    "StoredFieldMixin",
     "homogeneous_matrix",
     "ras_displacement_chain",
     "split_ras_displacement_chain",
@@ -16,10 +15,9 @@ from bagof.magic import KwOnly
 
 from brainhops._core import affines as _affines
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import _CURRENT, get_array_backend
+from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _as_backend_data, _BackendsMixin
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.base.parsers import WriterError
 
@@ -59,74 +57,6 @@ class LPSCoordinatesField(_xforms.CoordinatesField):
         super().__post_init__(arguments)
         _check_endpoint(self, "input", _VOXEL)
         _check_endpoint(self, "output", _LPS)
-
-
-class StoredFieldMixin:
-    """The backend conversions of a file format that stores a field.
-
-    A file format of a field, such as a displacement field read from a
-    NIfTI file, is a sequence whose members, the field and the affine
-    transformations around it, are derived from the array that the format
-    stores in `data`. A class that derives from this mixin and from a
-    sequence converts that array, rather than the members of the
-    sequence, and the members are derived again from the converted array.
-    The mixin must come before the sequence among the bases of the class.
-    """
-
-    def to_backend(
-        self,
-        backend: tx.Any = _CURRENT,
-        *,
-        device: tx.Union[str, int, None] = None,
-    ) -> tx.Any:
-        """Return the stored field as a bare array of a backend.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-
-        device : str or int, optional
-            The device for converted arrays. The backend supplies its default.
-
-        Returns
-        -------
-        array or None
-            The stored field.
-        """
-        return _BackendsMixin.to_backend(self, backend, device=device)
-
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # The stored field decides the backend.
-        dataobj = self.dataobj
-        if dataobj is not None:
-            yield dataobj
-
-    def as_backend(
-        self,
-        backend: tx.Any = _CURRENT,
-        *,
-        device: tx.Union[str, int, None] = None,
-        inplace: bool = False,
-    ) -> tx.Self:
-        """Return the format with its stored field converted.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-        device : str or int, optional
-            The device for converted arrays. The backend supplies its default.
-        inplace : bool, default=False
-            Whether this object holds the converted field and is
-            returned, instead of a new object.
-
-        Returns
-        -------
-        object
-            An object of the same class.
-        """
-        return _as_backend_data(self, backend, inplace, device=device)
 
 
 # ----------------------------------------------------------------------
@@ -296,16 +226,16 @@ def split_ras_displacement_chain(
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
     field = displacement.data
-    backend = get_array_backend(field)
-    field = backend.asarray(field)
+    xp = get_array_backend(field)
+    field = xp.asarray(field)
     if field.ndim != ndim + 1 or field.shape[-1] != ndim:
         raise WriterError(
             f"{what} holds one {ndim}-vector per voxel of a {ndim}-D "
             f"grid, not an array of shape {tuple(field.shape)}."
         )
     # The matrix is cast by NumPy, as in `ras_displacement_chain`.
-    rotate = backend.asarray(vox2ras[:ndim, :ndim].astype(field.dtype))
-    vectors = backend.matmul(rotate, field[..., None])[..., 0]
+    rotate = xp.asarray(vox2ras[:ndim, :ndim].astype(field.dtype))
+    vectors = xp.matmul(rotate, field[..., None])[..., 0]
     return vox2ras, vectors
 
 

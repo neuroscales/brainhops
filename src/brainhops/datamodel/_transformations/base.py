@@ -5,7 +5,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
-from brainhops.datamodel.base import DataModelBase, IdentityComparison
+from brainhops.datamodel.base import DataModelBase, _ComparesByIdMixin
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import ConversionError, LossyConversionError
@@ -26,7 +26,7 @@ if tx.TYPE_CHECKING:
 @nocycles.register_transformation
 class Transformation(
     _BackendsMixin,
-    IdentityComparison,
+    _ComparesByIdMixin,
     DataModelBase,
     reverse=True,
     eq=False,

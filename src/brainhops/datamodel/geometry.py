@@ -3,11 +3,12 @@
 __all__ = ["Geometry"]
 
 import numbers
-import sys
 
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, NotKwOnly
+
+from brainhops._core.typing import CartesianIndex, Shape
 
 from ._sugar import get_axes
 from .axes import Axis
@@ -27,15 +28,6 @@ from .transformations import (
     Transformation,
 )
 
-if sys.version_info >= (3, 10):
-    from types import EllipsisType
-else:
-    EllipsisType = type(Ellipsis)
-
-# An element of the index of an array: an integer, a slice, `None` (which
-# inserts an axis) or an ellipsis.
-_IndexElement = tx.Union[tx.SupportsIndex, slice, None, EllipsisType]
-
 
 def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
     return (CartesianField(), Identity())
@@ -54,7 +46,7 @@ class _GeometryFields(DataModelBase):
     ]
     """A cartesian field and a voxel-to-world transformation."""
 
-    shape: NoRepr[tx.Optional[tx.Tuple[int, ...]]] = None
+    shape: NoRepr[tx.Optional[Shape]] = None
     """The shape of the image data."""
 
     grid: tx.Optional[CartesianField] = None
@@ -94,15 +86,15 @@ class Geometry(_GeometryFields, ImmutableSequence):
             self.transformations = (value, self.transformation)
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> Shape:
         """Shape of the image data, which is the shape of the grid."""
         return self.grid.shape
 
     @shape.setter
-    def shape(self, value: tx.Tuple[int, ...]) -> None:
+    def shape(self, value: tx.Optional[tx.Iterable[int]]) -> None:
         if value is not None:
             self.grid = CartesianField(
-                shape=value,
+                shape=tuple(value),
                 input=self.grid.input,
                 output=self.grid.output,
             )
@@ -120,7 +112,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
             output=other.output,
         )
 
-    def __getitem__(self, index: tx.Tuple[_IndexElement, ...]) -> tx.Self:
+    def __getitem__(self, index: CartesianIndex) -> tx.Self:
         """Return the geometry of a sub-image.
 
         The index is the one that would be applied to the image data: a
@@ -191,10 +183,10 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
 
 def _index2transform(
-    index: tx.Tuple[_IndexElement, ...],
-    shape: tx.Tuple[int, ...],
+    index: CartesianIndex,
+    shape: Shape,
     system: tx.Optional[CoordinateSystem] = None,
-) -> tx.Tuple[Affine, tx.Tuple[int, ...]]:
+) -> tx.Tuple[Affine, Shape]:
     """Convert an array index into an affine from sub-array to array.
 
     Parameters
@@ -226,6 +218,8 @@ def _index2transform(
     # element raises an error whether or not the axes of `system` are
     # known. Integers are converted to built-in integers, which the code
     # below expects.
+    if not isinstance(index, tuple):
+        index = (index,)
     checked_index = []
     for idx in index:
         if isinstance(idx, numbers.Integral) and not isinstance(idx, bool):

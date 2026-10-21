@@ -6,17 +6,42 @@ anatomical orientations and the known terms of metadata fields.
 
 __all__ = [
     "BoundaryCondition",
+    "BoundaryName",
+    "BoundaryLike",
     "InterpolationOrder",
+    "InterpolationName",
+    "InterpolationValue",
+    "InterpolationLike",
     "StoreEnum",
+    "StoreName",
+    "StoreLike",
     "AxisType",
+    "AxisTypeName",
+    "AxisTypeLike",
     "OrientationType",
+    "OrientationTypeName",
+    "OrientationTypeLike",
     "AnatomicalOrientationValue",
+    "AnatomicalOrientationName",
+    "AnatomicalOrientationLike",
     "SimplifyPolicy",
+    "SimplifyPolicyName",
+    "SimplifyPolicyLike",
     "SpaceEnum",
+    "SpaceName",
+    "SpaceLike",
     "IntentEnum",
+    "IntentName",
+    "IntentLike",
     "Manufacturer",
+    "ManufacturerName",
+    "ManufacturerLike",
     "IlluminationType",
+    "IlluminationName",
+    "IlluminationLike",
     "ContrastMethod",
+    "ContrastMethodName",
+    "ContrastMethodLike",
 ]
 
 import typing_extensions as tx
@@ -58,6 +83,13 @@ class SimplifyPolicy(StrEnum):
 # ruff: enable[E501]
 
 
+SimplifyPolicyName: tx.TypeAlias = tx.Literal["none", "analytic", "numeric"]
+"""Simplification policy names."""
+
+SimplifyPolicyLike: tx.TypeAlias = tx.Union[SimplifyPolicy, SimplifyPolicyName]
+"""Values that can be interpreted as simplification policies."""
+
+
 # ruff: disable[E501]
 # fmt: off
 class BoundaryCondition(StrEnum):
@@ -89,7 +121,13 @@ class BoundaryCondition(StrEnum):
 BoundaryName: tx.TypeAlias = tx.Literal[
     "nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant"
 ]
+"""Acceptable names of boundary conditions."""
+
 BoundaryLike: tx.TypeAlias = tx.Union[BoundaryCondition, BoundaryName, float]
+"""
+Values that can be interpreted as boundary conditions.
+Constant values imply a constant boundary condition.
+"""
 
 
 # ruff: disable[E501]
@@ -125,7 +163,10 @@ class StoreEnum(StrEnum):
 
 
 StoreName: tx.TypeAlias = tx.Literal["coefficients", "values"]
+"""Acceptable names of what a transformation field stores."""
+
 StoreLike: tx.TypeAlias = tx.Union[StoreEnum, StoreName]
+"""Values that can be interpreted as what a transformation field stores."""
 
 
 class InterpolationOrder(IntEnum):
@@ -167,12 +208,17 @@ InterpolationName: tx.TypeAlias = tx.Literal[
     "barycentric",
     "fourier",
 ]
+"""Interpolation order names."""
+
 InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5]
+"""Interpolation order values."""
+
 InterpolationLike: tx.TypeAlias = tx.Union[
     InterpolationOrder,
     InterpolationName,
     InterpolationValue,
 ]
+"""Values that can be interpreted as interpolation orders."""
 
 
 class AxisType(StrEnum):
@@ -197,7 +243,10 @@ class AxisType(StrEnum):
 AxisTypeName: tx.TypeAlias = tx.Literal[
     "space", "time", "channel", "displacement", "coordinate"
 ]
+"""Axis type names."""
+
 AxisTypeLike: tx.TypeAlias = tx.Union[AxisType, AxisTypeName]
+"""Values that can be interpreted as axis types."""
 
 
 class OrientationType(StrEnum):
@@ -212,9 +261,12 @@ class OrientationType(StrEnum):
 
 
 OrientationTypeName: tx.TypeAlias = tx.Literal["anatomical"]
+"""Orientation type names."""
+
 OrientationTypeLike: tx.TypeAlias = tx.Union[
     OrientationType, OrientationTypeName
 ]
+"""Values that can be interpreted as orientation types."""
 
 
 # ruff: disable[E501]
@@ -310,9 +362,12 @@ AnatomicalOrientationName: tx.TypeAlias = tx.Literal[
     "apex-to-base",
     "base-to-apex",
 ]
+"""Anatomical orientation names."""
+
 AnatomicalOrientationLike: tx.TypeAlias = tx.Union[
     AnatomicalOrientationValue, AnatomicalOrientationName
 ]
+"""Values that can be interpreted as anatomical orientations."""
 
 
 # ----------------------------------------------------------------------
@@ -483,7 +538,10 @@ SpaceName: tx.TypeAlias = tx.Literal[
     "fsaverage", "fsaverage3", "fsaverage4", "fsaverage5", "fsaverage6",
     "fsaveragesym", "fsLR", "fsnative", "orig", "anat", "T1w", "T2w", "individual", "study"
 ]
+"""Known world space names."""
+
 SpaceLike: tx.TypeAlias  = tx.Union[SpaceEnum, SpaceName]
+"""Values that can be interpreted as world spaces."""
 
 
 class IntentEnum(StrEnum):
@@ -686,7 +744,10 @@ IntentName: tx.TypeAlias = tx.Literal[
     "fnirt quad spline coef",
     "topup field",
 ]
+"""Known intent names."""
+
 IntentLike: tx.TypeAlias = tx.Union[IntentEnum, IntentName]
+"""Values that can be interpreted as intents."""
 
 
 class Manufacturer(StrEnum):
@@ -743,7 +804,10 @@ ManufacturerName: tx.TypeAlias = tx.Literal[
     "UIH",
     "MRSolutions",
 ]
+"""Known manufacturer names."""
+
 ManufacturerLike: tx.TypeAlias = tx.Union[Manufacturer, ManufacturerName]
+"""Values that can be interpreted as manufacturers."""
 
 
 class IlluminationType(StrEnum):
@@ -779,7 +843,11 @@ class IlluminationType(StrEnum):
 IlluminationName: tx.TypeAlias = tx.Literal[
     "Transmitted", "Epifluorescence", "Oblique", "NonLinear", "Other"
 ]
+"""Known illumination type names."""
+
+
 IlluminationLike: tx.TypeAlias = tx.Union[IlluminationType, IlluminationName]
+"""Values that can be interpreted as illumination types."""
 
 
 class ContrastMethod(StrEnum):
@@ -835,4 +903,7 @@ ContrastMethodName: tx.TypeAlias = tx.Literal[
     "Fluorescence",
     "Other",
 ]
+"""Known contrast method names."""
+
 ContrastMethodLike: tx.TypeAlias = tx.Union[ContrastMethod, ContrastMethodName]
+"""Values that can be interpreted as contrast methods."""

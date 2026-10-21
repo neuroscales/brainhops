@@ -5,12 +5,12 @@ import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
 
 from brainhops._core.properties import smartproperty
-from brainhops.backends import _CURRENT
+from brainhops.backends import BackendLike, DeviceLike
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
-    _with_fields,
-    as_backend_all,
-    voxel_arrays_of,
+    _BackendsMixin,
+    dataobjproperty,
+    dataproperty,
 )
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
@@ -30,7 +30,7 @@ from .concrete import (
     Identity,
 )
 from .inverse import Inverse
-from .meta import SubspaceTransformation
+from .meta import MetaTransformation, SubspaceTransformation
 from .modes import (
     Family,
     ModeLike,
@@ -98,7 +98,7 @@ class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
 
 
 @register_sequence
-class Sequence(SequenceMixin, Transformation):
+class Sequence(SequenceMixin, MetaTransformation):
     """An ordered chain of transformations.
 
     [`Sequence`][] is the base class of [`MutableSequence`][] and
@@ -113,6 +113,7 @@ class Sequence(SequenceMixin, Transformation):
         equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
+    meta_fields = ("transformations",)
     data_fields = ("transformations",)
 
     # --- attributes ---------------------------------------------------
@@ -121,9 +122,10 @@ class Sequence(SequenceMixin, Transformation):
     # what was given rather than what the property reports. In a subclass that
     # derives its chain, the copy would otherwise serve a stale chain that
     # shares its list with the original.
-    _transformations: NotKwOnly[tx.Optional[tx.Sequence[Transformation]]] = (
-        None
-    )
+    _transformations: tx.Annotated[
+        tx.Optional[tx.Sequence[Transformation]],
+        NotKwOnly(),
+    ] = None
     """Transformations, in the order in which they are applied."""
 
     transformations = smartproperty("transformations")
@@ -414,9 +416,9 @@ class Sequence(SequenceMixin, Transformation):
 
     def to_backend(
         self,
-        backend: tx.Any = _CURRENT,
+        backend: tx.Optional[BackendLike] = None,
         *,
-        device: tx.Union[str, int, None] = None,
+        device: tx.Optional[DeviceLike] = None,
     ) -> tx.Any:
         """Refuse to return data, because a sequence holds none.
 
@@ -438,44 +440,6 @@ class Sequence(SequenceMixin, Transformation):
             "data. Convert it with as_backend, or convert its "
             "transformations."
         )
-
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # The fields among the members decide the backend.
-        return voxel_arrays_of(self.transformations)
-
-    def as_backend(
-        self,
-        backend: tx.Any = _CURRENT,
-        *,
-        device: tx.Union[str, int, None] = None,
-        inplace: bool = False,
-    ) -> tx.Self:
-        """Return the sequence with its members converted.
-
-        Each member is converted with its own `as_backend`, so that the
-        fields of the sequence are converted and its affine
-        transformations are kept.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-        device : str or int, optional
-            The device for converted arrays. The backend supplies its default.
-        inplace : bool, default=False
-            Whether this transformation holds the converted members and
-            is returned, instead of a new transformation.
-
-        Returns
-        -------
-        Sequence
-            A transformation of the same class.
-        """
-        members = self.transformations
-        converted = as_backend_all(members, backend, device=device)
-        if converted is members:
-            return self
-        return _with_fields(self, inplace, transformations=converted)
 
 
 class MutableSequence(MutableSequenceMixin, Sequence):
@@ -504,6 +468,47 @@ class ImmutableSequence(Sequence):
     _transformations: NotKwOnly[tx.Optional[tx.Tuple[Transformation, ...]]] = (
         None
     )
+
+
+class DerivedSequence(ImmutableSequence):
+    """An [`ImmutableSequence`][] whose members are derived from an array.
+
+    A file format that stores a field, such as a displacement field read
+    from a NIfTI file, is a sequence of the affine transformations and
+    the field that the file describes, but what it stores is the array of
+    the file. Its members are derived from that array and cached, and
+    they are derived again when the array changes. Such a format derives
+    from this class rather than from [`ImmutableSequence`][].
+
+    The array is exposed as `data` and `dataobj`, as in an image (see
+    [`dataproperty`][brainhops.datamodel._backends.dataproperty]). The
+    backend conversions apply to the array, so `to_backend` returns it
+    and `as_backend` converts it, and the members are then derived from
+    the converted array. A plain sequence instead refuses `to_backend`
+    and converts its members one by one, which would leave the stored
+    array as it is.
+
+    A subclass declares the field `_data`, which holds an array that was
+    assigned, derives its members from `data` in `transformations`, and
+    usually gives its own `dataobj`, which returns the lazy array of its
+    file when no array was assigned. This class declares no field, so
+    that the data model of such a format remains the sequence: another
+    object is converted into it through its chain of transformations.
+    """
+
+    data = dataproperty(invalidates="transformations")
+    """The stored array, loaded and in the backend of the setting.
+
+    Assigning it drops the members derived from the previous array.
+    """
+
+    dataobj = dataobjproperty()
+    """The stored array, without reading it."""
+
+    # The conversions of an object that stores an array, rather than
+    # those of a sequence, which convert the members.
+    to_backend = _BackendsMixin.to_backend
+    as_backend = _BackendsMixin.as_backend
 
 
 # ======================================================================

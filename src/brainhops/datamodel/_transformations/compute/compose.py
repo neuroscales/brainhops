@@ -49,7 +49,6 @@ sequence engine decides which adjacent transformations are passed to
 import typing_extensions as tx
 from bagof.dispatchers import Function, NoMethodError
 
-from brainhops.datamodel._backends import computing_with
 from brainhops.errors import CompositionError
 
 from .simplify import ANALYTIC_FLOOR, simplify
@@ -112,10 +111,7 @@ def compose(
     # is deliberately left uncaught, since it reveals a fault in the registry.
     t1, t2 = type(x1), type(x2)
     try:
-        # The backend of the result is chosen once, from the voxels of the
-        # two operands, and the composer runs under that setting.
-        with computing_with(x1, x2):
-            result = _compose(x1, x2)
+        result = _compose(x1, x2)
     except NoMethodError:
         result = NotImplemented
     if result is not NotImplemented:

@@ -74,8 +74,8 @@ def inv(
     A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
     backend : str or module, optional
-        Array backend, given by name or as a module. By default, the backend
-        is inferred from `A`.
+        Array backend, given by name or as a module.
+        By default, the backend is inferred from `A`.
 
     Returns
     -------
@@ -83,6 +83,7 @@ def inv(
         The compact inverses, with shape `(..., N, M+1)`.
     """
     xp = get_array_backend(backend or A)
+    A = xp.asarray(A)
     M, N = A.shape[-2:]
     N -= 1
 

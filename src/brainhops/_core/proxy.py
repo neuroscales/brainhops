@@ -24,6 +24,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops import backends
+from brainhops._core.linalg import ArrayProtocol
 
 _Selection: tx.TypeAlias = tx.Union[int, range, np.ndarray]
 """What a view selects along one axis of the stored array: a position,
@@ -480,7 +481,7 @@ class ArrayProxy(abc.ABC):
         """
         return np.asarray(self)
 
-    def to_cupy(self, device: tx.Optional[int] = None) -> tx.Any:
+    def to_cupy(self, device: backends.DeviceLike = None) -> ArrayProtocol:
         """Read the values of the proxy into a CuPy array on the GPU.
 
         Returns
@@ -495,12 +496,15 @@ class ArrayProxy(abc.ABC):
         """
         return backends.to_cupy(self, device=device)
 
-    def to_backend(self, backend: tx.Any = backends._CURRENT) -> tx.Any:
+    def to_backend(
+        self, backend: tx.Optional[backends.BackendLike] = None
+    ) -> ArrayProtocol:
         """Convert the proxy as a backend setting says.
 
         The settings are described in [`brainhops.backends`][].
-        Under `None`, and under `"auto"`, a proxy of at most the threshold of
-        `"auto"` is read with NumPy and a larger one becomes a Dask array.
+        Under `"native"`, and under `"auto"`, a proxy of at most the
+        threshold of `"auto"` is read with NumPy and a larger one becomes
+        a Dask array.
         A Dask array has the blocks that
         [`to_dask`][brainhops._core.proxy.ArrayProxy.to_dask] gives, and
         reading it reads only the blocks that it needs.
@@ -523,8 +527,8 @@ class ArrayProxy(abc.ABC):
         return backends.to_backend(self, backend)
 
     def to_dask(
-        self, *, device: tx.Union[str, int, None] = "cpu", **kwargs
-    ) -> tx.Any:
+        self, *, device: backends.DeviceLike = "cpu", **kwargs
+    ) -> ArrayProtocol:
         """Return a Dask array that reads the proxy block by block.
 
         The blocks are the `chunks` of the proxy when the storage

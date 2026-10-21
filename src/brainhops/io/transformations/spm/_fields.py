@@ -11,7 +11,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 # internals
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import dataproperty
+from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
@@ -35,7 +35,6 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
-    StoredFieldMixin,
     homogeneous_matrix,
 )
 from brainhops.io.transformations.nifti import (
@@ -51,9 +50,7 @@ from brainhops.io.transformations.nifti._views import (
 
 
 @register_format
-class SpmCoordinatesField(
-    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
-):
+class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
     Field of RAS coordinates written by SPM.
 
@@ -122,7 +119,7 @@ class SpmCoordinatesField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 

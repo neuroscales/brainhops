@@ -103,8 +103,8 @@ class _BoolWithMessage:
 
 def is_positive(array: ArrayProtocol) -> bool:
     """Return whether all the values of an array are strictly positive."""
-    backend = get_array_backend(array)
-    return not bool(backend.any(array <= 0))
+    xp = get_array_backend(array)
+    return not bool(xp.any(array <= 0))
 
 
 def require_positive(array: ArrayProtocol, what: str = "This") -> None:

@@ -47,6 +47,29 @@ def stores(cls: type, name: str) -> bool:
     return field is not None and bool(field.init) and not field.var
 
 
+_OBJ = tx.TypeVar("_OBJ", bound=Magic)
+
+
+def smart_replace(
+    obj: tx.Any,
+    cls: tx.Union[tx.Type[_OBJ], tx.Literal["inplace"], None] = None,
+    **changes,
+) -> _OBJ:
+    """Rebuild a magic object as `cls`, overriding fields with `changes`.
+
+    The transformation itself is returned, without a copy, when no field is
+    overridden and `cls` is either missing or the type of `t`.
+    """
+    doit = changes or (cls and isinstance(cls, type) and cls is not type(obj))
+    if not doit:
+        return obj
+    if cls == "inplace":
+        for name, value in changes.items():
+            setattr(obj, name, value)
+        return obj
+    return replace(obj, cls, **changes)
+
+
 def replace(
     obj: tx.Any, cls: tx.Optional[type] = None, **changes: tx.Any
 ) -> tx.Any:

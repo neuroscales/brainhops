@@ -678,7 +678,7 @@ class _FileBasedModelMixin:
             if not isinstance(other, cls) and _takes_over(cls, name):
                 # The data are read as the other object stores them, not
                 # converted with the backend setting in effect.
-                with backends.backend(None):
+                with backends.backend("native"):
                     value = getattr(other, name, None)
                 if value is not None:
                     kwargs.setdefault(name, value)

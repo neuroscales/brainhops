@@ -4,13 +4,13 @@ from bagof.magic import Factory, Inherit
 
 from ..axes import AxisTuple
 from .base import AXIS, CoordinateSystem
-from .dispatch import _is2d, _is3d
+from .dispatch import is2d, is3d
 
 _2Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS]
 _3Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS, AXIS]
 
 
-class CoordinateSystem2D(CoordinateSystem, on={"axes": _is2d}):
+class CoordinateSystem2D(CoordinateSystem, on={"axes": is2d}):
     """A coordinate system with exactly two axes.
 
     Parameters
@@ -24,7 +24,7 @@ class CoordinateSystem2D(CoordinateSystem, on={"axes": _is2d}):
     axes: Inherit[_2Axes] = Factory()
 
 
-class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
+class CoordinateSystem3D(CoordinateSystem, on={"axes": is3d}):
     """A coordinate system with exactly three axes.
 
     Parameters

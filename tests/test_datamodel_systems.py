@@ -1009,12 +1009,12 @@ def test_an_open_system_keeps_the_class_it_was_called_as(
 @pytest.mark.parametrize(
     "predicate",
     [
-        dispatch._is2d,
-        dispatch._is3d,
-        dispatch._is_spatial,
-        dispatch._is_array,
-        dispatch._is_mm,
-        dispatch._is_anat("RAS"),
+        dispatch.is2d,
+        dispatch.is3d,
+        dispatch.is_spatial,
+        dispatch.is_array,
+        dispatch.is_mm,
+        dispatch.is_anat("RAS"),
     ],
     ids=lambda p: p.__name__,
 )

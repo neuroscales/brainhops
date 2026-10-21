@@ -445,14 +445,14 @@ def test_fnirt_detects_absolute_and_relative() -> None:
 
     _, absolute, relative = _fnirt_setup()
     ref_v2f = _fsl_vox2scaled(REF_AFFINE, REF_SHAPE, [2.0, 2.0, 2.5])
-    backend = get_array_backend()
-    ref_scaled = _voxel_grid_in_scaled_mm(REF_SHAPE, ref_v2f, backend)
+    xp = get_array_backend()
+    ref_scaled = _voxel_grid_in_scaled_mm(REF_SHAPE, ref_v2f, xp)
     assert (
-        _detect_deformation_type(backend.asarray(absolute), ref_scaled)
+        _detect_deformation_type(xp.asarray(absolute), ref_scaled)
         == "absolute"
     )
     assert (
-        _detect_deformation_type(backend.asarray(relative), ref_scaled)
+        _detect_deformation_type(xp.asarray(relative), ref_scaled)
         == "relative"
     )
 

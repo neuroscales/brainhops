@@ -20,21 +20,21 @@ def _finite(
     return axes
 
 
-def _isnd(n: int) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
+def isnd(n: int) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
     """
     Generate an axes checker that returns true when they have a given length.
     """
 
-    def isnd(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
+    def _isnd(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
         closed = _finite(axes)
         return closed is not None and len(closed) == n
 
-    isnd.__name__ = isnd.__qualname__ = f"_is{n}d"
-    return isnd
+    _isnd.__name__ = _isnd.__qualname__ = f"is{n}d"
+    return _isnd
 
 
-_is2d = _isnd(2)
-_is3d = _isnd(3)
+is2d = isnd(2)
+is3d = isnd(3)
 
 
 def _all(
@@ -50,13 +50,13 @@ def _all(
     return check
 
 
-_is_spatial = _all(lambda axis: axis.type == "space", "_is_spatial")
-_is_array = _all(lambda axis: is_indexunit(axis.unit), "_is_array")
-_MM = Unit("mm")
-_is_mm = _all(lambda axis: axis.unit == _MM, "_is_mm")
+is_spatial = _all(lambda axis: axis.type == "space", "_is_spatial")
+is_array = _all(lambda axis: is_indexunit(axis.unit), "_is_array")
+MM = Unit("mm")
+is_mm = _all(lambda axis: axis.unit == MM, "_is_mm")
 
 
-def _both(
+def both(
     *tests: tx.Callable[[tx.Any], bool],
 ) -> tx.Callable[[tx.Any], bool]:
     def check(axes: tx.Any) -> bool:
@@ -69,7 +69,7 @@ def _both(
     return check
 
 
-def _is_anat(code: str) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
+def is_anat(code: str) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
     """Build a predicate that compares the axes with the orientation `code`.
 
     The letters are those of [`brainhops.datamodel.axes`][], so `"RAS"` means

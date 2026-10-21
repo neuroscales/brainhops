@@ -6,7 +6,11 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
@@ -39,7 +43,6 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.fields import (
-    StoredFieldMixin,
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
@@ -110,8 +113,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 class FnirtWarpField(
     FslTransformationFormat,
     NiftiBasedTransformation,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    _xforms.DerivedSequence,
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.
 
@@ -228,7 +230,7 @@ class FnirtWarpField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 

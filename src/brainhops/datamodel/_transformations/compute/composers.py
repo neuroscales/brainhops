@@ -76,10 +76,10 @@ def _(To: Sequence, Ti: Sequence) -> Transformation:
 
 @composer
 def _(To: Affine, Ti: Affine) -> Affine:
-    ba = get_array_backend(To.matrix)
+    xp = get_array_backend(To.matrix)
     No = To.matrix.shape[0]
     Ni = Ti.matrix.shape[1] - 1
-    A = ba.empty_like(To.matrix, shape=(No, Ni + 1))
+    A = xp.empty_like(To.matrix, shape=(No, Ni + 1))
     A[:, :-1] = To.matrix[:, :-1] @ Ti.matrix[:, :-1]
     A[:, -1:] = To.matrix[:, :-1] @ Ti.matrix[:, -1:] + To.matrix[:, -1:]
     return Affine(matrix=A, input=Ti.input, output=To.output)
@@ -412,7 +412,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     # it acts on, so the other axes are never tiled to the full size.
     Ti = Ti.compute()
     x = Ti.field
-    ba = get_array_backend(x)
+    xp = get_array_backend(x)
     if To.input_axes is None or To.output_axes is None:
         raise CompositionError(
             "A subspace transform composes with a field only when it names "
@@ -474,7 +474,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         columns[o] = acted[..., k]
     for o, i in zip(passthrough_out, passthrough_in):
         columns[o] = x[..., i]
-    y = ba.stack(columns, axis=-1)
+    y = xp.stack(columns, axis=-1)
 
     return CoordinatesField(
         field=y,
