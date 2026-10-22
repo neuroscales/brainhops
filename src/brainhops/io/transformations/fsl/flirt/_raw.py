@@ -5,6 +5,7 @@ __all__ = ["FlirtRaw"]
 import math
 
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 from brainhops._core.peek import peekable_lines
 from brainhops.io.base._raw import Raw
@@ -43,12 +44,20 @@ class FlirtRaw(Raw, TextFileReader, TextFileWriter):
     [`FlirtTransform`][brainhops.io.transformations.fsl.flirt.FlirtTransform]
     reads its FLIRT matrix from the record of its metadata. A record is
     never changed in place, so that several objects can share it. The
-    record does not keep the text of the file, and is written as FLIRT
-    writes its matrices (see [`to_lines`][]).
+    record also keeps the lines of the file, so that a file that is read
+    and written again keeps its bytes (see [`to_lines`][]).
     """
 
     matrix: _Matrix = _IDENTITY
     """The FLIRT matrix, as a tuple of rows of floats."""
+
+    lines: NoRepr[tx.Optional[tx.Tuple[str, ...]]] = None
+    """The lines of the file that the matrix was read from.
+
+    The lines are written back as they are while they still hold the
+    matrix of the record. They are `None` for a record that was encoded
+    from a matrix.
+    """
 
     # --- sniff --------------------------------------------------------
 
@@ -126,6 +135,7 @@ class FlirtRaw(Raw, TextFileReader, TextFileWriter):
                 f"{cls.__name__}.from_lines() takes no options, but was "
                 f"given {', '.join(sorted(kwargs))}."
             )
+        lines = tuple(_text_lines(lines))
         rows = _read_matrix_rows(lines)
         if not rows:
             raise SnifferContentError("Empty FLIRT matrix file.")
@@ -135,18 +145,20 @@ class FlirtRaw(Raw, TextFileReader, TextFileWriter):
                 "A FLIRT matrix must have rows of equal length, but the rows "
                 f"have lengths {sorted(len(row) for row in rows)}."
             )
-        return cls(matrix=tuple(tuple(float(v) for v in row) for row in rows))
+        matrix = tuple(tuple(float(v) for v in row) for row in rows)
+        return cls(matrix=matrix, lines=lines)
 
     # --- to -----------------------------------------------------------
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file, without their line breaks.
 
-        Each row of the matrix is written on its own line, as
-        `write_ascii_matrix` of FSL writes it: every number is followed
-        by two spaces. Each number is written with the fewest digits
-        that read back as the same float, whereas FLIRT writes six
-        significant digits.
+        The lines that the record was read from are returned while they
+        still hold its matrix. Otherwise each row of the matrix is written
+        on its own line, as `write_ascii_matrix` of FSL writes it: every
+        number is followed by two spaces. Each number is written with the
+        fewest digits that read back as the same float, whereas FLIRT
+        writes six significant digits.
 
         Parameters
         ----------
@@ -169,6 +181,8 @@ class FlirtRaw(Raw, TextFileReader, TextFileWriter):
                 f"{type(self).__name__}.to_lines() takes no options, but "
                 f"was given {', '.join(sorted(kwargs))}."
             )
+        if self.lines is not None and _still_holds(self):
+            return iter(self.lines)
         return iter(
             [
                 "".join(_format_number(v) + "  " for v in row)
@@ -222,6 +236,27 @@ def _read_matrix_rows(lines: tx.Iterable[str]) -> tx.List[tx.List[float]]:
         return read_text_rows(text_lines, comments=None, separators=r"\s+")
     except ArrayContainerError:
         return []
+
+
+def _text_lines(lines: tx.Iterable[tx.Any]) -> tx.Iterator[str]:
+    """Yield the lines of a file without their line breaks.
+
+    A reader that peeks at lines ends them with a sentinel that is not a
+    string, which ends the file.
+    """
+    if isinstance(lines, peekable_lines):
+        lines = list(lines)
+    for line in lines:
+        if not isinstance(line, str):
+            break
+        yield line.rstrip("\r\n")
+
+
+def _still_holds(record: FlirtRaw) -> bool:
+    """Tell whether the lines of a record hold its matrix."""
+    rows = _read_matrix_rows(list(record.lines))
+    matrix = tuple(tuple(float(v) for v in row) for row in rows)
+    return matrix == tuple(tuple(row) for row in record.matrix)
 
 
 def _format_number(value: float) -> str:

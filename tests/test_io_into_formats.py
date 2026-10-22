@@ -22,6 +22,8 @@ by the rules of its family, as any other transformation of that family
 is.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import typing_extensions as tx
@@ -104,6 +106,8 @@ from brainhops.io.transformations.x5 import X5Transform  # noqa: E402
 
 VOXEL = VoxelCoordinateSystem()
 
+DATA = Path(__file__).parent / "data"
+
 MATRIX = np.array(
     [
         [0.0, -2.0, 0.0, 10.0],
@@ -185,19 +189,15 @@ AFFINE_FAMILIES = [
 """The families whose members are affines, or chains of affines."""
 
 RELABELLED = {
-    *(
-        (family, cls)
-        for family in ("sequence", "immutable-sequence")
-        for cls in CHAIN_FORMATS
-    ),
-    *((family, LtaTransformation) for family in AFFINE_FAMILIES),
+    (family, cls)
+    for family in ("sequence", "immutable-sequence")
+    for cls in CHAIN_FORMATS
 }
 """
 The pairs of `FORMATS` that relabel a transformation between voxel
-spaces. A generic LTA file reads its systems from its type and from the
-geometry of its volumes, so it has none of its own to refuse, and
-whether it can write the systems of an affine is decided when it is
-written.
+spaces. An LTA file converts a map between voxel spaces only with the
+geometries of both volumes, which these checks do not give, so it
+refuses one.
 """
 
 
@@ -540,11 +540,14 @@ def test_a_bare_matrix_holds_a_relabelled_affine(family: str) -> None:
     )
 
 
-def test_an_itk_chain_holds_a_relabelled_chain() -> None:
+def test_an_itk_chain_holds_a_chain_of_affines_as_one_affine() -> None:
     chain = _families(LPSmm(), LPSmm())["sequence"]
     itk = chain.to(TfmTransform)
     assert type(itk) is TfmTransform
-    assert list(itk.transformations) == list(chain.transformations)
+    (affine,) = itk.transformations
+    np.testing.assert_array_equal(
+        affine.homogeneous_matrix, chain.to(xforms.Affine).homogeneous_matrix
+    )
 
 
 def test_a_scaling_between_lps_spaces_is_not_a_nifti_affine() -> None:
@@ -600,7 +603,9 @@ def test_a_ras_to_voxel_member_of_a_family_is_a_nifti_affine(
     family: str,
 ) -> None:
     t = _families(RASmm(), VOXEL)[family]
-    nifti = t.to(NiftiRASToVoxel)
+    # The header stores the inverse affine in single precision, which
+    # rounds the inverse of most of these affines.
+    nifti = t.to(NiftiRASToVoxel, lossy=True)
     assert type(nifti) is NiftiRASToVoxel
     np.testing.assert_array_equal(
         nifti.homogeneous_matrix, t.to(xforms.Affine).homogeneous_matrix
@@ -770,15 +775,21 @@ def test_a_chain_format_is_converted_to_itself() -> None:
             LtaTransformationVoxToVox(matrix=MATRIX[:-1]),
             LtaTransformationRASToRAS,
         ),
-        (TfmTransform([xforms.Scaling([1.0, 2.0, 3.0])]), H5Transform),
     ],
-    ids=["lta", "itk"],
+    ids=["lta"],
 )
 def test_another_variant_of_a_format_is_not_relabelled(
     t: xforms.Transformation, cls: type
 ) -> None:
     with pytest.raises(ConversionError):
         t.to(cls)
+
+
+def test_another_itk_format_holds_the_blocks_of_a_chain() -> None:
+    tfm = TfmTransform.load(DATA / "itk_composite_affine3d.tfm")
+    h5 = tfm.to(H5Transform)
+    assert type(h5) is H5Transform
+    assert list(h5.transformations) == list(tfm.transformations)
 
 
 def test_another_container_of_a_bare_matrix_holds_it() -> None:

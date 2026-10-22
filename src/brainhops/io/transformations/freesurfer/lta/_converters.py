@@ -69,6 +69,7 @@ from brainhops.io.transformations.base._conversions import (
     register_converter,
     unrepresentable,
 )
+from brainhops.io.transformations.base.affines import _compatible
 
 from ._matrix_utils import _volume_info
 from ._metadata import LtaMetadata
@@ -107,10 +108,12 @@ def _(
     if _is_voxels(src) and _is_voxels(dst):
         return _voxels(t, cls, options)
     matrix = affine_between(t, RAS, RAS, cls)
-    blocks = LtaRaw(
-        src=_block(options.get("reference"), LtaRaw.SrcVolumeInfo, t, cls),
-        dst=_block(options.get("moving"), LtaRaw.DstVolumeInfo, t, cls),
-    )
+    blocks = None
+    if any(options.get(name) is not None for name in OPTIONS):
+        blocks = LtaRaw(
+            src=_block(options.get("reference"), LtaRaw.SrcVolumeInfo, t, cls),
+            dst=_block(options.get("moving"), LtaRaw.DstVolumeInfo, t, cls),
+        )
     return _held(t, cls, matrix, RAS, RAS, blocks)
 
 
@@ -225,4 +228,33 @@ def _held(
         record = _build_raw(pending)
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
+    _check_view(t, cls, src, dst)
+    if blocks is None:
+        # The matrix and the systems stay pending, as for any affine that
+        # a format holds without a record, and are encoded when written.
+        return cls(matrix=matrix[:-1], input=src, output=dst)
+    # The geometries of the RAS type live in a record.
     return cls.from_raw(record)
+
+
+def _check_view(
+    t: _xforms.Transformation,
+    cls: tx.Type[LtaTransformation],
+    src: _systems.CoordinateSystem,
+    dst: _systems.CoordinateSystem,
+) -> None:
+    # A view of the format, such as the voxel-to-voxel view, reads an LTA
+    # file in its own systems, so it holds only an affine between them.
+    if cls is LtaTransformation:
+        return
+    view = cls()
+    for side, system in (("input", src), ("output", dst)):
+        own = getattr(view, side)
+        if own is not None and not _compatible(system, own):
+            raise unrepresentable(
+                t,
+                cls,
+                f"the view reads an LTA file in its own systems, and the "
+                f"{side} of the LTA file is {type(system).__name__}, not "
+                f"{type(own).__name__}. Convert it to LtaTransformation.",
+            )

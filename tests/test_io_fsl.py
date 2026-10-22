@@ -354,13 +354,24 @@ def test_what_a_flirt_record_cannot_hold_is_refused() -> None:
         _flirt().data = np.eye(4)[:-1]
 
 
-def test_flirt_is_not_written(tmp_path) -> None:  # noqa: ANN001
-    from brainhops.io.base.parsers import WriterError
+def test_flirt_is_written_back_as_it_was_read(tmp_path) -> None:  # noqa: ANN001
+    source = _flirt_file(tmp_path)
+    flirt = FlirtTransform.load(source)
+    target = tmp_path / "copy.mat"
+    io.save(flirt, target)
+    assert target.read_bytes() == Path(source).read_bytes()
 
+
+def test_an_assigned_flirt_matrix_is_written(tmp_path) -> None:  # noqa: ANN001
     flirt = FlirtTransform.load(_flirt_file(tmp_path))
-    assert not hasattr(flirt, "save")
-    with pytest.raises(WriterError):
-        io.save(flirt, tmp_path / "copy.mat")
+    matrix = np.diag([2.0, 3.0, 0.5, 1.0])
+    matrix[:3, 3] = [1.0, -2.0, 0.25]
+    flirt.flirt_matrix = matrix
+    target = tmp_path / "copy.mat"
+    flirt.save(target)
+    assert target.read_text().splitlines()[0] == "2  0  0  1  "
+    back = FlirtTransform.load(target)
+    assert np.array_equal(back.flirt_matrix, matrix)
 
 
 def test_flirt_options_are_refused(tmp_path) -> None:  # noqa: ANN001

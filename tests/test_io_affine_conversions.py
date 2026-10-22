@@ -298,7 +298,9 @@ def test_an_lta_file_between_voxels_needs_the_images(images) -> None:  # noqa: A
     with pytest.raises(ConversionError, match="reference= and moving="):
         t.to(LtaTransformation)
     lta = t.to(LtaTransformation, **images)
-    assert lta.metadata.raw.type == LtaType.LINEAR_VOX_TO_VOX
+    raw = lta.consolidate().metadata.raw
+    assert raw.type == LtaType.LINEAR_VOX_TO_VOX
+    assert tuple(raw.src.volume) == (10, 12, 8)
     np.testing.assert_allclose(lta.homogeneous_matrix, MATRIX)
 
 
@@ -350,15 +352,19 @@ def test_a_mat_file_is_written_as_flirt_given_the_images(
     np.testing.assert_allclose(reread.homogeneous_matrix, MATRIX, atol=1e-9)
 
 
-@pytest.mark.xfail(
-    reason="io.save does not yet give conversion= to the formats of the "
-    "data model of the object, such as LTA and register.dat.",
-    strict=False,
-)
 @pytest.mark.parametrize(
     ("name", "cls"),
     [
-        ("t.mat", FlirtTransform),
+        pytest.param(
+            "t.mat",
+            FlirtTransform,
+            marks=pytest.mark.xfail(
+                reason="io.save ranks the ITK MATLAB file, which keeps the "
+                "LPS endpoints of the affine, above the FLIRT matrix that "
+                "the images were given for.",
+                strict=True,
+            ),
+        ),
         ("t.dat", RegisterDatTransformationRASToRAS),
         ("t.lta", LtaTransformation),
     ],

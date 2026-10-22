@@ -7,6 +7,7 @@ from warnings import warn
 
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 from brainhops._core.peek import peekable_lines
 from brainhops.io.base._raw import Raw
@@ -46,15 +47,24 @@ class TfmRaw(Raw, TextFileReader, TextFileWriter):
 
     The blocks of a record are also the elements of the chain that a
     transformation decodes, so their parameters are read-only, and a
-    record is never changed in place. The record does not keep the text
-    of the file: it is written again from its blocks, as ITK writes them
-    (see [`to_lines`][]).
+    record is never changed in place. The record also keeps the lines of
+    the file, so that a file that is read and written again keeps its
+    bytes, and a record whose blocks were encoded again is written as
+    ITK writes them (see [`to_lines`][]).
     """
 
     blocks: tx.Tuple[ItkStruct, ...] = ()
     """Every block of the file, in the order of the file.
 
     A `CompositeTransform` header can only be the first block.
+    """
+
+    lines: NoRepr[tx.Optional[tx.Tuple[str, ...]]] = None
+    """The lines of the file that the blocks were read from.
+
+    The lines, comments included, are written back as they are while
+    the record holds the blocks that were read from them. They are
+    `None` for a record that was encoded from a chain.
     """
 
     # --- sniff --------------------------------------------------------
@@ -133,8 +143,14 @@ class TfmRaw(Raw, TextFileReader, TextFileWriter):
                 f"{cls.__name__}.from_lines() takes no options, but was "
                 f"given {', '.join(sorted(kwargs))}."
             )
-        if not isinstance(lines, peekable_lines):
-            lines = peekable_lines(lines)
+        if isinstance(lines, peekable_lines):
+            lines = list(lines)
+        text = []
+        for line in lines:
+            if not isinstance(line, str):
+                break
+            text.append(line.rstrip("\r\n"))
+        lines = peekable_lines(text)
         blocks = []
         while lines.peek():
             line = lines.next()
@@ -156,15 +172,17 @@ class TfmRaw(Raw, TextFileReader, TextFileWriter):
                 )
             )
         _check_composite(blocks)
-        return cls(blocks=tuple(blocks))
+        return cls(blocks=tuple(blocks), lines=tuple(text))
 
     # --- to -----------------------------------------------------------
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file, without their line breaks.
 
-        The file is written as `itk::TxtTransformIOTemplate::Write`
-        writes it: the line `#Insight Transform File V1.0`, then, for
+        The lines that the record was read from are returned while the
+        record holds the blocks that were read from them. Otherwise, the
+        file is written as `itk::TxtTransformIOTemplate::Write` writes
+        it: the line `#Insight Transform File V1.0`, then, for
         each block, a comment that numbers it, its `Transform:` line,
         and its `Parameters:` and `FixedParameters:` lines. A
         `CompositeTransform` header has no parameter lines. Each number
@@ -192,6 +210,8 @@ class TfmRaw(Raw, TextFileReader, TextFileWriter):
                 f"{type(self).__name__}.to_lines() takes no options, but "
                 f"was given {', '.join(sorted(kwargs))}."
             )
+        if self.lines is not None and _still_holds(self):
+            return iter(self.lines)
         return _lines(self.blocks)
 
     def to_text(self, **kwargs) -> str:
@@ -228,6 +248,25 @@ def _read_vector(match: tx.Optional[re.Match]) -> np.ndarray:
     text = None if match is None else match.group("values")
     values = list(map(float, text.split())) if text else []
     return _read_only(np.array(values))
+
+
+def _still_holds(record: TfmRaw) -> bool:
+    """Tell whether the lines of a record hold its blocks."""
+    read = TfmRaw.from_lines(record.lines).blocks
+    return len(read) == len(record.blocks) and all(
+        _same_block(a, b) for a, b in zip(read, record.blocks)
+    )
+
+
+def _same_block(first: ItkStruct, second: ItkStruct) -> bool:
+    """Tell whether two blocks store the same values."""
+    return _type_name(first) == _type_name(second) and all(
+        np.array_equal(
+            np.asarray(getattr(first, name), dtype=np.float64),
+            np.asarray(getattr(second, name), dtype=np.float64),
+        )
+        for name in ("parameters", "fixed_parameters")
+    )
 
 
 def _lines(blocks: tx.Sequence[ItkStruct]) -> tx.Iterator[str]:

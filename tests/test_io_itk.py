@@ -9,6 +9,7 @@ from brainhops import io
 from brainhops._core import affines
 from brainhops._core.dependencies import HAS_H5PY
 from brainhops.datamodel import transformations as xforms
+from brainhops.datamodel.systems import LPSmm
 from brainhops.io.transformations import itk
 
 data_dir = Path(__file__).parent / "data"
@@ -1019,15 +1020,45 @@ def test_assigning_metadata_or_a_position_drops_the_decoded_chain(
 
 
 @pytest.mark.parametrize("ext", sorted(WRITERS))
-def test_the_formats_do_not_write(tmp_path, ext: str) -> None:  # noqa: ANN001
-    from brainhops.io.base.parsers import WriterError
-
-    path = WRITERS[ext](tmp_path / f"single.{ext}", COMPOSITE[1:2])
+def test_the_formats_write_their_blocks(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"composite.{ext}", COMPOSITE)
     transform = _load(ext, path)
-    assert not hasattr(transform, "save")
-    assert not hasattr(transform.metadata, "save")
-    with pytest.raises(WriterError):
-        io.save(transform, tmp_path / f"copy.{ext}")
+    target = tmp_path / f"copy.{ext}"
+    io.save(transform, target)
+    back = _load(ext, target)
+    assert [type(block) for block in back] == [
+        type(block) for block in transform
+    ]
+    for old, new in zip(transform, back):
+        assert np.array_equal(
+            np.asarray(old.parameters), np.asarray(new.parameters)
+        )
+        assert np.array_equal(
+            np.asarray(old.fixed_parameters), np.asarray(new.fixed_parameters)
+        )
+
+
+def test_a_tfm_file_is_written_back_as_it_was_read(tmp_path) -> None:  # noqa: ANN001
+    source = data_dir / "itk_composite_affine3d.tfm"
+    target = tmp_path / "copy.tfm"
+    io.save(io.load(source), target)
+    assert target.read_text() == source.read_text()
+
+
+def test_an_affine_is_written_as_an_itk_text_file(tmp_path) -> None:  # noqa: ANN001
+    matrix = np.array(
+        [[0.5, 0.0, 0.0, 1.0], [0.0, 2.0, 0.0, -3.0], [0.0, 0.0, 1.0, 0.25]]
+    )
+    affine = xforms.Affine(matrix, input=LPSmm(), output=LPSmm())
+    target = tmp_path / "affine.tfm"
+    io.save(affine, target)
+    assert target.read_text().splitlines() == [
+        "#Insight Transform File V1.0",
+        "#Transform 0",
+        "Transform: AffineTransform_double_3_3",
+        "Parameters: 0.5 0 0 0 2 0 0 0 1 1 -3 0.25",
+        "FixedParameters: 0 0 0",
+    ]
 
 
 def test_tfm_options_are_refused() -> None:

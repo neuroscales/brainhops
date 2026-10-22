@@ -105,6 +105,19 @@ class FlirtTransform(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("flirt",)
+
+    PRIORITY: tx.ClassVar[int] = 1
+    """
+    Priority above the Convert3D matrix and the ITK MATLAB file.
+
+    A `.mat` name is claimed by the three formats. A FLIRT matrix is
+    converted only when the images that it needs are given, as in
+    `io.save(t, "t.mat", conversion={"reference": ref, "moving": mov})`,
+    and the images then say that a FLIRT matrix is wanted. An affine
+    between RAS spaces, which a Convert3D matrix holds as well, is
+    therefore written as a FLIRT matrix. A file is read by the confidence
+    of each format, which decides before the priority.
+    """
     # The data field is the FLIRT matrix. The `matrix` view is derived
     # from the FLIRT matrix and the two images, so computing it is costly
     # and may raise. Naming the FLIRT matrix here keeps the identity check
