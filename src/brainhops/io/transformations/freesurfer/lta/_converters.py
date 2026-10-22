@@ -118,7 +118,7 @@ def _(
     # and these rules keep its type. Another variant of the format reads
     # the record of `t`, when it has one, in its own systems. A matrix of
     # its own is converted as the matrix of any affine.
-    if isinstance(t, cls):
+    if type(t) is cls:
         return _convert_withlog(t, cls, "matrix", **kwargs)
     if t._data is None:
         return _view(t, cls, **kwargs)
