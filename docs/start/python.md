@@ -96,15 +96,14 @@ io.save(img, "copy.zarr")  # -> Zarr, without the geometry
 
 An image computed in memory is written the same way, since NIfTI and Zarr
 both hold a plain image. A transformation is converted to the format the
-name asks for, with the same converters as `t.to(Format)`, but only when
-the format holds the very same map. Its `input` and `output` are read,
-and bridged to the format's: an affine from voxels to LPS is written as
-the voxel-to-RAS affine of a NIfTI file, with its first two axes
-flipped, and an affine whose systems are not known is taken to map the
-format's. A field of displacements is written as a NIfTI displacement
-field, between its grid's world-to-voxel affine and its inverse, and a
-field of coordinates as a NIfTI (or, with a `y_` prefix, an SPM) field of
-coordinates:
+name asks for, with the same converters as `t.to(Format)`. Its `input`
+and `output` are read, and bridged to the format's: an affine from voxels
+to LPS is written as the voxel-to-RAS affine of a NIfTI file, with its
+first two axes flipped, and an affine whose systems are not known is
+taken to map the format's. A field is written as the values at the nodes
+of its grid, as a field of displacements or of coordinates, whichever the
+format stores. The two are the same map inside the grid and differ only
+in how they are extended outside it, which each format decides:
 
 ```python
 io.save(affine, "affine.nii.gz")  # -> NiftiVoxelToRAS
@@ -113,9 +112,13 @@ io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
 ```
 
 Several formats may claim the same name, as NiftyReg, MRtrix and elastix
-all claim `.txt`. They are tried from the most specific, and a format that
-cannot hold the object gives way to the next. An error that is not such a
-refusal, such as a file that cannot be written, stops the save at once.
+all claim `.txt`. The object is converted to each of them, and the format
+that keeps the most of it is chosen: a field of the same kind, and the
+same coordinate systems, so that a field between LPS spaces is written as
+an ITK field rather than as a NIfTI field between RAS spaces. A format
+that cannot hold the object gives way to the next. An error that is not
+such a refusal, such as a file that cannot be written, stops the save at
+once.
 
 A `hint` names the format, as it does for `load`, and only the formats
 that answer to it are chosen from. A format named by its hint is written
@@ -126,11 +129,22 @@ a name that no format claims, such as a plain `.json` name:
 io.save(affine, "transform.json", hint="neuroglancer.affine")
 ```
 
-Nothing is approximated to fit a format. An affine between two world
-spaces is not a voxel-to-RAS affine, and a field interpolated with cubic
-splines is not the linearly interpolated values a NIfTI file holds, so
-both are refused, with the reason each format gives. The same conversion
-can be asked for explicitly, or the format can be built directly:
+A format that holds a transformation only approximately is used only
+when `lossy=True` is given. A field interpolated with cubic splines, for
+example, is written in a NIfTI file as the values at its nodes, which are
+read back with linear interpolation. Some formats need images that the
+transformation does not hold, such as the reference and moving images of
+an FSL warp, which are given as options of the conversion. A format that
+cannot hold the transformation at all is refused, with the reason it
+gives: an affine between two world spaces is not a voxel-to-RAS affine.
+
+```python
+io.save(bspline, "warp.nii.gz", lossy=True)
+io.save(warp, "fnirt.nii.gz", hint="fnirt", conversion={"reference": ref})
+```
+
+The same conversion can be asked for explicitly, or the format can be
+built directly:
 
 ```python
 import numpy as np
