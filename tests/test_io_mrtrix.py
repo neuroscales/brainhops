@@ -840,19 +840,13 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        unscaled = _MrtrixProxy.get_unscaled
-        stored = _MrtrixProxy.read_stored
+        read = _MrtrixProxy._read
 
-        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        def counted(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
-            return unscaled(proxy, *args, **kwargs)
+            return read(proxy, *args, **kwargs)
 
-        def counted_stored(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-            self.count += 1
-            return stored(proxy, *args, **kwargs)
-
-        monkeypatch.setattr(_MrtrixProxy, "get_unscaled", counted_unscaled)
-        monkeypatch.setattr(_MrtrixProxy, "read_stored", counted_stored)
+        monkeypatch.setattr(_MrtrixProxy, "_read", counted)
 
 
 @pytest.mark.parametrize("name", ["source.mif", "source.mif.gz"])
@@ -880,9 +874,8 @@ def test_nothing_but_the_data_reads_the_voxels(
         lazy = MrtrixImage.load(source).data
     assert reads.count == 0
     assert np.asarray(lazy).shape == DATA.shape
-    # A read of the voxels reads the file once, which a gzipped file
-    # counts twice, as the stored bytes are read to be decoded.
-    assert reads.count == (2 if name.endswith(".gz") else 1)
+    # A read of the voxels reads the file once.
+    assert reads.count == 1
     reads.count = 0
     with backend("numpy"):
         data = image.data

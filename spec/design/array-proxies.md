@@ -7,9 +7,12 @@ MINC files without nibabel.
 
 The first two layers below are implemented in
 `brainhops._core.proxy`, and the fifteen proxies of brainhops
-derive from the base class. The third and fourth layers, and the
-reading of NIfTI, MGH and MINC without nibabel, are not implemented
-yet. The steps are listed at the end of the memo.
+derive from the base class. A first form of the third layer is
+implemented in `brainhops._core.strided` (see "What is implemented of
+the third layer" below), and the MRtrix, NRRD and AFNI proxies use it.
+The full third layer, the fourth layer, and the reading of NIfTI, MGH
+and MINC without nibabel, are not implemented yet. The steps are listed
+at the end of the memo.
 
 ## What a proxy is for
 
@@ -40,10 +43,10 @@ proxies of this group decode the bytes themselves or ask nibabel to.
 
 | Format    | Class                  | Partial reads | Scaling         |
 |-----------|------------------------|---------------|-----------------|
-| MRtrix    | `_MrtrixProxy`         | no            | yes, global     |
-| NRRD      | `_NrrdProxy`           | no            | no              |
-| AFNI      | `_BrikProxy`           | no            | yes, per volume |
-| MINC      | `_MincProxy` (nibabel) | no            | yes, per slice  |
+| MRtrix    | `_MrtrixProxy`         | yes, except `Bit` | yes, global |
+| NRRD      | `_NrrdProxy`           | yes, for raw, gzip and bzip2 in one file | no |
+| AFNI      | `_BrikProxy`           | yes, for sub-bricks of one type | yes, per volume |
+| MINC      | `_MincProxy` (nibabel) | yes, for a local file that is not compressed | yes, per slice |
 | NIfTI     | nibabel `ArrayProxy`   | yes           | yes, global     |
 | MGH       | nibabel `ArrayProxy`   | yes           | no              |
 
@@ -392,6 +395,29 @@ nibabel would remain a test dependency, so that the tests compare every
 header and every array with what nibabel reads. It could also remain an
 optional dependency for a conversion to nibabel images.
 
+## What is implemented of the third layer
+
+`StridedProxy` in `brainhops._core.strided` reads an array of
+fixed-size values stored in C or Fortran order at an offset of a file
+that may be compressed, presented through an axis permutation, flips
+and a scaling that broadcasts against the presented shape. It covers
+the layouts of MRtrix, NRRD and AFNI without a separate `Layout` class.
+A read gets the smallest range of whole slabs of the slowest stored axis
+that holds the selection, rather than a merged list of byte ranges, and
+a local file that is not compressed is memory-mapped. The blocks that it
+gives Dask are slabs of the slowest stored axis, as many as fit in the
+option `array.chunk-size` of Dask, so that each block reads one
+contiguous range of bytes. It has no cache, so a compressed file is
+decompressed from its start for each block that Dask reads, which
+indexed_gzip makes cheap when it is installed.
+
+The cases that do not fit a single block of fixed-size values are still
+decoded whole: packed `Bit` data of MRtrix, NRRD samples split between
+several files, encoded as text or preceded by skipped lines, and AFNI
+sub-bricks of several types. MINC keeps nibabel, which is now given the
+selection, so a local MINC1 or MINC2 file that is not compressed is read
+in part.
+
 ## Order of the work
 
 1. Add the protocol and the base class, and move every proxy of
@@ -399,9 +425,10 @@ optional dependency for a conversion to nibabel images.
    the duplicated code and makes indexing lazy for every proxy. The
    proxies of the first group still decode the whole file for any read.
 2. Write `ByteSource`, `Layout` and `StridedProxy` in `brainhops._core`,
-   without nibabel.
-3. Move MRtrix, NRRD and AFNI onto the third layer. This fixes the
-   repeated whole-file reads, and the existing tests cover the result.
+   without nibabel. A first `StridedProxy` is implemented, without
+   `ByteSource`, `Layout`, the merged byte ranges and the cache.
+3. Move MRtrix, NRRD and AFNI onto the third layer. This step is
+   implemented for the cases that the first `StridedProxy` covers.
 4. Parse MGH headers without nibabel, which is the smallest header and
    tests the path from header to `StridedProxy`.
 5. Parse NIfTI headers without nibabel, then MINC1.

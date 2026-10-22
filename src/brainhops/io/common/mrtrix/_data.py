@@ -10,8 +10,8 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.proxy import ArrayProxy
-from brainhops._core.streams import open_compressed, preserve_position
+from brainhops._core.streams import open_compressed
+from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base._utils_files import sibling as _sibling
@@ -23,6 +23,7 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._codecs import (
+    _storage_shape,
     image_to_storage,
     storage_to_image,
 )
@@ -156,7 +157,7 @@ def _is_scaled(record: MrtrixRaw) -> bool:
     return bool(scaling) and tuple(scaling) != (0.0, 1.0)
 
 
-class _MrtrixProxy(ArrayProxy):
+class _MrtrixProxy(StridedProxy):
     """A lazy array of the voxels of an MRtrix image.
 
     The proxy holds where the voxels lie, which is a path or the stream
@@ -168,10 +169,13 @@ class _MrtrixProxy(ArrayProxy):
     intensity `scaling` of the header is applied when they are read, as
     nibabel's proxy applies the scaling of a NIfTI header.
 
-    The voxels of a local file that is not compressed are memory-mapped
-    when `mmap` is true, so that reading them gives a read-only view of
-    the file. Indexing the proxy returns another lazy array (see
-    [`ArrayProxy`][]), but any read decodes the whole file for now.
+    A read gets only the bytes that its selection needs (see
+    [`StridedProxy`][brainhops._core.strided.StridedProxy]): the voxels
+    of a local file that is not compressed are memory-mapped when `mmap`
+    is true, and a compressed file is decompressed up to the end of the
+    selection. The blocks that the proxy gives Dask are slabs of the axis
+    that the file stores slowest. Packed `Bit` data cannot be read in
+    part, so any read of such an image decodes the whole file.
     """
 
     def __init__(
@@ -182,26 +186,41 @@ class _MrtrixProxy(ArrayProxy):
         record: MrtrixRaw,
         mmap: bool,
     ) -> None:
-        self.source = source
-        """The path of the file of the voxels, or the stream that holds it."""
-        self.start = int(start)
-        """The position of the file in a stream, before decompression."""
-        self.offset = int(offset)
-        """The position of the first voxel in the decompressed file."""
+        shape, position = _storage_shape(record.dim, record.layout)
+        flips = [axis for axis, s in enumerate(record.layout) if s < 0]
+        scaling = record.scaling if _is_scaled(record) else None
+        super().__init__(
+            source,
+            np.dtype(np.uint8) if record.is_bit else record.dtype,
+            shape,
+            offset=offset,
+            order="C",
+            axes=position,
+            flips=flips,
+            slope=None if scaling is None else scaling[1],
+            inter=None if scaling is None else scaling[0],
+            start=start,
+            mmap=mmap,
+        )
         self.record = record
         """The record of the image, which describes how voxels are stored."""
-        self.mmap = bool(mmap)
-        """Whether a local file that is not compressed is memory-mapped."""
-
-    @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the image, read from the record."""
-        return tuple(self.record.dim)
 
     @property
     def dtype(self) -> np.dtype:
         """The type of the values once the intensity scaling applies."""
         return _scaled_dtype(self.record)
+
+    @property
+    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        """The block shape, or `None` for packed `Bit` data."""
+        if self.record.is_bit:
+            return None
+        return super().base_chunks
+
+    @property
+    def nbytes_stored(self) -> int:
+        """The number of bytes of the stored voxels."""
+        return self.record.nbytes
 
     def read_stored(self) -> bytes:
         """Return the bytes of the voxels as the file stores them.
@@ -214,20 +233,13 @@ class _MrtrixProxy(ArrayProxy):
         ParserContentError
             If the file holds fewer bytes than the record says.
         """
-        nbytes = self.record.nbytes
-        if isinstance(self.source, (str, os.PathLike, path.PathLike)):
-            with _open_path(self.source) as f:
-                content = _read_at(f, self.offset, nbytes)
-        else:
-            with preserve_position(self.source):
-                self.source.seek(self.start)
-                content = _read_at(self.source, self.offset, nbytes)
-        if len(content) < nbytes:
+        try:
+            return super().read_stored()
+        except ValueError as error:
             raise ParserContentError(
-                f"The MRtrix data hold {len(content)} bytes, but the header "
-                f"asks for {nbytes}."
-            )
-        return content
+                f"The MRtrix data are shorter than the {self.record.nbytes} "
+                f"bytes that the header asks for. {error}"
+            ) from error
 
     def get_unscaled(self) -> np.ndarray:
         """Return all the stored values in the axis order of the header.
@@ -235,25 +247,17 @@ class _MrtrixProxy(ArrayProxy):
         The values are those of the whole file, whatever part of it a view
         of the proxy selects, and the intensity scaling is not applied.
         """
-        local = None
-        if isinstance(self.source, (str, os.PathLike, path.PathLike)):
-            local = _local_path(self.source)
-        nbytes = self.record.nbytes
-        if local is not None and self.mmap and nbytes > 0:
-            with open(local, "rb") as f:
-                compressed = f.read(2) == b"\x1f\x8b"
-            if not compressed:
-                buffer = np.memmap(
-                    local,
-                    dtype=np.uint8,
-                    mode="r",
-                    offset=self.offset,
-                    shape=(nbytes,),
-                )
-                return decode_data(self.record, buffer)
         return decode_data(self.record, self.read_stored())
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        if not self.record.is_bit:
+            try:
+                return super()._read(index)
+            except ValueError as error:
+                raise ParserContentError(
+                    f"The MRtrix data are shorter than the header asks "
+                    f"for. {error}"
+                ) from error
         values = self.get_unscaled()[index]
         if _is_scaled(self.record):
             offset, scale = self.record.scaling

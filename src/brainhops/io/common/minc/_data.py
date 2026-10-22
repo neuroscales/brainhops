@@ -21,6 +21,9 @@ from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from ._raw import MincRaw
 from ._utils import _read_minc, _read_voxels
 
+_CHUNK_BYTES = 128 * 2**20
+"""The size of a block when Dask is not installed to give its own."""
+
 
 class _MincProxy(ArrayProxy):
     """A lazy array of the voxels of a MINC image.
@@ -32,8 +35,13 @@ class _MincProxy(ArrayProxy):
     open. A local file that is not compressed is opened by name, and any
     other file is decompressed into memory first. The values are
     presented in the order of the file, slowest dimension first.
-    Indexing the proxy returns another lazy array (see
-    [`ArrayProxy`][]), but any read decodes the whole file for now.
+
+    A read asks nibabel for the box that it selects, which reads only
+    that part of a local file that is not compressed: MINC1 files are
+    memory-mapped, and MINC2 files are read with h5py. A compressed
+    file, or one read from a stream, is decompressed whole first. The
+    blocks that the proxy gives Dask are slabs of the slowest dimension,
+    as many as fit in the block size of Dask.
     """
 
     def __init__(self, source: tx.Any, record: MincRaw) -> None:
@@ -72,8 +80,31 @@ class _MincProxy(ArrayProxy):
             )
         return values
 
+    @property
+    def base_chunks(self) -> tx.Tuple[int, ...]:
+        """The block shape: slabs of the slowest dimension.
+
+        A block holds every value of the other dimensions, and as many
+        slabs as fit in the block size of Dask, with at least one slab.
+        """
+        shape = self.base_shape
+        if not shape:
+            return shape
+        slab = int(np.prod(shape[1:])) * np.dtype(self.dtype).itemsize
+        count = max(1, _chunk_bytes() // max(1, slab))
+        return (min(count, shape[0]),) + shape[1:]
+
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
-        return self.read_voxels()[index]
+        def read(container: tx.Any, mfile: tx.Any, version: int) -> np.ndarray:
+            if tuple(mfile.get_data_shape()) != self.base_shape:
+                raise ParserContentError(
+                    f"The MINC voxels have shape {mfile.get_data_shape()}, "
+                    f"but the header that the image was read with says "
+                    f"{self.base_shape}."
+                )
+            return _read_voxels(container, mfile, version, index)
+
+        return _read_minc(_opened(self.source), self.record.version, read)
 
 
 def _opened(source: tx.Any) -> tx.Union[str, bytes]:
@@ -133,3 +164,14 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
         content = bytes(open_compressed(file).read())
     record = MincRaw.from_fileobj(BytesIO(content))
     return record, _MincProxy(content, record)
+
+
+def _chunk_bytes() -> int:
+    """Return the number of bytes of a block that Dask is configured for."""
+    try:
+        import dask
+        from dask.utils import parse_bytes
+    except ImportError:
+        return _CHUNK_BYTES
+    size = dask.config.get("array.chunk-size", _CHUNK_BYTES)
+    return int(parse_bytes(size)) if isinstance(size, str) else int(size)
