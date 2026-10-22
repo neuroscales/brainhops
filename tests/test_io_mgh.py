@@ -29,6 +29,7 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     DisplacementField,
     Scaling,
 )
+from brainhops.errors import ConversionError  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     UnrepresentableTransformationError,
@@ -202,7 +203,7 @@ def test_the_tkr_space_is_the_shared_tkregister_system(tmp_path) -> None:  # noq
     assert tkr.output.geometry is None
     assert not isinstance(tkr.output, RASmm)
     assert isinstance(scanner.output, RASmm)
-    # An affine from tkr RAS to scanner RAS is not written by LTA as an
+    # An affine from tkr RAS to scanner RAS is not converted to LTA as an
     # affine between scanner spaces.
     tkr2scanner = scanner.homogeneous_matrix @ np.linalg.inv(
         tkr.homogeneous_matrix
@@ -210,9 +211,8 @@ def test_the_tkr_space_is_the_shared_tkregister_system(tmp_path) -> None:  # noq
     affine = Affine(
         matrix=tkr2scanner[:3], input=tkr.output, output=scanner.output
     )
-    lta = LtaTransformation.from_instance(affine)
-    with pytest.raises(UnrepresentableTransformationError):
-        lta.to_text()
+    with pytest.raises(ConversionError, match="tkregister space"):
+        LtaTransformation.from_instance(affine)
     # A 4-D image keeps a tkr space of four axes, named after it.
     image = io.images.load(_write(tmp_path, "vol4d.mgz", _data((3, 4, 5, 2))))
     assert image.transformations[1].output.name == "tkr"

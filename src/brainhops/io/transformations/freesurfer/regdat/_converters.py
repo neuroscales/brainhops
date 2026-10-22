@@ -73,6 +73,7 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.base._records import matrix_to_disk
 
 from ..lta import LtaRaw, LtaTransformation, LtaType, LtaValidity
+from ..lta._converters import _check_tkr
 from ..lta._matrix_utils import (
     _get_tkr2tkr,
     _volume_geometry,
@@ -115,6 +116,7 @@ def _(
         reference = src.geometry if reference is None else reference
         moving = dst.geometry if moving is None else moving
     else:
+        _check_tkr(t, cls, src, dst)
         missing = [
             name
             for name, value in zip(OPTIONS, (reference, moving))

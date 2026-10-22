@@ -105,6 +105,7 @@ def _(
         if isinstance(src, kind) and isinstance(dst, kind):
             matrix = affine_between(t, src, dst, cls)
             return _held(t, cls, matrix, src, dst, None)
+    _check_tkr(t, cls, src, dst)
     if _is_voxels(src) and _is_voxels(dst):
         return _voxels(t, cls, options)
     matrix = affine_between(t, RAS, RAS, cls)
@@ -258,3 +259,25 @@ def _check_view(
                 f"{side} of the LTA file is {type(system).__name__}, not "
                 f"{type(own).__name__}. Convert it to LtaTransformation.",
             )
+
+
+def _check_tkr(
+    t: _xforms.Transformation,
+    cls: type,
+    src: tx.Optional[_systems.CoordinateSystem],
+    dst: tx.Optional[_systems.CoordinateSystem],
+) -> None:
+    # A tkregister space has the axes of RAS but another origin, which
+    # only the geometry of its volume gives, so it is never read as the
+    # scanner RAS of the other side.
+    tkr = [isinstance(system, FreesurferTkrSystem) for system in (src, dst)]
+    if any(tkr) and not all(tkr):
+        raise unrepresentable(
+            t,
+            cls,
+            "one of its endpoints is a tkregister space and the other is "
+            "not. A tkregister space is placed in scanner RAS only by the "
+            "geometry of its volume, so the affine is not one that the "
+            "format stores. Compose it with the tkregister-to-scanner "
+            "affine of the volume first.",
+        )

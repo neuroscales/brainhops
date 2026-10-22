@@ -28,8 +28,8 @@ class TfmMetadata(MetadataReader, MetadataFormat):
     version of ITK.
 
     The text is read by the record: [`from_lines`][] parses a [`TfmRaw`][]
-    and wraps it. brainhops does not write `.tfm` files, so the metadata
-    cannot be written either.
+    and wraps it. The metadata is not written on its own: a `.tfm` file
+    is written by its transformation, which writes the record.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".tfm",)
