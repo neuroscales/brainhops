@@ -797,13 +797,17 @@ def test_a_record_of_the_other_syntax_is_written_in_this_one(
     assert len(again) == 2
 
 
-def test_a_chain_is_relabelled() -> None:
+def test_a_chain_is_converted() -> None:
+    # A chain of affines between unknown systems is taken to map LPS, and
+    # it is converted to the simplest elastix transform that holds it.
     chain = xforms.Sequence([xforms.Translation([1.0, 2.0, 3.0])])
-    assert relabels(chain, ElastixParameterTransform)
-    assert relabels(chain, ElastixTomlTransform)
+    assert not relabels(chain, ElastixParameterTransform)
+    assert not relabels(chain, ElastixTomlTransform)
     held = chain.to(ElastixParameterTransform)
     assert type(held) is ElastixParameterTransform
     assert held.metadata is None
+    record = held.consolidate().metadata.raw
+    assert record.parameters["Transform"] == ("TranslationTransform",)
 
 
 # ----------------------------------------------------------------------

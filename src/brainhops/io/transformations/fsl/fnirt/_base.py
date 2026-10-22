@@ -1,6 +1,9 @@
+import os
+
+import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Alias, Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Alias, Inherit, KwOnly, NoRepr, fields_dict, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
@@ -15,6 +18,7 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.errors import ConversionError, LossyConversionError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -177,6 +181,11 @@ class FnirtWarpField(
     """
 
     HINTS = ("fnirt",)
+    # A field that a FNIRT warp holds exactly, on the grid of its
+    # reference, is held exactly by a NIfTI displacement field too, and
+    # `io.save` then writes the NIfTI field unless `hint="fnirt"` asks
+    # for this format.
+    PRIORITY: tx.ClassVar[int] = -1
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -258,8 +267,8 @@ class FnirtWarpField(
     def _pop_images(
         cls, kwargs: tx.Dict[str, tx.Any]
     ) -> tx.Tuple[tx.Optional[_ImageLike], tx.Optional[_ImageLike]]:
-        moving = pop_aliased(cls, kwargs, "moving")
-        reference = pop_aliased(cls, kwargs, "reference")
+        moving = _read_image(pop_aliased(cls, kwargs, "moving"))
+        reference = _read_image(pop_aliased(cls, kwargs, "reference"))
         return moving, reference
 
     @classmethod
@@ -422,6 +431,55 @@ class FnirtWarpField(
         self.metadata = metadata
         self.data = None
         return self
+
+    # --- conversion ---------------------------------------------------
+
+    def to(
+        self,
+        cls: tx.Optional[type] = None,
+        **kwargs: tx.Any,
+    ) -> _xforms.Transformation:
+        """Convert the warp to another type or encoding.
+
+        A FNIRT file does not hold the geometry of its images, so a warp
+        that was loaded without them can be given them here, as the
+        options `reference=` and `moving=` (or `ref=`, `mov=` and
+        `src=`), and `deformation_type=`. They complete the warp before
+        it is converted, and they are passed on to the converter only
+        when the class it converts to has a field of that name, such as
+        the moving image of a FLIRT transform. Within its own class, the
+        options are the fields of the warp, as for any transformation.
+
+        A coefficient field is converted to a file format that stores a
+        dense field, such as a NIfTI displacement field, through a
+        deformation field on the grid of the reference. The cubic spline
+        is then sampled at every voxel of the reference rather than at
+        its knots only, which is a loss, so the conversion needs
+        `lossy=True`. A format that stores B-splines, such as a NiftyReg
+        grid of control points or an elastix B-spline, receives the
+        spline itself.
+
+        Parameters
+        ----------
+        cls : type, optional
+            The type to convert to. By default, the type is kept.
+        **kwargs : Any
+            The options that `to` takes for any transformation, such as
+            `lossy=`, and the geometry of the warp.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        target = cls or self._target_class(kwargs)
+        if isinstance(target, type) and issubclass(target, FnirtWarpField):
+            return super().to(cls, **kwargs)
+        source = _with_geometry(self, target, kwargs)
+        _check_resolvable(source)
+        if _densified(source, target):
+            return _through_deformation(source, cls, kwargs)
+        return super(FnirtWarpField, source).to(cls, **kwargs)
 
     # --- exposed parameters -------------------------------------------
 
@@ -844,6 +902,142 @@ def _warp_chain(
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
+
+
+def _read_image(image: tx.Any) -> tx.Any:
+    """Return an image, with a path read as a NIfTI header."""
+    if isinstance(image, (str, os.PathLike)):
+        return nb.load(os.fspath(image)).header
+    return image
+
+
+_GEOMETRY = ("moving", "reference", "deformation_type")
+"""The fields of a warp that a conversion to another class completes."""
+
+
+def _with_geometry(
+    warp: FnirtWarpField, target: type, kwargs: tx.Dict[str, tx.Any]
+) -> FnirtWarpField:
+    """Complete a warp with the geometry that a conversion is given.
+
+    Each option that names a field of `_GEOMETRY`, under any of its
+    aliases, sets that field on a copy of the warp when the warp does
+    not have it. The option is removed from `kwargs` unless `target` has
+    a field of the same name, which then receives it as well.
+    """
+    fields = fields_dict(FnirtWarpField)
+    try:
+        targets = fields_dict(target)
+    except TypeError:
+        targets = {}
+    given = {}
+    for name in _GEOMETRY:
+        aliases = fields[name].alias or (name,)
+        if isinstance(aliases, str):
+            aliases = (aliases,)
+        for alias in aliases:
+            if alias not in kwargs:
+                continue
+            value = kwargs[alias] if alias in targets else kwargs.pop(alias)
+            if value is not None and getattr(warp, name) is None:
+                given[name] = value
+    if "moving" in given:
+        given["moving"] = _read_image(given["moving"])
+    if "reference" in given:
+        given["reference"] = _read_image(given["reference"])
+    return replace(warp, **given) if given else warp
+
+
+def _check_resolvable(warp: FnirtWarpField) -> None:
+    """Refuse to convert a warp whose images are missing.
+
+    Raises
+    ------
+    ConversionError
+        If the warp was read from a file and the images that place it in
+        the world are not known.
+    """
+    if warp._transformations is not None or _header(warp) is None:
+        return
+    missing = [
+        name
+        for name in ("reference", "moving")
+        if getattr(warp, name) is None
+        and (name == "moving" or warp._is_coeff())
+    ]
+    if missing:
+        names = " and ".join(f"{name}=" for name in missing)
+        raise ConversionError(
+            f"This FnirtWarpField cannot be converted: a FNIRT warp maps "
+            f"the scaled millimetres of its reference image to those of its "
+            f"moving image, and the file does not hold the geometry of "
+            f"{' and '.join(missing)}. Pass {names} to io.load, or to the "
+            f"conversion, as in t.to(Format, moving=...)."
+        )
+
+
+def _densified(warp: FnirtWarpField, target: tx.Any) -> bool:
+    """Whether a warp is converted through a deformation field.
+
+    A coefficient field is, when it is converted to a file format that
+    does not store B-splines, and when both of its images are known.
+    """
+    from brainhops.io.transformations.base import TransformationFormat
+
+    if not isinstance(target, type):
+        return False
+    if not issubclass(target, TransformationFormat):
+        return False
+    if _header(warp) is None or not warp._is_coeff():
+        return False
+    if warp._transformations is not None or not warp._resolvable():
+        return False
+    return not issubclass(target, _spline_formats())
+
+
+def _spline_formats() -> tx.Tuple[type, ...]:
+    """The file formats that store a B-spline as it is."""
+    formats: tx.List[type] = []
+    try:
+        from brainhops.io.transformations.niftyreg import (
+            NiftyRegControlPointGrid,
+        )
+
+        formats.append(NiftyRegControlPointGrid)
+    except ImportError:  # pragma: no cover
+        pass
+    from brainhops.io.transformations.elastix import ElastixTransform
+
+    formats.append(ElastixTransform)
+    return tuple(formats)
+
+
+def _through_deformation(
+    warp: FnirtWarpField, cls: tx.Any, kwargs: tx.Dict[str, tx.Any]
+) -> _xforms.Transformation:
+    """Convert a coefficient field through a deformation field.
+
+    The deformation field samples the spline at every voxel of the
+    reference, which loses, so the result is returned only with
+    `lossy=True`, and is carried by a `LossyConversionError` otherwise.
+    """
+    from ._converters import to_fnirt
+
+    lossy = kwargs.pop("lossy", False)
+    try:
+        dense = to_fnirt(warp, FnirtWarpField)
+    except LossyConversionError as error:
+        dense = error.result
+    result = dense.to(cls, lossy=True, **kwargs)
+    if lossy:
+        return result
+    raise LossyConversionError(
+        f"The {getattr(cls, '__name__', cls)} that this FNIRT coefficient "
+        f"field converts to is not the same map: the cubic spline is "
+        f"sampled at the voxels of the reference, which are read back with "
+        f"linear interpolation. Pass lossy=True to accept it.",
+        result=result,
+    )
 
 
 def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
