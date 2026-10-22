@@ -7,6 +7,7 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # internals
 from brainhops._core import path
@@ -176,20 +177,61 @@ class _MrtrixProxy(StridedProxy):
     selection. The blocks that the proxy gives Dask are slabs of the axis
     that the file stores slowest. Packed `Bit` data cannot be read in
     part, so any read of such an image decodes the whole file.
+
+    A reader builds the proxy from the record of the image with
+    [`from_record`][brainhops.io.common.mrtrix._data._MrtrixProxy.from_record].
     """
 
-    def __init__(
-        self,
+    record: KwOnly[
+        tx.Annotated[
+            MrtrixRaw,
+            tx.Doc(
+                "The record of the image, which describes how its voxels "
+                "are stored."
+            ),
+        ]
+    ]
+
+    @classmethod
+    def from_record(
+        cls,
         source: tx.Any,
         start: int,
         offset: int,
         record: MrtrixRaw,
         mmap: bool,
-    ) -> None:
+    ) -> "_MrtrixProxy":
+        """
+        Return the proxy of the voxels that a record describes.
+
+        The strided layout is read from the record: the stored shape and
+        the reversed axes come from its `layout`, and the intensity
+        scaling from its `scaling`. Packed `Bit` data are described as
+        bytes, which only the whole file decodes.
+
+        Parameters
+        ----------
+        source : path-like or file object
+            The file, by its path, or a stream open in binary mode.
+        start : int
+            The position of the content in `source`, before
+            decompression.
+        offset : int
+            The position of the first voxel in the decoded content.
+        record : MrtrixRaw
+            The record of the image.
+        mmap : bool
+            Whether a local file that is not compressed is memory-mapped.
+
+        Returns
+        -------
+        _MrtrixProxy
+            The proxy of the voxels.
+        """
         shape, position = _storage_shape(record.dim, record.layout)
         flips = [axis for axis, s in enumerate(record.layout) if s < 0]
         scaling = record.scaling if _is_scaled(record) else None
-        super().__init__(
+        return cls.dense(
             source,
             np.dtype(np.uint8) if record.is_bit else record.dtype,
             shape,
@@ -201,9 +243,8 @@ class _MrtrixProxy(StridedProxy):
             inter=None if scaling is None else scaling[0],
             start=start,
             mmap=mmap,
+            record=record,
         )
-        self.record = record
-        """The record of the image, which describes how voxels are stored."""
 
     @property
     def dtype(self) -> np.dtype:
@@ -350,4 +391,6 @@ def read_mrtrix(
                     f"The MRtrix data file {source} holds {size} bytes, but "
                     f"the header asks for {offset + record.nbytes}."
                 )
-    return record, _MrtrixProxy(source, start, offset, record, mmap)
+    return record, _MrtrixProxy.from_record(
+        source, start, offset, record, mmap
+    )

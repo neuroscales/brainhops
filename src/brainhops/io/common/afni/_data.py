@@ -10,6 +10,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # internals
 from brainhops._core import path
@@ -249,9 +250,44 @@ class _BrikProxy(StridedProxy):
     of slices for a single sub-brick. Sub-bricks of several types are
     joined in their common type, which needs the whole BRIK, so any read
     of such a BRIK decodes and scales all of it.
+
+    A reader builds the proxy from the record of the dataset with
+    [`from_record`][brainhops.io.common.afni._data._BrikProxy.from_record].
     """
 
-    def __init__(self, brik: tx.Any, record: AfniRaw, mmap: bool) -> None:
+    record: KwOnly[
+        tx.Annotated[
+            AfniRaw,
+            tx.Doc("The record of the dataset, which describes the BRIK."),
+        ]
+    ]
+
+    @classmethod
+    def from_record(
+        cls, brik: tx.Any, record: AfniRaw, mmap: bool
+    ) -> "_BrikProxy":
+        """
+        Return the proxy of the voxels of a BRIK that a record describes.
+
+        The layout is read from the record: a BRIK is a Fortran-ordered
+        array of shape `(x, y, z, sub-brick)`, with the last axis dropped
+        for a single sub-brick, and the factors of `BRICK_FLOAT_FACS`
+        scale each sub-brick. A factor of zero means no scaling.
+
+        Parameters
+        ----------
+        brik : path-like
+            The path of the BRIK file.
+        record : AfniRaw
+            The record of the dataset.
+        mmap : bool
+            Whether a local BRIK that is not compressed is memory-mapped.
+
+        Returns
+        -------
+        _BrikProxy
+            The proxy of the voxels.
+        """
         nvals = record.nvals
         shape = record.shape + ((nvals,) if nvals > 1 else ())
         slope = None
@@ -259,18 +295,20 @@ class _BrikProxy(StridedProxy):
             facs = np.asarray(record.float_facs, dtype=np.float64)
             facs = np.where(facs == 0, 1.0, facs)
             slope = facs if nvals > 1 else facs[0]
-        super().__init__(
+        return cls.dense(
             brik,
             record.dtypes[0],
             shape,
             order="F",
             slope=slope,
             mmap=mmap,
+            record=record,
         )
-        self.brik = brik
-        """The path of the BRIK file."""
-        self.record = record
-        """The record of the dataset, which describes the BRIK."""
+
+    @property
+    def brik(self) -> tx.Any:
+        """The path of the BRIK file, which is the source of the proxy."""
+        return self.source
 
     @property
     def _single_type(self) -> bool:
@@ -424,7 +462,7 @@ def brik_proxy(record: AfniRaw, brik: tx.Any, mmap: bool) -> _BrikProxy:
                 f"The AFNI BRIK {brik} holds {size} bytes, but the header "
                 f"asks for {record.nbytes}."
             )
-    return _BrikProxy(brik, record, mmap)
+    return _BrikProxy.from_record(brik, record, mmap)
 
 
 def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:

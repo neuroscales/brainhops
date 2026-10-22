@@ -398,18 +398,26 @@ optional dependency for a conversion to nibabel images.
 ## What is implemented of the third layer
 
 `StridedProxy` in `brainhops._core.strided` reads an array of
-fixed-size values stored in C or Fortran order at an offset of a file
-that may be compressed, presented through an axis permutation, flips
-and a scaling that broadcasts against the presented shape. It covers
-the layouts of MRtrix, NRRD and AFNI without a separate `Layout` class.
-A read gets the smallest range of whole slabs of the slowest stored axis
-that holds the selection, rather than a merged list of byte ranges, and
-a local file that is not compressed is memory-mapped. The blocks that it
-gives Dask are slabs of the slowest stored axis, as many as fit in the
-option `array.chunk-size` of Dask, so that each block reads one
-contiguous range of bytes. It has no cache, so a compressed file is
-decompressed from its start for each block that Dask reads, which
-indexed_gzip makes cheap when it is installed.
+fixed-size values at an offset of a file that may be compressed. Where
+each value lies is given as the layout above describes it, by the
+position of the first value and one stride in bytes for each axis,
+which may be negative, so the proxy holds a layout in its own fields
+rather than in a separate `Layout` class. Its constructor
+`StridedProxy.dense` builds the strides of an array stored in C or
+Fortran order and presented through an axis permutation and flips,
+which are the layouts of MRtrix, NRRD and AFNI. The proxy also applies
+a scaling that broadcasts against its shape. A read gets the range of
+bytes from the first value of the selected box to its last one, rather
+than a merged list of byte ranges, and a local file that is not
+compressed is memory-mapped. The blocks that it gives Dask are slabs of
+the axis with the largest stride, as many as fit in the option
+`array.chunk-size` of Dask, so that each block reads one contiguous
+range of bytes. It has no cache, so a compressed file is decompressed
+from its start for each block that Dask reads, which indexed_gzip makes
+cheap when it is installed. The proxy is a `Magic` class of bagof, whose
+constructor is built from its fields, and the MRtrix and AFNI proxies
+add the record of their file as a field and build themselves from it
+with `from_record`. Status: implemented.
 
 The cases that do not fit a single block of fixed-size values are still
 decoded whole: packed `Bit` data of MRtrix, NRRD samples split between
