@@ -2,8 +2,8 @@
 
 | Format                   | Module  | Class                       | Writes |
 | ------------------------ | ------- | --------------------------- | ------ |
-| text (`.tfm`, `.txt`)    | `tfm`   | `TfmTransform`              | no     |
-| HDF5 (`.h5`)             | `h5`    | `H5Transform`               | no     |
+| text (`.tfm`, `.txt`)    | `tfm`   | `TfmTransform`              | yes    |
+| HDF5 (`.h5`)             | `h5`    | `H5Transform`               | yes    |
 | binary MATLAB (`.mat`)   | `mat`   | `MatTransform`              | yes    |
 | NIfTI warp (`.nii[.gz]`) | `nifti` | `ItkNiftiDisplacementField` | yes    |
 

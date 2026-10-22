@@ -200,6 +200,19 @@ class XfmTransform(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xfm",)
 
+    PRIORITY: tx.ClassVar[int] = -1
+    """
+    Priority below the MNI affine.
+
+    An `.xfm` name cannot tell a chain of transforms from a single
+    affine, and both formats hold an affine exactly. `io.save` writes an
+    affine as an
+    [`XfmAffine`][brainhops.io.transformations.minc.XfmAffine], unless it
+    already is an `XfmTransform`, which is built with
+    `t.to(XfmTransform)`. A file is read by the confidence of each
+    format, which decides before the priority.
+    """
+
     _metadata: NoRepr[tx.Optional[XfmMetadata]] = Inherit(
         "metadata", default=None
     )

@@ -10,9 +10,13 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import TextFileReader
+from brainhops.io.base.parsers import TextFileReader, TextFileWriter
 from brainhops.io.common._geometry import held_transformations
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
+)
 
 from .._chains import (
     _check_position,
@@ -33,7 +37,7 @@ def _record(xform: "TfmTransform") -> tx.Optional[TfmRaw]:
 
 
 @register_format
-class TfmTransform(TextFileReader, ItkTransform):
+class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
     """Transformation stored in an ITK text `.tfm` file.
 
     The transformation is the chain of blocks of one top-level transform of
@@ -48,8 +52,21 @@ class TfmTransform(TextFileReader, ItkTransform):
     The record describes the file as it was read, or as the transformation
     was last consolidated. A chain that is assigned or changed, and an
     `input` or `output` that is set, are pending until [`consolidate`][]
-    encodes them into a new record. brainhops does not write `.tfm` files,
-    so the record is only held in memory.
+    encodes them into a new record, or until the transformation is
+    written.
+
+    !!! note "What is written"
+        The transformation is consolidated, and the blocks of its record
+        are written as ITK writes a text file (see
+        [`TfmRaw.to_lines`][brainhops.io.transformations.itk.tfm.TfmRaw.to_lines]).
+        A transformation read from a file whose chain still holds the
+        blocks of the record is written with every block of the file,
+        including the transforms that `position` did not select. The
+        comments of the file and the digits of its numbers are not kept,
+        but every number reads back as the same value. An ITK block is
+        written as it is, center included, and an affine between ITK
+        spaces as an `AffineTransform` centered on the origin. A chain
+        of several blocks is written as a composite.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".tfm",)
@@ -337,6 +354,59 @@ class TfmTransform(TextFileReader, ItkTransform):
         self.position = None
         self.transformations = None
         return self
+
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        """Yield the lines of the `.tfm` file of the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written, so the transformation itself is not changed, and a
+        transformation that cannot be encoded raises before any line is
+        written.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, which are given to
+            [`consolidate`][]. The writer of the record takes no other
+            option.
+
+        Returns
+        -------
+        iterator of str
+            The lines of the file, without line breaks.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If a transformation of the chain is neither an ITK block nor
+            an affine between ITK spaces.
+        """
+        fields, options = metadata_options(kwargs)
+        return _record(self.consolidate(**fields)).to_lines(**options)
+
+    def to_text(self, **kwargs) -> str:
+        """Return the content of the `.tfm` file of the transformation.
+
+        The content is made of the lines of [`to_lines`][].
+
+        Parameters
+        ----------
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, which are given to
+            [`consolidate`][].
+
+        Returns
+        -------
+        str
+            The content of the file, ending with a newline.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If a transformation of the chain is neither an ITK block nor
+            an affine between ITK spaces.
+        """
+        return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
 
 def _decode(
