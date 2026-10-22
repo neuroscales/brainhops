@@ -92,6 +92,10 @@ if HAS_NIBABEL:
         NiftyRegVelocityGrid,
     )
 
+    # Importing the private converters registers them with the data
+    # model, so that a field converts into a grid of control points.
+    from . import _grid_converters  # noqa: F401  isort: skip
+
     __all__ += [
         "NiftyRegControlPointGrid",
         "NiftyRegDeformationField",

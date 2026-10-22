@@ -139,10 +139,17 @@ def _read_minc(
 
 
 def _read_voxels(
-    container: tx.Any, mfile: _minc1.Minc1File, version: int
+    container: tx.Any,
+    mfile: _minc1.Minc1File,
+    version: int,
+    index: tx.Tuple[tx.Any, ...] = (),
 ) -> np.ndarray:
-    """Read the scaled voxels of an open file, in file (C) order."""
-    array = mfile.get_scaled_data()
+    """Read the scaled voxels of an open file, in file (C) order.
+
+    `index` selects a box of the voxels, which nibabel reads alone from a
+    memory-mapped MINC1 file or from the HDF5 dataset of a MINC2 file.
+    """
+    array = mfile.get_scaled_data(tuple(index))
     # Copy into native byte order (MINC1 is big-endian), so that the result
     # outlives a memory-mapped file.
     return np.array(array, dtype=array.dtype.newbyteorder("="))

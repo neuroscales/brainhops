@@ -517,10 +517,12 @@ def test_a_general_transformation_is_saved_in_the_format_it_converts_to(
 
 def test_save_gives_each_format_reason_to_refuse(tmp_path) -> None:  # noqa: ANN001
     with pytest.raises(WriterError) as info:
-        io.save(_lps_displacement_chain(degree=3), tmp_path / "warp.nii.gz")
+        # A quadratic field, which a NiftyReg grid of control points,
+        # cubic or linear, does not hold exactly either.
+        io.save(_lps_displacement_chain(degree=2), tmp_path / "warp.nii.gz")
     message = str(info.value)
     assert "NiftiRASDisplacementField: LossyConversionError" in message
-    assert "degree 3" in message
+    assert "degree 2" in message
 
 
 # ----------------------------------------------------------------------

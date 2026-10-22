@@ -13,8 +13,8 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed
+from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
@@ -228,7 +228,7 @@ _CHUNK = 1 << 20
 """The number of bytes copied at a time from one BRIK to another."""
 
 
-class _BrikProxy(ArrayProxy):
+class _BrikProxy(StridedProxy):
     """A lazy array of the voxels that a BRIK file stores.
 
     The proxy holds the path of the BRIK and the record of the dataset,
@@ -240,26 +240,42 @@ class _BrikProxy(ArrayProxy):
     the values are read, as nibabel's proxy applies the scaling of a
     NIfTI header.
 
-    A local BRIK that is not compressed and whose sub-bricks share a
-    type is memory-mapped when `mmap` is true, so that reading the values
-    gives a read-only view of the file. Indexing the proxy returns
-    another lazy array (see [`ArrayProxy`][]), but any read decodes and
-    scales the whole BRIK for now.
+    When the sub-bricks share a type, the BRIK is one Fortran-ordered
+    array, and a read gets only the bytes that its selection needs (see
+    [`StridedProxy`][brainhops._core.strided.StridedProxy]): a local BRIK
+    that is not compressed is memory-mapped when `mmap` is true, and a
+    compressed one is decompressed up to the end of the selection. The
+    blocks that the proxy gives Dask are groups of sub-bricks, or slabs
+    of slices for a single sub-brick. Sub-bricks of several types are
+    joined in their common type, which needs the whole BRIK, so any read
+    of such a BRIK decodes and scales all of it.
     """
 
     def __init__(self, brik: tx.Any, record: AfniRaw, mmap: bool) -> None:
+        nvals = record.nvals
+        shape = record.shape + ((nvals,) if nvals > 1 else ())
+        slope = None
+        if _is_scaled(record):
+            facs = np.asarray(record.float_facs, dtype=np.float64)
+            facs = np.where(facs == 0, 1.0, facs)
+            slope = facs if nvals > 1 else facs[0]
+        super().__init__(
+            brik,
+            record.dtypes[0],
+            shape,
+            order="F",
+            slope=slope,
+            mmap=mmap,
+        )
         self.brik = brik
         """The path of the BRIK file."""
         self.record = record
         """The record of the dataset, which describes the BRIK."""
-        self.mmap = bool(mmap)
-        """Whether a local, uncompressed BRIK is memory-mapped."""
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the image, read from the record."""
-        nvals = self.record.nvals
-        return self.record.shape + ((nvals,) if nvals > 1 else ())
+    def _single_type(self) -> bool:
+        # Whether the sub-bricks share a type, so that the BRIK is one array.
+        return len(set(self.record.dtypes)) == 1
 
     @property
     def dtype(self) -> np.dtype:
@@ -268,6 +284,18 @@ class _BrikProxy(ArrayProxy):
         if _is_scaled(self.record):
             return np.result_type(stored, np.float32)
         return stored
+
+    @property
+    def nbytes_stored(self) -> int:
+        """The number of bytes of the BRIK."""
+        return self.record.nbytes
+
+    @property
+    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        """The block shape, or `None` for sub-bricks of several types."""
+        if not self._single_type:
+            return None
+        return super().base_chunks
 
     def get_unscaled(self) -> np.ndarray:
         """Return all the stored values as a `(x, y, z, sub-brick)` array.
@@ -303,6 +331,15 @@ class _BrikProxy(ArrayProxy):
                 remaining -= len(chunk)
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        if self._single_type:
+            try:
+                return super()._read(index)
+            except ValueError as error:
+                raise ParserContentError(
+                    f"The AFNI BRIK {self.brik} is shorter than the "
+                    f"{self.record.nbytes} bytes that its header asks for. "
+                    f"{error}"
+                ) from error
         values = scale_bricks(self.record, self.get_unscaled())
         if self.record.nvals == 1:
             values = values[..., 0]

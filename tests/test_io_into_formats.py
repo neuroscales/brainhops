@@ -168,7 +168,7 @@ FORMATS = [
 ]
 """The formats that are bound to RAS, to LPS or to their own spaces."""
 
-CHAIN_FORMATS = [FnirtWarpField, M3zMorph, X5Transform]
+CHAIN_FORMATS = [M3zMorph, X5Transform]
 """
 The formats that relabel a chain and read their coordinate systems from
 it, so that they have no systems of their own to refuse.
@@ -356,7 +356,7 @@ def test_a_format_without_an_exact_conversion_refuses(
     "family, cls",
     [
         (family, cls)
-        for cls in (NiftyRegDisplacementField, FnirtWarpField, M3zMorph)
+        for cls in (NiftyRegDisplacementField, M3zMorph)
         for family in ("sequence", "immutable-sequence")
     ],
     ids=lambda x: getattr(x, "__name__", x),
@@ -464,9 +464,7 @@ def test_a_chain_between_lps_spaces_is_not_relabelled_as_niftyreg() -> None:
             convert(t)
 
 
-@pytest.mark.parametrize(
-    "cls", [NiftyRegDisplacementField, FnirtWarpField, X5Transform]
-)
+@pytest.mark.parametrize("cls", [NiftyRegDisplacementField, X5Transform])
 def test_a_chain_without_systems_is_relabelled(cls: type) -> None:
     # A chain whose systems are not known is taken to map the systems of
     # the format, as `from_any` always took it, and `to` now takes it so.
@@ -498,7 +496,8 @@ def test_an_exact_converter_is_chosen_over_relabelling(
 def test_a_format_without_an_exact_converter_is_relabelled() -> None:
     chain = _families(None, None)["sequence"]
     assert relabels(chain, NiftyRegDisplacementField)
-    assert relabels(chain, FnirtWarpField)
+    # FNIRT converts a transformation when it is given its two images.
+    assert not relabels(chain, FnirtWarpField)
     assert relabels(chain, X5Transform)
     assert not relabels(chain, NiftiRASDisplacementField)
     # A format that registers no converter is rebuilt by the converters of

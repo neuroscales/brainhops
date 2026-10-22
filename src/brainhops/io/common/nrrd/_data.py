@@ -16,6 +16,7 @@ from brainhops._core import path
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
+from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base._utils_files import sibling as _sibling
@@ -255,10 +256,14 @@ class _NrrdProxy(ArrayProxy):
     because the image was written over its own file with another type,
     is refused rather than misread.
 
-    Raw samples in a single local file are memory-mapped when `mmap` is
-    true, so that reading them gives a read-only view of the file.
-    Indexing the proxy returns another lazy array (see
-    [`ArrayProxy`][]), but any read decodes the whole file for now.
+    Samples in a single file that are raw, or compressed with gzip or
+    bzip2, and that no line skip precedes, are read in part (see
+    [`StridedProxy`][brainhops._core.strided.StridedProxy]): a local file
+    of raw samples is memory-mapped when `mmap` is true, and compressed
+    samples are decompressed up to the end of the selection. The blocks
+    that the proxy gives Dask are then slabs of the axis that the file
+    stores slowest. Samples split between several files, encoded as text,
+    or preceded by skipped lines are decoded whole for any read.
     """
 
     def __init__(
@@ -367,8 +372,82 @@ class _NrrdProxy(ArrayProxy):
         values = _decode(self.record, self._locations(), self.mmap)
         return values.transpose(image_order(self.record))
 
+    @property
+    def partial(self) -> bool:
+        """Whether the samples can be read in part.
+
+        They can when they lie in one file, are raw or compressed with
+        gzip or bzip2, and follow the header without skipped lines, so
+        that each sample lies at a known position of the decoded stream.
+        A byte skip of -1 counts from the end of the file, which is known
+        only for raw samples.
+        """
+        record = self.record
+        if len(self.files) > 1 or record.line_skip:
+            return False
+        if record.encoding == "raw":
+            return True
+        return record.encoding in _PARTIAL_ENCODINGS and record.byte_skip >= 0
+
+    @property
+    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        """The block shape, or `None` for samples that are decoded whole."""
+        if not self.partial:
+            return None
+        return self._strided(self.source, self.start, 0).base_chunks
+
+    def _strided(self, file: tx.Any, start: int, skip: int) -> StridedProxy:
+        """The strided reader of the samples that lie in `file`."""
+        return StridedProxy(
+            file,
+            self.record.dtype,
+            self.record.sizes,
+            offset=skip,
+            order="F",
+            axes=image_order(self.record),
+            start=start,
+            mmap=self.mmap,
+        )
+
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
-        return self.read_samples()[index]
+        if not self.partial:
+            return self.read_samples()[index]
+        ((file, start),) = self._locations()
+        skip = self.record.byte_skip
+        if skip == -1:
+            # The samples end the file, so they start before its end by
+            # their own length.
+            start, skip = _end_start(file, self.record.nbytes), 0
+        try:
+            return self._strided(file, start, skip)._read(index)
+        except ValueError as error:
+            raise ParserContentError(
+                f"The NRRD data are shorter than the {self.record.count} "
+                f"values of type {self.record.dtype} that the header asks "
+                f"for. {error}"
+            ) from error
+
+
+_PARTIAL_ENCODINGS = ("raw", "gzip", "bzip2")
+"""The encodings whose samples lie at known positions once decoded."""
+
+
+def _end_start(file: tx.Any, nbytes: int) -> int:
+    """Return the position of the last `nbytes` bytes of a raw file."""
+    if _is_path(file):
+        with _open_path(file) as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+    else:
+        with preserve_position(file):
+            file.seek(0, os.SEEK_END)
+            size = file.tell()
+    if size < nbytes:
+        raise ParserContentError(
+            f"The NRRD data file {file} holds {size} bytes, fewer than the "
+            f"{nbytes} that the header asks for."
+        )
+    return size - nbytes
 
 
 def read_nrrd(
