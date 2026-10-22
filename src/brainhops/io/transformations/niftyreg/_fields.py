@@ -670,6 +670,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         describe the layout and the geometry are encoded again. The given
         affines replace the extensions of that header, because NiftyReg
         reads its affines from the first extensions.
+
+        The vectors are stored in single precision, unless the `dtype` or
+        `datatype` override asks for another type. NiftyReg computes its
+        deformation fields in single precision, and refuses a grid of
+        control points whose type differs from that of the field.
         """
         vectors = _field_to_disk(vectors)
         image = _record_image(vectors, self._record(), vox2world, overrides)
@@ -678,6 +683,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_NIFTYREG
         )
         header["intent_p1"] = kind
+        header.set_data_dtype(np.float32)
         del header.extensions[:]
         for matrix in extensions:
             header.extensions.append(_extension(matrix))
