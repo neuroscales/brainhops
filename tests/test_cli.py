@@ -352,6 +352,34 @@ def test_convert_writes_an_image(tmp_path) -> None:  # noqa: ANN001
     )
 
 
+def test_convert_reads_the_target_specification(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.cli._convert import parse_target
+
+    image = _write_nifti(tmp_path / "ref.nii.gz")
+    path, hints, options = parse_target(
+        f"out.nii.gz|itk|reference:[{image}]|log:true|steps:6"
+    )
+    assert path == "out.nii.gz"
+    assert hints == ("itk",)
+    assert isinstance(options.pop("reference"), Image)
+    assert options == {"log": True, "steps": 6}
+
+
+def test_convert_takes_the_target_format_from_a_hint(tmp_path) -> None:  # noqa: ANN001
+    from brainhops import io
+    from brainhops.io.transformations.mrtrix import MrtrixLinearTransform
+    from brainhops.io.transformations.niftyreg import NiftyRegAffine
+
+    source = str(DATA / "itk_affine3d.tfm")
+    for hint, cls in (
+        ("mrtrix", MrtrixLinearTransform),
+        ("niftyreg", NiftyRegAffine),
+    ):
+        out = tmp_path / f"{hint}.txt"
+        assert main(["convert", source, "-o", f"{out}|{hint}"]) == 0
+        assert isinstance(io.transformations.load(out, hint=hint), cls)
+
+
 def test_convert_reports_a_missing_input(capsys) -> None:  # noqa: ANN001
     assert main(["convert", "missing.tfm", "-o", "out.nii.gz"]) == 1
     assert "missing.tfm" in capsys.readouterr().err

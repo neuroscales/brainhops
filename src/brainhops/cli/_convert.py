@@ -13,9 +13,13 @@ as in `warp.nii.gz|fnirt|moving:[source.nii.gz]`. A transformation may
 also be followed by operators, such as `|inv`, which are applied before
 it is written.
 
-The target format may need images too: an FSL warp or a FLIRT matrix
-is written for a reference and a moving image, which `--reference` and
-`--moving` give. A format that does not need them ignores them. A
+The output is a target specification, written in the same syntax. Its
+hints select the target format, for a name that several formats claim
+or that none claims, and its options are options of the conversion. An
+option whose value is a nested specification in brackets is read as an
+image, which gives the target format a geometry that the object does
+not hold, as in `warp.nii.gz|fnirt|reference:[ref.nii.gz]|moving:[src.nii.gz]`
+for an FSL warp. A format that does not take an option ignores it. A
 transformation is written in a format that holds it only approximately,
 such as a field interpolated with cubic splines written as the linearly
 interpolated values of a NIfTI file, only with `--lossy`.
@@ -29,7 +33,7 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base import ImageSpec, TransformationSpec
+from brainhops.io.base import ImageSpec, SourceSpec, TransformationSpec
 from brainhops.io.base.parsers import AmbiguousFormatError, WriterError
 
 from ._errors import CliError, WritingUnavailable
@@ -53,7 +57,10 @@ def add_parser(
             "select the reader and whose options give the reader what the "
             "file does not hold, such as 'warp.nii.gz|fnirt|moving:[src.nii"
             ".gz]'. A transformation may be followed by operators, such as "
-            "'|inv'."
+            "'|inv'. The output is written in the same syntax: its hints "
+            "select the target format and its options are options of the "
+            "conversion, such as the images an FSL warp is written for, "
+            "'out.nii.gz|fnirt|reference:[ref.nii.gz]|moving:[src.nii.gz]'."
         ),
     )
     parser.add_argument(
@@ -65,16 +72,12 @@ def add_parser(
         "-o",
         "--output",
         required=True,
-        metavar="FILE",
-        help="Path to write the converted object to. Its extension "
-        "selects the target format.",
-    )
-    parser.add_argument(
-        "--to",
-        dest="hint",
-        metavar="HINT",
-        help="Format hint of the target, such as 'itk' or 'niftyreg', for "
-        "a name that several formats claim or that none claims.",
+        metavar="TARGET",
+        help="Target specification, 'path|hint|key:value', of the file to "
+        "write. The name and the hints select the target format, and the "
+        "options are options of the conversion, such as "
+        "'reference:[ref.nii.gz]' and 'moving:[src.nii.gz]' for an FSL "
+        "warp.",
     )
     parser.add_argument(
         "--kind",
@@ -82,18 +85,6 @@ def add_parser(
         default="auto",
         help="Kind of the input object. By default, it is detected from "
         "the file.",
-    )
-    parser.add_argument(
-        "--reference",
-        metavar="IMAGE",
-        help="Reference (fixed) image, for a target format that needs its "
-        "geometry, such as an FSL warp or a FLIRT matrix.",
-    )
-    parser.add_argument(
-        "--moving",
-        metavar="IMAGE",
-        help="Moving (source) image, for a target format that needs its "
-        "geometry, such as an FSL warp or a FLIRT matrix.",
     )
     parser.add_argument(
         "--lossy",
@@ -110,15 +101,69 @@ def add_parser(
 def run(args: argparse.Namespace) -> int:
     """Run the `convert` command, and return its exit code."""
     obj = load_object(args.input, args.kind)
-    conversion: tx.Dict[str, tx.Any] = {}
-    if args.reference is not None:
-        conversion["reference"] = load_image(args.reference)
-    if args.moving is not None:
-        conversion["moving"] = load_image(args.moving)
-    save_object(
-        obj, args.output, hint=args.hint, lossy=args.lossy, **conversion
-    )
+    path, hints, conversion = parse_target(args.output)
+    save_object(obj, path, hints=hints, lossy=args.lossy, **conversion)
     return 0
+
+
+def parse_target(
+    target: str,
+) -> tx.Tuple[str, tx.Tuple[str, ...], tx.Dict[str, tx.Any]]:
+    """
+    Read a target specification into a path, hints and options.
+
+    The target is written `path|hint|key:value`, as a source is. An
+    option whose value is a nested specification in brackets, as in
+    `reference:[ref.nii.gz]`, is read as an image. The values `true` and
+    `false` are booleans, a number is an integer or a float, and any
+    other value is kept as a string.
+
+    Parameters
+    ----------
+    target : str
+        The target specification.
+
+    Returns
+    -------
+    path : str
+        The path of the file to write.
+    hints : tuple of str
+        The format hints of the target.
+    options : dict
+        The options of the conversion.
+
+    Raises
+    ------
+    CliError
+        If the specification is invalid, or an image cannot be read.
+    """
+    try:
+        spec = SourceSpec.from_arg(target)
+    except ValueError as exc:
+        raise CliError(f"Invalid target {target!r}: {exc}") from exc
+    options = {}
+    for key, value in spec.options.items():
+        if isinstance(value, SourceSpec):
+            image = ImageSpec(
+                path=value.path, hints=value.hints, options=value.options
+            )
+            options[key] = load_image(image)
+        else:
+            options[key] = _option_value(value)
+    return str(spec.path), tuple(spec.hints), options
+
+
+def _option_value(text: str) -> tx.Any:
+    # A boolean, a number, or the text itself.
+    lowered = text.strip().lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    for kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError:
+            pass
+    return text
 
 
 def load_object(source: str, kind: str = "auto") -> tx.Any:
@@ -172,7 +217,7 @@ def load_object(source: str, kind: str = "auto") -> tx.Any:
 def save_object(
     obj: tx.Any,
     output: str,
-    hint: tx.Optional[str] = None,
+    hints: tx.Sequence[str] = (),
     lossy: bool = False,
     **conversion: tx.Any,
 ) -> None:
@@ -185,8 +230,8 @@ def save_object(
         The image or the transformation to write.
     output : str
         The path of the output file.
-    hint : str, optional
-        A format hint that selects the target format.
+    hints : sequence of str, default=()
+        Format hints that select the target format.
     lossy : bool, default=False
         Whether a transformation may be written in a format that holds
         it only approximately.
@@ -203,6 +248,6 @@ def save_object(
     if isinstance(obj, Transformation):
         options = {"lossy": lossy, "conversion": conversion}
     try:
-        io.save(obj, output, hint=hint, **options)
+        io.save(obj, output, hint=tuple(hints) or None, **options)
     except (AmbiguousFormatError, WriterError) as exc:
         raise WritingUnavailable(f"Could not write {output!r}: {exc}") from exc

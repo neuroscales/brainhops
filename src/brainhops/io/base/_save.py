@@ -63,14 +63,15 @@ def save(
        with `hint="neuroglancer.affine"`.
     2. **The object's own format.** If `obj` already is of one of the
        candidates, it is written as it is.
-    3. **A format that can hold the object as it is.** Otherwise, a
-       candidate can hold `obj` if it is a file-backed version of the
-       very data model `obj` is an instance of, and takes every field
-       that data model has (`NiftiImage` and `ZarrImage` are file-backed
+    3. **A format that can hold the object as it is.** Otherwise, an
+       object that is not a transformation is written in a candidate
+       that is a file-backed version of the very data model `obj` is an
+       instance of, and takes every field that data model has
+       (`NiftiImage` and `ZarrImage` are file-backed
        `SingleScaleImage`s). `obj` is converted to it, which neither
        loses nor changes anything.
-    4. **A format a transformation converts to.** Otherwise, a
-       transformation is converted to every candidate, with the same
+    4. **A format a transformation converts to.** A transformation is
+       instead converted to every candidate, with the same
        converters as `obj.to(Format, **conversion)`. A converter returns
        the map `obj` is, with its endpoints bridged to the format's (an
        affine to LPS is flipped into RAS), an approximation of it, or
@@ -113,20 +114,16 @@ def save(
         candidate holds exactly is refused with each candidate's
         reason.
 
-    !!! note "Two passes, one conversion"
-        Steps 3 and 4 are two passes only until every writable
-        transformation format has exact converters (#312). Until then,
-        a format without an exact converter holds a transformation only
-        by relabelling it, that is, by being rebuilt from its
-        parameters, when the coordinate systems allow it. Step 3 writes
-        a transformation in such a format only if the format is a
-        file-backed version of its data model. Step 4 converts it only
-        to the formats that convert it exactly, so that the formats
+    !!! note "One pass for a transformation"
+        Some formats have no exact converter yet (#312), and hold a
+        transformation only by relabelling it, that is, by being
+        rebuilt from its parameters, when the coordinate systems allow
+        it. Step 4 relabels a transformation only into a format that is
+        a file-backed version of its data model, so that the formats
         that would only relabel it do not make the choice ambiguous.
-        For every transformation format, `from_instance` is
-        `obj.to(Format)`, so both passes run the same conversion.
-        `NiftyRegAffine` converts an affine between world spaces, or
-        between unknown spaces, in step 4.
+        Every candidate, including such a format, is given the options
+        of the conversion, so that an LTA file or a `register.dat` file
+        receives the geometries of its volumes.
 
     Parameters
     ----------
@@ -227,20 +224,19 @@ def save(
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
-    if _write_first(file, name, obj, holders, _copy, reasons, kwargs):
-        return
-    # The second pass converts a transformation (see "Two passes, one
-    # conversion" above): the first stays for the formats without
-    # converters, and for those with them it runs the same conversion.
     if isinstance(obj, Transformation):
-        others = [
-            candidate for candidate in claimed if candidate not in holders
-        ]
+        # A transformation is converted to every candidate in one pass,
+        # which gives each one the options of the conversion, and a format
+        # of its own data model is converted to as well (see "One pass for
+        # a transformation" above).
+        own = {fmt for fmt, _ in holders}
         options = dict(conversion or {})
         if _write_best(
-            file, name, obj, others, options, lossy, reasons, kwargs
+            file, name, obj, claimed, own, options, lossy, reasons, kwargs
         ):
             return
+    elif _write_first(file, name, obj, holders, _copy, reasons, kwargs):
+        return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
@@ -261,6 +257,7 @@ def _convert(
     obj: Transformation,
     fmt: type,
     options: tx.Mapping[str, tx.Any],
+    own: bool = False,
 ) -> tx.Tuple[tx.Any, tx.Optional[LossyConversionError]]:
     """`obj` converted to `fmt`, as `obj.to(fmt)` converts it.
 
@@ -268,11 +265,11 @@ def _convert(
     loses, or `None` when it is exact. A lossy result is the one that
     `obj.to(fmt, lossy=True)` returns. The options of the conversion are
     given to every format, so a format that does not take some of them is
-    converted without them. A format
-    without an exact converter for `obj` may relabel it (#312). Such a
-    format is not chosen by this pass, so that a format that converts
-    `obj` is not made ambiguous by the formats that would only relabel
-    it.
+    converted without them. A format without an exact converter for
+    `obj` may relabel it (#312). Such a format is chosen only when `own`
+    says that it is a file-backed version of the data model of `obj`, so
+    that a format that converts `obj` is not made ambiguous by the formats
+    that would only relabel it.
     """
     # The transformation formats import this package, so their helpers are
     # imported when they are used.
@@ -281,7 +278,7 @@ def _convert(
     )
     from brainhops.io.transformations.base._converters import relabels
 
-    if relabels(obj, fmt):
+    if not own and relabels(obj, fmt):
         raise ConversionError(
             f"{fmt.__name__} has no exact converter for a "
             f"{type(obj).__name__} (#312), and a transformation is saved "
@@ -310,6 +307,7 @@ def _write_best(
     name: str,
     obj: Transformation,
     candidates: tx.List[tx.Tuple[type, tx.Any]],
+    own: tx.Set[type],
     options: tx.Mapping[str, tx.Any],
     lossy: bool,
     reasons: tx.List[str],
@@ -346,7 +344,7 @@ def _write_best(
         )
         try:
             with metadata_loss_policy(report):
-                writer, loses = _convert(obj, fmt, options)
+                writer, loses = _convert(obj, fmt, options, fmt in own)
         except OSError:
             raise
         except Exception as e:  # noqa: BLE001

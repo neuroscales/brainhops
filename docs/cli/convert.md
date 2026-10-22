@@ -3,14 +3,15 @@
 === ":octicons-terminal-24:"
 
     ```shell
-    brainhops convert SOURCE --output FILE [--to HINT] [--kind KIND] [--reference IMAGE] [--moving IMAGE] [--lossy]
+    brainhops convert SOURCE --output TARGET [--kind KIND] [--lossy]
     ```
 
 The `convert` command reads an image or a transformation stored in one
 format and writes it in another, for example to turn an ITK transform into
 a NIfTI displacement field. The kind of object is detected from the input
 file, and the target format is chosen from the name of the output file, as
-`brainhops.io.save` chooses it.
+`brainhops.io.save` chooses it. Both the input and the output are written
+as [source specifications](reslice.md#source-specifications), with pipes.
 
 A transformation is written in a format that holds the same map, with its
 coordinate systems adapted to those of the format: an affine between LPS
@@ -33,15 +34,28 @@ transformation exactly is still preferred when one is available.
 
 ## Options
 
-| Flag             | Type    | Description                                                                                                              | Default    |
-| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ | ---------- |
-| `-h`, `--help`   |         | Show the help message and exit.                                                                                          |            |
-| `-o`, `--output` | `path`  | Path to write the converted object to. Its name selects the target format.                                              | *required* |
-| `--to`           | `str`   | Format hint of the target, such as `itk` or `niftyreg`, for a name that several formats claim or that none claims.      |            |
-| `--kind`         | `str`   | Kind of the input object: `auto`, `image` or `transform`.                                                                | `auto`     |
-| `--reference`    | `path`  | Reference (fixed) image, for a target format that needs its geometry, such as an FSL warp or a FLIRT matrix.            |            |
-| `--moving`       | `path`  | Moving (source) image, for a target format that needs its geometry, such as an FSL warp or a FLIRT matrix.              |            |
-| `--lossy`        |         | Allow a target format that holds the transformation only approximately.                                                 |            |
+| Flag             | Type     | Description                                                                                  | Default    |
+| ---------------- | -------- | -------------------------------------------------------------------------------------------- | ---------- |
+| `-h`, `--help`   |          | Show the help message and exit.                                                              |            |
+| `-o`, `--output` | `target` | The file to write, given as a [target specification](#target-specifications).                | *required* |
+| `--kind`         | `str`    | Kind of the input object: `auto`, `image` or `transform`.                                    | `auto`     |
+| `--lossy`        |          | Allow a target format that holds the transformation only approximately.                     |            |
+
+## Target specifications
+
+The output is written in the syntax of a source: a path, optionally
+followed by pipe-separated segments. A format hint, such as `itk` or
+`niftyreg`, selects the target format for a name that several formats
+claim, such as `.nii.gz`, or for a name that no format claims. A named
+option, written `name:value`, is an option of the conversion. The value of
+an option may be a source specification in square brackets, which is then
+read as an image. This is how a target format is given the images that it
+needs and that the object does not hold, such as the reference and the
+moving images of an FSL warp:
+`warp.nii.gz|fnirt|reference:[ref.nii.gz]|moving:[source.nii.gz]`. A
+format that does not take an option ignores it. The values `true` and
+`false` are read as booleans, and numbers as numbers, so that
+`velocity.nii.gz|log:true` writes the velocity that a field holds.
 
 ## Examples
 
@@ -60,12 +74,12 @@ is written. The inverse of an ANTs affine is written as an AFNI matrix with
 brainhops convert 'affine0GenericAffine.mat|inv' -o inverse.aff12.1D
 ```
 
-The images that a target format needs are given with `--reference` and
-`--moving`, and formats that do not need them ignore them:
+The images that a target format needs are given in the target
+specification:
 
 ```shell
-brainhops convert warp.nii.gz -o fnirt_warp.nii.gz --to fnirt \
-    --reference ref.nii.gz --moving source.nii.gz
+brainhops convert warp.nii.gz \
+    -o 'fnirt_warp.nii.gz|fnirt|reference:[ref.nii.gz]|moving:[source.nii.gz]'
 ```
 
 ## Exit status

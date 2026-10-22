@@ -140,7 +140,12 @@ gives: an affine between two world spaces is not a voxel-to-RAS affine.
 
 ```python
 io.save(bspline, "warp.nii.gz", lossy=True)
-io.save(warp, "fnirt.nii.gz", hint="fnirt", conversion={"reference": ref})
+io.save(
+    warp,
+    "fnirt.nii.gz",
+    hint="fnirt",
+    conversion={"reference": ref, "moving": moving},
+)
 ```
 
 The same conversion can be asked for explicitly, or the format can be
