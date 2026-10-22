@@ -90,7 +90,9 @@ metadata of the file, in the order of the file, with the
 [`TfmTransform`][brainhops.io.transformations.itk.tfm.TfmTransform]
 holds that metadata and decodes its chain from the record when it is
 first used, and the option `position` selects which top-level transform
-is decoded. brainhops does not write `.tfm` files.
+is decoded. A transformation is written as ITK writes a `.tfm` file,
+from the blocks of its record, so the comments of a file that was read
+are not kept.
 
 ## Transformation classes
 

@@ -21,7 +21,7 @@ from brainhops.datamodel.metadata import (
 )
 from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import ConversionError
+from brainhops.errors import ConversionError, LossyConversionError
 from brainhops.io.base._base import FileFormat, _takes_over
 from brainhops.io.base._dispatch import (
     _match_name,
@@ -42,6 +42,9 @@ def save(
     obj: tx.Any,
     file: path.FileLike,
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+    *,
+    lossy: bool = False,
+    conversion: tx.Optional[tx.Mapping[str, tx.Any]] = None,
     **kwargs,
 ) -> None:
     """Write an object to a file in the format that the file name calls for.
@@ -59,25 +62,41 @@ def save(
        with `hint="neuroglancer.affine"`.
     2. **The object's own format.** If `obj` already is of one of the
        candidates, it is written as it is.
-    3. **A format that can hold the object as it is.** Otherwise, a
-       candidate can hold `obj` if it is a file-backed version of the
-       very data model `obj` is an instance of, and takes every field
-       that data model has (`NiftiImage` and `ZarrImage` are file-backed
+    3. **A format that can hold the object as it is.** Otherwise, an
+       object that is not a transformation is written in a candidate
+       that is a file-backed version of the very data model `obj` is an
+       instance of, and takes every field that data model has
+       (`NiftiImage` and `ZarrImage` are file-backed
        `SingleScaleImage`s). `obj` is converted to it, which neither
        loses nor changes anything.
-    4. **A format a transformation converts to.** Otherwise, a
-       transformation is converted to the candidates, with the same
-       converters as `obj.to(Format)`, and written in the one it
-       converts to. A converter returns the very map `obj` is, with
-       its endpoints bridged to the format's (an affine to LPS is
-       flipped into RAS), or refuses: a general `Affine` is written as
-       the voxel-to-RAS affine of a NIfTI file only when that is what it
-       maps, or when its coordinate systems are not known.
+    4. **A format a transformation converts to.** A transformation is
+       instead converted to every candidate, with the same
+       converters as `obj.to(Format, **conversion)`. A converter returns
+       the map `obj` is, with its endpoints bridged to the format's (an
+       affine to LPS is flipped into RAS), an approximation of it, or
+       refuses: a general `Affine` is written as the voxel-to-RAS
+       affine of a NIfTI file only when that is what it maps, or when
+       its coordinate systems are not known. An approximation, such as
+       a field interpolated with cubic splines that a NIfTI file stores
+       as linearly interpolated values, is kept only with `lossy=True`.
 
-    In steps 3 and 4, the candidates are tried from the most specific,
-    by the rules reading uses: the longest prefix, then the narrowest
+    In step 3, the candidates are tried from the most specific, by the
+    rules reading uses: the longest prefix, then the narrowest
     declaration, then `PRIORITY`. Two that are equally specific and can
     both hold `obj` are an ambiguity, and nothing is written.
+
+    In step 4, the conversions are ranked. The extension and the prefix
+    of the name come first, so that a `y_` prefix asks for an SPM
+    deformation. An exact conversion then comes before a lossy one, and a
+    format that takes every option of `conversion` before one that does
+    not, so that the images given for an FSL file select it. Then comes
+    the conversion that keeps more of what `obj` holds: a field
+    of the same kind (displacements, coordinates or a velocity), and the
+    known endpoints of `obj`, so that a field between LPS spaces is
+    written as an ITK field rather than as a NIfTI field between RAS
+    spaces. The narrowest declaration and `PRIORITY` come last. Two
+    conversions that rank first together are an ambiguity, and nothing
+    is written.
 
     A candidate that refuses `obj` gives way to the next, in step 3
     and then in step 4, until one writes it. A candidate refuses when
@@ -89,27 +108,23 @@ def save(
     file cannot be written, is raised at once, as is any other error of
     a writer, and no other candidate is tried.
 
-    !!! note "Nothing is approximated"
-        A transformation is written only in a format that holds it
-        exactly. One that no candidate holds -- a field interpolated
-        with cubic splines, to be written as NIfTI's linearly
-        interpolated values, say -- is refused with each candidate's
-        reason, rather than resampled.
+    !!! note "Approximations are opted into"
+        A transformation is written in a format that holds it only
+        approximately when `lossy=True` is given, and a format that
+        holds it exactly is still preferred. Without it, one that no
+        candidate holds exactly is refused with each candidate's
+        reason.
 
-    !!! note "Two passes, one conversion"
-        Steps 3 and 4 are two passes only until every writable
-        transformation format has exact converters (#312). Until then,
-        a format without an exact converter holds a transformation only
-        by relabelling it, that is, by being rebuilt from its
-        parameters, when the coordinate systems allow it. Step 3 writes
-        a transformation in such a format only if the format is a
-        file-backed version of its data model. Step 4 converts it only
-        to the formats that convert it exactly, so that the formats
+    !!! note "One pass for a transformation"
+        Some formats have no exact converter yet (#312), and hold a
+        transformation only by relabelling it, that is, by being
+        rebuilt from its parameters, when the coordinate systems allow
+        it. Step 4 relabels a transformation only into a format that is
+        a file-backed version of its data model, so that the formats
         that would only relabel it do not make the choice ambiguous.
-        For every transformation format, `from_instance` is
-        `obj.to(Format)`, so both passes run the same conversion.
-        `NiftyRegAffine` converts an affine between world spaces, or
-        between unknown spaces, in step 4.
+        Every candidate, including such a format, is given the options
+        of the conversion, so that an LTA file or a `register.dat` file
+        receives the geometries of its volumes.
 
     Parameters
     ----------
@@ -123,6 +138,17 @@ def save(
         Hints that name the formats to choose from, such as
         `"neuroglancer.affine"`, as for `load`. A file without a name is
         written by `obj` itself, and the hint is not used.
+    lossy : bool, default=False
+        Whether a transformation may be written in a format that holds it
+        only approximately, such as a field interpolated with cubic
+        splines written as the linearly interpolated values of a NIfTI
+        file. A format that holds the transformation exactly is still
+        preferred.
+    conversion : mapping, optional
+        Options of the conversion of a transformation to the chosen
+        format, as `obj.to(Format, **conversion)` takes them. A format
+        that needs the geometry of an image, such as an FSL warp, takes
+        it there, as in `conversion={"reference": image}`.
     **kwargs : Any
         Options passed to the `save` method of the chosen format. An
         option named after a field of the metadata, such as `dtype`,
@@ -199,17 +225,19 @@ def save(
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
-    if _write_first(file, name, obj, holders, _copy, reasons, kwargs):
-        return
-    # The second pass converts a transformation (see "Two passes, one
-    # conversion" above): the first stays for the formats without
-    # converters, and for those with them it runs the same conversion.
     if isinstance(obj, Transformation):
-        others = [
-            candidate for candidate in claimed if candidate not in holders
-        ]
-        if _write_first(file, name, obj, others, _convert, reasons, kwargs):
+        # A transformation is converted to every candidate in one pass,
+        # which gives each one the options of the conversion, and a format
+        # of its own data model is converted to as well (see "One pass for
+        # a transformation" above).
+        own = {fmt for fmt, _ in holders}
+        options = dict(conversion or {})
+        if _write_best(
+            file, name, obj, claimed, own, options, lossy, reasons, kwargs
+        ):
             return
+    elif _write_first(file, name, obj, holders, _copy, reasons, kwargs):
+        return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
@@ -226,25 +254,195 @@ def _copy(obj: tx.Any, fmt: type) -> tx.Any:
     return fmt.from_instance(obj)
 
 
-def _convert(obj: Transformation, fmt: type) -> tx.Any:
-    """`obj` converted exactly to `fmt`, as `obj.to(fmt)` converts it.
+def _convert(
+    obj: Transformation,
+    fmt: type,
+    options: tx.Mapping[str, tx.Any],
+    own: bool = False,
+) -> tx.Tuple[tx.Any, tx.Optional[LossyConversionError], int]:
+    """`obj` converted to `fmt`, as `obj.to(fmt, **options)` converts it.
 
-    A format without an exact converter for `obj` may relabel it (#312).
-    Such a format is not chosen by this pass, so that a format that
-    converts `obj` exactly is not made ambiguous by the formats that
-    would only relabel it.
+    The result is returned with the error that says what the conversion
+    loses, or `None` when it is exact, and with the number of options
+    that the format did not take. A lossy result is the one that
+    `obj.to(fmt, lossy=True)` returns. The options of the conversion are
+    given to every format, so a format that does not take some of them is
+    converted without them. A format without an exact converter for
+    `obj` may relabel it (#312). Such a format is chosen only when `own`
+    says that it is a file-backed version of the data model of `obj`, so
+    that a format that converts `obj` is not made ambiguous by the formats
+    that would only relabel it.
+
+    The conversion goes through `obj.to`, so that a transformation that
+    takes options of its own, such as an FSL warp given the images it
+    was estimated for, receives them too.
     """
-    # The transformation formats import this package, so their helper is
-    # imported when it is used.
+    # The transformation formats import this package, so their helpers are
+    # imported when they are used.
+    from brainhops.io.transformations.base._conversions import (
+        UnusedOptionError,
+    )
     from brainhops.io.transformations.base._converters import relabels
 
-    if relabels(obj, fmt):
+    if not own and relabels(obj, fmt):
         raise ConversionError(
             f"{fmt.__name__} has no exact converter for a "
             f"{type(obj).__name__} (#312), and a transformation is saved "
             f"by relabelling it only in a format of its own data model."
         )
-    return obj.to(fmt)
+    unused = 0
+    try:
+        try:
+            return obj.to(fmt, **options), None, unused
+        except UnusedOptionError as error:
+            # The options are given to every format, and one that does not
+            # take some of them is converted without them.
+            kept = {
+                key: value
+                for key, value in options.items()
+                if key not in error.names
+            }
+            unused = len(options) - len(kept)
+            return obj.to(fmt, **kept), None, unused
+    except LossyConversionError as error:
+        if error.result is None:
+            raise
+        return error.result, error, unused
+
+
+def _write_best(
+    file: path.FileLike,
+    name: str,
+    obj: Transformation,
+    candidates: tx.List[tx.Tuple[type, tx.Any]],
+    own: tx.Set[type],
+    options: tx.Mapping[str, tx.Any],
+    lossy: bool,
+    reasons: tx.List[str],
+    save_options: tx.Dict[str, tx.Any],
+) -> bool:
+    """
+    Write a transformation in the candidate format that holds it best.
+
+    `obj` is converted to every candidate. The conversions are then
+    ranked: first by the extension and the prefix of the name that the
+    format matches, then by whether the conversion is exact, then by the
+    number of conversion options that the format did not take, so that a
+    FLIRT matrix given its images comes before another matrix, then by how
+    closely the format keeps what `obj` holds (see [`_fidelity`][]), and
+    last by the declared extensions and the `PRIORITY` of the format. A
+    lossy conversion is kept only when `lossy` is true. Several
+    conversions that rank first together are an ambiguity. A writer that
+    refuses what it was given gives way to the next conversion.
+
+    Returns
+    -------
+    bool
+        Whether `obj` was written.
+
+    Raises
+    ------
+    AmbiguousFormatError
+        If several conversions rank first together.
+    OSError
+        If converting or writing raises it.
+    """
+    ranked = []
+    for fmt, match in _drop_base(candidates):
+        report = ConversionReport(
+            source=type(obj).__name__, target=fmt.__name__
+        )
+        try:
+            with metadata_loss_policy(report):
+                writer, loses, unused = _convert(obj, fmt, options, fmt in own)
+        except OSError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
+            continue
+        if loses is not None and not lossy:
+            reasons.append(f"{fmt.__name__}: LossyConversionError: {loses}")
+            continue
+        extension, prefix = match or (0, 0)
+        key = (
+            -extension,
+            -prefix,
+            int(loses is not None),
+            unused,
+            -_fidelity(obj, writer),
+            0 if fmt.EXTENSIONS else 1,
+            len(fmt.EXTENSIONS),
+            -fmt.PRIORITY,
+        )
+        ranked.append((key, fmt, writer, report))
+    ranked.sort(key=lambda item: item[0])
+    while ranked:
+        best = [item for item in ranked if item[0] == ranked[0][0]]
+        if len(best) > 1:
+            raise AmbiguousFormatError(
+                _ambiguity_message(name, obj, [fmt for _, fmt, _, _ in best])
+            )
+        _, fmt, writer, report = best[0]
+        ranked = ranked[1:]
+        try:
+            _write_once(obj, writer, file, report, save_options)
+        except (ConversionError, WriterError) as e:
+            reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
+            continue
+        return True
+    return False
+
+
+def _fidelity(obj: Transformation, converted: Transformation) -> int:
+    """
+    How closely a converted transformation keeps what `obj` holds.
+
+    Two formats may both hold the same map, such as a field of
+    displacements in a NIfTI file between RAS spaces and in an ITK file
+    between LPS spaces. The one that changes less is preferred: one point
+    is given when the field it stores is of the same kind as the field of
+    `obj` (displacements, coordinates or a velocity), and one point for
+    each endpoint of `obj` that is known and that the format keeps.
+    """
+    score = 0
+    if _field_kind(obj) == _field_kind(converted):
+        score += 1
+    for side in ("input", "output"):
+        mine = getattr(obj, side, None)
+        theirs = getattr(converted, side, None)
+        if mine is not None and theirs is not None and mine == theirs:
+            score += 1
+    return score
+
+
+def _field_kind(t: Transformation) -> tx.Optional[str]:
+    """The kind of the field that `t` holds, or `None` for no field."""
+    from brainhops.datamodel import transformations as xforms
+
+    pending = [t]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, xforms.DisplacementField):
+            return "velocity" if current.log else "displacements"
+        if isinstance(current, xforms.CoordinatesField):
+            return "coordinates"
+        if isinstance(current, xforms.Sequence):
+            pending.extend(current.transformations or ())
+    return None
+
+
+def _drop_base(
+    candidates: tx.List[tx.Tuple[type, tx.Any]],
+) -> tx.List[tx.Tuple[type, tx.Any]]:
+    """Drop the candidates that are base classes of another candidate."""
+    classes = [cls for cls, _ in candidates]
+    return [
+        (cls, match)
+        for cls, match in candidates
+        if not any(
+            other is not cls and issubclass(other, cls) for other in classes
+        )
+    ]
 
 
 def _write_first(

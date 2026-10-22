@@ -17,6 +17,7 @@ from bagof.magic import replace
 import brainhops.io as io
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel.transformations import Affine
+from brainhops.errors import ConversionError
 from brainhops.io.base.parsers import (
     Confidence,
     FileWriter,
@@ -674,35 +675,58 @@ def test_an_affine_between_lta_voxel_systems_is_saved_as_lta(tmp_path) -> None: 
 
 
 @pytest.mark.parametrize(
-    "affine",
+    "affine, flip",
     [
-        Affine(np.asarray(MATRIX)[:-1]),
-        Affine(
-            np.asarray(MATRIX)[:-1],
-            input=_systems.RASmm(),
-            output=_systems.LPSmm(),
-        ),
-        Affine(
-            np.asarray(MATRIX)[:-1],
-            input=_systems.VoxelCoordinateSystem(),
-            output=_systems.VoxelCoordinateSystem(),
+        (Affine(np.asarray(MATRIX)[:-1]), np.eye(4)),
+        (
+            Affine(
+                np.asarray(MATRIX)[:-1],
+                input=_systems.RASmm(),
+                output=_systems.LPSmm(),
+            ),
+            np.diag([-1.0, -1.0, 1.0, 1.0]),
         ),
     ],
-    ids=["unspecified", "ras-to-lps", "voxel"],
+    ids=["unspecified", "ras-to-lps"],
 )
-def test_an_affine_lta_cannot_encode_is_refused(
+def test_an_affine_between_worlds_is_bridged_to_ras(
     tmp_path,  # noqa: ANN001
     affine: Affine,
+    flip: np.ndarray,
 ) -> None:
-    # An affine without LTA systems is refused, and no file is created.
-    # `io.save` gives the reason of each format that claims `.lta`.
-    with pytest.raises(
-        WriterError, match="UnrepresentableTransformationError"
-    ):
+    # An affine whose systems are not known is taken to map RAS to RAS,
+    # and an endpoint in LPS is flipped into RAS.
+    io.save(affine, tmp_path / "x.lta")
+    back = io.load(tmp_path / "x.lta")
+    assert back.metadata.raw.type is LtaType.LINEAR_RAS_TO_RAS
+    np.testing.assert_allclose(
+        back.homogeneous_matrix, flip @ np.asarray(MATRIX)
+    )
+
+
+def test_an_affine_between_voxels_needs_the_geometries(tmp_path) -> None:  # noqa: ANN001
+    # A map between voxels is stored with the geometries of both volumes,
+    # which are not given, and no file is created.
+    affine = Affine(
+        np.asarray(MATRIX)[:-1],
+        input=_systems.VoxelCoordinateSystem(),
+        output=_systems.VoxelCoordinateSystem(),
+    )
+    with pytest.raises(WriterError, match="reference= and moving="):
         io.save(affine, tmp_path / "x.lta")
     assert not (tmp_path / "x.lta").exists()
+    with pytest.raises(ConversionError, match="reference= and moving="):
+        LtaTransformation.from_instance(affine)
+
+
+def test_an_lta_file_refuses_systems_that_it_cannot_encode(tmp_path) -> None:  # noqa: ANN001
+    # Systems that are assigned after a conversion are checked when the
+    # file is written.
+    lta = LtaTransformation(matrix=np.asarray(MATRIX)[:-1])
+    lta.input = _systems.RASmm()
+    lta.output = _systems.LPSmm()
     with pytest.raises(UnrepresentableTransformationError):
-        LtaTransformation.from_instance(affine).save(tmp_path / "x.lta")
+        lta.save(tmp_path / "x.lta")
     assert not (tmp_path / "x.lta").exists()
 
 
@@ -710,5 +734,5 @@ def test_a_non_3d_affine_is_refused(tmp_path) -> None:  # noqa: ANN001
     affine = Affine(
         np.eye(3)[:-1], input=_systems.RASmm(), output=_systems.RASmm()
     )
-    with pytest.raises(WriterError, match="shape"):
+    with pytest.raises(WriterError, match="3-D affine"):
         io.save(affine, tmp_path / "x.lta")

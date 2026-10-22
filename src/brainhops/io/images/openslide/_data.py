@@ -19,6 +19,7 @@ import weakref
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
@@ -265,22 +266,16 @@ class _SlideArray(ArrayProxy):
     over it, as [`view`][] describes.
     """
 
-    def __init__(
-        self,
-        slide: _Slide,
-        record: OpenSlideRaw,
-        level: int,
-        lazy: tx.Optional[bool] = None,
-    ) -> None:
-        self.slide = slide
-        """The slide whose level the array reads."""
-        self.record = record
-        """The record of the slide."""
-        self.level = int(level)
-        """The index of the level in the record."""
-        self.lazy = lazy
-        """Whether the data is a dask array, or `None` for the array backend
-        to decide."""
+    slide: NoRepr[tx.Any, tx.Doc("The slide whose level the array reads.")]
+    record: NoRepr[OpenSlideRaw, tx.Doc("The record of the slide.")]
+    level: tx.Annotated[int, tx.Doc("The index of the level in the record.")]
+    lazy: tx.Annotated[
+        tx.Optional[bool],
+        tx.Doc(
+            "Whether the data is a dask array, or `None` for the array "
+            "backend to decide."
+        ),
+    ] = None
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -296,9 +291,6 @@ class _SlideArray(ArrayProxy):
     def base_chunks(self) -> tx.Tuple[int, int, int]:
         """The blocks that group whole tiles of the level."""
         return _chunks(self.record, self.level, self.base_shape)
-
-    def __repr__(self) -> str:
-        return f"_SlideArray(level={self.level}, shape={self.shape}, uint8)"
 
     def view(self) -> ArrayProtocol:
         """Return the data of the level, without reading any pixel.

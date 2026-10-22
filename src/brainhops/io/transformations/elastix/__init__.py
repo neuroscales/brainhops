@@ -209,7 +209,6 @@ from ._xform import (
 )
 
 # Importing the private converters registers them with the data model,
-# so that a conversion into one of these formats, such as
-# `t.to(Format)`, fails with a reason instead of building a wrong
-# object.
+# so that an affine or a field converts into one of these formats, as in
+# `t.to(Format)`.
 from . import _converters  # noqa: E402, F401  isort: skip

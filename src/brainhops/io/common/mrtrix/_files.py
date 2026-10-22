@@ -351,7 +351,7 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
     ).newbyteorder("="):
         return source
     content = BytesIO(payload(record, source))
-    return _MrtrixProxy(content, 0, 0, record, mmap=False)
+    return _MrtrixProxy.from_record(content, 0, 0, record, mmap=False)
 
 
 def _stored_proxy(raw: tx.Any) -> bool:

@@ -54,11 +54,21 @@ These conventions were checked against KCL-BMEIS/niftyreg at commit 79a1762
   `intent_p2` marks a backward field, whose velocity is negated. A velocity
   read from a file is written back as read, and one built from a chain is
   written as positions with its steps in `intent_p2`.
+- Header extensions: a grid of control points or a velocity may hold affines
+  as raw `mat44` matrices in its first two extensions. For a grid of control
+  points, `reg_spline_getDeformationField` applies the first affine before the
+  spline and composes the second one after it, and `reg_f3d -sym` writes its
+  half affine in both. For a velocity, NiftyReg composes the second affine
+  after the flow. The dense deformation and displacement fields do not read
+  their extensions. A conversion to a grid stores the affines around the field
+  in these extensions, and writes the identity in the first one when only the
+  second one is needed.
 
 ## Not supported
 
-- A velocity with an affine in its header extensions, as written by a symmetric
-  registration. NiftyReg removes the affine before integration and composes it
+- A velocity whose first header extension holds an affine other than the
+  identity, as written by a symmetric registration. NiftyReg subtracts the
+  values of that affine from the velocity before integration and adds them
   back afterwards, and brainhops does not decode this step. Such a file is
   read and written back, but using it raises `NotImplementedError`;
   integrating it with `reg_transform -def` gives a deformation field that can
@@ -92,6 +102,10 @@ if HAS_NIBABEL:
         NiftyRegVelocityGrid,
     )
 
+    # Importing the private converters registers them with the data
+    # model, so that a field converts into a grid of control points.
+    from . import _grid_converters  # noqa: F401  isort: skip
+
     __all__ += [
         "NiftyRegControlPointGrid",
         "NiftyRegDeformationField",
@@ -102,6 +116,10 @@ if HAS_NIBABEL:
         "NiftyRegVelocityField",
         "NiftyRegVelocityGrid",
     ]
+
+    # Importing the private converters registers the exact conversions
+    # into the dense fields with the data model.
+    from . import _converters  # noqa: E402, F401  isort: skip
 else:
     register_missing_format(
         [

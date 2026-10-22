@@ -71,6 +71,15 @@ class FreesurferTkrSystem(
     geometry: KwOnly[tx.Optional[Geometry]] = None
     """The geometry of the volume, or `None` when it is not known."""
 
+    DISTINCT_ORIGIN: tx.ClassVar[bool] = True
+    """Whether the space differs from other spaces with the same axes.
+
+    A tkregister space has the axes of scanner RAS but another origin,
+    so a conversion into a file format never bridges it to a system of
+    another class by its axes alone (see
+    [`affine_between`][brainhops.io.transformations.base._conversions.affine_between]).
+    """
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.geometry is not None:

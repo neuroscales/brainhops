@@ -19,9 +19,9 @@ program.
 | --------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
 | `command` | `{reslice,compose,convert}` | Subcommand to run: [`reslice`](reslice.md), [`compose`](compose.md) or [`convert`](convert.md). |
 
-Only `reslice` is implemented. The `compose` and `convert` subcommands are
-already registered, so that their options can be reviewed, but running
-either of them reports that it is not implemented yet and exits with an
+The `reslice` and `convert` commands are implemented. The `compose`
+command is already registered, so that its options can be reviewed, but
+running it reports that it is not implemented yet and exits with an
 error.
 
 ## Options

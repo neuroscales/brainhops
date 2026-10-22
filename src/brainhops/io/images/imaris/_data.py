@@ -8,6 +8,7 @@ from io import BytesIO
 import h5py
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoInit, NoRepr
 
 # internals
 from brainhops._core.proxy import ArrayProxy
@@ -36,14 +37,22 @@ class _ImarisProxy(ArrayProxy):
     time.
     """
 
-    def __init__(self, source: _Source, record: ImarisRaw, level: int) -> None:
-        self.source = source
-        """The path of the file, its bytes, or the open file."""
-        self.record = record
-        """The record of the file, which gives the shape and the type."""
-        self.level = level
-        """The index of the resolution level that the proxy reads."""
-        self._chunks: tx.Optional[tx.Tuple[int, ...]] = None
+    source: tx.Annotated[
+        tx.Any, tx.Doc("The path of the file, its bytes, or the open file.")
+    ]
+    record: NoRepr[
+        ImarisRaw,
+        tx.Doc("The record of the file, which gives the shape and the type."),
+    ]
+    level: tx.Annotated[
+        int, tx.Doc("The index of the resolution level that the proxy reads.")
+    ]
+    _chunks: NoInit[
+        NoRepr[
+            tx.Optional[tx.Tuple[int, ...]],
+            tx.Doc("The chunks of the level, once they were read."),
+        ]
+    ] = None
 
     @property
     def _level(self) -> ImarisLevel:
@@ -97,12 +106,6 @@ class _ImarisProxy(ArrayProxy):
                     out[i, j] = block[steps]
         keep = tuple(0 if isinstance(p, int) else slice(None) for p in parts)
         return out[keep]
-
-    def __repr__(self) -> str:
-        return (
-            f"_ImarisProxy(level={self.level}, shape={self.shape}, "
-            f"dtype={self.dtype})"
-        )
 
 
 def read_imaris_level(

@@ -36,6 +36,8 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
+    _NIFTI_INTENT_NAME_ITK_COORDINATES,
+    _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
 )
@@ -101,16 +103,23 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
         A `VECTOR` image (1007), the intent that this reader and SPM write,
         scores `Confidence.CERTAIN`. A `DISPVECT` image (1006) is left to
         [`NiftiRASDisplacementField`][], and a file named `"NREG_TRANS"` to
-        [`brainhops.io.transformations.niftyreg`][]. The ITK displacement
-        reader ties on a `VECTOR` image in the ITK layout unless its intent
-        name is `"Mapping"`, so a hint decides (see
+        [`brainhops.io.transformations.niftyreg`][]. A file named
+        `"ITKDisplacement"` or `"ITKCoordinates"`, which brainhops writes
+        on ITK fields, is left to the ITK readers. The ITK displacement
+        reader ties on any other `VECTOR` image in the ITK layout unless its
+        intent name is `"Mapping"`, so a hint decides (see
         [`brainhops.io.transformations.itk.nifti`][]). Any other file whose
         trailing axis has length 3 scores `Confidence.MAYBE`.
         """
         intent = _nifti_intent(header)
-        if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_NIFTYREG:
+        if _nifti_intent_name(header) in (
+            _NIFTI_INTENT_NAME_NIFTYREG,
+            _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
+            _NIFTI_INTENT_NAME_ITK_COORDINATES,
+        ):
             # Only the NiftyReg readers decode what intent_p1 says the file
-            # holds.
+            # holds, and only the ITK readers read a field that brainhops
+            # wrote as one.
             return Confidence.NO
         if intent == _NIFTI_INTENT_VECTOR:
             return Confidence.CERTAIN

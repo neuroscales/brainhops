@@ -15,7 +15,7 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
-from brainhops.backends import get_array_backend, to_numpy
+from brainhops.backends import get_array_backend, to_backend, to_numpy
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
@@ -33,15 +33,24 @@ from brainhops.datamodel.transformations import (
     is_identity,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import (
     Confidence,
     ParserTypeError,
     WriterError,
 )
 from brainhops.io.common.zarr import StoreLike
+from brainhops.io.common.zarr._data import (
+    _ZarrProxy,
+    reads_inside,
+    store_chunks,
+    store_location,
+    write_into,
+)
 from brainhops.io.common.zarr._parsers import (
     _as_node,
     _ZarrNodeReaderWriter,
+    absolute_location,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -81,7 +90,12 @@ class OmeZarrField(
     raw_levels: tx.Optional[tx.List[ArrayProtocol]] = None
     """
     The array of each resolution level, ordered from finest to coarsest,
-    exactly as stored in the file. The values are in world units.
+    exactly as stored in the file. The values are in world units. A
+    field read from a store holds a lazy array of each level, which
+    reads only the chunks that a selection needs (see
+    [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]), and which becomes
+    a Dask array with the chunks of the store under the backend setting
+    `"dask"`.
     """
 
     voxel2world: tx.Optional[Transformation] = None
@@ -125,7 +139,11 @@ class OmeZarrField(
         """The resolution scales, each a sequence.
 
         The scales are built on first access and cached. For a displacement
-        field, the placement is first checked to be affine.
+        field, the placement is first checked to be affine. The lazy array
+        of a level is converted with the backend setting in effect at that
+        access, as [`to_backend`][brainhops.backends.to_backend] says, so
+        that under `with backend("dask"):` each level is a Dask array with
+        the chunks of the store, and nothing is read.
         """
         cached = getattr(self, "_scales", None)
         if cached is not None:
@@ -162,8 +180,9 @@ class OmeZarrField(
     def from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
         """Read a field from an opened Zarr group.
 
-        The node's own OME metadata describes the field. The arrays of all
-        levels are read eagerly, and the metadata is kept as read.
+        The node's own OME metadata describes the field. Each level is
+        held as a lazy array of its Zarr array, so that nothing but the
+        metadata is read here, and the metadata is kept as read.
         """
         node = _as_node(node)
         if node is None:
@@ -191,9 +210,8 @@ class OmeZarrField(
                 "This node's OME metadata names no field datasets, so it has "
                 "no resolution levels to read."
             )
-        xp = get_array_backend()
         raw_levels = [
-            xp.asarray(_node.follow_path(node, str(ds.path))[...])
+            _level_proxy(_node.follow_path(node, str(ds.path)))
             for ds in datasets
         ]
         ndim = int(raw_levels[0].ndim)
@@ -234,6 +252,25 @@ class OmeZarrField(
     def to_node(self, node: tx.Any, **kwargs) -> tx.Any:
         """Write the field into an opened Zarr group, and return the group.
 
+        Each level is created with its shape and its type, and then
+        written into, so that a lazy array or a Dask array is written
+        block by block and never read whole into memory. A level that is
+        a lazy array of a store or a Dask array keeps its chunks, unless
+        `chunks` is given among the options.
+
+        Parameters
+        ----------
+        node : ZarrGroup
+            The group that receives the levels and the metadata.
+        **kwargs : Any
+            Options of the creation of each level array, such as
+            `chunks`.
+
+        Returns
+        -------
+        ZarrGroup
+            The group that was written into.
+
         Raises
         ------
         WriterError
@@ -270,9 +307,19 @@ class OmeZarrField(
                 if index < len(datasets)
                 else str(index)
             )
-            # Zarr writes arrays from memory, so an array on a GPU is copied
-            # to memory first, whatever the backend setting.
-            node.create_array(dataset_path, data=to_numpy(array), **kwargs)
+            # An array on a GPU is copied to memory, one block at a time
+            # for a Dask array, since Zarr writes arrays from memory.
+            options = dict(kwargs)
+            chunks = store_chunks(array)
+            if chunks is not None:
+                options.setdefault("chunks", chunks)
+            target = node.create_array(
+                dataset_path,
+                shape=tuple(int(n) for n in array.shape),
+                dtype=array.dtype,
+                **options,
+            )
+            write_into(target, array)
         node.ome = ome
         return node
 
@@ -281,11 +328,49 @@ class OmeZarrField(
 
         An opened group is written into as it stands. A location names a store
         that does not exist yet, so the group is created first.
+
+        The levels of a field read from a store are lazy arrays of that
+        store. When the location is the local store that they read, the
+        new store is filled beside it and then moved into place, so that
+        the levels are read before the old store is removed.
+
+        Parameters
+        ----------
+        location : str or PathLike or ZarrGroup
+            The location of the store, or an opened group.
+        **kwargs : Any
+            Options of [`to_node`][].
+
+        Raises
+        ------
+        WriterError
+            If the location is the remote store that a level reads, which
+            cannot be replaced without the level reading a store half
+            written.
         """
         node = _as_node(location)
-        if node is None:
-            node = abczarr.open_group(location, mode="w")
-        self.to_node(node, **kwargs)
+        if node is not None:
+            self.to_node(node, **kwargs)
+            return
+        location = absolute_location(location)
+        if not any(
+            reads_inside(raw, location) for raw in self.raw_levels or []
+        ):
+            self.to_node(abczarr.open_group(location, mode="w"), **kwargs)
+            return
+        if not is_local(location):
+            raise WriterError(
+                "This field reads the remote store that it would be written "
+                f"to, {location}, and a remote store cannot be replaced in "
+                "one step, so the field would read a store half written. "
+                "Write the field to another location."
+            )
+        replace_directory(
+            location,
+            lambda name: self.to_node(
+                abczarr.open_group(name, mode="w"), **kwargs
+            ),
+        )
 
     # --- level construction ---
 
@@ -322,8 +407,11 @@ class OmeZarrField(
     def _level(self, index: int) -> Sequence:
         # A coordinate level is the world-to-voxel affine followed by the
         # coordinate array. A displacement level also maps back to the world,
-        # because brainhops displacements work from voxel to voxel.
-        raw = _vector_axis_last(self.raw_levels[index], self._vector_axis)
+        # because brainhops displacements work from voxel to voxel. The lazy
+        # array of a store is converted as the backend setting says.
+        raw = _vector_axis_last(
+            to_backend(self.raw_levels[index]), self._vector_axis
+        )
         ndim = int(raw.shape[-1])
         voxel2world = self._level_voxel2world(index, ndim)
         world2voxel = voxel2world.inverse()
@@ -360,6 +448,15 @@ class OmeZarrField(
             )
 
 
+def _level_proxy(array: tx.Any) -> tx.Any:
+    # A level of a store is held as a lazy array of its Zarr array, which
+    # reads only the chunks that a selection needs. A node that is not a
+    # Zarr array, such as an array given in memory, is kept as it is.
+    if isinstance(array, abczarr.ZarrArray):
+        return _ZarrProxy(array, store_location(array))
+    return array
+
+
 def _vector_axis_last(
     raw: ArrayProtocol, vector_axis: tx.Optional[int]
 ) -> ArrayProtocol:
@@ -377,12 +474,13 @@ def _to_voxel_displacement(
     raw: ArrayProtocol, voxel2world: Transformation
 ) -> ArrayProtocol:
     # World-unit displacements become voxel displacements through the inverse
-    # L^-1 of the linear part of the placement: raw @ L^-T.
+    # L^-1 of the linear part of the placement: raw @ L^-T. The product is
+    # computed in the backend of the displacements, so that a Dask array is
+    # converted block by block rather than read into memory.
     matrix = _as_affine(voxel2world).matrix
-    inverse = _affine_inv(matrix)
-    xp = get_array_backend(matrix)
-    raw = xp.asarray(raw)
-    return raw @ inverse[:, :-1].T
+    inverse = to_numpy(_affine_inv(matrix))
+    ab = get_array_backend(raw)
+    return raw @ ab.asarray(inverse[:, :-1].T)
 
 
 def _dataset_placement(

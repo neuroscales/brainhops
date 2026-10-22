@@ -12,8 +12,12 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.common._geometry import held_transformations
-from brainhops.io.common.hdf5 import Hdf5Reader
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.common.hdf5 import Hdf5ReaderWriter
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
+)
 
 from .._chains import (
     _check_position,
@@ -34,7 +38,7 @@ def _record(xform: "H5Transform") -> tx.Optional[H5Raw]:
 
 
 @register_format
-class H5Transform(Hdf5Reader, ItkTransform):
+class H5Transform(Hdf5ReaderWriter, ItkTransform):
     """Transformation stored in an ITK HDF5 (`.h5`) file.
 
     The transformation is the chain of blocks of one top-level transform of
@@ -50,8 +54,19 @@ class H5Transform(Hdf5Reader, ItkTransform):
     The record describes the file as it was read, or as the transformation
     was last consolidated. A chain that is assigned or changed, and an
     `input` or `output` that is set, are pending until [`consolidate`][]
-    encodes them into a new record. brainhops does not write ITK `.h5`
-    files, so the record is only held in memory.
+    encodes them into a new record, or until the transformation is
+    written.
+
+    !!! note "What is written"
+        The transformation is consolidated, and its record is written as
+        ITK writes an `.h5` file (see
+        [`H5Raw.to_h5`][brainhops.io.transformations.itk.h5.H5Raw.to_h5]).
+        A transformation read from a file whose chain still holds the
+        blocks of the record is written with every block of the file,
+        including the transforms that `position` did not select. An ITK
+        block is written as it is, center included, and an affine
+        between ITK spaces as an `AffineTransform` centered on the
+        origin. A chain of several blocks is written as a composite.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5", ".hdf5")
@@ -340,6 +355,35 @@ class H5Transform(Hdf5Reader, ItkTransform):
         self.position = None
         self.transformations = None
         return self
+
+    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
+        """Write the transformation into an empty HDF5 file.
+
+        The transformation is consolidated into a copy, whose record is
+        written by [`H5Raw.to_h5`][], and the transformation itself is not
+        changed.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The file, empty and open for writing.
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, which are given to
+            [`consolidate`][].
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If a transformation of the chain is neither an ITK block nor
+            an affine between ITK spaces.
+        """
+        self._h5_writer(**kwargs)(h5file)
+
+    def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
+        # The copy is consolidated before the file is opened, so that a
+        # transformation that cannot be encoded leaves the file untouched.
+        fields, options = metadata_options(kwargs)
+        return _record(self.consolidate(**fields))._h5_writer(**options)
 
 
 def _decode(

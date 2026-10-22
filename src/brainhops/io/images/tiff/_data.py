@@ -3,6 +3,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core.proxy import ArrayProxy
@@ -33,25 +34,27 @@ class _TiffProxy(ArrayProxy):
     which reads only its selection of a memory map or of a dask array.
     """
 
-    def __init__(
-        self,
-        source: backend.TiffSource,
-        record: TiffRaw,
-        level: int,
-        mmap: bool = True,
-        lazy: tx.Optional[bool] = None,
-    ) -> None:
-        self.source = source
-        """The file name or the bytes of the file."""
-        self.record = record
-        """The record of the series that the level belongs to."""
-        self.level = int(level)
-        """The index of the level in the record."""
-        self.mmap = bool(mmap)
-        """Whether a local, uncompressed, contiguous level is memory-mapped."""
-        self.lazy = lazy
-        """Whether the level is read as a dask array, or `None` for the
-        array backend to decide."""
+    source: tx.Annotated[
+        tx.Any, tx.Doc("The file name or the bytes of the file.")
+    ]
+    record: NoRepr[
+        TiffRaw,
+        tx.Doc("The record of the series that the level belongs to."),
+    ]
+    level: tx.Annotated[int, tx.Doc("The index of the level in the record.")]
+    mmap: tx.Annotated[
+        bool,
+        tx.Doc(
+            "Whether a local, uncompressed, contiguous level is memory-mapped."
+        ),
+    ] = True
+    lazy: tx.Annotated[
+        tx.Optional[bool],
+        tx.Doc(
+            "Whether the level is read as a dask array, or `None` for the "
+            "array backend to decide."
+        ),
+    ] = None
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:

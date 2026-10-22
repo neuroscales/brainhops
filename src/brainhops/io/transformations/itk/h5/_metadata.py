@@ -29,8 +29,9 @@ class H5Metadata(Hdf5Reader, MetadataFormat):
     decodes its chain from the record of its metadata.
 
     The file is read by the record: [`from_h5`][] reads an [`H5Raw`][] and
-    wraps it. brainhops does not write ITK `.h5` files, so the metadata
-    cannot be written either. The metadata keeps no open file.
+    wraps it. The metadata is not written on its own: an `.h5` file is
+    written by its transformation, which writes the record. The metadata
+    keeps no open file.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5", ".hdf5")

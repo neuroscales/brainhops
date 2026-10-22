@@ -1,5 +1,7 @@
 """Tests of the brainhops command-line interface."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -15,6 +17,7 @@ from brainhops.cli._reslice import (
     _split_transform_spec,
     reslice_image,
 )
+from brainhops.datamodel import transformations as xforms
 from brainhops.datamodel.images import Image
 from brainhops.io.base import ImageSpec, TransformationSpec
 
@@ -297,10 +300,98 @@ def test_compose_reports_not_implemented(capsys) -> None:  # noqa: ANN001
     assert "not implemented" in capsys.readouterr().err.lower()
 
 
-def test_convert_reports_not_implemented(capsys) -> None:  # noqa: ANN001
-    code = main(["convert", "a.tfm", "-o", "out.nii.gz"])
-    assert code == 1
-    assert "not implemented" in capsys.readouterr().err.lower()
+DATA = Path(__file__).parent / "data"
+
+
+def test_convert_writes_an_itk_field_as_nifti(tmp_path) -> None:  # noqa: ANN001
+    # A field between LPS spaces keeps its endpoints in an ITK NIfTI
+    # field, whose intent name makes it read back without a hint.
+    from brainhops import io
+    from brainhops.io.transformations.itk.nifti import (
+        ItkNiftiDisplacementField,
+    )
+
+    out = tmp_path / "warp.nii.gz"
+    code = main(
+        ["convert", str(DATA / "itk_displacement3d.h5"), "-o", str(out)]
+    )
+    assert code == 0
+    loaded = io.transformations.load(out)
+    assert isinstance(loaded, ItkNiftiDisplacementField)
+
+
+def test_convert_writes_an_affine_with_its_operators(tmp_path) -> None:  # noqa: ANN001
+    from brainhops import io
+
+    source = str(DATA / "itk_affine3d.tfm")
+    out = tmp_path / "inverse.aff12.1D"
+    assert main(["convert", f"{source}|inv", "-o", str(out)]) == 0
+    forward = io.transformations.load(source).to(xforms.Affine)
+    inverse = io.transformations.load(out).to(xforms.Affine)
+    np.testing.assert_allclose(
+        (inverse @ forward).to(xforms.Affine).homogeneous_matrix,
+        np.eye(4),
+        atol=1e-6,
+    )
+
+
+def test_convert_needs_lossy_for_an_approximation(tmp_path, capsys) -> None:  # noqa: ANN001
+    # A NiftyReg grid of control points holds the cubic B-spline exactly,
+    # so the NIfTI displacement field, which samples it, is asked for by
+    # its hint.
+    source = str(DATA / "itk_bspline3d.tfm")
+    out = tmp_path / "bspline.nii.gz"
+    target = f"{out}|nifti.displacements"
+    assert main(["convert", source, "-o", target]) == 3
+    assert "lossy" in capsys.readouterr().err
+    assert not out.exists()
+    assert main(["convert", source, "-o", target, "--lossy"]) == 0
+    assert out.exists()
+
+
+def test_convert_writes_an_image(tmp_path) -> None:  # noqa: ANN001
+    from brainhops import io
+
+    source = _write_nifti(tmp_path / "image.nii.gz")
+    out = tmp_path / "image.mif"
+    assert main(["convert", source, "-o", str(out)]) == 0
+    image = io.images.load(out)
+    np.testing.assert_array_equal(
+        np.asarray(image.data), nb.load(source).get_fdata()
+    )
+
+
+def test_convert_reads_the_target_specification(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.cli._convert import parse_target
+
+    image = _write_nifti(tmp_path / "ref.nii.gz")
+    path, hints, options = parse_target(
+        f"out.nii.gz|itk|reference:[{image}]|log:true|steps:6"
+    )
+    assert path == "out.nii.gz"
+    assert hints == ("itk",)
+    assert isinstance(options.pop("reference"), Image)
+    assert options == {"log": True, "steps": 6}
+
+
+def test_convert_takes_the_target_format_from_a_hint(tmp_path) -> None:  # noqa: ANN001
+    from brainhops import io
+    from brainhops.io.transformations.mrtrix import MrtrixLinearTransform
+    from brainhops.io.transformations.niftyreg import NiftyRegAffine
+
+    source = str(DATA / "itk_affine3d.tfm")
+    for hint, cls in (
+        ("mrtrix", MrtrixLinearTransform),
+        ("niftyreg", NiftyRegAffine),
+    ):
+        out = tmp_path / f"{hint}.txt"
+        assert main(["convert", source, "-o", f"{out}|{hint}"]) == 0
+        assert isinstance(io.transformations.load(out, hint=hint), cls)
+
+
+def test_convert_reports_a_missing_input(capsys) -> None:  # noqa: ANN001
+    assert main(["convert", "missing.tfm", "-o", "out.nii.gz"]) == 1
+    assert "missing.tfm" in capsys.readouterr().err
 
 
 def test_split_transform_spec_expands_svf() -> None:

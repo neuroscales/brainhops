@@ -8,6 +8,7 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 from brainhops._core import path
 
@@ -42,15 +43,18 @@ class _PillowProxy(ArrayProxy):
     file that it was read from.
     """
 
-    def __init__(
-        self, source: tx.Any, record: PillowRaw, palette: bool
-    ) -> None:
-        self.source = source
-        """The path of the file, or the stream that holds it."""
-        self.record = record
-        """The record of the frame, which says what the frame decodes to."""
-        self.palette = bool(palette)
-        """Whether the colours of a palette image are looked up."""
+    source: tx.Annotated[
+        tx.Any, tx.Doc("The path of the file, or the stream that holds it.")
+    ]
+    record: NoRepr[
+        PillowRaw,
+        tx.Doc(
+            "The record of the frame, which says what the frame decodes to."
+        ),
+    ]
+    palette: tx.Annotated[
+        bool, tx.Doc("Whether the colours of a palette image are looked up.")
+    ]
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:

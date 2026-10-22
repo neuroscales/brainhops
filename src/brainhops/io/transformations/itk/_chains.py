@@ -306,3 +306,20 @@ def _read_only(values: tx.Any) -> tx.Any:
 
 def _is_composite(block: ItkStruct) -> bool:
     return block.type == ItkTransformClass.CompositeTransform
+
+
+def _type_name(block: ItkStruct) -> str:
+    """Return the name of the type of a block, as an ITK file writes it.
+
+    The name joins the class, the precision and the dimensions of the
+    block, as in `AffineTransform_double_3_3`. A B-spline whose degree
+    is not 3 appends its degree.
+    """
+    name = (
+        f"{ItkTransformClass(block.type).value}_"
+        f"{ItkPrecision(block.precision).value}_"
+        f"{block.ndim_input}_{block.ndim_output}"
+    )
+    if block.type == ItkTransformClass.BSplineTransform and block.degree != 3:
+        name += f"_{block.degree}"
+    return name

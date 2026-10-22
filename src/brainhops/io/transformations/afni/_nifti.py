@@ -53,7 +53,12 @@ from brainhops.io.metadata._base import (
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base._conversions import format_options
+from brainhops.io.transformations.base._conversions import (
+    FIELD_SOURCES,
+    format_options,
+    held,
+    register_converter,
+)
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
@@ -62,7 +67,7 @@ from brainhops.io.transformations.nifti._views import (
 )
 
 # this format
-from ._converters import _afni_displacement
+from ._converters import afni_chain, afni_displacement
 from ._formats import AfniWarpFormat
 from ._geometry import _nifti_matrix, nifti_cardinal_matrix
 from ._warp import (
@@ -749,21 +754,24 @@ def _niml_extension(nums: str) -> bytes:
 # _converters`.
 
 
-@converter(_xforms.CoordinatesField, AfniNiftiWarp)
-@converter(_xforms.Sequence, AfniNiftiWarp)
-@converter
+@register_converter(FIELD_SOURCES, AfniNiftiWarp)
 def _(
-    t: _xforms.DisplacementField, cls: tx.Type[AfniNiftiWarp], **kwargs
+    t: _xforms.Transformation, cls: tx.Type[AfniNiftiWarp], **kwargs
 ) -> AfniNiftiWarp:
-    # Exactly, or raise: one field of displacements, between a world-to-grid
-    # affine and its inverse, on a cardinal grid, sampled as AFNI stores
-    # it.
+    # One field of displacements, between a world-to-grid affine and its
+    # inverse, on a cardinal grid, sampled as AFNI stores it. Anything
+    # else is turned into one, and what loses is reported.
     cls = AfniNiftiWarp
     options = format_options(t, cls, kwargs, ("metadata",))
     # The metadata of `t` rides along, converted by the field, as for the
-    # NIfTI transformations.
-    options.setdefault("metadata", t.metadata)
-    return cls(transformations=_afni_displacement(t, cls), **options)
+    # NIfTI transformations. The header of another NIfTI format is left
+    # out, since its intent would claim the file for that format.
+    metadata = t.metadata
+    if isinstance(metadata, NiftiMetadata) and metadata.raw is not None:
+        metadata = replace(metadata, raw=None)
+    options.setdefault("metadata", metadata)
+    parts = afni_displacement(t, cls)
+    return held(cls(transformations=afni_chain(parts), **options), parts)
 
 
 @converter

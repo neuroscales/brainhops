@@ -84,6 +84,21 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("mat",)
 
+    PRIORITY: tx.ClassVar[int] = -1
+    """
+    Priority below the Convert3D matrix.
+
+    A `.mat` name is claimed by an ITK MATLAB file, a Convert3D matrix
+    and a FLIRT matrix. `io.save` writes an affine in the format that
+    keeps its endpoints: an affine between LPS spaces as an ITK file,
+    and one between RAS spaces as a Convert3D matrix. An affine whose
+    systems are not known is written as a Convert3D matrix, which this
+    priority decides, and a FLIRT matrix is written only when the
+    images that it needs are given as conversion options. A file is
+    read by the confidence of each format, which decides before the
+    priority.
+    """
+
     _metadata: NoRepr[tx.Optional[MatMetadata]] = Inherit(
         "metadata", default=None
     )

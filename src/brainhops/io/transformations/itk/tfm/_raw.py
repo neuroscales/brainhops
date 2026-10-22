@@ -7,6 +7,7 @@ from warnings import warn
 
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 from brainhops._core.peek import peekable_lines
 from brainhops.io.base._raw import Raw
@@ -14,17 +15,23 @@ from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
     TextFileReader,
+    TextFileWriter,
 )
 
-from .._chains import _check_composite, _read_only
-from .._common import _TRANSFORM_TYPE_RE, ItkStruct, _type_fields
+from .._chains import _check_composite, _is_composite, _read_only, _type_name
+from .._common import (
+    _TRANSFORM_TYPE_RE,
+    ItkPrecision,
+    ItkStruct,
+    _type_fields,
+)
 
 _TRANSFORM_RE = re.compile(r"^Transform:\s*" + _TRANSFORM_TYPE_RE.pattern[1:])
 _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TfmRaw(Raw, TextFileReader):
+class TfmRaw(Raw, TextFileReader, TextFileWriter):
     """Record of an ITK text `.tfm` file, which holds its blocks as read.
 
     A `.tfm` file is short and is read in one pass, so the record holds
@@ -40,15 +47,24 @@ class TfmRaw(Raw, TextFileReader):
 
     The blocks of a record are also the elements of the chain that a
     transformation decodes, so their parameters are read-only, and a
-    record is never changed in place. brainhops does not write `.tfm`
-    files, so the record has no writer and does not keep the text of the
-    file.
+    record is never changed in place. The record also keeps the lines of
+    the file, so that a file that is read and written again keeps its
+    bytes, and a record whose blocks were encoded again is written as
+    ITK writes them (see [`to_lines`][]).
     """
 
     blocks: tx.Tuple[ItkStruct, ...] = ()
     """Every block of the file, in the order of the file.
 
     A `CompositeTransform` header can only be the first block.
+    """
+
+    lines: NoRepr[tx.Optional[tx.Tuple[str, ...]]] = None
+    """The lines of the file that the blocks were read from.
+
+    The lines, comments included, are written back as they are while
+    the record holds the blocks that were read from them. They are
+    `None` for a record that was encoded from a chain.
     """
 
     # --- sniff --------------------------------------------------------
@@ -127,8 +143,14 @@ class TfmRaw(Raw, TextFileReader):
                 f"{cls.__name__}.from_lines() takes no options, but was "
                 f"given {', '.join(sorted(kwargs))}."
             )
-        if not isinstance(lines, peekable_lines):
-            lines = peekable_lines(lines)
+        if isinstance(lines, peekable_lines):
+            lines = list(lines)
+        text = []
+        for line in lines:
+            if not isinstance(line, str):
+                break
+            text.append(line.rstrip("\r\n"))
+        lines = peekable_lines(text)
         blocks = []
         while lines.peek():
             line = lines.next()
@@ -150,7 +172,70 @@ class TfmRaw(Raw, TextFileReader):
                 )
             )
         _check_composite(blocks)
-        return cls(blocks=tuple(blocks))
+        return cls(blocks=tuple(blocks), lines=tuple(text))
+
+    # --- to -----------------------------------------------------------
+
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        """Yield the lines of the file, without their line breaks.
+
+        The lines that the record was read from are returned while the
+        record holds the blocks that were read from them. Otherwise, the
+        file is written as `itk::TxtTransformIOTemplate::Write` writes
+        it: the line `#Insight Transform File V1.0`, then, for
+        each block, a comment that numbers it, its `Transform:` line,
+        and its `Parameters:` and `FixedParameters:` lines. A
+        `CompositeTransform` header has no parameter lines. Each number
+        is written with the fewest digits that read back as the same
+        number in the precision of its block.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer. There are none, so any option is
+            refused.
+
+        Yields
+        ------
+        str
+            The lines of the file.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        """
+        if kwargs:
+            raise TypeError(
+                f"{type(self).__name__}.to_lines() takes no options, but "
+                f"was given {', '.join(sorted(kwargs))}."
+            )
+        if self.lines is not None and _still_holds(self):
+            return iter(self.lines)
+        return _lines(self.blocks)
+
+    def to_text(self, **kwargs) -> str:
+        """Return the text of the file, ending with a newline.
+
+        The text is made of the lines of [`to_lines`][].
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the writer. There are none, so any option is
+            refused.
+
+        Returns
+        -------
+        str
+            The content of the file.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        """
+        return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
 
 # ---------------------------------------------------------------------
@@ -163,3 +248,56 @@ def _read_vector(match: tx.Optional[re.Match]) -> np.ndarray:
     text = None if match is None else match.group("values")
     values = list(map(float, text.split())) if text else []
     return _read_only(np.array(values))
+
+
+def _still_holds(record: TfmRaw) -> bool:
+    """Tell whether the lines of a record hold its blocks."""
+    read = TfmRaw.from_lines(record.lines).blocks
+    return len(read) == len(record.blocks) and all(
+        _same_block(a, b) for a, b in zip(read, record.blocks)
+    )
+
+
+def _same_block(first: ItkStruct, second: ItkStruct) -> bool:
+    """Tell whether two blocks store the same values."""
+    return _type_name(first) == _type_name(second) and all(
+        np.array_equal(
+            np.asarray(getattr(first, name), dtype=np.float64),
+            np.asarray(getattr(second, name), dtype=np.float64),
+        )
+        for name in ("parameters", "fixed_parameters")
+    )
+
+
+def _lines(blocks: tx.Sequence[ItkStruct]) -> tx.Iterator[str]:
+    """Yield the lines of a file that holds blocks, as ITK writes them."""
+    yield "#Insight Transform File V1.0"
+    for index, block in enumerate(blocks):
+        yield f"#Transform {index}"
+        yield f"Transform: {_type_name(block)}"
+        if _is_composite(block):
+            continue
+        precision = ItkPrecision(block.precision)
+        yield _vector_line("Parameters:", block.parameters, precision)
+        yield _vector_line(
+            "FixedParameters:", block.fixed_parameters, ItkPrecision.Double
+        )
+
+
+def _vector_line(tag: str, values: tx.Any, precision: ItkPrecision) -> str:
+    """Return a parameter line, with its values separated by spaces."""
+    dtype = np.float32 if precision == ItkPrecision.Float else np.float64
+    values = np.asarray(values, dtype=np.float64).reshape(-1).astype(dtype)
+    return " ".join([tag, *(_format_number(value) for value in values)])
+
+
+def _format_number(value: np.floating) -> str:
+    """Return the shortest text that reads back as the same number.
+
+    An integral value is written without a decimal point, as ITK writes
+    it, so that `1.0` is written `1`.
+    """
+    text = str(value)
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text

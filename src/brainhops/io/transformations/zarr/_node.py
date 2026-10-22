@@ -13,6 +13,7 @@ import typing_extensions as tx
 
 from brainhops.backends import to_backend
 from brainhops.datamodel.axes import Axis
+from brainhops.io.common.zarr._data import _ZarrProxy, store_location
 from brainhops.io.transformations.zarr._axes import _to_axis
 
 # These axis types carry the components of a field's vectors.
@@ -79,5 +80,12 @@ def dimension_names(field_node: tx.Any) -> tx.Optional[tx.List[str]]:
 
 
 def read_array(field_node: tx.Any) -> tx.Any:
-    """Read the field's array through the active array backend."""
-    return to_backend(field_node[...])
+    """Return the field's array, converted as the backend setting says.
+
+    The array is held as a lazy array of the Zarr array (see
+    [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]) and converted with
+    [`to_backend`][brainhops.backends.to_backend]. Under the setting
+    `"dask"`, the result is a Dask array with the chunks of the store,
+    which reads nothing until it is computed.
+    """
+    return to_backend(_ZarrProxy(field_node, store_location(field_node)))

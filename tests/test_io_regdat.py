@@ -503,8 +503,8 @@ def test_a_scanner_affine_is_saved_with_its_geometries(tmp_path) -> None:  # noq
     # register.dat is given, and nothing is written.
     with pytest.raises(WriterError) as raised:
         io.save(affine, tmp_path / "bare.dat")
-    assert "RegisterDatTransformation: Unrepresentable" in str(raised.value)
-    assert "geometries" in str(raised.value)
+    assert "RegisterDatTransformation: ConversionError" in str(raised.value)
+    assert "reference= and moving=" in str(raised.value)
     assert list(tmp_path.iterdir()) == []
     xform = RegisterDatTransformation.from_instance(
         affine, reference=REFERENCE, moving=MOVING

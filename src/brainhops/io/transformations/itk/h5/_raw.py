@@ -17,12 +17,13 @@ from brainhops.io.base.parsers import (
 )
 
 # io
-from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Reader
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5ReaderWriter
 from brainhops.io.common.hdf5._parsers import read_string
 
-from .._chains import _check_composite, _read_only
+from .._chains import _check_composite, _is_composite, _read_only, _type_name
 from .._common import (
     _TRANSFORM_TYPE_RE,
+    ItkPrecision,
     ItkStruct,
     ItkTransformClass,
     _type_fields,
@@ -54,7 +55,7 @@ class H5Header(Magic, convert=True, repr=HideIfNone):
     """The operating system version, such as `"6.1.0-1007-oem"`."""
 
 
-class H5Raw(Raw, Hdf5Reader):
+class H5Raw(Raw, Hdf5ReaderWriter):
     """Record of an ITK HDF5 (`.h5`) file, which holds its root and blocks.
 
     An ITK `.h5` file records the versions of the libraries that wrote it
@@ -78,8 +79,8 @@ class H5Raw(Raw, Hdf5Reader):
     [`H5Metadata`][brainhops.io.transformations.itk.h5.H5Metadata], holds a
     record, and an
     [`H5Transform`][brainhops.io.transformations.itk.h5.H5Transform]
-    decodes its chain from the record of its metadata. brainhops does not
-    write ITK `.h5` files, so the record has no writer.
+    decodes its chain from the record of its metadata. The record is
+    written as ITK writes an `.h5` file (see [`to_h5`][]).
     """
 
     header: H5Header = Factory(H5Header)
@@ -169,6 +170,80 @@ class H5Raw(Raw, Hdf5Reader):
         _check_composite(blocks)
         return cls(header=header, blocks=tuple(blocks))
 
+    # --- to -----------------------------------------------------------
+
+    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
+        """Write the record into an empty HDF5 file open for writing.
+
+        The file is written as `itk::HDF5TransformIOTemplate::Write`
+        writes it. The strings of the header are datasets at the root of
+        the file, and each block is the group of `/TransformGroup` named
+        after its number in the file. A group holds the type of its block
+        as a string, and its parameters and fixed parameters as vectors
+        of numbers. The parameters are stored in the precision of the
+        block, and the fixed parameters in double precision. A
+        `CompositeTransform` header holds its type only. ITK records its
+        own version at the root of the file, and the reader of brainhops
+        recognises an ITK file by it, so a header without `ITKVersion`
+        is written with a version that names brainhops instead.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The file, empty and open for writing.
+        **kwargs : Any
+            Options of the writer. There are none, so any option is
+            refused.
+
+        Raises
+        ------
+        TypeError
+            If an option is given.
+        """
+        self._h5_writer(**kwargs)(h5file)
+
+    def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
+        # The parameters of a warp are read before the file is opened, so
+        # that a file written over the one that they are read from is not
+        # truncated first.
+        if kwargs:
+            raise TypeError(
+                f"{type(self).__name__}.to_h5() takes no options, but was "
+                f"given {', '.join(sorted(kwargs))}."
+            )
+        header = {
+            name: getattr(self.header, name)
+            for name in ("HDFVersion", "ITKVersion", "OSName", "OSVersion")
+        }
+        if header["ITKVersion"] is None:
+            header["ITKVersion"] = _WRITER
+        if header["HDFVersion"] is None:
+            header["HDFVersion"] = (
+                f"HDF5 library version: {h5py.version.hdf5_version}"
+            )
+        groups = [_group_content(block) for block in self.blocks]
+
+        def write(h5file: h5py.File) -> None:
+            strings = h5py.string_dtype()
+            for name, value in header.items():
+                if value is not None:
+                    h5file.create_dataset(name, data=[value], dtype=strings)
+            root = h5file.create_group(TRANSFORM_GROUP)
+            for index, content in enumerate(groups):
+                group = root.create_group(str(index))
+                kind, parameters, fixed_parameters = content
+                group.create_dataset(
+                    "TransformType", data=[kind], dtype=strings
+                )
+                if parameters is None:
+                    continue
+                group.create_dataset("TransformParameters", data=parameters)
+                group.create_dataset(
+                    "TransformFixedParameters", data=fixed_parameters
+                )
+
+        return write
+
 
 # ---------------------------------------------------------------------
 # Utilities
@@ -207,6 +282,28 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
         parameters=_read_only(parameters),
         fixed_parameters=_read_only(fixed_parameters),
     )
+
+
+_WRITER = "unknown, written by brainhops"
+"""The `ITKVersion` of a file whose record does not name a version."""
+
+
+def _group_content(
+    block: ItkStruct,
+) -> tx.Tuple[str, tx.Optional[np.ndarray], tx.Optional[np.ndarray]]:
+    """Return the type and the vectors that the group of a block holds.
+
+    The vectors are read into memory, in the precision that ITK writes
+    them in. A composite header has no vectors.
+    """
+    kind = _type_name(block)
+    if _is_composite(block):
+        return kind, None, None
+    float32 = ItkPrecision(block.precision) == ItkPrecision.Float
+    dtype = np.float32 if float32 else np.float64
+    parameters = np.asarray(block.parameters, dtype=np.float64).reshape(-1)
+    fixed = np.asarray(block.fixed_parameters, dtype=np.float64).reshape(-1)
+    return kind, parameters.astype(dtype), fixed
 
 
 def _dataset(

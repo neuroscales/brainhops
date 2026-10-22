@@ -339,6 +339,11 @@ class ElastixParameterTransform(ElastixTransform):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".txt",)
     HINTS = ("params",)
+    # A `.txt` file holds a bare matrix more often than an elastix map,
+    # so an affine whose systems are not known, which every `.txt`
+    # format converts exactly, is written as a matrix rather than as an
+    # elastix transform (see `io.save`).
+    PRIORITY: tx.ClassVar[int] = -1
 
     @classmethod
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:

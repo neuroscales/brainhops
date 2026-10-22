@@ -981,18 +981,18 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        samples = _NrrdProxy.read_samples
+        read = _NrrdProxy._read
         stored = _NrrdProxy.read_stored
 
-        def counted_samples(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        def counted_read(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
-            return samples(proxy, *args, **kwargs)
+            return read(proxy, *args, **kwargs)
 
         def counted_stored(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
             return stored(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_NrrdProxy, "read_samples", counted_samples)
+        monkeypatch.setattr(_NrrdProxy, "_read", counted_read)
         monkeypatch.setattr(_NrrdProxy, "read_stored", counted_stored)
 
 

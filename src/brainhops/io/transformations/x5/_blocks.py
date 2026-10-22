@@ -17,7 +17,7 @@ from bagof.magic import replace
 
 from brainhops._core import affines as _affines
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend, to_numpy
+from brainhops.backends import get_array_backend, to_backend, to_numpy
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
@@ -221,12 +221,16 @@ def _read_parameter(stored: tx.Any) -> np.ndarray:
 def _read(stored: tx.Any) -> ArrayProtocol:
     """Return an array of a node, read from the file if it is a proxy.
 
-    A [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] is read
-    with the array backend, which loads it with NumPy and keeps it lazy
-    with Dask. A NumPy array is returned as a read-only view.
+    A [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] is
+    converted as the backend setting says (see
+    [`to_backend`][brainhops.backends.to_backend]): it is read with NumPy,
+    or kept lazy as a Dask array whose blocks are the chunks of the
+    dataset when it is stored in chunks, so that a computation reads
+    only the blocks that it needs.
+    A NumPy array is returned as a read-only view.
     """
     if isinstance(stored, DelayedH5Array):
-        array = get_array_backend().asarray(stored)
+        array = to_backend(stored)
     else:
         array = get_array_backend(stored).asarray(stored)
     if isinstance(array, np.ndarray):

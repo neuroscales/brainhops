@@ -26,7 +26,10 @@ from brainhops.datamodel.systems import (  # noqa: E402
     RASmm,
     VoxelCoordinateSystem,
 )
-from brainhops.errors import ConversionError  # noqa: E402
+from brainhops.errors import (  # noqa: E402
+    ConversionError,
+    LossyConversionError,
+)
 from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
 )
@@ -291,10 +294,27 @@ def test_an_lps_displacement_chain_is_bridged_into_ras(tmp_path) -> None:  # noq
     lps = _flip(_world())
     expected = _flip(_apply(chain, lps))
     np.testing.assert_allclose(_apply(nifti, _flip(lps)), expected, atol=1e-12)
-    io.save(chain, tmp_path / "warp.nii.gz")
+    io.save(nifti, tmp_path / "warp.nii.gz")
     back = io.transformations.load(tmp_path / "warp.nii.gz")
     assert isinstance(back, NiftiRASDisplacementField)
     np.testing.assert_allclose(_apply(back, _flip(lps)), expected, atol=1e-10)
+
+
+def test_an_lps_displacement_chain_is_saved_as_an_itk_field(tmp_path) -> None:  # noqa: ANN001
+    # `io.save` keeps the LPS endpoints of the chain in an ITK field, which
+    # is read back with its hint, since its header cannot say ITK.
+    from brainhops.io.transformations.itk.nifti import (
+        ItkNiftiDisplacementField,
+    )
+
+    chain = _lps_displacement_chain()
+    lps = _flip(_world())
+    io.save(chain, tmp_path / "warp.nii.gz")
+    back = io.transformations.load(tmp_path / "warp.nii.gz", hint="itk")
+    assert isinstance(back, ItkNiftiDisplacementField)
+    np.testing.assert_allclose(
+        _apply(back, lps), _apply(chain, lps), atol=1e-10
+    )
 
 
 def test_a_velocity_is_held_and_written_as_its_displacement(tmp_path) -> None:  # noqa: ANN001
@@ -313,19 +333,32 @@ def test_a_velocity_is_held_and_written_as_its_displacement(tmp_path) -> None:  
     np.testing.assert_allclose(_apply(back, points), expected, atol=1e-10)
 
 
-def test_a_cubic_displacement_field_is_refused() -> None:
+def test_a_cubic_displacement_field_is_lossy() -> None:
     # NIfTI's values are read back with linear interpolation, which is
     # another map between the nodes than a cubic spline's.
-    with pytest.raises(ConversionError, match="degree 3"):
-        _lps_displacement_chain(degree=3).to(NiftiRASDisplacementField)
+    chain = _lps_displacement_chain(degree=3)
+    with pytest.raises(LossyConversionError, match="degree 3"):
+        chain.to(NiftiRASDisplacementField)
+    nifti = chain.to(NiftiRASDisplacementField, lossy=True)
+    # The values at the nodes are kept.
+    lps = LPS2RAS @ VOX2WORLD
+    nodes = _voxels()[:3] @ lps[:3, :3].T + lps[:3, 3]
+    np.testing.assert_allclose(
+        _flip(_apply(nifti, _flip(nodes))), _apply(chain, nodes), atol=1e-10
+    )
 
 
-def test_ends_that_do_not_undo_each_other_are_refused() -> None:
+def test_ends_that_do_not_undo_each_other_are_carried_into_the_field() -> None:
     chain = list(_ras_displacement_chain())
     chain[2] = VoxelToRAS(matrix=(2 * VOX2WORLD)[:-1])
     chain = xforms.Sequence(transformations=chain)
-    with pytest.raises(ConversionError, match="do not undo each other"):
-        chain.to(NiftiRASDisplacementField)
+    nifti = chain.to(NiftiRASDisplacementField)
+    # The last two points lie outside the grid, where the two fields are
+    # extended differently.
+    points = _world()[:-2]
+    np.testing.assert_allclose(
+        _apply(nifti, points), _apply(chain, points), atol=1e-10
+    )
 
 
 def test_two_fields_are_not_composed_into_one() -> None:
@@ -335,15 +368,29 @@ def test_two_fields_are_not_composed_into_one() -> None:
         chain.to(NiftiRASDisplacementField)
 
 
-def test_a_field_of_coordinates_is_not_one_of_displacements() -> None:
-    # They extend differently outside their grid.
-    coordinates = xforms.CoordinatesField(field=_coordinates())
-    with pytest.raises(ConversionError, match="holds displacements"):
-        coordinates.to(NiftiRASDisplacementField)
-    with pytest.raises(ConversionError, match="holds coordinates"):
-        xforms.DisplacementField(field=_displacements()).to(
-            NiftiRASCoordinatesField
-        )
+def test_coordinates_and_displacements_convert_into_each_other() -> None:
+    # They are the same map inside their grid, and only extend differently
+    # outside it, which is not a loss.
+    coordinates = xforms.CoordinatesField(
+        field=_coordinates(), input=VOXEL, output=RASmm()
+    )
+    chain = xforms.Sequence(
+        transformations=[
+            RASToVoxel(matrix=np.linalg.inv(VOX2WORLD)[:-1]),
+            coordinates,
+        ]
+    )
+    displacement = chain.to(NiftiRASDisplacementField)
+    points = _world()[:-2]
+    np.testing.assert_allclose(
+        _apply(displacement, points), _apply(chain, points), atol=1e-10
+    )
+    nifti = _ras_displacement_chain().to(SpmCoordinatesField)
+    np.testing.assert_allclose(
+        _apply(nifti, points),
+        _apply(_ras_displacement_chain(), points),
+        atol=1e-10,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -435,9 +482,10 @@ def test_an_spm_file_round_trips(tmp_path) -> None:  # noqa: ANN001
     assert back.metadata.raw.header.get_intent() == ("vector", (), "Mapping")
 
 
-def test_a_displacement_field_is_not_an_spm_deformation() -> None:
-    with pytest.raises(ConversionError, match="holds coordinates"):
-        _ras_displacement_chain().to(SpmCoordinatesField)
+def test_a_map_from_ras_is_not_a_nifti_field_of_coordinates() -> None:
+    # A NIfTI field of coordinates maps the voxels of its grid.
+    with pytest.raises(ConversionError, match="SPM deformation"):
+        _ras_displacement_chain().to(NiftiRASCoordinatesField)
 
 
 # ----------------------------------------------------------------------
@@ -486,10 +534,12 @@ def test_a_general_transformation_is_saved_in_the_format_it_converts_to(
 
 def test_save_gives_each_format_reason_to_refuse(tmp_path) -> None:  # noqa: ANN001
     with pytest.raises(WriterError) as info:
-        io.save(_lps_displacement_chain(degree=3), tmp_path / "warp.nii.gz")
+        # A quadratic field, which a NiftyReg grid of control points,
+        # cubic or linear, does not hold exactly either.
+        io.save(_lps_displacement_chain(degree=2), tmp_path / "warp.nii.gz")
     message = str(info.value)
-    assert "NiftiRASDisplacementField: ConversionError" in message
-    assert "degree 3" in message
+    assert "NiftiRASDisplacementField: LossyConversionError" in message
+    assert "degree 2" in message
 
 
 # ----------------------------------------------------------------------

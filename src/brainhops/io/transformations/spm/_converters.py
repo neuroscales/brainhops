@@ -9,43 +9,48 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.io.transformations.base._conversions import (
+    FIELD_SOURCES,
+    FieldParts,
+    coordinates_parts,
     format_options,
+    held,
     split_field_chain,
+    undoes,
     unrepresentable,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import RASCoordinatesField
-from brainhops.io.transformations.nifti._converters import (
-    RAS,
-    check_coordinates,
-    ras_coordinate_values,
-)
+from brainhops.io.transformations.nifti._converters import RAS
 
 from ._fields import SpmCoordinatesField
 
 
-@converter(_xforms.DisplacementField, SpmCoordinatesField)
-@converter(_xforms.Sequence, SpmCoordinatesField)
-@converter
 def _(
-    t: _xforms.CoordinatesField,
+    t: _xforms.Transformation,
     cls: tx.Type[SpmCoordinatesField],
     **kwargs,
 ) -> SpmCoordinatesField:
-    # Exactly, or raise: an affine from RAS to a grid, then one field of
-    # coordinates on that grid, sampled as NIfTI stores it, followed by an
-    # affine into RAS. A field of displacements is refused there, with the
-    # reason.
+    # An affine from RAS to a grid, then the RAS position of each node of
+    # that grid. A field of displacements becomes the position of each
+    # node, and a field that is not linear is sampled at its nodes, which
+    # loses.
+    cls = SpmCoordinatesField
     options = format_options(t, cls, kwargs, ("metadata",))
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
-    ras2voxel, field, voxel2ras = _spm_coordinates(t, cls)
-    coordinates = ras_coordinate_values(t, field, voxel2ras, cls)
+    if _holds_no_coordinates(t, cls):
+        chain = (RASToVoxel(), RASCoordinatesField())
+        return cls(transformations=chain, **options)
+    parts = _spm_coordinates(t, cls)
     chain = (
-        RASToVoxel(matrix=ras2voxel[:-1]),
-        RASCoordinatesField(field=coordinates),
+        RASToVoxel(matrix=parts.world2grid[:-1]),
+        RASCoordinatesField(field=parts.field.values),
     )
-    return cls(transformations=chain, **options)
+    return held(cls(transformations=chain, **options), parts)
+
+
+for _source in FIELD_SOURCES:
+    converter(_source, SpmCoordinatesField)(_)
 
 
 @converter
@@ -59,24 +64,46 @@ def _(
     return smart_replace(t, cls, **kwargs)
 
 
-def _spm_coordinates(t: _xforms.Transformation, cls: type) -> tuple:
+def _holds_no_coordinates(t: _xforms.Transformation, cls: type) -> bool:
+    """
+    Whether `t` is a field of coordinates without data, the identity.
+
+    Such a field is held without data, as a displacement field without
+    data is. Nothing may then come before or after it, since an affine
+    has no values to be carried into.
+    """
+    before, field, after = split_field_chain(t, RAS, RAS, cls)
+    if field.data is not None:
+        return False
+    identity = np.eye(len(before))
+    if not undoes(before, identity) or not undoes(after, identity):
+        raise unrepresentable(
+            t,
+            cls,
+            "it holds no coordinates, and an affine before or after them "
+            "has no values to be carried into.",
+        )
+    return True
+
+
+def _spm_coordinates(t: _xforms.Transformation, cls: type) -> FieldParts:
     """
     `t` as an SPM deformation field, or the reason it is not.
 
-    Returns `(ras2voxel, field, voxel2ras)`: the homogeneous affine from
-    RAS to the grid of the field, the field of coordinates, and the affine
-    its coordinates are carried into RAS by.
+    Returns the parts that
+    [`coordinates_parts`][brainhops.io.transformations.base._conversions.coordinates_parts]
+    gives: the homogeneous affine from RAS to the grid of the field, and
+    the RAS position of each node of that grid.
     """
-    ras2voxel, field, voxel2ras = split_field_chain(t, RAS, RAS, cls)
-    check_coordinates(field, t, cls)
-    if np.linalg.cond(ras2voxel) > _MAX_CONDITION:
+    parts = coordinates_parts(t, RAS, RAS, cls)
+    if np.linalg.cond(parts.world2grid) > _MAX_CONDITION:
         raise unrepresentable(
             t,
             cls,
             "the affine before its field is singular, or nearly so, and SPM "
             "stores the grid of the field by its inverse.",
         )
-    return ras2voxel, field, voxel2ras
+    return parts
 
 
 _MAX_CONDITION = 1e12

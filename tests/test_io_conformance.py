@@ -1959,9 +1959,10 @@ class Exemplar(tx.NamedTuple):
 
     The record of a FLIRT matrix holds the matrix alone, and that of an
     ITK text file its blocks alone, so an edit of the record is an edit
-    of the data, which an assigned value replaces. Check 20 then checks
-    that the edit is followed and that the assigned value is kept, but
-    not that the edit is kept under the assigned value.
+    of the data, which an assigned value replaces. Checks 10 and 20 then
+    check that the edit is followed and that the assigned value is kept,
+    but not that the edit is kept under the assigned value, in memory or
+    in the file that is written.
     """
 
     container: str = "file"
@@ -3791,7 +3792,7 @@ if nb is not None:
         set_data=lambda xform, value: setattr(xform, "flirt_matrix", value),
         cut=_copy,
         header=lambda metadata: metadata.raw.matrix,
-        source=_write_flirt,
+        fixture=_write_flirt,
         pending=("_flirt_matrix",),
         records=True,
         bare=True,
@@ -3908,7 +3909,7 @@ _ITK_TEXT = Exemplar(
     ),
     cut=_copy,
     header=_itk_summary,
-    source=_write_tfm,
+    fixture=_write_tfm,
     records=True,
     bare=True,
 )
@@ -3924,19 +3925,11 @@ EXEMPLARS[MatTransform] = _ITK_TEXT._replace(
     binary=True,
     cut=None,
     header=None,
-    source=None,
+    fixture=None,
     records=False,
 )
 
 if h5py is not None:
-
-    def _write_itk_h5(path: tx.Any, parameters: tx.Any) -> None:
-        with h5py.File(path, "w") as file:
-            file["ITKVersion"] = np.bytes_("5.4.0")
-            group = file.create_group("TransformGroup/0")
-            group["TransformType"] = np.bytes_(f"{_ITK_WARP}_double_3_3")
-            group["TransformParameters"] = np.asarray(parameters, float)
-            group["TransformFixedParameters"] = _ITK_GRID
 
     def _itk_h5_cut(source: tx.Any, target: tx.Any) -> None:
         """Copy an ITK `.h5` file whose warp parameters cannot be read.
@@ -3980,7 +3973,8 @@ if h5py is not None:
             xform, "transformations", [_itk_warp(value)]
         ),
         cut=_itk_h5_cut,
-        source=_write_itk_h5,
+        # The file is written by the format itself.
+        fixture=None,
     )
 
 
@@ -5595,7 +5589,7 @@ def test_10_record_edits_survive_and_geometry_wins(
     # Writing encodes into a copy of the record, never into the record.
     assert _written(exemplar, loaded.metadata) == header
     back = _load(cls, exemplar, target)
-    assert exemplar.record_edited(back.metadata.raw)
+    assert exemplar.bare or exemplar.record_edited(back.metadata.raw)
     assert np.allclose(exemplar.geometry(back), exemplar.geometry(loaded))
     original = exemplar.geometry(_load(cls, exemplar, source))
     assert not np.allclose(exemplar.geometry(back), original)
@@ -6089,7 +6083,7 @@ def test_20_other_metadata_keeps_only_what_was_assigned(
     loaded.save(target)
     back = _load(cls, exemplar, target)
     assert np.allclose(exemplar.geometry(back), assigned)
-    assert exemplar.record_edited(back.metadata.raw)
+    assert exemplar.bare or exemplar.record_edited(back.metadata.raw)
 
 
 # ----------------------------------------------------------------------

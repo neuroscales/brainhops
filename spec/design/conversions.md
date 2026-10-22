@@ -134,18 +134,69 @@ pyramid adds none, so the image keeps its geometry. A pyramid becomes
 the single-scale image of its highest-resolution level, placed in the
 world space of the pyramid, and its other levels are left out.
 
-A file format without an exact converter yet (#312) relabels a
-transformation, and it first carries the transformation into its own
-coordinate systems when they differ. Each such endpoint is bridged as
-composition bridges two neighbours, by reordering, flipping and
-rescaling axes, which is exact. This is done for the formats that store
-an affine, such as the MNI `.xfm` file and the RAS variant of an LTA
-file. A voxel system is not bridged to a world system, because that
-needs the geometry of the volume, and a format that holds that geometry,
-such as an LTA file with valid volume information, uses it only in its
-own exact converter. `save()` writes through the same conversion, so an
-affine between LPS systems is saved in an `.xfm` file as the equivalent
-affine between RAS systems.
+Every affine file format has an exact converter from each family with
+an affine form, and from a chain of affines. The converter carries the
+transformation into the coordinate systems of the format: each endpoint
+is bridged as composition bridges two neighbours, by reordering,
+flipping and rescaling axes, which is exact, and the chain is composed
+into one matrix. A voxel system is not bridged to a world system,
+because that needs the geometry of a volume. A format that places its
+matrix with the geometries of two volumes (FLIRT, `register.dat`, and
+LTA between voxels) takes them as the conversion options `reference=`,
+the volume of the input, and `moving=`, the volume of the output, and
+refuses the conversion without them. `save()` writes through the same
+conversion, so an affine between LPS systems is saved in an `.xfm` file
+as the equivalent affine between RAS systems. Status: implemented.
+
+A field is a B-spline of some degree, whether a format stores the values
+at its nodes (a B-spline of degree 1) or the coefficients of a cubic
+B-spline (FNIRT coefficient fields, NiftyReg grids of control points
+and velocity grids, elastix B-spline transforms, X5 B-splines). Every
+field format is therefore converted to by the same helpers of
+`io/transformations/base/_conversions.py`, which take the degree of the
+format. A field of that degree keeps its coefficients. A chain
+`A o (id + d) o B` holds a field between two affines, and everything
+that the header of a format can hold is stored there, as the tools
+write their own files. A NiftyReg grid of control points has two affine
+slots in its header extensions: NiftyReg applies the first one before
+the spline and composes the second one after it, as `reg_f3d -sym`
+writes them, so the grid stores `B` and `A` there and the field keeps
+the grid on which it is placed (`field_slots`). A NiftyReg velocity
+grid or velocity field composes its second extension after the flow,
+and NiftyReg subtracts the values of the first one from the velocity,
+which is not a composition, so the affines around a velocity are
+carried to its end by a change of coordinates, which is exact, and
+stored in the second extension (`split_affine`). The dense NiftyReg
+fields have no affine slot, since NiftyReg does not read their
+extensions. An elastix file chains transforms, and an ITK, X5 or MINC
+file is a chain of its own, so these formats store `B` and `A` as
+transforms on either side of the field, which keeps its grid
+(`world_pieces`). When ITK cannot place that grid, because it places a
+grid by orthonormal directions, elastix stores one affine, `A B`, after
+or before the field. An FSL coefficient field stores the initial affine
+that FNIRT applies first, so it stores `A B` there, and the field is
+placed by `B` (`split_affine`). The header affine of a NIfTI field
+places its grid in the input world, so it holds `B`. A NIfTI field has
+no other affine, and what `A` and `B` do not undo of each other is
+carried into the values of the field. That is also exact, since a
+B-spline is linear in its coefficients and reproduces affine maps. The
+qform and the sform of a NIfTI header are two placements of the same
+grid, from which a reader chooses one, so they cannot hold two affines
+that are applied in turn. A field of another degree is evaluated at its nodes, and its values are
+converted to coefficients by the existing conversion
+`field.to(store="coefficients")`, which is a loss. A format that imposes
+its own grid, such as the reference of an FSL warp or the knots of
+FNIRT, has the transformation evaluated at the nodes of that grid and
+interpolated with its degree, which is exact only when the
+transformation is already a B-spline of that degree on that grid. No
+spline is fitted by least squares. How a field is extended beyond its
+grid, and the boundary condition of the spline, are not counted as
+losses. Neither is the precision in which a format stores its numbers,
+such as the single precision of a NIfTI-1 affine or of a NiftyReg
+field: a change of data type rounds the numbers but does not change the
+map. FNIRT and FLIRT need the geometry of their two images, which a
+conversion takes as the options `reference=` and `moving=`. Status:
+implemented.
 
 ## 4. Refusals that are deliberate
 

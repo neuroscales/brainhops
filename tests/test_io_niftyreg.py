@@ -18,6 +18,7 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as bio  # noqa: E402
 from brainhops.datamodel import systems  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
+from brainhops.errors import ConversionError  # noqa: E402
 from brainhops.io.base._dispatch import format_hints  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
@@ -617,10 +618,17 @@ def _with_extension(image: "nb.Nifti1Image", matrix: np.ndarray) -> None:
         image.header.extensions.append(nb.nifti1.Nifti1Extension(0, content))
 
 
-def test_grid_extension_affine_is_applied_first(
+def test_grid_extension_affines_surround_the_spline(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """Reference positions go through the extension affine, then the spline."""
+    """
+    Reference positions go through the first extension affine, then the
+    spline, then the second extension affine.
+
+    `reg_f3d -sym` writes its half affine in both extensions, and
+    `reg_spline_getDeformationField` applies the first one before the
+    spline and composes the second one after it.
+    """
     positions, vox2world = _random_cpp(rng, scale=1.0)
     half = AFFINE.copy()
     half[:3, 3] *= 0.5
@@ -629,19 +637,24 @@ def test_grid_extension_affine_is_applied_first(
     path = tmp_path / "cpp.nii.gz"
     nb.save(image, path)
     xform = load(path)
-    assert len(xform) == 4
+    assert len(xform) == 5
     assert isinstance(xform.affine, RASToRAS)
+    assert isinstance(xform.affine_after, RASToRAS)
     np.testing.assert_allclose(
         xform.affine.homogeneous_matrix, half.astype("f4"), atol=0
     )
+    np.testing.assert_allclose(
+        xform.affine_after.homogeneous_matrix, half.astype("f4"), atol=0
+    )
     points = _points(rng, 20, 0.1, 0.9)
-    expected = _niftyreg_cubic(positions, vox2world, _world(points, half))
+    spline = _niftyreg_cubic(positions, vox2world, _world(points, half))
+    expected = _world(spline, half)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-4)
 
     out = tmp_path / "out.nii.gz"
     xform.save(out)
     back = load(out)
-    assert len(back) == 4
+    assert len(back) == 5
     np.testing.assert_allclose(_apply(back, points), expected, atol=1e-4)
 
 
@@ -829,7 +842,7 @@ def test_velocity_with_an_affine_is_read_but_not_decoded(
     assert xform.squaring_steps == -6
     assert len(xform.extension_affines) == 2
     np.testing.assert_allclose(np.asarray(xform.data), vectors, atol=1e-6)
-    with pytest.raises(NotImplementedError, match="extensions"):
+    with pytest.raises(NotImplementedError, match="first header extension"):
         xform.compute()
 
     # A velocity with an affine is written back as read.
@@ -918,9 +931,8 @@ def test_a_displacement_copied_to_a_velocity_is_refused(
 ) -> None:
     """A NIfTI displacement field has no logarithm to write as a velocity."""
     path = _dispvect(tmp_path, np.zeros((*REF_SHAPE, 3)) + 0.5)
-    copied = NiftyRegVelocityField.from_instance(load(path))
-    with pytest.raises(NotImplementedError, match="logarithm"):
-        copied.to_nibabel()
+    with pytest.raises(ConversionError, match="logarithm"):
+        NiftyRegVelocityField.from_instance(load(path))
 
 
 def test_a_velocity_copied_to_niftyreg_keeps_its_steps(tmp_path: Path) -> None:

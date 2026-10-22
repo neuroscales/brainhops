@@ -26,10 +26,16 @@ from brainhops.errors import IncompatibleSystemError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
+    WriterError,
 )
 from brainhops.io.common.nifti._header import _NiftiObject
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._base import (
+    metadata_options,
+    metadata_to_write,
+    requested_fields,
+)
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
 
@@ -54,6 +60,7 @@ def _record(xform: "FlirtTransform") -> tx.Optional[FlirtRaw]:
 @register_format
 class FlirtTransform(
     TextFileReader,
+    TextFileWriter,
     FslAffineFormat,
     _xforms.Affine,
     TransformationFormat,
@@ -78,12 +85,39 @@ class FlirtTransform(
     assigned, or given to the constructor, is pending until
     [`consolidate`][] encodes it into a new record. The affine in world
     coordinates is computed from the FLIRT matrix and the two images, so
-    it cannot be assigned. brainhops does not write FLIRT files, so the
-    record is only held in memory.
+    it cannot be assigned.
+
+    Another affine is converted to a FLIRT transform with the images,
+    as in `t.to(FlirtTransform, reference=ref, moving=mov)`. The affine
+    is read from the RAS world of the reference to that of the moving
+    image, with its endpoints bridged to RAS, and the converter computes
+    the FLIRT matrix that maps it, which is the matrix that is written.
+    Without both images, the conversion is refused, since the FLIRT
+    matrix cannot be computed.
+
+    !!! note "What is written"
+        The FLIRT matrix is written as FLIRT writes it, a row of four
+        numbers on each of four lines. A transformation read from a file
+        and not changed is written as its record holds the matrix. The
+        images are not written, since the file has no place for them, so
+        they must be given again to read the file in world coordinates.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("flirt",)
+
+    PRIORITY: tx.ClassVar[int] = 1
+    """
+    Priority above the Convert3D matrix and the ITK MATLAB file.
+
+    A `.mat` name is claimed by the three formats. A FLIRT matrix is
+    converted only when the images that it needs are given, as in
+    `io.save(t, "t.mat", conversion={"reference": ref, "moving": mov})`,
+    and the images then say that a FLIRT matrix is wanted. An affine
+    between RAS spaces, which a Convert3D matrix holds as well, is
+    therefore written as a FLIRT matrix. A file is read by the confidence
+    of each format, which decides before the priority.
+    """
     # The data field is the FLIRT matrix. The `matrix` view is derived
     # from the FLIRT matrix and the two images, so computing it is costly
     # and may raise. Naming the FLIRT matrix here keeps the identity check
@@ -316,8 +350,7 @@ class FlirtTransform(
         matrix, the images and the systems. Nothing is decoded, and the
         affine in world coordinates, which needs both images, is never
         computed. Any other transformation is converted as `other.to(cls)`
-        converts it, which a FLIRT transform refuses, since a conversion is
-        not given the images.
+        converts it, which needs the images `reference=` and `moving=`.
 
         Parameters
         ----------
@@ -437,6 +470,70 @@ class FlirtTransform(
         self.metadata = metadata
         self.flirt_matrix = None
         return self
+
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        """Yield the lines of the FLIRT file of the transformation.
+
+        The transformation is consolidated into a copy, whose record is
+        written, so the transformation itself is not changed, and a
+        transformation that cannot be encoded raises before any line is
+        written. The images are not needed, since the file holds the
+        FLIRT matrix.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, which are given to
+            [`consolidate`][].
+
+        Returns
+        -------
+        iterator of str
+            The lines of the file, without line breaks.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the FLIRT matrix is not a `(4, 4)` matrix, or if the
+            `input` or `output` is not RAS.
+        WriterError
+            If the transformation has no FLIRT matrix.
+        """
+        fields, options = metadata_options(kwargs)
+        record = _record(self.consolidate(**fields))
+        if record is None:
+            raise WriterError(
+                "This FLIRT transform has no FLIRT matrix to write. Convert "
+                "an affine with t.to(FlirtTransform, reference=..., "
+                "moving=...) to compute one."
+            )
+        return record.to_lines(**options)
+
+    def to_text(self, **kwargs) -> str:
+        """Return the content of the FLIRT file of the transformation.
+
+        The content is made of the lines of [`to_lines`][].
+
+        Parameters
+        ----------
+        **kwargs : Any
+            `on_loss` and the fields of the metadata, which are given to
+            [`consolidate`][].
+
+        Returns
+        -------
+        str
+            The content of the file, ending with a newline.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the FLIRT matrix is not a `(4, 4)` matrix, or if the
+            `input` or `output` is not RAS.
+        WriterError
+            If the transformation has no FLIRT matrix.
+        """
+        return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
     def inverse(self, compute: bool = False, **kwargs) -> _xforms.Affine:
         # The inverse is a plain affine, because the FLIRT matrix and the

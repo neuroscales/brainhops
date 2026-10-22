@@ -35,6 +35,7 @@ from . import (
     freesurfer,
     itk,
     matrix,
+    minc,
     mrtrix,
     neuroglancer,
     niftyreg,

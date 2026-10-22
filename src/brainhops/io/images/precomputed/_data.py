@@ -6,6 +6,7 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoInit, NoRepr
 
 # internals
 from brainhops._core import path
@@ -168,17 +169,29 @@ class _PrecomputedProxy(ArrayProxy):
     keeps no open scale when it is pickled.
     """
 
-    def __init__(
-        self, location: str, record: PrecomputedRaw, scale: PrecomputedScale
-    ) -> None:
-        self.location = location
-        """The local path or the URL of the directory of the volume."""
-        self.scale = scale
-        """The record of the scale that the proxy reads."""
-        self.num_channels = record.num_channels
+    location: tx.Annotated[
+        tx.Any,
+        tx.Doc("The local path or the URL of the directory of the volume."),
+    ]
+    record: NoRepr[
+        PrecomputedRaw,
+        tx.Doc("The record of the volume, which gives its type and channels."),
+    ]
+    scale: NoRepr[
+        PrecomputedScale,
+        tx.Doc("The record of the scale that the proxy reads."),
+    ]
+    _store: NoInit[
+        NoRepr[
+            tx.Optional[tx.Any],
+            tx.Doc("The scale that TensorStore opened, or `None`."),
+        ]
+    ] = None
+
+    @property
+    def num_channels(self) -> int:
         """The number of channels of the volume."""
-        self._dtype = record.dtype
-        self._store = None
+        return int(self.record.num_channels)
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -190,19 +203,25 @@ class _PrecomputedProxy(ArrayProxy):
 
     @property
     def dtype(self) -> np.dtype:
-        """The type of the voxels."""
-        return self._dtype
+        """The type of the voxels, read from the record."""
+        return self.record.dtype
+
+    @property
+    def base_chunks(self) -> tx.Tuple[int, ...]:
+        """The shape of a chunk of the scale, read from the record.
+
+        The chunk is the first of the `chunk_sizes` of the scale, which
+        is the one that a reader uses, and it holds every channel.
+        """
+        chunks = tuple(int(n) for n in self.scale.chunk_size)
+        if self.num_channels != 1:
+            chunks += (int(self.num_channels),)
+        return chunks
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         state = dict(self.__dict__)
         state["_store"] = None
         return state
-
-    def __repr__(self) -> str:
-        return (
-            f"_PrecomputedProxy(key={self.scale.key!r}, shape={self.shape}, "
-            f"dtype={self.dtype})"
-        )
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         """Read a box of the voxels with TensorStore.

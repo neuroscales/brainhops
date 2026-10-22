@@ -8,6 +8,7 @@ from os import PathLike
 import h5py
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoInit, NoRepr
 
 from brainhops._core.proxy import ArrayProxy
 
@@ -30,13 +31,35 @@ class DelayedH5Array(ArrayProxy):
     closing a view opens or closes the file of that array.
     """
 
-    def __init__(self, file: H5Like, path: str) -> None:
-        self.file: H5Like = file
-        self.path: str = path
-        self._file: tx.Optional[h5py.File] = None
-        self._shape: tx.Optional[tx.Tuple[int]] = None
-        self._dtype: tx.Optional[np.dtype] = None
-        self._chunks: tx.Optional[tx.Tuple[int]] = None
+    file: tx.Annotated[
+        tx.Any,
+        tx.Doc("The HDF5 file, by its path, as an open file, or as bytes."),
+    ]
+    path: tx.Annotated[str, tx.Doc("The path of the dataset in the file.")]
+    _handle: NoInit[
+        NoRepr[
+            tx.Optional[tx.Any],
+            tx.Doc("The file that the array opened and keeps, or `None`."),
+        ]
+    ] = None
+    _shape: NoInit[
+        NoRepr[
+            tx.Optional[tx.Tuple[int, ...]],
+            tx.Doc("The shape of the dataset, once it was opened."),
+        ]
+    ] = None
+    _dtype: NoInit[
+        NoRepr[
+            tx.Optional[np.dtype],
+            tx.Doc("The type of the dataset, once it was opened."),
+        ]
+    ] = None
+    _chunks: NoInit[
+        NoRepr[
+            tx.Optional[tx.Tuple[int, ...]],
+            tx.Doc("The chunks of the dataset, once it was opened."),
+        ]
+    ] = None
 
     @property
     def _owner(self) -> "DelayedH5Array":
@@ -47,14 +70,14 @@ class DelayedH5Array(ArrayProxy):
         """Open the HDF5 file, or reuse the open one, and return it."""
         owner = self._owner
         owner.to_dataset(keep_open=True)
-        return owner._file
+        return owner._handle
 
     def close(self) -> None:
         """Close the HDF5 file if this array opened it."""
         owner = self._owner
-        if owner._file is not None:
-            owner._file.close()
-            owner._file = None
+        if owner._handle is not None:
+            owner._handle.close()
+            owner._handle = None
 
     def __del__(self) -> None:
         # A view does not own the file of the array it was made from.
@@ -76,15 +99,15 @@ class DelayedH5Array(ArrayProxy):
         if file is None:
             return self.to_dataset(self.file, keep_open=keep_open)
 
-        if self._file is not None:
-            file = self._file
+        if self._handle is not None:
+            file = self._handle
 
         if isinstance(file, (str, PathLike)):
             if not keep_open:
                 with h5py.File(file, "r") as f:
                     return self.to_dataset(f)
             else:
-                file = self._file = h5py.File(file, "r")
+                file = self._handle = h5py.File(file, "r")
 
         if isinstance(file, h5py.File):
             dataset = file[self.path]
@@ -103,7 +126,7 @@ class DelayedH5Array(ArrayProxy):
         dask reads chunks from several threads and one could close a shared
         handle while another is reading.
         """
-        file = self._file if self._file is not None else self.file
+        file = self._handle if self._handle is not None else self.file
         if isinstance(file, (str, PathLike)):
             with h5py.File(file, "r") as f:
                 return f[self.path][index]

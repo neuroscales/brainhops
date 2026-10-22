@@ -81,8 +81,10 @@ its chain from the record when it is first used. The parameters of the
 warps are read lazily by default, through a
 [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] that opens
 the file again by its name, and at once with `load=True` or when the file
-is read from a stream. No object keeps the file open. brainhops does not
-write ITK `.h5` files.
+is read from a stream. No object keeps the file open. A transformation
+is written as ITK writes an `.h5` file, and the parameters of its warps
+are read before the file is opened, so that a file can be written over
+the one that it was read from.
 """
 
 __all__ = [

@@ -596,13 +596,13 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        read = _MincProxy.read_voxels
+        read = _MincProxy._read
 
         def counted(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
             return read(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_MincProxy, "read_voxels", counted)
+        monkeypatch.setattr(_MincProxy, "_read", counted)
 
 
 @pytest.mark.parametrize("gzipped", [False, True])

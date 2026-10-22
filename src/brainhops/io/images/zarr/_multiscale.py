@@ -23,12 +23,19 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base import register_format
+from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
-from brainhops.io.common.zarr._data import _ZarrProxy, store_location
+from brainhops.io.common.zarr._data import (
+    _ZarrProxy,
+    reads_inside,
+    store_chunks,
+    store_location,
+)
 from brainhops.io.common.zarr._parsers import (
     _as_node,
     _ZarrNodeReaderWriter,
+    absolute_location,
     opened_node,
 )
 from brainhops.io.images.base import ImageFormat
@@ -355,6 +362,10 @@ class OmeZarrImage(
             return Confidence.NO
         if not looks_like_multiscale(node):
             return Confidence.NO
+        if _holds_a_field(node):
+            # A displacement or a coordinate axis makes the group a field,
+            # which the OME-Zarr field reads.
+            return Confidence.NO
         return Confidence.CERTAIN
 
     def to_node(
@@ -375,7 +386,10 @@ class OmeZarrImage(
         node : ZarrGroup
             Group that receives the levels and the metadata.
         chunks : sequence of int, optional
-            Chunk shape of every level, in the brainhops axis order.
+            Chunk shape of every level, in the brainhops axis order. By
+            default, a level whose data is a lazy array of a chunked
+            store, or a Dask array, keeps its chunks, and abczarr
+            chooses the chunks of any other level.
         version : str, optional
             OME-NGFF version. By default, the source version or 0.6 is used.
         **kwargs : Any
@@ -484,6 +498,13 @@ class OmeZarrImage(
             options = dict(kwargs)
             if stored_chunks is not None:
                 options["chunks"] = stored_chunks
+            else:
+                # A level whose data is a lazy array of a chunked store,
+                # or a Dask array, keeps its chunks, so that each of its
+                # blocks is written into chunks of its own.
+                native = store_chunks(getattr(image, "dataobj", None))
+                if native is not None and len(native) == len(storage_perm):
+                    options["chunks"] = tuple(native[p] for p in storage_perm)
             node.create_array(str(index), data=stored, **options)
             levels.append((str(index), entry))
 
@@ -540,11 +561,47 @@ class OmeZarrImage(
 
         A location is opened with mode `"w"`, which replaces any existing store
         there. The other arguments are those of [`to_node`][].
+
+        The levels of a pyramid read from a store are lazy arrays of that
+        store. When the location is the local store that they read, the
+        new store is filled beside it and then moved into place, so that
+        the levels are read before the old store is removed.
+
+        Raises
+        ------
+        WriterError
+            If the location is the remote store that a level reads, which
+            cannot be replaced without the level reading a store half
+            written.
         """
         node = _as_node(location)
-        if node is None:
+        if node is not None:
+            self.to_node(node, chunks=chunks, version=version, **kwargs)
+            return
+        location = absolute_location(location)
+        levels = [
+            getattr(level, "dataobj", None) for level in self.images or ()
+        ]
+        if not any(reads_inside(raw, location) for raw in levels):
             node = open_group(location, mode="w")
-        self.to_node(node, chunks=chunks, version=version, **kwargs)
+            self.to_node(node, chunks=chunks, version=version, **kwargs)
+            return
+        if not is_local(location):
+            raise WriterError(
+                "This image reads the remote store that it would be written "
+                f"to, {location}, and a remote store cannot be replaced in "
+                "one step, so the image would read a store half written. "
+                "Write the image to another location."
+            )
+        replace_directory(
+            location,
+            lambda name: self.to_node(
+                open_group(name, mode="w"),
+                chunks=chunks,
+                version=version,
+                **kwargs,
+            ),
+        )
 
     def _write_axes(self, ndim: int) -> tx.List[Axis]:
         axes = self.axes
@@ -613,3 +670,20 @@ def _level(
         rawdata=_ZarrProxy(array, store_location(array), perm),
         metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
     )
+
+
+def _holds_a_field(node: ZarrNode) -> bool:
+    """Whether the OME metadata of a group names a field axis.
+
+    A group whose coordinate systems have a displacement or a coordinate
+    axis stores a transformation field rather than an image.
+    """
+    # The transformation formats import the image formats, so their helper
+    # is imported when it is used.
+    from brainhops.io.transformations.zarr import _node
+
+    for system in _node.coordinate_systems(node):
+        for axis in getattr(system, "axes", None) or []:
+            if getattr(axis, "type", None) in ("displacement", "coordinate"):
+                return True
+    return False

@@ -7,9 +7,12 @@ MINC files without nibabel.
 
 The first two layers below are implemented in
 `brainhops._core.proxy`, and the fifteen proxies of brainhops
-derive from the base class. The third and fourth layers, and the
-reading of NIfTI, MGH and MINC without nibabel, are not implemented
-yet. The steps are listed at the end of the memo.
+derive from the base class. A first form of the third layer is
+implemented in `brainhops._core.strided` (see "What is implemented of
+the third layer" below), and the MRtrix, NRRD and AFNI proxies use it.
+The full third layer, the fourth layer, and the reading of NIfTI, MGH
+and MINC without nibabel, are not implemented yet. The steps are listed
+at the end of the memo.
 
 ## What a proxy is for
 
@@ -40,10 +43,10 @@ proxies of this group decode the bytes themselves or ask nibabel to.
 
 | Format    | Class                  | Partial reads | Scaling         |
 |-----------|------------------------|---------------|-----------------|
-| MRtrix    | `_MrtrixProxy`         | no            | yes, global     |
-| NRRD      | `_NrrdProxy`           | no            | no              |
-| AFNI      | `_BrikProxy`           | no            | yes, per volume |
-| MINC      | `_MincProxy` (nibabel) | no            | yes, per slice  |
+| MRtrix    | `_MrtrixProxy`         | yes, except `Bit` | yes, global |
+| NRRD      | `_NrrdProxy`           | yes, for raw, gzip and bzip2 in one file | no |
+| AFNI      | `_BrikProxy`           | yes, for sub-bricks of one type | yes, per volume |
+| MINC      | `_MincProxy` (nibabel) | yes, for a local file that is not compressed | yes, per slice |
 | NIfTI     | nibabel `ArrayProxy`   | yes           | yes, global     |
 | MGH       | nibabel `ArrayProxy`   | yes           | no              |
 
@@ -215,6 +218,10 @@ of an object read from a file is a proxy in the layout of its `data`,
 and `data` reads it with the backend setting (see
 [Array backends](array-backends.md)). The NIfTI and MGH views wrap the
 proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
+The voxels of these files are stored contiguously, so that proxy
+prefers blocks of whole slices along the last spatial axis, with as
+many slices as fit in the block size of Dask (the option
+`array.chunk-size` of its configuration). This is implemented.
 The views of TIFF and OpenSlide keep their own functions, because
 tifffile can give a memory map or a Dask array itself, and an
 OpenSlide level is kept as a Dask array when it is read lazily.
@@ -328,6 +335,15 @@ small base class, because they differ only in the driver name.
 ITK and X5. Pillow and JPEG 2000 keep reading the whole image, because
 their codecs cannot decode a part of it.
 
+The native block shapes are implemented: the proxies of Zarr, N5,
+precomputed, BigDataViewer, Imaris, OpenSlide and image stacks, and
+`DelayedH5Array`, give them as `base_chunks`. The shared base class of
+N5 and precomputed is not implemented. The readers of transformation
+fields stored in HDF5 (ITK and X5) and in OME-Zarr convert their lazy
+arrays with the backend setting, so that under `"dask"` a field is a
+Dask array with these blocks, and the writer of OME-Zarr fields writes
+it block by block into chunks of the same shape.
+
 ## How each format would read its data
 
 | Format        | Proxy                                           |
@@ -379,6 +395,56 @@ nibabel would remain a test dependency, so that the tests compare every
 header and every array with what nibabel reads. It could also remain an
 optional dependency for a conversion to nibabel images.
 
+## What is implemented of the third layer
+
+`StridedProxy` in `brainhops._core.strided` reads an array of
+fixed-size values at an offset of a file that may be compressed. Where
+each value lies is given as the layout above describes it, by the
+position of the first value and one stride in bytes for each axis,
+which may be negative, so the proxy holds a layout in its own fields
+rather than in a separate `Layout` class. Its constructor
+`StridedProxy.contiguous` builds the strides of an array stored in C or
+Fortran order and presented through an axis permutation and flips,
+which are the layouts of MRtrix, NRRD and AFNI. The proxy also applies
+a scaling that broadcasts against its shape. A read gets the range of
+bytes from the first value of the selected box to its last one, rather
+than a merged list of byte ranges, and a local file that is not
+compressed is memory-mapped. The blocks that it gives Dask are slabs of
+the axis with the largest stride, as many as fit in the option
+`array.chunk-size` of Dask, so that each block reads one contiguous
+range of bytes. It has no cache, so a compressed file is decompressed
+from its start for each block that Dask reads, which indexed_gzip makes
+cheap when it is installed. Its constructor is built from its fields,
+which convert their arguments to their types, and the MRtrix and AFNI
+proxies add the record of their file as a field and build themselves
+from it with `from_record`. Status: implemented.
+
+`ArrayProxy` is a `Magic` class of bagof without fields, and every proxy
+of brainhops declares its state as fields, so that its constructor is
+built from them. A value that a proxy computes rather than receives is
+a property, such as a shape or a type read from the record, and a cache
+that it fills on the first read, such as an open store or file, is a
+private field that is not an argument of the constructor and is not
+shown. A private field also keeps what the file stores when a property
+shows something else: the `_dtype` of `StridedProxy` is the stored type,
+given as `dtype=`, and its property `dtype` is the type of the scaled
+values. The metaclass of `Magic` is
+that of an abstract base class, so the members that a subclass must
+define stay abstract. A proxy is compared by identity, and the state of
+a view (`_root`, `_selection` and `_axes`) is held in class variables
+that are not fields of the constructor. The fields of a subclass
+convert their arguments to their types, and its representation is the
+one that `Magic` builds, which shows the fields that do not hold their
+defaults. A view shares the fields of its proxy, so it shows them too,
+and its own shape is read from `shape`. Status: implemented.
+
+The cases that do not fit a single block of fixed-size values are still
+decoded whole: packed `Bit` data of MRtrix, NRRD samples split between
+several files, encoded as text or preceded by skipped lines, and AFNI
+sub-bricks of several types. MINC keeps nibabel, which is now given the
+selection, so a local MINC1 or MINC2 file that is not compressed is read
+in part.
+
 ## Order of the work
 
 1. Add the protocol and the base class, and move every proxy of
@@ -386,9 +452,10 @@ optional dependency for a conversion to nibabel images.
    the duplicated code and makes indexing lazy for every proxy. The
    proxies of the first group still decode the whole file for any read.
 2. Write `ByteSource`, `Layout` and `StridedProxy` in `brainhops._core`,
-   without nibabel.
-3. Move MRtrix, NRRD and AFNI onto the third layer. This fixes the
-   repeated whole-file reads, and the existing tests cover the result.
+   without nibabel. A first `StridedProxy` is implemented, without
+   `ByteSource`, `Layout`, the merged byte ranges and the cache.
+3. Move MRtrix, NRRD and AFNI onto the third layer. This step is
+   implemented for the cases that the first `StridedProxy` covers.
 4. Parse MGH headers without nibabel, which is the smallest header and
    tests the path from header to `StridedProxy`.
 5. Parse NIfTI headers without nibabel, then MINC1.

@@ -9,8 +9,10 @@ A FLIRT file is short and is read in one pass. Its matrix is held as a
 a [`FlirtTransform`][] holds that metadata. The file holds no image
 geometry, so the moving and reference images that place the matrix in
 world coordinates are options of the transformation, `moving=` and
-`reference=`, which are never part of the record. brainhops does not
-write FLIRT files.
+`reference=`, which are never part of the record. A FLIRT transform is
+written as FLIRT writes its matrices, and another affine is converted to
+one when both images are given, as in
+`t.to(FlirtTransform, reference=ref, moving=mov)`.
 """
 
 __all__ = ["FlirtMetadata", "FlirtRaw", "FlirtTransform"]
@@ -20,7 +22,6 @@ from ._raw import FlirtRaw
 from ._xform import FlirtTransform
 
 # Importing the private converters registers them with the data model,
-# so that a conversion into one of these formats, such as
-# `t.to(Format)`, fails with a reason instead of building a wrong
-# object.
+# so that a conversion into this format, `t.to(FlirtTransform)`,
+# computes the FLIRT matrix from the images that it is given.
 from . import _converters  # noqa: E402, F401  isort: skip

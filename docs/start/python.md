@@ -96,15 +96,14 @@ io.save(img, "copy.zarr")  # -> Zarr, without the geometry
 
 An image computed in memory is written the same way, since NIfTI and Zarr
 both hold a plain image. A transformation is converted to the format the
-name asks for, with the same converters as `t.to(Format)`, but only when
-the format holds the very same map. Its `input` and `output` are read,
-and bridged to the format's: an affine from voxels to LPS is written as
-the voxel-to-RAS affine of a NIfTI file, with its first two axes
-flipped, and an affine whose systems are not known is taken to map the
-format's. A field of displacements is written as a NIfTI displacement
-field, between its grid's world-to-voxel affine and its inverse, and a
-field of coordinates as a NIfTI (or, with a `y_` prefix, an SPM) field of
-coordinates:
+name asks for, with the same converters as `t.to(Format)`. Its `input`
+and `output` are read, and bridged to the format's: an affine from voxels
+to LPS is written as the voxel-to-RAS affine of a NIfTI file, with its
+first two axes flipped, and an affine whose systems are not known is
+taken to map the format's. A field is written as the values at the nodes
+of its grid, as a field of displacements or of coordinates, whichever the
+format stores. The two are the same map inside the grid and differ only
+in how they are extended outside it, which each format decides:
 
 ```python
 io.save(affine, "affine.nii.gz")  # -> NiftiVoxelToRAS
@@ -113,9 +112,13 @@ io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
 ```
 
 Several formats may claim the same name, as NiftyReg, MRtrix and elastix
-all claim `.txt`. They are tried from the most specific, and a format that
-cannot hold the object gives way to the next. An error that is not such a
-refusal, such as a file that cannot be written, stops the save at once.
+all claim `.txt`. The object is converted to each of them, and the format
+that keeps the most of it is chosen: a field of the same kind, and the
+same coordinate systems, so that a field between LPS spaces is written as
+an ITK field rather than as a NIfTI field between RAS spaces. A format
+that cannot hold the object gives way to the next. An error that is not
+such a refusal, such as a file that cannot be written, stops the save at
+once.
 
 A `hint` names the format, as it does for `load`, and only the formats
 that answer to it are chosen from. A format named by its hint is written
@@ -126,11 +129,27 @@ a name that no format claims, such as a plain `.json` name:
 io.save(affine, "transform.json", hint="neuroglancer.affine")
 ```
 
-Nothing is approximated to fit a format. An affine between two world
-spaces is not a voxel-to-RAS affine, and a field interpolated with cubic
-splines is not the linearly interpolated values a NIfTI file holds, so
-both are refused, with the reason each format gives. The same conversion
-can be asked for explicitly, or the format can be built directly:
+A format that holds a transformation only approximately is used only
+when `lossy=True` is given. A field interpolated with cubic splines, for
+example, is written in a NIfTI file as the values at its nodes, which are
+read back with linear interpolation. Some formats need images that the
+transformation does not hold, such as the reference and moving images of
+an FSL warp, which are given as options of the conversion. A format that
+cannot hold the transformation at all is refused, with the reason it
+gives: an affine between two world spaces is not a voxel-to-RAS affine.
+
+```python
+io.save(bspline, "warp.nii.gz", lossy=True)
+io.save(
+    warp,
+    "fnirt.nii.gz",
+    hint="fnirt",
+    conversion={"reference": ref, "moving": moving},
+)
+```
+
+The same conversion can be asked for explicitly, or the format can be
+built directly:
 
 ```python
 import numpy as np
@@ -147,27 +166,30 @@ Every family with an affine form, such as a `Scaling` or a
 coordinate systems, such as `VoxelToRAS`, accepts only endpoints that
 are compatible with those systems. A transformation between other
 systems is therefore refused with a `ConversionError`, rather than given
-the class with its parameters unchanged. A format that reads its
-coordinate systems from what it holds, such as LTA, and has no exact
-conversion yet (#312) is given the parameters of the transformation
-unchanged, which is called relabelling, but only when the coordinate
-systems of the transformation are not known or are compatible with
-those of the format. `t.to(Format)`, `Format.from_any(t)` and
-`Format.from_instance(t)` give the same result, or raise the same
-error.
+the class with its parameters unchanged. `t.to(Format)`,
+`Format.from_any(t)` and `Format.from_instance(t)` give the same result,
+or raise the same error.
 
-An LTA file states which coordinate systems its affine maps between. A
-general `Affine` is therefore written to an LTA file only if its `input`
-and `output` say so as well: both must be `RASmm` (or both `RSAmm`), or
-both must be the voxel or physical system of an LTA volume. An affine read
-from an LTA file is written back as it was read.
+Every affine file format converts any affine between worlds, and a
+chain of affines, into its own coordinate systems. An affine between
+LPS spaces is flipped into RAS for an LTA or an MNI `.xfm` file, and an
+affine between RAS spaces into LPS for an ITK file. An affine whose
+systems are not known is taken to map the systems of the format. A
+format that places its matrix with the geometry of two images, such as
+a FLIRT matrix or a `register.dat` file, takes the images as the options
+`reference=`, the image of the input, and `moving=`, the image of the
+output, and refuses the conversion without them.
 
 ```python
-from brainhops.datamodel.systems import RASmm
+from brainhops.datamodel.systems import LPSmm
+from brainhops.io.transformations.fsl.flirt import FlirtTransform
 
 matrix = np.eye(3, 4)
-io.save(Affine(matrix, input=RASmm(), output=RASmm()), "affine.lta")
+affine = Affine(matrix, input=LPSmm(), output=LPSmm())
+io.save(affine, "affine.lta")  # an LTA file between RAS spaces
 io.save(io.load("affine.lta"), "copy.lta")  # -> the same file
+flirt = affine.to(FlirtTransform, reference=src, moving=dst)
+flirt.save("affine.mat")
 ```
 
 ## Images

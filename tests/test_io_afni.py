@@ -1077,18 +1077,18 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        unscaled = _BrikProxy.get_unscaled
+        read = _BrikProxy._read
         copy_to = _BrikProxy.copy_to
 
-        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        def counted_read(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
-            return unscaled(proxy, *args, **kwargs)
+            return read(proxy, *args, **kwargs)
 
         def counted_copy(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
             return copy_to(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_BrikProxy, "get_unscaled", counted_unscaled)
+        monkeypatch.setattr(_BrikProxy, "_read", counted_read)
         monkeypatch.setattr(_BrikProxy, "copy_to", counted_copy)
 
 
