@@ -446,7 +446,7 @@ def _field_array(
     raw = _node.read_array(field_node)
     typed = _node.typed_axes(field_node, field_node.ndim)
     if typed is not None:
-        data = get_array_backend().transpose(
+        data = get_array_backend(raw).transpose(
             raw, _axisorder.to_canonical(typed)
         )
     else:
@@ -514,7 +514,7 @@ def _field_from_names(
     )
     by_name = {names[i]: i for i in spatial_dims}
     target = [by_name[axis.name] for axis in canonical_axes] + component_dims
-    return get_array_backend().transpose(raw, target)
+    return get_array_backend(raw).transpose(raw, target)
 
 
 def _map_transform(
