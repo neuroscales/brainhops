@@ -94,6 +94,24 @@ them apart by `intent_p1`. Only the NiftyReg readers decode such files, so the
 generic vector readers decline them.
 """
 
+_NIFTI_INTENT_NAME_ITK_DISPLACEMENT = "ITKDisplacement"
+"""Intent name of the ITK displacement fields that brainhops writes.
+
+A `VECTOR` image in the ITK layout may hold LPS displacements, as ITK and
+ANTs write them, or RAS coordinates, and its header cannot say which, so
+the two readers tie on a file without a name. brainhops writes this name
+on the ITK displacement fields it writes, so that it reads them back
+without a hint. ITK ignores the name.
+"""
+
+_NIFTI_INTENT_NAME_ITK_COORDINATES = "ITKCoordinates"
+"""Intent name of the ITK fields of coordinates that brainhops writes.
+
+ITK and ANTs never write a field of coordinates, so a file is read as
+one only with a hint, or when it carries this name, which brainhops
+writes on such fields.
+"""
+
 _NIFTI_INTENT_NAME_MAPPING = "Mapping"
 """Intent name of SPM coordinate fields (`y_` files).
 

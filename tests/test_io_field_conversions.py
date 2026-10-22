@@ -499,3 +499,24 @@ def test_a_dense_field_is_written_as_an_itk_displacement_field(
     np.testing.assert_allclose(
         _apply(back, ras * flip) * flip, _apply(chain, ras), atol=1e-8
     )
+
+
+@pytest.mark.parametrize(
+    "kind", ["ItkNiftiDisplacementField", "ItkNiftiCoordinatesField"]
+)
+def test_an_itk_field_written_by_brainhops_reads_back_without_a_hint(
+    tmp_path,  # noqa: ANN001
+    kind: str,
+) -> None:
+    # A VECTOR image may hold ITK displacements or RAS coordinates, which
+    # its header cannot tell apart. brainhops writes an intent name on the
+    # ITK fields it writes, so they are read back as what they are.
+    from brainhops.io.transformations import itk
+
+    cls = getattr(itk.nifti, kind)
+    source = transformations.load(
+        Path(__file__).parent / "data" / "itk_displacement3d.h5"
+    )
+    path = tmp_path / "warp.nii.gz"
+    source.to(cls).save(path)
+    assert type(io.load(path)) is cls

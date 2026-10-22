@@ -34,6 +34,8 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
+    _NIFTI_INTENT_NAME_ITK_COORDINATES,
+    _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
@@ -169,6 +171,10 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
 
     HINTS = ("itk", "ants")
+
+    INTENT_NAME: tx.ClassVar[str] = ""
+    """The intent name that brainhops writes on the field, so that it reads
+    the field back as this class without a hint. ITK ignores it."""
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
@@ -516,7 +522,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         vox2ras = _RAS_LPS @ _embed_affine(vox2lps)
         vectors = _itk_field_to_disk(vectors)
         image = _record_image(vectors, self._record(), vox2ras, overrides)
-        image.header.set_intent(_NIFTI_INTENT_VECTOR)
+        image.header.set_intent(_NIFTI_INTENT_VECTOR, name=self.INTENT_NAME)
         scode, qcode = self._xform_codes()
         image.header.set_sform(vox2ras, code=scode)
         image.header.set_qform(vox2ras, code=qcode)
@@ -553,6 +559,8 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     HINTS = ("displacements",)
 
+    INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_DISPLACEMENT
+
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """
@@ -569,9 +577,14 @@ class ItkNiftiDisplacementField(ItkNiftiField):
             return Confidence.NO
         if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
             return Confidence.NO
-        if _nifti_intent_name(header) in (
+        name = _nifti_intent_name(header)
+        if name == _NIFTI_INTENT_NAME_ITK_DISPLACEMENT:
+            # Only this reader claims the name that brainhops writes on it.
+            return Confidence.CERTAIN
+        if name in (
             _NIFTI_INTENT_NAME_MAPPING,
             _NIFTI_INTENT_NAME_NIFTYREG,
+            _NIFTI_INTENT_NAME_ITK_COORDINATES,
         ):
             return Confidence.NO
         return Confidence.CERTAIN
@@ -709,6 +722,8 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
 
     HINTS = ("coordinates",)
 
+    INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_COORDINATES
+
     PRIORITY: tx.ClassVar[int] = -1
     """
     Priority below the displacement reader.
@@ -720,7 +735,20 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """Never claim a file, since only a hint can select this reader."""
+        """
+        Claim only the files that brainhops writes as such fields.
+
+        ITK and ANTs never write a field of coordinates, so a file is read
+        as one only with a hint, or when it is a `VECTOR` image in the ITK
+        layout that carries the intent name `"ITKCoordinates"`, which
+        brainhops writes on it.
+        """
+        if _itk_ndim(_nifti_shape(header)) is None:
+            return Confidence.NO
+        if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
+            return Confidence.NO
+        if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_ITK_COORDINATES:
+            return Confidence.CERTAIN
         return Confidence.NO
 
     # --- chain --------------------------------------------------------

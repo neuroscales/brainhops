@@ -305,7 +305,7 @@ DATA = Path(__file__).parent / "data"
 
 def test_convert_writes_an_itk_field_as_nifti(tmp_path) -> None:  # noqa: ANN001
     # A field between LPS spaces keeps its endpoints in an ITK NIfTI
-    # field, which is read back with its hint.
+    # field, whose intent name makes it read back without a hint.
     from brainhops import io
     from brainhops.io.transformations.itk.nifti import (
         ItkNiftiDisplacementField,
@@ -316,7 +316,7 @@ def test_convert_writes_an_itk_field_as_nifti(tmp_path) -> None:  # noqa: ANN001
         ["convert", str(DATA / "itk_displacement3d.h5"), "-o", str(out)]
     )
     assert code == 0
-    loaded = io.transformations.load(out, hint="itk")
+    loaded = io.transformations.load(out)
     assert isinstance(loaded, ItkNiftiDisplacementField)
 
 
