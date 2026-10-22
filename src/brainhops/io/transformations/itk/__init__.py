@@ -76,3 +76,8 @@ try:
     __all__ += ["nifti"]
 except ImportError:
     pass
+
+# Importing the private converters registers them with the data model,
+# so that a conversion into the text, HDF5 and MATLAB formats, such as
+# `t.to(MatTransform)`, bridges an affine to the LPS spaces of ITK.
+from . import _converters  # noqa: E402, F401  isort: skip

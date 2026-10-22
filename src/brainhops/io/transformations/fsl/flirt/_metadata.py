@@ -29,8 +29,9 @@ class FlirtMetadata(MetadataReader, MetadataFormat):
     of the transformation and not part of its metadata.
 
     The text is read by the record: [`from_lines`][] parses a
-    [`FlirtRaw`][] and wraps it. brainhops does not write FLIRT files, so
-    the metadata cannot be written either.
+    [`FlirtRaw`][] and wraps it. The metadata is not written on its own:
+    a FLIRT file is written by its transformation, which writes the
+    record.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
