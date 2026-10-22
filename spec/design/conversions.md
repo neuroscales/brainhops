@@ -154,10 +154,17 @@ B-spline (FNIRT coefficient fields, NiftyReg grids of control points
 and velocity grids, elastix B-spline transforms, X5 B-splines). Every
 field format is therefore converted to by the same helpers of
 `io/transformations/base/_conversions.py`, which take the degree of the
-format. A field of that degree keeps its coefficients. A B-spline is
-linear in its coefficients and reproduces affine maps, so the affines
-around the field, and the grid that turns coordinates into
-displacements, are carried into the coefficients without a loss. A
+format. A field of that degree keeps its coefficients. The affine that
+a field does not undo, in a chain `A o (id + d) o B`, is stored in the
+header when the format has a place for it, as the tools write their own
+files: the affine that NiftyReg applies before its grid, the initial
+affine of an FSL coefficient field, another transform of an elastix,
+ITK, X5 or MINC chain. The field then holds the displacement alone,
+placed by `B` or by the inverse of `A`, and nothing is lost
+(`split_affine`). A format without such a place, such as a NIfTI
+displacement field, carries the affine into the coefficients of the
+field, which is also exact, since a B-spline is linear in its
+coefficients and reproduces affine maps. A
 field of another degree is evaluated at its nodes, and its values are
 converted to coefficients by the existing conversion
 `field.to(store="coefficients")`, which is a loss. A format that imposes

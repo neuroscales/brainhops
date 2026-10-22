@@ -26,13 +26,21 @@ as `reference=`, or the origin.
 
 A field is written as a `BSplineTransform`, which is a field like any
 other, interpolated with B-splines: of the degree of the field when
-elastix has it (1 to 3), and cubic otherwise. The B-spline is placed on
-the grid of the field, and the affines around the field are carried
-into its coefficients, which is exact, since a B-spline is linear in its
-coefficients and reproduces affine maps. A field of another degree is
-evaluated at its nodes and interpolated with the cubic B-spline, which
-is a loss, and so is a field whose grid has no orthonormal directions,
-as ITK requires: it is evaluated on the nearest grid that has them.
+elastix has it (1 to 3), and cubic otherwise. The affine that the field
+does not undo is written as a transform of its own, so that the
+B-spline holds the displacement alone, as elastix writes its own
+registrations (see
+[`split_affine`][brainhops.io.transformations.base._conversions.split_affine]).
+It is applied after the B-spline, which keeps the grid of the field, or
+before it when ITK cannot place that grid by orthonormal directions. The
+two transforms are chained as elastix chains them: the file of the
+transform applied first is the initial transform of the other, named in
+`InitialTransformParameterFileName`. The initial file is named after a
+hash of its content, and it is written beside the file that names it
+when the transformation is written to a path. A field of another degree
+is evaluated at its nodes and interpolated with the cubic B-spline,
+which is a loss, and so is a field that ITK cannot place on either
+side: it is evaluated on the nearest grid that ITK can place.
 
 The option `reference=`, a NIfTI image or header or the path of a NIfTI
 file, gives the geometry of the fixed image (`Size`, `Spacing`, `Origin`
@@ -68,6 +76,7 @@ from brainhops.io.transformations.base._conversions import (
     format_options,
     register_converter,
     sample_on_grid,
+    split_affine,
 )
 from brainhops.io.transformations.base._converters import relabel
 from brainhops.io.transformations.base._splines import (
@@ -144,7 +153,7 @@ def to_elastix(
     if matrix is not None:
         blocks = [_affine_block(matrix, center)]
     else:
-        blocks, loss = _field_blocks(t, cls, world)
+        blocks, loss = _field_blocks(t, cls, world, center)
     if len(blocks) == 1 and not base:
         # One transform is held as the chain of the format, which its
         # consolidation encodes, and the metadata of `t` rides along.
@@ -263,32 +272,50 @@ def _field_blocks(
     t: _xforms.Transformation,
     cls: type,
     world: tx.Any,
+    center: np.ndarray,
 ) -> tx.Tuple[tx.List[tx.Any], tx.Optional[str]]:
     """
     Return the blocks that hold the field of `t`, in the order of
     application, and what they lose.
 
-    The field is held as a B-spline of its own degree when elastix has
-    it, and as a cubic B-spline otherwise, on the grid of the field, with
-    the affines around it carried into its coefficients (see
-    [`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]).
-    ITK places a grid by orthonormal directions, so a field on another
-    grid is evaluated on the nearest grid that has them, which loses.
+    The affine that the field does not undo is written as a transform
+    of its own, chained to the B-spline as elastix chains transforms, so
+    that the B-spline holds the displacement alone (see
+    [`split_affine`][brainhops.io.transformations.base._conversions.split_affine]).
+    It is applied after the B-spline, which keeps the grid of the field,
+    or before it when ITK cannot place that grid, since ITK places a grid
+    by orthonormal directions. The field is held as a B-spline of its own
+    degree when elastix has it, and as a cubic B-spline otherwise. A
+    field that ITK cannot place on either side is evaluated on the
+    nearest grid that it can place, which loses.
     """
     degree = _spline_degree(t)
-    parts = displacement_parts(t, world, cls, degree=degree)
-    if orthonormal_placement(parts.grid2world) is None:
+    for side in ("after", "before"):
+        affine, field = split_affine(t, world, world, cls, side)
+        parts = displacement_parts(field, world, cls, degree=degree)
+        if orthonormal_placement(parts.grid2world) is not None:
+            break
+    else:
         grid2world = _orthogonalized(parts.grid2world)
         shape = tuple(int(n) for n in parts.field.data.shape[:-1])
         parts = displacements_of(
             sample_on_grid(
-                t, np.linalg.inv(grid2world), shape, world, world, cls, degree
+                field,
+                np.linalg.inv(grid2world),
+                shape,
+                world,
+                world,
+                cls,
+                degree,
             )
         )
-    field = parts.field
-    coefficients = field.coefficients if degree > 1 else field.values
-    block = _bspline_block(parts.grid2world, coefficients, degree)
-    return [block], parts.loss
+    data = parts.field
+    coefficients = data.coefficients if degree > 1 else data.values
+    blocks = [_bspline_block(parts.grid2world, coefficients, degree)]
+    if not np.allclose(affine, np.eye(len(affine))):
+        block = _affine_block(affine, center)
+        blocks = blocks + [block] if side == "after" else [block, *blocks]
+    return blocks, parts.loss
 
 
 def _spline_degree(t: _xforms.Transformation) -> int:

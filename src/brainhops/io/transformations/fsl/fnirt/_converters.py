@@ -26,14 +26,17 @@ is sampled, which loses: the converter raises a `LossyConversionError`
 that carries the result.
 
 A coefficient field (`--cout`) stores a cubic B-spline whose knots lie
-every `knot_spacing` voxels of the reference, as FNIRT places them. The
-transformation is evaluated at the knots as a cubic B-spline (see
+every `knot_spacing` voxels of the reference, as FNIRT places them, and
+an initial affine. The affine that the field of the transformation does
+not undo is stored in the initial affine, as FNIRT stores it, so that
+the spline holds the displacement alone (see
+[`split_affine`][brainhops.io.transformations.base._conversions.split_affine]),
+and an affine alone is held exactly by an initial affine and a spline
+of zeros. The field is evaluated at the knots as a cubic B-spline (see
 [`sample_on_grid`][brainhops.io.transformations.base._conversions.sample_on_grid]),
 and the values are converted to coefficients. A cubic B-spline on that
-knot grid, between any two affines, is held exactly, since a B-spline
-is linear in its coefficients and reproduces affine maps. Any other
-transformation is evaluated at the knots and interpolated, which
-loses.
+knot grid is held exactly, and any other field is evaluated at the
+knots and interpolated, which loses.
 """
 
 import nibabel as nb
@@ -58,6 +61,7 @@ from brainhops.io.transformations.base._conversions import (
     format_options,
     register_converter,
     sample_on_grid,
+    split_affine,
     unrepresentable,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
@@ -229,26 +233,35 @@ def _coefficients(
     fsl2grid = np.diag(np.concatenate([1.0 / (ref.pixdim * spacing), [1.0]]))
     fsl2grid[:3, 3] += _anchor_offsets(3, spacing.astype(float))
     ras2grid = fsl2grid @ ref.ras2fsl
-    # `t` is evaluated at the knots as a cubic B-spline, which keeps the
-    # coefficients of a cubic B-spline already on this knot grid. The
-    # field then maps each knot to the scaled millimetres of the moving
-    # image, and FNIRT stores the displacement from the knot, in the
-    # scaled millimetres of the reference, with no initial affine. A
-    # B-spline is linear in its coefficients and reproduces affine maps,
-    # so these affines act on its coefficients as on its values.
-    parts = sample_on_grid(t, ras2grid, sizes, RAS, RAS, cls, degree=3)
-    field = parts.field
-    knots = voxel_grid_coordinates(sizes, np.linalg.inv(fsl2grid))
-    scaled = apply_affine(mov.ras2fsl, field.data)
-    displacement = _xforms.DisplacementField(
-        data=scaled - knots,
-        degree=3,
-        store=field.store,
-        bound="constant",
-    )
-    values = displacement.coefficients
-    initial = np.eye(4)
-    loss = parts.loss
+    # FNIRT maps a reference position `x`, in scaled millimetres, to
+    # `M x + D(x)` in the source, where `M` is the inverse of the sform
+    # and `D` is the B-spline. The affine that the field does not undo is
+    # stored in `M`, as FNIRT stores its initial affine, so that the
+    # spline holds the displacement alone (see `split_affine`).
+    affine, field = split_affine(t, RAS, RAS, cls, "after")
+    to_source = mov.ras2fsl @ affine @ ref.fsl2ras
+    if field is None:
+        values = np.zeros((*sizes, 3))
+        loss = None
+    else:
+        # The field is evaluated at the knots as a cubic B-spline, which
+        # keeps the coefficients of a cubic B-spline already on this knot
+        # grid. Its displacement, in the scaled millimetres of the
+        # reference, is carried into the source by the linear part of
+        # `M`. Both maps are affine, so they act on the coefficients of
+        # the B-spline as on its values.
+        parts = sample_on_grid(field, ras2grid, sizes, RAS, RAS, cls, degree=3)
+        knots = voxel_grid_coordinates(sizes, np.linalg.inv(fsl2grid))
+        moved = apply_affine(ref.ras2fsl, parts.field.data) - knots
+        displacement = _xforms.DisplacementField(
+            data=apply_affine(_linear(to_source), moved),
+            degree=3,
+            store=parts.field.store,
+            bound="constant",
+        )
+        values = displacement.coefficients
+        loss = parts.loss
+    initial = np.linalg.inv(to_source)
     header = nb.Nifti1Header()
     header.set_data_shape((*sizes, 3))
     header.set_data_dtype(np.float32)
@@ -292,6 +305,13 @@ def _is_affine(t: _xforms.Transformation, cls: type) -> bool:
     except ConversionError:
         return False
     return True
+
+
+def _linear(matrix: np.ndarray) -> np.ndarray:
+    # The linear part of a homogeneous affine, as a homogeneous affine.
+    linear = np.eye(len(matrix))
+    linear[:-1, :-1] = matrix[:-1, :-1]
+    return linear
 
 
 def _held(result: FnirtWarpField, loss: tx.Optional[str]) -> FnirtWarpField:

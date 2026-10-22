@@ -79,6 +79,7 @@ __all__ = [
     "held",
     "register_converter",
     "sample_on_grid",
+    "split_affine",
     "split_field_chain",
     "UnusedOptionError",
     "undoes",
@@ -721,6 +722,95 @@ def displacement_parts(
         output=_VOXEL,
     )
     return FieldParts(world2grid, result, grid2world, loss)
+
+
+def split_affine(
+    t: _xforms.Transformation,
+    input: CoordinateSystem,
+    output: CoordinateSystem,
+    cls: type,
+    side: str,
+) -> tx.Tuple[np.ndarray, tx.Optional[_xforms.Transformation]]:
+    """
+    Take the affine part of `t` out of its field.
+
+    Some formats store an affine of their own beside a field, in their
+    header: the affine that NiftyReg applies before its grid of control
+    points, the initial affine of an FSL coefficient field, or another
+    transform of a chain. Such a format stores what it can in that slot,
+    as the tools write their own files, so that the field holds only a
+    displacement.
+
+    A transformation that holds one field of displacements between two
+    affines is the map `T = A o (id + d) o B`, where `B` carries the
+    input world to the grid of the field and `A` carries the grid to the
+    output world. It is split exactly, without changing the field, into
+    the affine `R = A B` and a field `S` between an affine and its
+    inverse: `T = R o S`, with `S` placed by `B` in the input world, when
+    the affine is applied last, and `T = S o R`, with `S` placed by the
+    inverse of `A` in the output world, when it is applied first. A
+    velocity is kept, since its flow is carried by a change of
+    coordinates. A field of coordinates holds its affines in its values,
+    so it is a displacement between `B` and its inverse, with no affine
+    taken out. A transformation without a field is all affine.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation to split.
+    input : CoordinateSystem
+        The world that the format maps from.
+    output : CoordinateSystem
+        The world that the format maps to.
+    cls : type
+        The format, which names the error when `t` cannot be split.
+    side : {"before", "after"}
+        Whether the format applies its affine before or after its field.
+
+    Returns
+    -------
+    affine : array, shape `(D + 1, D + 1)`
+        The homogeneous affine `R`, from `input` to `output`.
+    field : Transformation or None
+        The field `S`, a chain of an affine, the field and the inverse
+        affine, from `output` to `output` when `side` is `"before"` and
+        from `input` to `input` otherwise. It is `None` when `t` holds no
+        field.
+
+    Raises
+    ------
+    ConversionError
+        If a bridge does not exist, or `t` is neither an affine nor one
+        field between affines.
+    """
+    if side not in ("before", "after"):
+        raise ValueError(f"side must be 'before' or 'after', not {side!r}.")
+    try:
+        return affine_between(t, input, output, cls), None
+    except ConversionError:
+        pass
+    before, field, after = split_field_chain(t, input, output, cls)
+    if isinstance(field, _xforms.CoordinatesField):
+        parts = displacement_parts(t, input, cls, degree=int(field.degree))
+        before, field = parts.world2grid, parts.field
+        after = parts.grid2world
+        affine = np.eye(len(before))
+    else:
+        affine = after @ before
+    if side == "after":
+        world, place = input, before
+    else:
+        world, place = output, np.linalg.inv(after)
+    chain = _xforms.Sequence(
+        transformations=[
+            _xforms.Affine(matrix=place[:-1], input=world, output=_VOXEL),
+            replace(field, input=_VOXEL, output=_VOXEL),
+            _xforms.Affine(
+                matrix=np.linalg.inv(place)[:-1], input=_VOXEL, output=world
+            ),
+        ]
+    )
+    return affine, chain
 
 
 def coordinates_parts(

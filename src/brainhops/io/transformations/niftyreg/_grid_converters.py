@@ -20,15 +20,18 @@ A grid of control points is a field like any other, interpolated with
 cubic or linear B-splines, so it is converted as the other field
 formats are (see
 [`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]).
+The affine that the field does not undo is stored in the affine slot of
+the grid, which NiftyReg reads from the header extension and applies
+before the spline, so that the spline holds the displacement alone (see
+[`split_affine`][brainhops.io.transformations.base._conversions.split_affine]).
 By default, the control points are the nodes of the field of `t`. A
 field of the degree of the grid is then kept as it is, and any other
 field is evaluated at its nodes, and its values are converted to the
-coefficients of the grid, which is a loss. The affines around the field
-are carried into it, and a field of coordinates becomes the
-displacement of each node. With `spacing=`, the distance between the
-control points in millimetres, `t` is evaluated on a grid laid out as
-NiftyReg lays it out, with one control point before the first voxel of
-the field, which is a loss.
+coefficients of the grid, which is a loss. A field of coordinates
+becomes the displacement of each node. With `spacing=`, the distance
+between the control points in millimetres, the field is evaluated on a
+grid laid out as NiftyReg lays it out, with one control point before
+the first voxel of the field, which is a loss.
 
 A velocity grid holds a velocity, which must lie between affines that
 undo each other, since the grid holds no affine. The options of a
@@ -55,6 +58,7 @@ from brainhops.io.transformations.base._conversions import (
     held,
     register_converter,
     sample_on_grid,
+    split_affine,
     split_field_chain,
     undoes,
     unrepresentable,
@@ -64,6 +68,7 @@ from brainhops.io.transformations.base._splines import (
     source_grid,
 )
 from brainhops.io.transformations.base.affines import (
+    RASToRAS,
     RASToVoxel,
     VoxelToRAS,
 )
@@ -106,17 +111,31 @@ def _to_grid(
             f"degree={degree} was asked.",
         )
     spacing = options.get("spacing")
+    # The affine that the field does not undo is applied first, in the
+    # slot that NiftyReg reads from the header extension, so that the
+    # spline holds the displacement alone.
+    affine, field = split_affine(t, RAS, RAS, cls, "before")
+    if field is None:
+        raise unrepresentable(
+            t,
+            cls,
+            "it holds no field, and a NiftyReg grid of control points is "
+            "placed on the grid of a field.",
+        )
     if spacing is None:
-        parts = displacement_parts(t, RAS, cls, degree=degree)
+        parts = displacement_parts(field, RAS, cls, degree=degree)
     else:
-        grid2world, shape = _control_grid(t, cls, spacing)
+        grid2world, shape = _control_grid(field, cls, spacing)
         parts = displacements_of(
             sample_on_grid(
-                t, np.linalg.inv(grid2world), shape, RAS, RAS, cls, degree
+                field, np.linalg.inv(grid2world), shape, RAS, RAS, cls, degree
             )
         )
     _check_3d(parts, t, cls)
-    return held(cls(transformations=_sandwich(parts)), parts)
+    chain = _sandwich(parts)
+    if not undoes(affine, np.eye(len(affine))):
+        chain = (RASToRAS(matrix=affine[:-1]), *chain)
+    return held(cls(transformations=chain), parts)
 
 
 @register_converter(FIELD_SOURCES, NiftyRegVelocityGrid)

@@ -339,14 +339,19 @@ def test_a_cubic_spline_is_exactly_a_niftyreg_grid(tmp_path) -> None:  # noqa: A
     assert _error(back, chain) < EXACT
 
 
-def test_an_affine_before_a_spline_is_carried_into_a_niftyreg_grid() -> None:
-    # A B-spline is linear in its coefficients and reproduces affine maps,
-    # so the affine is carried into the coefficients without a loss.
+def test_an_affine_before_a_spline_goes_into_the_niftyreg_extension() -> None:
+    # The affine is stored in the slot that NiftyReg applies before its
+    # grid, and the spline holds the displacement alone.
     affine = _affine(
         np.diag([1.1, 0.9, 1.0]), dict(input=RASmm(), output=RASmm())
     )
     chain = xforms.Sequence(transformations=[affine, *_chain(degree=3)])
     grid = chain.to(NiftyRegControlPointGrid)
+    assert grid.affine is not None
+    np.testing.assert_array_equal(
+        np.asarray(grid.displacement.data),
+        np.asarray(_chain(degree=3)[1].data),
+    )
     assert _error(grid, chain) < EXACT
 
 
@@ -439,20 +444,33 @@ def test_an_elastix_transform_takes_the_fixed_image() -> None:
     assert _error(converted, affine) < EXACT
 
 
-def test_a_fnirt_spline_is_one_elastix_file(tmp_path) -> None:  # noqa: ANN001
-    # The initial affine of the FNIRT warp is carried into the
-    # coefficients of the B-spline, so one file holds the warp exactly.
+def test_a_fnirt_spline_is_chained_in_elastix_files(tmp_path) -> None:  # noqa: ANN001
+    # The initial affine of the FNIRT warp is written as a transform of
+    # its own, which the file of the B-spline names as its initial
+    # transform.
     warp = _load(COEFFICIENTS)
     converted = warp.to(ElastixParameterTransform)
-    assert converted.initial is None
+    assert converted.initial is not None
     assert _error(converted, warp) < EXACT
     path = str(tmp_path / "TransformParameters.0.txt")
     io.save(converted, path)
-    assert len(os.listdir(tmp_path)) == 1
+    assert len(os.listdir(tmp_path)) == 2
     back = io.load(path)
     assert _error(back, warp) < EXACT
     assert _error(back.to(NiftyRegControlPointGrid), warp) < EXACT
     assert _error(back.to(NiftiRASDisplacementField, lossy=True), warp) < 1.0
+
+
+def test_an_affine_alone_is_the_initial_affine_of_a_fnirt_spline() -> None:
+    # A FNIRT coefficient field stores an affine in its initial affine,
+    # with a spline of zeros.
+    affine = _affine(
+        np.diag([1.1, 0.9, 1.0]), dict(input=RASmm(), output=RASmm())
+    )
+    warp = affine.to(FnirtWarpField, reference=REF, moving=SRC, knot_spacing=5)
+    np.testing.assert_array_equal(np.asarray(warp.data), 0)
+    # The sform of a NIfTI-1 header holds the affine in single precision.
+    assert _error(warp, affine) < 1e-4
 
 
 @pytest.mark.parametrize("degree", [1, 3])
