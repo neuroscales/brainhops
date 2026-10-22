@@ -164,6 +164,11 @@ class _N5Proxy(ArrayProxy):
         """The directory of the dataset."""
         self._shape = tuple(int(n) for n in record.dimensions)
         self._dtype = record.dtype
+        self._chunks = (
+            None
+            if record.block_size is None
+            else tuple(int(n) for n in record.block_size)
+        )
         self._store = None
 
     @property
@@ -175,6 +180,15 @@ class _N5Proxy(ArrayProxy):
     def dtype(self) -> np.dtype:
         """The type of the samples, in the native byte order."""
         return self._dtype
+
+    @property
+    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        """The shape of a block of the dataset, read from the record.
+
+        Each block is a file of the dataset, so a Dask chunk of this
+        shape reads a single file.
+        """
+        return self._chunks
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         state = dict(self.__dict__)

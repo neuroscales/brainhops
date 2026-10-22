@@ -7,8 +7,9 @@ import typing_extensions as tx
 from brainhops._core import affines as _affines
 from brainhops._core.enum import StrEnum
 from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+from brainhops.backends import get_array_backend, to_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
@@ -354,7 +355,12 @@ class ItkDisplacementBase(ItkBlockBase):
 
         parameters = self.parameters
         parameters = parameters if parameters is not None else np.array([])
-        if not hasattr(parameters, "reshape"):
+        if isinstance(parameters, ArrayProxy):
+            # The lazy array of an HDF5 file is converted as the backend
+            # setting says, so that under Dask it stays lazy, with the
+            # chunks of the dataset when it has some, and is not read.
+            parameters = to_backend(parameters)
+        elif not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
         # The buffer is C-ordered with x varying fastest, so the spatial axes
