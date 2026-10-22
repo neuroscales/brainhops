@@ -657,13 +657,13 @@ def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: A
     [
         Affine(MATRIX, input=RASmm(), output=RASmm()),
         Scaling([1.0, 2.0, 3.0], input=LPSmm(), output=LPSmm()),
-        CoordinatesField(field=np.zeros((2, 3, 4, 3)), degree=3),
+        CoordinatesField(field=np.zeros((2, 3, 4, 3)), degree=2),
         DisplacementField(field=np.zeros((2, 3, 4, 3)), degree=2),
     ],
     ids=[
         "world-affine",
         "scaling",
-        "cubic-coordinates",
+        "quadratic-coordinates",
         "quadratic-displacement",
     ],
 )
@@ -674,10 +674,11 @@ def test_a_transformation_no_nifti_format_holds_is_refused(
     # A NIfTI transformation maps voxels to RAS, or RAS to RAS through a
     # linearly interpolated field. A transformation that does not, such
     # as an affine or a scaling between world spaces, or a field
-    # interpolated with cubic splines, would be read back as a different
-    # map. It is therefore refused, with the reason of each format. A
-    # field of cubic displacements is held exactly by a NiftyReg grid of
-    # control points, so a quadratic one is refused instead.
+    # interpolated with quadratic splines, would be read back as a
+    # different map. It is therefore refused, with the reason of each
+    # format. A cubic field, of displacements or of coordinates, is held
+    # exactly by a NiftyReg grid of control points, so quadratic ones are
+    # refused instead.
     with pytest.raises(WriterError, match="from_any"):
         io.save(obj, tmp_path / "transform.nii")
     assert not (tmp_path / "transform.nii").exists()

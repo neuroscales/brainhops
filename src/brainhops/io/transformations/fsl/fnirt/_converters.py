@@ -26,12 +26,14 @@ is sampled, which loses: the converter raises a `LossyConversionError`
 that carries the result.
 
 A coefficient field (`--cout`) stores a cubic B-spline whose knots lie
-every `knot_spacing` voxels of the reference, as FNIRT places them, and
-an initial affine. A cubic B-spline on that knot grid, between any two
-affines, is held exactly, with the affines in the initial affine and in
-the coefficients. Any other transformation is evaluated at every voxel
-of the reference, and the coefficients are the least-squares fit of the
-spline to these values, which loses.
+every `knot_spacing` voxels of the reference, as FNIRT places them. The
+transformation is evaluated at the knots as a cubic B-spline (see
+[`sample_on_grid`][brainhops.io.transformations.base._conversions.sample_on_grid]),
+and the values are converted to coefficients. A cubic B-spline on that
+knot grid, between any two affines, is held exactly, since a B-spline
+is linear in its coefficients and reproduces affine maps. Any other
+transformation is evaluated at the knots and interpolated, which
+loses.
 """
 
 import nibabel as nb
@@ -56,12 +58,7 @@ from brainhops.io.transformations.base._conversions import (
     format_options,
     register_converter,
     sample_on_grid,
-    undoes,
     unrepresentable,
-)
-from brainhops.io.transformations.base._splines import (
-    exact_spline_parts,
-    least_squares,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 
@@ -232,29 +229,26 @@ def _coefficients(
     fsl2grid = np.diag(np.concatenate([1.0 / (ref.pixdim * spacing), [1.0]]))
     fsl2grid[:3, 3] += _anchor_offsets(3, spacing.astype(float))
     ras2grid = fsl2grid @ ref.ras2fsl
-    exact = exact_spline_parts(t, RAS, RAS, cls, (3,))
-    if (
-        exact is not None
-        and tuple(exact.coefficients.shape[:-1]) == sizes
-        and undoes(exact.before, np.linalg.inv(ras2grid))
-    ):
-        # From the grid to the scaled millimetres of the moving image,
-        # the field is `q = K y + K d(y)`, with `y = G p` for a
-        # reference position `p`: the affine `K G` is the inverse of the
-        # initial affine, and `K d` is the displacement that FNIRT adds
-        # to it.
-        to_moving = mov.ras2fsl @ exact.after
-        initial = np.linalg.inv(to_moving @ fsl2grid)
-        values = apply_affine(_linear(to_moving), exact.coefficients)
-        loss = None
-    else:
-        values = _fitted(t, cls, ref, mov, shape, sizes, fsl2grid)
-        initial = np.eye(4)
-        loss = (
-            "it is evaluated at the voxels of the reference, and a cubic "
-            "B-spline on the knot grid of FNIRT is fitted to these values, "
-            "which only approximates it."
-        )
+    # `t` is evaluated at the knots as a cubic B-spline, which keeps the
+    # coefficients of a cubic B-spline already on this knot grid. The
+    # field then maps each knot to the scaled millimetres of the moving
+    # image, and FNIRT stores the displacement from the knot, in the
+    # scaled millimetres of the reference, with no initial affine. A
+    # B-spline is linear in its coefficients and reproduces affine maps,
+    # so these affines act on its coefficients as on its values.
+    parts = sample_on_grid(t, ras2grid, sizes, RAS, RAS, cls, degree=3)
+    field = parts.field
+    knots = voxel_grid_coordinates(sizes, np.linalg.inv(fsl2grid))
+    scaled = apply_affine(mov.ras2fsl, field.data)
+    displacement = _xforms.DisplacementField(
+        data=scaled - knots,
+        degree=3,
+        store=field.store,
+        bound="constant",
+    )
+    values = displacement.coefficients
+    initial = np.eye(4)
+    loss = parts.loss
     header = nb.Nifti1Header()
     header.set_data_shape((*sizes, 3))
     header.set_data_dtype(np.float32)
@@ -274,32 +268,6 @@ def _coefficients(
         moving=moving,
     )
     return _held(result, loss)
-
-
-def _fitted(
-    t: _xforms.Transformation,
-    cls: type,
-    ref: _ImageGeometry,
-    mov: _ImageGeometry,
-    shape: tx.Tuple[int, ...],
-    sizes: tx.Tuple[int, ...],
-    fsl2grid: np.ndarray,
-) -> np.ndarray:
-    # The least-squares coefficients of the displacement, in scaled
-    # millimetres, of every voxel of the reference.
-    parts = sample_on_grid(t, ref.ras2vox, shape, RAS, RAS, cls)
-    positions = np.asarray(parts.field.values, dtype=np.float64)
-    scaled = apply_affine(mov.ras2fsl, positions)
-    nodes = voxel_grid_coordinates(shape, ref.vox2fsl)
-    vox2grid = fsl2grid @ ref.vox2fsl
-    # The knot grid is aligned with the voxels of the reference, so the
-    # coordinates of a voxel along an axis depend on its index along
-    # that axis alone.
-    coordinates = [
-        vox2grid[axis, axis] * np.arange(n) + vox2grid[axis, 3]
-        for axis, n in enumerate(shape)
-    ]
-    return least_squares(scaled - nodes, coordinates, sizes, 3, "constant")
 
 
 # ----------------------------------------------------------------------
@@ -324,13 +292,6 @@ def _is_affine(t: _xforms.Transformation, cls: type) -> bool:
     except ConversionError:
         return False
     return True
-
-
-def _linear(matrix: np.ndarray) -> np.ndarray:
-    # The linear part of a homogeneous affine, as a homogeneous affine.
-    linear = np.eye(len(matrix))
-    linear[:-1, :-1] = matrix[:-1, :-1]
-    return linear
 
 
 def _held(result: FnirtWarpField, loss: tx.Optional[str]) -> FnirtWarpField:

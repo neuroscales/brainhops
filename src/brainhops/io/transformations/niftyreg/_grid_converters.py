@@ -4,32 +4,36 @@ Private converters into the NiftyReg grids of control points.
 `t.to(NiftyRegControlPointGrid)`, `NiftyRegControlPointGrid.from_any(t)`
 and `io.save(t, "cpp.nii.gz", hint="niftyreg.cpp")` all run these
 converters. A grid of control points, which `reg_f3d -cpp` writes,
-stores a cubic or linear B-spline of displacements in RAS millimetres,
-and it may hold an affine that is applied before the spline.
+stores the coefficients of a cubic or linear B-spline of displacements
+in RAS millimetres, and a velocity grid stores those of a cubic
+velocity.
 
-| Source                                   | Result                      |
-| ---------------------------------------- | --------------------------- |
-| B-spline of the degree of the grid       | exact                       |
-| any other field, or chain with a field   | fitted B-spline, lossy      |
-| velocity of degree 3 (velocity grid)     | exact                       |
-| other velocity (velocity grid)           | fitted B-spline, lossy      |
-| displacement (velocity grid)             | refused                     |
+| Source                                     | Result                    |
+| ------------------------------------------ | ------------------------- |
+| field of the degree of the grid            | exact                     |
+| field of another degree                    | interpolated, lossy       |
+| any field, with `spacing=`                 | evaluated, lossy          |
+| velocity (velocity grid)                   | as a field, above         |
+| displacement (velocity grid)               | refused                   |
 
-A transformation that holds a field between two affines is held
-exactly when its field is a B-spline of the degree that the grid
-stores, because the affine that does not undo the other one is moved
-into the affine slot of the grid (see
-[`_splines`][brainhops.io.transformations.base._splines]). A velocity
-grid has no affine slot, so a velocity must lie between affines that
-undo each other. Any other field is sampled at the control points of a
-grid laid out as NiftyReg lays it out, with one control point before
-the first voxel of the field, and the coefficients are fitted to the
-samples. By default, the control points are the voxels of the field, so
-that the fit is the cubic interpolation of its values, which is a loss.
+A grid of control points is a field like any other, interpolated with
+cubic or linear B-splines, so it is converted as the other field
+formats are (see
+[`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]).
+By default, the control points are the nodes of the field of `t`. A
+field of the degree of the grid is then kept as it is, and any other
+field is evaluated at its nodes, and its values are converted to the
+coefficients of the grid, which is a loss. The affines around the field
+are carried into it, and a field of coordinates becomes the
+displacement of each node. With `spacing=`, the distance between the
+control points in millimetres, `t` is evaluated on a grid laid out as
+NiftyReg lays it out, with one control point before the first voxel of
+the field, which is a loss.
 
-The options of a conversion are `degree=` (3, the default, or 1 for a
-linear grid) and `spacing=`, the distance between the control points in
-millimetres, which always asks for a fit.
+A velocity grid holds a velocity, which must lie between affines that
+undo each other, since the grid holds no affine. The options of a
+conversion are `degree=` (3, the default, or 1 for a linear grid of
+displacements) and `spacing=`.
 """
 
 import numpy as np
@@ -42,22 +46,24 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.errors import LossyConversionError
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
+    FieldParts,
+    displacement_parts,
+    displacements_of,
     format_options,
+    held,
     register_converter,
+    sample_on_grid,
+    split_field_chain,
+    undoes,
     unrepresentable,
 )
 from brainhops.io.transformations.base._splines import (
-    SplineParts,
     control_grid,
-    exact_spline_parts,
-    fit_spline,
     source_grid,
 )
 from brainhops.io.transformations.base.affines import (
-    RASToRAS,
     RASToVoxel,
     VoxelToRAS,
 )
@@ -70,6 +76,9 @@ from ._fields import (
 
 RAS = _systems.RASmm()
 """The world of every NiftyReg transformation, RAS in millimetres."""
+
+VOXEL = _systems.VoxelCoordinateSystem()
+"""The indices of the control points of a grid."""
 
 GRID_OPTIONS = ("degree", "spacing")
 """What a conversion to a grid of control points may set."""
@@ -84,8 +93,8 @@ def _to_grid(
     cls: tx.Type[NiftyRegControlPointGrid],
     **kwargs,
 ) -> NiftyRegControlPointGrid:
-    # The spline of `t` when it is one of the degree of the grid, and a
-    # fitted spline otherwise.
+    # The field of `t`, as the coefficients of a spline of the degree of
+    # the grid, on its own nodes or on a grid of the asked spacing.
     cls = NiftyRegControlPointGrid
     options = format_options(t, cls, dict(kwargs), GRID_OPTIONS)
     degree = int(options.get("degree", 3))
@@ -97,17 +106,17 @@ def _to_grid(
             f"degree={degree} was asked.",
         )
     spacing = options.get("spacing")
-    parts = None
     if spacing is None:
-        parts = exact_spline_parts(t, RAS, RAS, cls, (degree,))
-    if parts is None:
-        parts = _fitted(t, cls, degree, spacing, log=False)
-    chain = _sandwich(parts, log=False)
-    if not parts.sandwich:
-        # The affine that the field does not undo is applied first, in
-        # the slot that NiftyReg reads from the header extension.
-        chain = (RASToRAS(matrix=(parts.after @ parts.before)[:-1]), *chain)
-    return _held(cls(transformations=chain), parts)
+        parts = displacement_parts(t, RAS, cls, degree=degree)
+    else:
+        grid2world, shape = _control_grid(t, cls, spacing)
+        parts = displacements_of(
+            sample_on_grid(
+                t, np.linalg.inv(grid2world), shape, RAS, RAS, cls, degree
+            )
+        )
+    _check_3d(parts, t, cls)
+    return held(cls(transformations=_sandwich(parts)), parts)
 
 
 @register_converter(FIELD_SOURCES, NiftyRegVelocityGrid)
@@ -116,23 +125,43 @@ def _to_velocity_grid(
     cls: tx.Type[NiftyRegVelocityGrid],
     **kwargs,
 ) -> NiftyRegVelocityGrid:
-    # The cubic velocity of `t`, or a cubic spline fitted to it.
+    # The velocity of `t`, as the coefficients of a cubic spline, on its
+    # own nodes or on a grid of the asked spacing.
     cls = NiftyRegVelocityGrid
     options = format_options(t, cls, dict(kwargs), VELOCITY_OPTIONS)
     spacing = options.get("spacing")
-    parts = None
+    velocity = _velocity(t, cls)
     if spacing is None:
-        parts = exact_spline_parts(t, RAS, RAS, cls, (3,), log=True)
-    if parts is None:
-        parts = _fitted(t, cls, 3, spacing, log=True)
-    if not parts.sandwich:
-        raise unrepresentable(
-            t,
-            cls,
-            "its velocity lies between affines that do not undo each "
-            "other, and a NiftyReg velocity grid holds no affine.",
+        parts = displacement_parts(t, RAS, cls, keep_log=True, degree=3)
+    else:
+        # The values of the velocity are evaluated on the new grid, as
+        # those of a displacement would be, and are read again as a
+        # velocity.
+        grid2world, shape = _control_grid(t, cls, spacing)
+        parts = displacements_of(
+            sample_on_grid(
+                _as_displacement(velocity),
+                np.linalg.inv(grid2world),
+                shape,
+                RAS,
+                RAS,
+                cls,
+                3,
+            )
         )
-    return _held(cls(transformations=_sandwich(parts, log=True)), parts)
+        field = parts.field
+        parts = parts._replace(
+            field=_xforms.DisplacementField(
+                data=field.values,
+                log=True,
+                steps=velocity.steps,
+                degree=3,
+                input=VOXEL,
+                output=VOXEL,
+            )
+        )
+    _check_3d(parts, t, cls)
+    return held(cls(transformations=_sandwich(parts)), parts)
 
 
 @converter(NiftyRegSequence, NiftyRegControlPointGrid)
@@ -154,66 +183,91 @@ def _(
 # ----------------------------------------------------------------------
 
 
-def _fitted(
-    t: _xforms.Transformation,
-    cls: type,
-    degree: int,
-    spacing: tx.Any,
-    log: bool,
-) -> SplineParts:
-    # A spline fitted on the grid that NiftyReg would build over the
-    # grid of the first field of `t`, sampled once per control point.
+def _control_grid(
+    t: _xforms.Transformation, cls: type, spacing: tx.Any
+) -> tx.Tuple[np.ndarray, tx.Tuple[int, ...]]:
+    # The grid that NiftyReg would build over the grid of the first field
+    # of `t`, with control points `spacing` millimetres apart.
     grid2world, shape = source_grid(t, RAS, cls)
-    if len(shape) != 3:
+    return control_grid(grid2world, shape, spacing)
+
+
+def _velocity(t: _xforms.Transformation, cls: type) -> _xforms.Transformation:
+    # The velocity of `t`, which must lie between affines that undo each
+    # other, since a velocity grid holds no affine.
+    before, field, after = split_field_chain(t, RAS, RAS, cls)
+    if not isinstance(field, _xforms.DisplacementField) or not field.log:
         raise unrepresentable(
-            t, cls, "NiftyReg grids of control points are three-dimensional."
+            t,
+            cls,
+            "the format stores a velocity, and its field holds a "
+            "displacement, whose logarithm brainhops does not compute.",
         )
-    grid2world, shape = control_grid(grid2world, shape, spacing)
-    return fit_spline(
-        t,
-        grid2world,
-        shape,
-        RAS,
-        RAS,
-        cls,
-        degree,
-        BoundaryCondition.nearest,
-        log=log,
+    if not undoes(before, after):
+        raise unrepresentable(
+            t,
+            cls,
+            "its velocity lies between affines that do not undo each "
+            "other, and a NiftyReg velocity grid holds no affine.",
+        )
+    return t
+
+
+def _as_displacement(t: _xforms.Transformation) -> _xforms.Transformation:
+    # The chain of `t` with its velocity read as a displacement, so that
+    # evaluating the chain gives the values of the velocity rather than
+    # those of its flow.
+    before, field, after = split_field_chain(t, RAS, RAS, NiftyRegVelocityGrid)
+    values = _xforms.DisplacementField(
+        data=field.data,
+        degree=field.degree,
+        bound=field.bound,
+        store=field.store,
+        input=VOXEL,
+        output=VOXEL,
+    )
+    return _xforms.Sequence(
+        transformations=[
+            _xforms.Affine(matrix=before[:-1], input=RAS, output=VOXEL),
+            values,
+            _xforms.Affine(matrix=after[:-1], input=VOXEL, output=RAS),
+        ]
     )
 
 
-def _sandwich(
-    parts: SplineParts, log: bool
-) -> tx.Tuple[_xforms.Transformation, ...]:
+def _check_3d(parts: FieldParts, t: _xforms.Transformation, cls: type) -> None:
+    # NiftyReg grids are three-dimensional.
+    data = parts.field.data
+    if data is None or data.shape[-1] != 3:
+        raise unrepresentable(
+            t,
+            cls,
+            "NiftyReg grids of control points hold the coefficients of a "
+            "three-dimensional field on each control point.",
+        )
+
+
+def _sandwich(parts: FieldParts) -> tx.Tuple[_xforms.Transformation, ...]:
     # The three slots of a NiftyReg grid: RAS to the control points, the
-    # spline in their units, and back to RAS, placed by `after`.
-    degree = int(parts.degree)
-    velocity = {"log": True} if log else {}
-    if log and parts.steps is not None:
-        velocity["steps"] = int(parts.steps)
-    voxel = _systems.VoxelCoordinateSystem()
+    # spline in their units, stored as its coefficients, and back to RAS.
+    field = parts.field
+    degree = int(field.degree)
+    velocity = {}
+    if field.log:
+        velocity["log"] = True
+        if getattr(field, "steps", None) is not None:
+            velocity["steps"] = int(field.steps)
+    coefficients = field.coefficients if degree > 1 else field.values
     return (
-        RASToVoxel(matrix=np.linalg.inv(parts.after)[:-1]),
+        RASToVoxel(matrix=parts.world2grid[:-1]),
         _xforms.DisplacementField(
-            data=parts.coefficients,
-            input=voxel,
-            output=voxel,
+            data=coefficients,
+            input=VOXEL,
+            output=VOXEL,
             degree=degree,
             bound=BoundaryCondition.nearest,
             store=StoreEnum.from_coefficients(degree > 1),
             **velocity,
         ),
-        VoxelToRAS(matrix=parts.after[:-1]),
+        VoxelToRAS(matrix=parts.grid2world[:-1]),
     )
-
-
-def _held(result: tx.Any, parts: SplineParts) -> tx.Any:
-    # The result, or the error that carries it after a fit.
-    if parts.loss is not None:
-        raise LossyConversionError(
-            f"The {type(result).__name__} that this transformation "
-            f"converts to is not the same map: {parts.loss} Pass "
-            f"lossy=True to accept it.",
-            result=result,
-        )
-    return result

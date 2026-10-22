@@ -102,6 +102,7 @@ from brainhops.datamodel._transformations.compute.convert import (
     convert,
     converter,
 )
+from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.systems import CoordinateSystem, VoxelCoordinateSystem
 from brainhops.errors import (
     AdaptationError,
@@ -549,9 +550,11 @@ class FieldParts(tx.NamedTuple):
     grid, of shape `(D + 1, D + 1)`."""
 
     field: _Field
-    """The field on the voxels of the grid, sampled linearly. It is a
-    field of displacements in voxels, or a field of coordinates in the
-    output world."""
+    """The field on the voxels of the grid, interpolated with the degree
+    that the format asked for. It is a field of displacements in voxels,
+    or a field of coordinates in the output world. A format that stores
+    the coefficients of a spline reads `field.coefficients`, and one that
+    stores values reads `field.values`."""
 
     grid2world: np.ndarray
     """The homogeneous affine from the voxels of the grid back to the
@@ -561,8 +564,8 @@ class FieldParts(tx.NamedTuple):
     """What the field loses, as the end of a sentence, or `None` when it
     is the same map as the transformation inside the grid. It loses when
     the transformation interpolates its field with another degree than
-    the linear interpolation that a format stores, or when the field is
-    sampled on another grid."""
+    the one that the format stores, or when the field is sampled on
+    another grid."""
 
     @property
     def exact(self) -> bool:
@@ -613,28 +616,31 @@ def displacement_parts(
     world: CoordinateSystem,
     cls: type,
     keep_log: bool = False,
+    degree: int = 1,
 ) -> FieldParts:
     """
     Take `t` apart as a field of displacements between two affines.
 
-    This is what a format such as a NIfTI `DISPVECT` file or an ITK
-    displacement field stores: an affine from the world to the voxels of
-    a grid, displacements in those voxels, and the inverse affine back
-    to the world. `t` is read from `world` and written in `world`, with
-    the bridges between them and its own endpoints put on either side
-    of it (see [`split_field_chain`][]).
+    This is what a format such as a NIfTI `DISPVECT` file, an ITK
+    displacement field or a grid of B-spline coefficients stores: an
+    affine from the world to the voxels of a grid, displacements in
+    those voxels, interpolated with the degree of the format, and the
+    inverse affine back to the world. `t` is read from `world` and
+    written in `world`, with the bridges between them and its own
+    endpoints put on either side of it (see [`split_field_chain`][]).
 
     The field that `t` holds may be a field of displacements or of
-    coordinates, and the affines on either side of it need not undo each
-    other. In both cases, the position that each node of the grid maps
-    to is computed, and the displacement is that position minus the
-    node. The result is the same map as `t` inside the grid, and differs
+    coordinates, of any degree, and the affines on either side of it
+    need not undo each other. The position that each node of the grid
+    maps to is computed, and the displacement is that position minus the
+    node. A spline of degree 1 or more reproduces the affine functions,
+    so the result is the same map as `t` inside the grid, and differs
     from it only in how it is extended beyond the grid, which a field
     format decides. A velocity is integrated into its displacement,
     unless `keep_log` asks for it as it is and the affines undo each
-    other, in which case the field is kept. A field interpolated with
-    another degree than 1 is sampled at its nodes, and the parts then
-    report a loss.
+    other, in which case the velocity is kept. A field interpolated with
+    another degree than `degree` is evaluated at its nodes and
+    interpolated with `degree`, and the parts then report a loss.
 
     Parameters
     ----------
@@ -647,6 +653,10 @@ def displacement_parts(
     keep_log : bool, default=False
         Whether a velocity is kept as a velocity, for a format that can
         store one.
+    degree : int, default=1
+        The degree of the spline with which the format interpolates its
+        field: 1 for the values of a dense field, 3 for the coefficients
+        of a cubic B-spline.
 
     Returns
     -------
@@ -666,13 +676,18 @@ def displacement_parts(
     sandwich = isinstance(field, _xforms.DisplacementField) and undoes(
         before, after
     )
-    if sandwich and int(field.degree) == 1 and (keep_log or not field.log):
+    velocity = keep_log and sandwich and bool(field.log)
+    if (
+        sandwich
+        and int(field.degree) == degree
+        and (velocity or not field.log)
+    ):
         # The field is already what the format stores, and is kept as it
         # is, with its data still unread.
         field = replace(field, input=_VOXEL, output=_VOXEL)
         return FieldParts(world2grid, field, grid2world)
-    values, loss = _linear_values(field)
-    if values is None and not undoes(before, after):
+    data, store, bound, loss = _node_data(field, degree, keep_log=velocity)
+    if data is None and not undoes(before, after):
         raise unrepresentable(
             t,
             cls,
@@ -681,21 +696,29 @@ def displacement_parts(
             "other, so the format would need the displacement of every "
             "node of a grid.",
         )
-    if values is None:
+    if data is None:
         result = _xforms.DisplacementField(input=_VOXEL, output=_VOXEL)
         return FieldParts(world2grid, result, grid2world, loss)
     if sandwich:
-        displacements = values
+        displacements = data
     else:
         # The position of each node, in the voxels of the grid, minus the
-        # node.
-        positions = values
+        # node. A B-spline is linear in its coefficients and reproduces
+        # the identity with the coefficient `k` at node `k`, so this holds
+        # for its coefficients as it does for values.
+        positions = data
         if isinstance(field, _xforms.DisplacementField):
-            positions = positions + _grid_like(values)
+            positions = positions + _grid_like(data)
         positions = apply_affine(before @ after, positions)
         displacements = positions - _grid_like(positions)
     result = _xforms.DisplacementField(
-        field=displacements, input=_VOXEL, output=_VOXEL
+        data=displacements,
+        log=velocity,
+        degree=degree,
+        store=store,
+        bound=bound,
+        input=_VOXEL,
+        output=_VOXEL,
     )
     return FieldParts(world2grid, result, grid2world, loss)
 
@@ -705,6 +728,7 @@ def coordinates_parts(
     input: CoordinateSystem,
     output: CoordinateSystem,
     cls: type,
+    degree: int = 1,
 ) -> FieldParts:
     """
     Take `t` apart as an affine followed by a field of coordinates.
@@ -721,8 +745,8 @@ def coordinates_parts(
     cases, so the result is the same map as `t` inside the grid, and
     differs from it only in how it is extended beyond the grid. A
     velocity is integrated into its displacement. A field interpolated
-    with another degree than 1 is sampled at its nodes, and the parts
-    then report a loss.
+    with another degree than `degree` is evaluated at its nodes and
+    interpolated with `degree`, and the parts then report a loss.
 
     Parameters
     ----------
@@ -734,6 +758,9 @@ def coordinates_parts(
         The world that the coordinates of the format are written in.
     cls : type
         The format, which names the error when `t` cannot be held.
+    degree : int, default=1
+        The degree of the spline with which the format interpolates its
+        field.
 
     Returns
     -------
@@ -748,7 +775,7 @@ def coordinates_parts(
         between affines, or the field holds no values.
     """
     before, field, after = split_field_chain(t, input, output, cls)
-    values, loss = _linear_values(field)
+    values, store, bound, loss = _node_data(field, degree)
     if values is None and isinstance(field, _xforms.CoordinatesField):
         raise unrepresentable(
             t,
@@ -769,7 +796,12 @@ def coordinates_parts(
         positions = positions + _grid_like(values)
     coordinates = apply_affine(after, positions)
     result = _xforms.CoordinatesField(
-        data=coordinates, input=_VOXEL, output=output
+        data=coordinates,
+        degree=degree,
+        store=store,
+        bound=bound,
+        input=_VOXEL,
+        output=output,
     )
     return FieldParts(before, result, np.linalg.inv(before), loss)
 
@@ -781,17 +813,18 @@ def sample_on_grid(
     input: CoordinateSystem,
     output: CoordinateSystem,
     cls: type,
+    degree: int = 1,
 ) -> FieldParts:
     """
     Sample `t` on the nodes of a grid that a format imposes.
 
     Some formats store a field on a grid that is fixed by something else
-    than the field, such as the reference image of an FSL warp. `t` is
-    then evaluated at the nodes of that grid, which gives the position
-    in `output` that each node maps to. Linear interpolation between
-    these positions is the same map as `t` only when `t` is itself
-    linear on the same grid, so the parts are exact only when the grid
-    is the grid of the field of `t` and the field is linear.
+    than the field, such as the reference image of an FSL warp or the
+    knots of its B-spline. `t` is then evaluated at the nodes of that
+    grid, which gives the position in `output` that each node maps to,
+    and these positions are interpolated with `degree`. This is the same
+    map as `t` only when `t` is itself interpolated with `degree` on the
+    same grid, so the parts are exact only then.
 
     Parameters
     ----------
@@ -807,6 +840,9 @@ def sample_on_grid(
         The world that the coordinates are written in.
     cls : type
         The format, which names the error when `t` cannot be sampled.
+    degree : int, default=1
+        The degree of the spline with which the format interpolates its
+        field.
 
     Returns
     -------
@@ -822,7 +858,7 @@ def sample_on_grid(
     world2grid = np.asarray(world2grid, dtype=np.float64)
     shape = tuple(int(n) for n in shape)
     try:
-        native = coordinates_parts(t, input, output, cls)
+        native = coordinates_parts(t, input, output, cls, degree)
     except ConversionError:
         native = None
     if (
@@ -858,34 +894,58 @@ def sample_on_grid(
             "same dimension.",
         )
     result = _xforms.CoordinatesField(
-        data=mapped.values, input=_VOXEL, output=output
+        field=mapped.values, degree=degree, input=_VOXEL, output=output
     )
     loss = (
-        "it is sampled on the grid of the format, and is read back with "
-        "linear interpolation between these samples."
+        f"it is evaluated on the grid of the format, and is read back with "
+        f"an interpolation of degree {degree} between these samples."
     )
     return FieldParts(world2grid, result, grid2world, loss)
 
 
-def _linear_values(
-    field: _Field,
-) -> tx.Tuple[tx.Optional[ArrayProtocol], tx.Optional[str]]:
-    # The values of a field at its nodes, which a format stores and reads
-    # back with linear interpolation, and what they lose against the field
-    # between the nodes, if anything. A velocity is integrated first. How
-    # the field is extended beyond its grid does not count: every format
-    # extends it in its own way.
-    if isinstance(field, _xforms.DisplacementField) and field.log:
+def _node_data(
+    field: _Field, degree: int, keep_log: bool = False
+) -> tx.Tuple[
+    tx.Optional[ArrayProtocol],
+    StoreEnum,
+    tx.Any,
+    tx.Optional[str],
+]:
+    # The data of a field in the encoding of a spline of `degree`, with
+    # that encoding, its boundary condition, and what it loses against the
+    # field, if anything. A field of that degree gives its coefficients,
+    # on which affines act as they act on values, and keeps its boundary.
+    # A field of another degree is evaluated at its nodes, and its values
+    # are stored, which a format interpolates with `degree`. A velocity is
+    # integrated first, unless it is kept. How the field is extended
+    # beyond its grid does not count: every format extends it in its own
+    # way.
+    if (
+        isinstance(field, _xforms.DisplacementField)
+        and field.log
+        and not keep_log
+    ):
         field = convert(field, _xforms.DisplacementField, log=False)
     if field.data is None:
-        return None, None
-    degree = int(field.degree)
-    if degree == 1:
-        return field.values, None
-    return field.values, (
-        f"its field is interpolated with degree {degree}, and the format "
-        f"stores the values at its nodes, which are read back with linear "
-        f"interpolation."
+        return None, StoreEnum.values, field.bound, None
+    source = int(field.degree)
+    if source == degree:
+        if degree > 1:
+            return (
+                field.coefficients,
+                StoreEnum.coefficients,
+                field.bound,
+                None,
+            )
+        return field.values, StoreEnum.values, field.bound, None
+    return (
+        field.values,
+        StoreEnum.values,
+        BoundaryCondition.nearest,
+        (
+            f"its field is interpolated with degree {source}, and the format "
+            f"interpolates the values at its nodes with degree {degree}."
+        ),
     )
 
 
@@ -1212,7 +1272,10 @@ def displacements_of(parts: FieldParts) -> FieldParts:
     positions = apply_affine(parts.world2grid, field.values)
     displacements = positions - _grid_like(positions)
     result = _xforms.DisplacementField(
-        field=displacements, input=_VOXEL, output=_VOXEL
+        field=displacements,
+        degree=int(field.degree),
+        input=_VOXEL,
+        output=_VOXEL,
     )
     return parts._replace(field=result)
 

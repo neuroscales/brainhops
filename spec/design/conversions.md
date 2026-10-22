@@ -148,23 +148,28 @@ refuses the conversion without them. `save()` writes through the same
 conversion, so an affine between LPS systems is saved in an `.xfm` file
 as the equivalent affine between RAS systems. Status: implemented.
 
-The formats that store a B-spline on a grid of control points (FNIRT
-coefficient fields, NiftyReg grids of control points and velocity
-grids, and elastix B-spline transforms) have exact converters, which
-share the helpers of `io/transformations/base/_splines.py`. A field
-between two affines is held exactly when it is a B-spline of a degree
-that the format stores, because a displacement is linear in its
-coefficients and the affine that the other one does not undo can be
-moved to one side of the field: NiftyReg keeps it in its header
-extension, elastix in an initial transform, and FNIRT in its initial
-affine. Any other field is sampled on the grid of control points, and
-the coefficients are fitted to the samples by least squares, which is a
-loss reported by `LossyConversionError`. The choice keeps every pair of
-these formats convertible, which users expect, while `lossy=True` marks
-the approximations. How a field is extended beyond its grid, and the
-boundary condition of the spline, are not counted as losses. FNIRT and
-FLIRT need the geometry of their two images, which a conversion takes
-as the options `reference=` and `moving=`. Status: implemented.
+A field is a B-spline of some degree, whether a format stores the values
+at its nodes (a B-spline of degree 1) or the coefficients of a cubic
+B-spline (FNIRT coefficient fields, NiftyReg grids of control points
+and velocity grids, elastix B-spline transforms, X5 B-splines). Every
+field format is therefore converted to by the same helpers of
+`io/transformations/base/_conversions.py`, which take the degree of the
+format. A field of that degree keeps its coefficients. A B-spline is
+linear in its coefficients and reproduces affine maps, so the affines
+around the field, and the grid that turns coordinates into
+displacements, are carried into the coefficients without a loss. A
+field of another degree is evaluated at its nodes, and its values are
+converted to coefficients by the existing conversion
+`field.to(store="coefficients")`, which is a loss. A format that imposes
+its own grid, such as the reference of an FSL warp or the knots of
+FNIRT, has the transformation evaluated at the nodes of that grid and
+interpolated with its degree, which is exact only when the
+transformation is already a B-spline of that degree on that grid. No
+spline is fitted by least squares. How a field is extended beyond its
+grid, and the boundary condition of the spline, are not counted as
+losses. FNIRT and FLIRT need the geometry of their two images, which a
+conversion takes as the options `reference=` and `moving=`. Status:
+implemented.
 
 ## 4. Refusals that are deliberate
 

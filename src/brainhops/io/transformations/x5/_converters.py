@@ -25,15 +25,17 @@ cuts it, and each piece becomes one transform of the file:
 | a field of displacements of cubic B-splines  | [`X5BSplineField`][]       |
 | a field of coordinates                       | [`X5CoordinatesField`][]   |
 
-A field of displacements is stored as its values at the nodes of its
-grid, which are read back with linear interpolation, and a velocity is
-integrated. A field interpolated with cubic B-splines is stored as its
-coefficients, which X5 reads back with cubic B-splines and a zero
-boundary. A field interpolated with another degree, or with cubic
-B-splines and another boundary, which X5 refits with a zero boundary,
-is not the same map near the edges or between the nodes, which is a
-loss: the converter raises a `LossyConversionError`, and
-`t.to(X5Transform, lossy=True)` returns the approximation.
+A field is converted as every field format converts it (see
+[`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]):
+a field interpolated with cubic B-splines is stored as its
+coefficients, which X5 reads back with cubic B-splines, and any other
+field as its values at the nodes of its grid, which are read back with
+linear interpolation. A velocity is integrated, and the affines around
+a field are carried into it. A field interpolated with a degree other
+than 1 or 3 is evaluated at its nodes, which is a loss: the converter
+raises a `LossyConversionError`, and `t.to(X5Transform, lossy=True)`
+returns the approximation. How a field is extended beyond its grid,
+which X5 does with a zero boundary, is not counted as a loss.
 
 The conversion takes `metadata=`, and without it the metadata of `t` is
 converted into the metadata of X5. An `X5Transform` that is converted
@@ -41,20 +43,17 @@ to its own class is changed by the rules of any chain, which keep its
 type.
 """
 
-import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
-from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+from brainhops.datamodel.enums import StoreEnum
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
-    FieldParts,
     coordinates_parts,
     displacement_parts,
     format_options,
@@ -128,26 +127,15 @@ def _element(piece: _xforms.Transformation, cls: type) -> tx.Tuple:
             )
         )
         return element, parts
-    if int(field.degree) == 3 and not field.log and field.data is not None:
-        # A cubic B-spline is kept as one, and the writer stores it as
-        # coefficients with a zero boundary. A piece of displacements is
-        # closed by the inverse of its first affine.
-        loss = None
-        if field.bound != BoundaryCondition.zeros:
-            loss = (
-                f"its cubic B-spline has the boundary {field.bound!s}, and "
-                f"X5 refits it with a zero boundary, which changes the map "
-                f"near the edges of its grid."
-            )
-        parts = FieldParts(before, field, np.linalg.inv(before), loss)
+    if int(field.degree) == 3 and field.data is not None:
+        # A cubic B-spline is kept as one, with its coefficients, and a
+        # cubic velocity is integrated into one. The affines around the
+        # field are carried into its coefficients.
+        parts = displacement_parts(piece, RAS, cls, degree=3)
         element = X5BSplineField(
             transformations=(
                 RASToVoxel(matrix=parts.world2grid[:-1]),
-                # X5 stores the coefficients of the B-spline, so values are
-                # turned into the coefficients that interpolate them.
-                replace(field, input=VOXEL, output=VOXEL).to(
-                    store=StoreEnum.coefficients
-                ),
+                parts.field.to(store=StoreEnum.coefficients),
                 VoxelToRAS(matrix=parts.grid2world[:-1]),
             )
         )
