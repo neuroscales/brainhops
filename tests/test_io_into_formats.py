@@ -636,10 +636,13 @@ def test_a_cartesian_grid_is_a_nifti_field_of_coordinates() -> None:
     np.testing.assert_array_equal(nifti.field, grid.field)
 
 
-def test_a_velocity_is_not_a_nifti_field_of_coordinates() -> None:
+def test_a_velocity_is_integrated_into_a_nifti_field_of_coordinates() -> None:
+    # A zero velocity integrates into the identity, whose coordinates are
+    # those of the nodes.
     velocity = xforms.StationaryVelocityField(data=np.zeros((2, 3, 4, 3)))
-    with pytest.raises(ConversionError, match="holds a"):
-        velocity.to(NiftiRASCoordinatesField)
+    nifti = velocity.to(NiftiRASCoordinatesField)
+    grid = np.stack(np.meshgrid(*map(np.arange, (2, 3, 4)), indexing="ij"), -1)
+    np.testing.assert_allclose(np.asarray(nifti.field), grid)
 
 
 # ----------------------------------------------------------------------

@@ -2,9 +2,10 @@
 Private converters into the NIfTI transformation formats.
 
 `t.to(NiftiVoxelToRAS)`, `NiftiVoxelToRAS.from_any(t)` and
-`io.save(t, "affine.nii.gz")` all run these converters. Each one either
-returns an instance of its format that is exactly the map `t` is, or
-raises a `ConversionError` that says what the format cannot hold.
+`io.save(t, "affine.nii.gz")` all run these converters. Each one
+returns an instance of its format that is the map `t` is, raises a
+`LossyConversionError` that carries an approximation of it, or raises a
+`ConversionError` that says what the format cannot hold.
 
 | Source                             | Format                        |
 | ---------------------------------- | ----------------------------- |
@@ -25,29 +26,30 @@ with its own.
 
 The endpoints are those of `t`, bridged exactly to those of the format.
 An affine to LPS is flipped into RAS, and an affine whose systems are
-not known is taken to map the systems of the format. A field is held
-only as NIfTI stores it, which means that its values are read back with
+not known is taken to map the systems of the format. A field is stored
+as its values at the nodes of its grid, which NIfTI reads back with
 linear interpolation and with the nearest value outside the grid. A
-displacement field is held only between a world-to-grid affine and its
-inverse. A field of displacements is not stored as one of
-coordinates, or the reverse: the two extend differently outside their
-grid, so they are not the same map there.
+field of coordinates is stored as the displacement of each node, and a
+field of displacements as the position of each node, since the two are
+the same map inside the grid and only extend differently beyond it.
+The affines on either side of the field are carried into its values
+when they do not undo each other. A field interpolated with another
+degree than 1 is sampled at its nodes, which is a loss: the converter
+raises a `LossyConversionError`, and `t.to(Format, lossy=True)` returns
+the sampled field.
 
-Each converter makes the decision "exactly, or raise" in one place: the
-helper it calls first (`_ras_displacement`, `_ras_coordinates`, or
-`affine_between`). Nothing is resampled or approximated. The options a
-converter is given are the format's own (`metadata=`, and `log=` and
-`steps=` for a displacement field); one that would change the map, such
-as `input=` or `matrix=`, is refused by `format_options`. Without
-`metadata=`, the format receives the metadata of `t`, which its field
-converts into `NiftiMetadata` without a record, so that the vocabulary
-of an X5 transform, say, is carried into the NIfTI file.
+The options a converter is given are the format's own (`metadata=`,
+and `log=` and `steps=` for a displacement field); one that would
+change the map, such as `input=` or `matrix=`, is refused by
+`format_options`. Without `metadata=`, the format receives the metadata
+of `t`, which its field converts into `NiftiMetadata` without a record,
+so that the vocabulary of an X5 transform, say, is carried into the
+NIfTI file.
 """
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
 
 # datamodel
 from brainhops.datamodel import systems as _systems
@@ -58,13 +60,16 @@ from brainhops.datamodel._transformations.compute.converters import (
     _convert_withsplines,
     smart_replace,
 )
-from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.errors import ConversionError
 
 # io
 from brainhops.io.transformations.base._conversions import (
+    FieldParts,
     affine_between,
-    apply_affine,
+    coordinates_parts,
+    displacement_parts,
     format_options,
+    held,
     split_field_chain,
     undoes,
     unrepresentable,
@@ -162,6 +167,7 @@ def _(
 
 
 @converter(_xforms.CoordinatesField, NiftiRASDisplacementField)
+@converter(_xforms.CartesianField, NiftiRASDisplacementField)
 @converter(_xforms.Sequence, NiftiRASDisplacementField)
 @converter
 def _(
@@ -169,22 +175,21 @@ def _(
     cls: tx.Type[NiftiRASDisplacementField],
     **kwargs,
 ) -> NiftiRASDisplacementField:
-    # Exactly, or raise: one field of displacements, between a world-to-grid
-    # affine and its inverse, sampled as NIfTI stores it, and written in the
-    # encoding it holds. A field of coordinates is refused there, with the
-    # reason.
-    options = format_options(
-        t, NiftiRASDisplacementField, kwargs, DISPLACEMENT_OPTIONS
-    )
+    # One field between a world-to-grid affine and its inverse, sampled as
+    # NIfTI stores it, and written in the encoding it holds. A field of
+    # coordinates becomes the displacement of each node, and a field that
+    # is not linear is sampled at its nodes, which loses.
+    cls = NiftiRASDisplacementField
+    options = format_options(t, cls, kwargs, DISPLACEMENT_OPTIONS)
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
-    ras2voxel, field, voxel2ras = _ras_displacement(t, options)
+    parts = _ras_displacement(t, options)
     chain = (
-        RASToVoxel(matrix=ras2voxel[:-1]),
-        replace(field, input=VOXEL, output=VOXEL),
-        VoxelToRAS(matrix=voxel2ras[:-1]),
+        RASToVoxel(matrix=parts.world2grid[:-1]),
+        parts.field,
+        VoxelToRAS(matrix=parts.grid2world[:-1]),
     )
-    return NiftiRASDisplacementField(transformations=chain, **options)
+    return held(cls(transformations=chain, **options), parts)
 
 
 @converter(_xforms.StationaryVelocityField, NiftiRASCoordinatesField)
@@ -197,16 +202,29 @@ def _(
     cls: tx.Type[NiftiRASCoordinatesField],
     **kwargs,
 ) -> NiftiRASCoordinatesField:
-    # Exactly, or raise: one field of coordinates on the file's voxels,
-    # sampled as NIfTI stores it, followed by an affine into RAS. A field
-    # of displacements is refused there, with the reason.
+    # One field of coordinates on the file's voxels, sampled as NIfTI
+    # stores it, carried into RAS. A field of displacements becomes the
+    # position of each node, and a field that is not linear is sampled at
+    # its nodes, which loses.
     cls = NiftiRASCoordinatesField
     options = format_options(t, cls, kwargs, COORDINATES_OPTIONS)
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
-    field, voxel2ras = _ras_coordinates(t, cls)
-    coordinates = ras_coordinate_values(t, field, voxel2ras, cls)
-    return cls(field=coordinates, **options)
+    if _empty_coordinates(t, cls) is not None:
+        return cls(field=None, **options)
+    parts = coordinates_parts(t, VOXEL, RAS, cls)
+    # The voxels of the file are the grid of the field: nothing (but
+    # rounding) may come between them.
+    if not undoes(parts.world2grid, np.eye(len(parts.world2grid))):
+        raise unrepresentable(
+            t,
+            cls,
+            "an affine comes before its field, and the voxels of the file "
+            "are those of the grid the field is sampled on. A map from RAS "
+            "is written as an SPM deformation, whose file name starts with "
+            "'y_'.",
+        )
+    return held(cls(field=parts.field.values, **options), parts)
 
 
 @converter
@@ -236,131 +254,78 @@ def _(
 # ----------------------------------------------------------------------
 
 
-def _ras_displacement(t: _xforms.Transformation, options: dict) -> tuple:
+def _ras_displacement(t: _xforms.Transformation, options: dict) -> FieldParts:
     """
     `t` as a NIfTI field of RAS displacements, or the reason it is not.
 
-    Returns `(ras2voxel, field, voxel2ras)`: the homogeneous world-to-grid
-    affine, the displacement field in the voxels of its grid, and the
-    grid-to-world affine, which undoes the first. `options` are those the
-    format is built with: `log=True` writes the velocity of the field,
-    which only a velocity has.
+    Returns the parts that
+    [`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]
+    gives: the world-to-grid affine, the displacement field in the voxels
+    of its grid, and the inverse affine. `options` are those the format is
+    built with: `log=True` writes the velocity of the field, which only a
+    velocity has.
     """
     cls = NiftiRASDisplacementField
-    ras2voxel, field, voxel2ras = split_field_chain(t, RAS, RAS, cls)
-    if not isinstance(field, _xforms.DisplacementField):
-        raise unrepresentable(
-            t,
-            cls,
-            f"it holds a {type(field).__name__}, and the format holds "
-            f"displacements. The two extend differently outside their "
-            f"grid, so one is not the other there.",
-        )
-    _check_nifti_sampling(field, t, cls)
-    if not undoes(ras2voxel, voxel2ras):
-        raise unrepresentable(
-            t,
-            cls,
-            "the affines on either side of its field do not undo each "
-            "other, and a NIfTI displacement field adds its vectors to the "
-            "point it moves, in RAS.",
-        )
-    if options.get("log") and not field.log:
-        raise unrepresentable(
-            t,
-            cls,
-            "log=True writes the velocity of its field, and its field holds "
-            "a displacement, whose logarithm brainhops does not compute.",
-        )
-    if options.get("steps") is not None and not options.get("log"):
+    log = bool(options.get("log"))
+    if options.get("steps") is not None and not log:
         raise unrepresentable(
             t,
             cls,
             "steps= is the number of squaring steps of a velocity, so it "
             "is given with log=True.",
         )
-    return ras2voxel, field, voxel2ras
-
-
-def _ras_coordinates(t: _xforms.Transformation, cls: type) -> tuple:
-    """
-    `t` as a NIfTI field of RAS coordinates, or the reason it is not.
-
-    Returns `(field, voxel2ras)`: the field of coordinates, on the voxels
-    of the file, and the affine its coordinates are carried into RAS by.
-    """
-    voxel2grid, field, voxel2ras = split_field_chain(t, VOXEL, RAS, cls)
-    check_coordinates(field, t, cls)
-    # The voxels of the file are the grid of the field: nothing (but
-    # rounding) may come between them.
-    if not undoes(voxel2grid, np.eye(len(voxel2grid))):
+    # A velocity is kept, and is written as its displacement unless the
+    # format is given log=True.
+    parts = displacement_parts(t, RAS, cls, keep_log=True)
+    if log and not parts.field.log:
         raise unrepresentable(
             t,
             cls,
-            "an affine comes before its field, and the voxels of the file "
-            "are those of the grid the field is sampled on.",
+            "log=True writes the velocity of its field, and its field holds "
+            "a displacement, whose logarithm brainhops does not compute.",
         )
-    return field, voxel2ras
+    return parts
 
 
-def ras_coordinate_values(
-    t: _xforms.Transformation,
-    field: _xforms.CoordinatesField,
-    voxel2ras: np.ndarray,
-    cls: type,
-) -> tx.Any:
+def _empty_coordinates(
+    t: _xforms.Transformation, cls: type
+) -> tx.Optional[_xforms.CoordinatesField]:
     """
-    The values of a field of coordinates, carried into RAS by `voxel2ras`.
+    The field of `t` when it holds no coordinates, or `None`.
 
     A field without data is the identity, as a displacement field without
-    data is, and is held without data. The affine after it then cannot be
-    carried into its values, so it must be the identity too.
+    data is, and is held without data. Nothing may then come before or
+    after it, since an affine has no values to be carried into.
     """
-    if field.data is None:
-        if not undoes(voxel2ras, np.eye(len(voxel2ras))):
-            raise unrepresentable(
-                t,
-                cls,
-                "it holds no coordinates, and an affine after them has no "
-                "values to be carried into.",
-            )
+    voxel2grid, field, voxel2ras = _voxel_chain(t, cls)
+    if field.data is not None:
         return None
-    return apply_affine(voxel2ras, field.field)
-
-
-def check_coordinates(
-    field: _xforms.Transformation, t: _xforms.Transformation, cls: type
-) -> None:
-    """Refuse a field that is not one of coordinates, sampled as NIfTI
-    stores it."""
-    if not isinstance(field, _xforms.CoordinatesField):
+    identity = np.eye(len(voxel2ras))
+    if not undoes(voxel2grid, identity) or not undoes(voxel2ras, identity):
         raise unrepresentable(
             t,
             cls,
-            f"it holds a {type(field).__name__}, and the format holds "
-            f"coordinates. The two extend differently outside their grid, "
-            f"so one is not the other there.",
+            "it holds no coordinates, and an affine before or after them "
+            "has no values to be carried into.",
         )
-    _check_nifti_sampling(field, t, cls)
+    return field
 
 
-def _check_nifti_sampling(
-    field: _xforms.Transformation, t: _xforms.Transformation, cls: type
-) -> None:
+def _voxel_chain(t: _xforms.Transformation, cls: type) -> tuple:
     """
-    Refuse a field that NIfTI does not read back as the same map.
+    `t` taken apart around its field, read from the voxels of the file.
 
-    NIfTI stores the values of a field, which are read back with linear
-    interpolation and extended with the nearest value outside the grid.
-    A field of values interpolated otherwise is a different map between
-    its samples, or outside them.
+    A NIfTI field of coordinates maps the voxels of its file, so a
+    transformation that maps from a world cannot be read from them. The
+    error then says that such a map is written as an SPM deformation.
     """
-    degree = int(field.degree)
-    if degree != 1 or field.bound != BoundaryCondition.nearest:
+    try:
+        return split_field_chain(t, VOXEL, RAS, cls)
+    except ConversionError as error:
         raise unrepresentable(
             t,
             cls,
-            f"its field is interpolated with degree {degree} and bound "
-            f"{field.bound!s}, and a NIfTI file stores values that are read "
-            f"with degree 1 and bound 'nearest'.",
-        )
+            f"a NIfTI field of coordinates maps the voxels of the file, and "
+            f"this transformation does not. A map from RAS is written as an "
+            f"SPM deformation, whose file name starts with 'y_'. {error}",
+        ) from error
