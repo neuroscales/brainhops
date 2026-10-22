@@ -369,3 +369,23 @@ def test_to_axis_maps_each_ome_type() -> None:
     assert type(other) is Axis
     assert other.type == "array"
     assert other.name == "c"
+
+
+def test_the_generic_load_reads_a_field_rather_than_an_image(
+    tmp_path: Path,
+) -> None:
+    import brainhops.io as io
+
+    path = _write_field_store(
+        tmp_path,
+        np.zeros((4, 5, 6, 3), dtype="float32"),
+        [
+            ("z", "space"),
+            ("y", "space"),
+            ("x", "space"),
+            ("d", "displacement"),
+        ],
+        {"type": "identity"},
+        name="generic.zarr",
+    )
+    assert isinstance(io.load(path), OmeZarrField)

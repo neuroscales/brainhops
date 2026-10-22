@@ -362,6 +362,10 @@ class OmeZarrImage(
             return Confidence.NO
         if not looks_like_multiscale(node):
             return Confidence.NO
+        if _holds_a_field(node):
+            # A displacement or a coordinate axis makes the group a field,
+            # which the OME-Zarr field reads.
+            return Confidence.NO
         return Confidence.CERTAIN
 
     def to_node(
@@ -666,3 +670,20 @@ def _level(
         rawdata=_ZarrProxy(array, store_location(array), perm),
         metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
     )
+
+
+def _holds_a_field(node: ZarrNode) -> bool:
+    """Whether the OME metadata of a group names a field axis.
+
+    A group whose coordinate systems have a displacement or a coordinate
+    axis stores a transformation field rather than an image.
+    """
+    # The transformation formats import the image formats, so their helper
+    # is imported when it is used.
+    from brainhops.io.transformations.zarr import _node
+
+    for system in _node.coordinate_systems(node):
+        for axis in getattr(system, "axes", None) or []:
+            if getattr(axis, "type", None) in ("displacement", "coordinate"):
+                return True
+    return False

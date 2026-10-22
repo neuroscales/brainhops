@@ -99,7 +99,9 @@ def _(t: XfmAffine, cls: tx.Type[XfmAffine], **kwargs) -> XfmAffine:
 # MINC volumes. A chain of affines alone becomes one linear transform.
 
 
-@register_converter(AFFINE_SOURCES + FIELD_SOURCES, XfmTransform)
+@register_converter(
+    dict.fromkeys(AFFINE_SOURCES + FIELD_SOURCES), XfmTransform
+)
 def _(
     t: _xforms.Transformation, cls: tx.Type[XfmTransform], **kwargs
 ) -> XfmTransform:
