@@ -146,7 +146,7 @@ On a format object, `rawdata` is the only attribute that stores data. It
 holds the data as it is laid out in the file. After a read, `rawdata` is
 usually a lazy proxy, and once data has been assigned it is an array.
 The proxy types are nibabel's `ArrayProxy`, the existing
-`DelayedH5Array` for HDF5, Zarr arrays, and a new proxy for raw binary
+`H5ArrayProxy` for HDF5, Zarr arrays, and a new proxy for raw binary
 blocks that knows their offset and compression.
 
 The public `data` attribute is a cached view of `rawdata`. Each format
@@ -571,7 +571,7 @@ Each format package is split into private submodules, such as
 `_views.py`. The package `__init__` exports only the public names. The
 `<X>Raw` and `<X>Metadata` classes are public. The proxy types are
 private, except those that are already public, such as
-`DelayedH5Array`.
+`H5ArrayProxy`.
 
 `Metadata` is exported by `brainhops.datamodel`, and `MetadataFormat` by
 the new package `brainhops.io.metadata`. After the first pass,
@@ -1135,7 +1135,7 @@ its status.
     mode `"rt"`. Formats that hold a chain of transformations needed
     `view`, `data` and `set_data` hooks. Status: accepted in passes 2a
     and 2b.
-46. The X5 record holds the lazy `DelayedH5Array` proxies, so the data
+46. The X5 record holds the lazy `H5ArrayProxy` proxies, so the data
     lives in the metadata rather than on the format object
     (`io/transformations/x5/_raw.py`). The nodes and their arrays form
     one record, and HDF5 has no split between a header and its data. A

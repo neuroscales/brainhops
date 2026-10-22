@@ -13,6 +13,7 @@ __all__ = [
     "HiddenConst",
     "ArrayProtocol",
     "ArrayLike",
+    "DTypeLike",
     "safe_get_origin",
     "npscalar",
     "npvector",
@@ -33,9 +34,9 @@ from bagof.hints import array as art
 from bagof.hints import cupy as cpt
 from bagof.hints import dask as dkt
 from bagof.hints import numpy as npt
-from bagof.hints.array import ArrayLike, ArrayProtocol
+from bagof.hints.array import ArrayLike, ArrayProtocol, DTypeLike
 from bagof.hints.numpy import dtype, ndarray
-from bagof.magic import Frozen, NoInit, NoRepr
+from bagof.magic import Default, Frozen, NoInit, NoRepr
 
 from brainhops import backends
 
@@ -66,6 +67,9 @@ Const = tx.Annotated[T, Frozen(), NoInit()]
 
 HiddenConst = tx.Annotated[Const[T], NoRepr()]
 """Constant field that is also hidden from the generated `__repr__`."""
+
+Internal = tx.Annotated[tx.Optional[T], NoRepr(), NoInit(), Default(None)]
+"""Internal attribute that is not exposed to the user."""
 
 
 class ToNumpyParameter(Converter):

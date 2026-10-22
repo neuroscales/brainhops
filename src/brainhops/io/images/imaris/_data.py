@@ -17,8 +17,10 @@ from brainhops._core.proxy import ArrayProxy
 from ._raw import ImarisLevel, ImarisRaw
 
 _Source = tx.Union[str, bytes, h5py.File]
-"""Where the voxels are read from: a local path, the bytes of a file, or
-an HDF5 file that the caller opened."""
+"""
+Where the voxels are read from: a local path, the bytes of a file, or
+an HDF5 file that the caller opened.
+"""
 
 
 class _ImarisProxy(ArrayProxy):
@@ -37,22 +39,21 @@ class _ImarisProxy(ArrayProxy):
     time.
     """
 
-    source: tx.Annotated[
-        tx.Any, tx.Doc("The path of the file, its bytes, or the open file.")
-    ]
-    record: NoRepr[
-        ImarisRaw,
-        tx.Doc("The record of the file, which gives the shape and the type."),
-    ]
-    level: tx.Annotated[
-        int, tx.Doc("The index of the resolution level that the proxy reads.")
-    ]
-    _chunks: NoInit[
-        NoRepr[
-            tx.Optional[tx.Tuple[int, ...]],
-            tx.Doc("The chunks of the level, once they were read."),
-        ]
-    ] = None
+    # --- magic attributes ----
+
+    source: tx.Any
+    """The path of the file, its bytes, or the open file."""
+
+    record: NoRepr[ImarisRaw]
+    """The record of the file, which gives the shape and the type."""
+
+    level: int = 0
+    """The index of the resolution level that the proxy reads."""
+
+    _chunks: NoInit[NoRepr[tx.Optional[tx.Tuple[int, ...]]]] = None
+    """The chunks of the level, once they were read."""
+
+    # --- properties ----
 
     @property
     def _level(self) -> ImarisLevel:
@@ -87,6 +88,8 @@ class _ImarisProxy(ArrayProxy):
                 min(int(c), n) for c, n in zip(chunks, self.base_shape[2:])
             )
         return owner._chunks
+
+    # --- methods ----
 
     def _read(self, parts: tx.Tuple[tx.Union[int, slice], ...]) -> np.ndarray:
         """Read a box of integers and slices, one per axis."""

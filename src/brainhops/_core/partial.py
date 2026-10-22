@@ -8,6 +8,14 @@ from .properties import alias, lazyproperty
 
 
 class AnnotatedPartial:
+    """
+    Base class for a partial function that keeps its type annotations.
+
+    When minting a new `annotated_partial`, a local subclass of this
+    base class is created, which overrides the `__call__` method and
+    its annotations.
+    """
+
     def __init__(self, func: Callable, *args, **keywords) -> None:
         self.partial = partial(func, *args, **keywords)
         update_wrapper(

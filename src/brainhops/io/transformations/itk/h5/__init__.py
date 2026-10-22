@@ -79,7 +79,7 @@ metadata of the file, and an
 [`H5Transform`][brainhops.io.transformations.itk.h5.H5Transform] decodes
 its chain from the record when it is first used. The parameters of the
 warps are read lazily by default, through a
-[`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] that opens
+[`H5ArrayProxy`][brainhops.io.common.hdf5.H5ArrayProxy] that opens
 the file again by its name, and at once with `load=True` or when the file
 is read from a stream. No object keeps the file open. A transformation
 is written as ITK writes an `.h5` file, and the parameters of its warps
@@ -88,14 +88,14 @@ the one that it was read from.
 """
 
 __all__ = [
-    "DelayedH5Array",
+    "H5ArrayProxy",
     "H5Header",
     "H5Metadata",
     "H5Raw",
     "H5Transform",
 ]
 
-from brainhops.io.common.hdf5 import DelayedH5Array
+from brainhops.io.common.hdf5 import H5ArrayProxy
 
 from ._metadata import H5Metadata
 from ._raw import H5Header, H5Raw

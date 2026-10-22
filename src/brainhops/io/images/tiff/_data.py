@@ -34,27 +34,27 @@ class _TiffProxy(ArrayProxy):
     which reads only its selection of a memory map or of a dask array.
     """
 
-    source: tx.Annotated[
-        tx.Any, tx.Doc("The file name or the bytes of the file.")
-    ]
-    record: NoRepr[
-        TiffRaw,
-        tx.Doc("The record of the series that the level belongs to."),
-    ]
-    level: tx.Annotated[int, tx.Doc("The index of the level in the record.")]
-    mmap: tx.Annotated[
-        bool,
-        tx.Doc(
-            "Whether a local, uncompressed, contiguous level is memory-mapped."
-        ),
-    ] = True
-    lazy: tx.Annotated[
-        tx.Optional[bool],
-        tx.Doc(
-            "Whether the level is read as a dask array, or `None` for the "
-            "array backend to decide."
-        ),
-    ] = None
+    # --- magic attributes ----
+
+    source: tx.Any
+    """The file name or the bytes of the file."""
+
+    record: NoRepr[TiffRaw]
+    """The record of the series that the level belongs to."""
+
+    level: int = 0
+    """The index of the level in the record."""
+
+    mmap: bool = True
+    """Whether a local, uncompressed, contiguous level is memory-mapped."""
+
+    lazy: tx.Optional[bool] = None
+    """
+    Whether the level is read as a dask array, or `None` for the array
+    backend to decide."
+    """
+
+    # --- properties ----
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -67,6 +67,8 @@ class _TiffProxy(ArrayProxy):
     def dtype(self) -> np.dtype:
         """The type of the pixels."""
         return np.dtype(self.record.levels[self.level].dtype)
+
+    # --- methods ----
 
     def read(self) -> tx.Any:
         """Return the pixels as a view in the order of brainhops.
