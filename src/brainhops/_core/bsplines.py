@@ -12,13 +12,15 @@ from brainhops._core.dependencies import da, np
 from brainhops._core.typing import Clip
 from brainhops.backends import (
     _creation_options,
-    best_backend,
+    backend,
     copy_array,
     get_array_backend,
     get_ndimage_backend,
-    match_backends,
+    promote_backends,
+    to_backend,
     to_backend_of,
 )
+from brainhops.datamodel.enums import BoundaryName
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
@@ -50,7 +52,7 @@ def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
     return _map_coordinates
 
 
-def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
+def _map_coordinates_for(xp: ModuleType, xd: ModuleType) -> tx.Callable:
     """Return the `map_coordinates` function of a backend.
 
     The dask implementation samples coordinates of shape `(ndim, *shape)`
@@ -58,13 +60,13 @@ def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
     is. The functions of other backends are wrapped so that they flatten the
     coordinates before sampling and restore the spatial shape afterwards.
     """
-    if da is not None and nx is da:
-        return nd.map_coordinates
-    return _autoreshape(nd.map_coordinates)
+    if da is not None and xp is da:
+        return xd.map_coordinates
+    return _autoreshape(xd.map_coordinates)
 
 
 def _over_batch(
-    nx: ModuleType,
+    xp: ModuleType,
     input: ArrayProtocol,
     batch: tx.Tuple[int, ...],
     func: tx.Callable[[ArrayProtocol], ArrayProtocol],
@@ -79,16 +81,16 @@ def _over_batch(
     rebuilds the graph of every chunk that the assignment covers.
     """
     indices = itertools.product(*[range(s) for s in batch])
-    if da is not None and nx is da:
+    if da is not None and xp is da:
         dtype = input.dtype
         parts = [
-            nx.asarray(func(input[index])).astype(dtype) for index in indices
+            xp.asarray(func(input[index])).astype(dtype) for index in indices
         ]
         if not batch:
             return parts[0]
-        return nx.stack(parts).reshape(tuple(batch) + tuple(shape))
+        return xp.stack(parts).reshape(tuple(batch) + tuple(shape))
     if output is None:
-        output = nx.empty_like(input, shape=tuple(batch) + tuple(shape))
+        output = xp.empty_like(input, shape=tuple(batch) + tuple(shape))
     for index in indices:
         output[index] = func(input[index])
     return output
@@ -200,9 +202,11 @@ def pull(
     ArrayProtocol
         The interpolated array, with shape `(*batch, *spatial_out)`.
     """
-    nx = best_backend(input, coords)
-    nd = get_ndimage_backend(nx)
-    input, coords = match_backends(input, coords)
+    backend = promote_backends(input, coords)
+    xp = get_array_backend(backend)
+    xd = get_ndimage_backend(xp)
+    input = to_backend(input, backend)
+    coords = to_backend(coords, backend)
     if dtype is not None:
         dtype = np.dtype(dtype)
         input = input.astype(_sampling_dtype(input.dtype, dtype), copy=False)
@@ -210,7 +214,7 @@ def pull(
     clip = _normalize_clip(clip, ndim)
     batch = input.shape[:-ndim]
     mask = _clip_mask(coords, input.shape[-ndim:], clip)
-    coords = nx.moveaxis(coords, -1, 0)
+    coords = xp.moveaxis(coords, -1, 0)
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
     opts = {
@@ -219,16 +223,16 @@ def pull(
         "cval": cval,
         "prefilter": not coeff,
     }
-    map_coordinates = _map_coordinates_for(nx, nd)
+    map_coordinates = _map_coordinates_for(xp, xd)
     output = _over_batch(
-        nx,
+        xp,
         input,
         batch,
         lambda x: map_coordinates(x, coords, **opts),
         tuple(coords.shape[1:]),
     )
     output = (
-        nx.where(mask, output, nx.zeros_like(output))
+        xp.where(mask, output, xp.zeros_like(output))
         if mask is not None
         else output
     )
@@ -262,18 +266,18 @@ def _cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
     dtype = np.dtype(dtype)
     if values.dtype == dtype:
         return values
-    nx = get_array_backend(values)
+    xp = get_array_backend(values)
     if dtype.kind == "b":
-        return nx.trunc(values).astype(dtype)
+        return xp.trunc(values).astype(dtype)
     if np.issubdtype(dtype, np.integer):
         # Adding 0.5 in float32 can move a value just below a rounding
         # threshold onto the threshold. Convert before that addition.
         values = values.astype(
             np.result_type(values.dtype, np.float64), copy=False
         )
-        rounded = nx.trunc(nx.where(values > 0, values + 0.5, values - 0.5))
+        rounded = xp.trunc(xp.where(values > 0, values + 0.5, values - 0.5))
         info = np.iinfo(dtype)
-        return nx.clip(rounded, info.min, info.max).astype(dtype)
+        return xp.clip(rounded, info.min, info.max).astype(dtype)
     return values.astype(dtype)
 
 
@@ -325,11 +329,11 @@ def pull_axes(
         come first, in their original order, and are followed by the
         spatial axes of the output.
     """
-    nx = best_backend(input, coords)
+    xp = get_array_backend(promote_backends(input, coords))
     axes = [int(a) % input.ndim for a in axes]
     ndim = len(axes)
     dest = list(range(input.ndim - ndim, input.ndim))
-    moved = nx.moveaxis(input, axes, dest)
+    moved = xp.moveaxis(input, axes, dest)
     return pull(moved, coords, degree, bound, coeff, clip=clip, dtype=dtype)
 
 
@@ -368,11 +372,14 @@ def spline_matrix(
     ArrayProtocol
         The matrix `W`, with shape `(n_out, n_in)`.
     """
-    nx = get_array_backend(coords_1d)
+    xp = get_array_backend(coords_1d)
     bound0 = bound if isinstance(bound, str) else 0.0
-    basis = nx.eye(n_in)
-    coords = nx.reshape(nx.asarray(coords_1d), (-1, 1))
-    return pull(basis, coords, degree, bound0, coeff).T
+    basis = xp.eye(n_in)
+    coords = xp.reshape(coords_1d, (-1, 1))
+    # Weight matrices follow their coordinates, independently of the
+    # backend selected for the image that will use these weights.
+    with backend(xp):
+        return pull(basis, coords, degree, bound0, coeff).T
 
 
 def pull_field(
@@ -403,11 +410,13 @@ def pull_field(
     ArrayLike
         The interpolated field, with shape `(*batch, *spatial_out, ndim)`.
     """
-    nx = best_backend(field, coords)
-    field, coords = match_backends(field, coords)
-    field = nx.moveaxis(field, -1, 0)
+    backend = promote_backends(field, coords)
+    xp = get_array_backend(backend)
+    field = to_backend(field, backend)
+    coords = to_backend(coords, backend)
+    field = xp.moveaxis(field, -1, 0)
     field = pull(field, coords, degree, bound, coeff)
-    field = nx.moveaxis(field, 0, -1)
+    field = xp.moveaxis(field, 0, -1)
     return field
 
 
@@ -445,8 +454,8 @@ def coeff2value(
     # coefficients are the values.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
-    nx = get_array_backend(input)
-    nd = get_ndimage_backend(nx)
+    xp = get_array_backend(input)
+    xd = get_ndimage_backend(xp)
     # An ndim of 0 means that all axes are spatial, since zero spatial axes
     # would be meaningless for interpolation.
     ndim = ndim or input.ndim
@@ -454,17 +463,17 @@ def coeff2value(
     # The grid is created in the backend of the input, with CuPy chunks
     # when the chunks of the input are CuPy arrays.
     options = _creation_options(input)
-    grid = nx.meshgrid(
-        *(nx.arange(s, **options) for s in input.shape[-ndim:]),
+    grid = xp.meshgrid(
+        *(xp.arange(s, **options) for s in input.shape[-ndim:]),
         indexing="ij",
     )
-    grid = nx.stack(grid, axis=0)
+    grid = xp.stack(grid, axis=0)
     mode, cval = _scipy_boundary(bound)
     degree = int(degree)
     opts = {"order": degree, "mode": mode, "cval": cval, "prefilter": False}
-    map_coordinates = _map_coordinates_for(nx, nd)
+    map_coordinates = _map_coordinates_for(xp, xd)
     return _over_batch(
-        nx,
+        xp,
         input,
         batch,
         lambda x: map_coordinates(x, grid, **opts),
@@ -500,18 +509,18 @@ def coeff2value_field(
     ArrayLike
         The values, with the same shape as `field`.
     """
-    nx = get_array_backend(field)
+    xp = get_array_backend(field)
     ndim = field.shape[-1]
-    field = nx.moveaxis(field, -1, 0)
+    field = xp.moveaxis(field, -1, 0)
     field = coeff2value(field, degree, bound, inplace=inplace, ndim=ndim)
-    field = nx.moveaxis(field, 0, -1)
+    field = xp.moveaxis(field, 0, -1)
     return field
 
 
 def value2coeff(
     input: ArrayLike,
     degree: int,
-    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    bound: tx.Union[BoundaryName, float],
     inplace: bool = False,
     ndim: tx.Optional[int] = None,
 ) -> ArrayLike:
@@ -539,8 +548,8 @@ def value2coeff(
     # values are the coefficients.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
-    nx = get_array_backend(input)
-    nd = get_ndimage_backend(input)
+    xp = get_array_backend(input)
+    xd = get_ndimage_backend(input)
     # An ndim of 0 means that all axes are spatial, since zero spatial axes
     # would be meaningless for a spline filter.
     ndim = ndim or input.ndim
@@ -560,11 +569,11 @@ def value2coeff(
     else:
 
         def convert(x: ArrayProtocol) -> ArrayProtocol:
-            return nd.spline_filter(x, order=degree, mode=mode)
+            return xd.spline_filter(x, order=degree, mode=mode)
 
     input = ensure_floating(input)
     output = _over_batch(
-        nx,
+        xp,
         input,
         batch,
         convert,
@@ -668,15 +677,14 @@ def _low_rank(block: np.ndarray) -> tx.Tuple[np.ndarray, np.ndarray]:
 
 
 def _along(
-    nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
+    xp: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
     """Apply a matrix to an array along one axis."""
-    matrix = nx.asarray(to_backend_of(matrix, x), dtype=np.float64)
-    return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
+    return xp.moveaxis(xp.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
 
 def _edge_terms(
-    nx: ModuleType,
+    xp: ModuleType,
     pair: tx.Tuple[np.ndarray, np.ndarray],
     slab: ArrayProtocol,
     axis: int,
@@ -696,7 +704,7 @@ def _edge_terms(
     # The factors are small NumPy matrices, which are moved once to the
     # backend of the slab, before anything is computed from them.
     u, v = (to_backend_of(factor, slab) for factor in pair)
-    weights = nx.tensordot(v, slab, axes=([1], [axis]))
+    weights = xp.tensordot(v, slab, axes=([1], [axis]))
     xp = get_array_backend(u)
     shape = [1] * slab.ndim
     shape[axis] = -1
@@ -707,7 +715,7 @@ def _edge_terms(
             column[length - u.shape[0] :] = u[:, j]
         else:
             column[: u.shape[0]] = u[:, j]
-        terms.append((column.reshape(shape), nx.expand_dims(weights[j], axis)))
+        terms.append((column.reshape(shape), xp.expand_dims(weights[j], axis)))
     return terms
 
 
@@ -812,7 +820,7 @@ def _constant_correction(
 def _interpolating_coefficients(
     values: ArrayProtocol,
     degree: int,
-    bound: tx.Union[str, float],
+    bound: str,
     cval: float,
 ) -> ArrayProtocol:
     """Return the coefficients that interpolate values exactly.
@@ -827,9 +835,20 @@ def _interpolating_coefficients(
     chunks. Because the solve is linear and separable, `cval` only changes
     the coefficients near the faces of the array, and that change is added
     at the end (see `_constant_correction`).
+
+    Parameters
+    ----------
+    values : ArrayProtocol
+        Values with shape `(*batch, *spatial)`.
+    degree : int
+        Degree of the spline, from 0 to 5.
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"} | float
+        Boundary condition, as in [`pull`][].
+    cval : float
+        Value beyond the edges, used when `bound` is a number. The coefficients
     """
-    nx = get_array_backend(values)
-    nd = get_ndimage_backend(values)
+    xp = get_array_backend(values)
+    xd = get_ndimage_backend(values)
     lazy = da is not None and isinstance(values, da.Array)
     coeff = values
     all_ones = []
@@ -837,7 +856,8 @@ def _interpolating_coefficients(
         size = int(values.shape[axis])
         inverse, low, high, ones = _boundary_solvers(size, degree, bound)
         if inverse is not None:
-            coeff = _along(nx, inverse, coeff, axis)
+            inverse = to_backend_of(inverse, coeff)
+            coeff = _along(xp, inverse, coeff, axis)
         else:
             index = (slice(None),) * axis
             # The corrections read the values before the in-place filter
@@ -849,13 +869,13 @@ def _interpolating_coefficients(
             )
             if not lazy:
                 low = _edge_terms(
-                    nx, low[0], low[1], axis, low[0][0].shape[0], False
+                    xp, low[0], low[1], axis, low[0][0].shape[0], False
                 )
                 high = _edge_terms(
-                    nx, high[0], high[1], axis, high[0][0].shape[0], True
+                    xp, high[0], high[1], axis, high[0][0].shape[0], True
                 )
             inplace = not lazy and coeff is not values
-            filtered = nd.spline_filter1d(
+            filtered = xd.spline_filter1d(
                 coeff,
                 degree,
                 axis=axis,
@@ -926,11 +946,11 @@ def value2coeff_field(
     ArrayLike
         The coefficients, with the same shape as `field`.
     """
-    nx = get_array_backend(field)
+    xp = get_array_backend(field)
     ndim = field.shape[-1]
-    field = nx.moveaxis(field, -1, 0)
+    field = xp.moveaxis(field, -1, 0)
     field = value2coeff(field, degree, bound, inplace=inplace, ndim=ndim)
-    field = nx.moveaxis(field, 0, -1)
+    field = xp.moveaxis(field, 0, -1)
     return field
 
 

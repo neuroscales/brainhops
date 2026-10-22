@@ -11,7 +11,7 @@ def _index_axis(i: int) -> Axis:
     return Axis(f"dim{i}", unit="index")
 
 
-class _AxesFactory(Factory):
+class AxesFactory(Factory):
     _AxisFactory = tx.Callable[..., AXIS]
 
     def __init__(
@@ -25,7 +25,7 @@ class _AxesFactory(Factory):
         return tuple(map(self.axis_factory, range(self.ndim)))
 
 
-class _ArrayAxesFactory(_AxesFactory):
+class ArrayAxesFactory(AxesFactory):
     def __init__(self, ndim: int) -> None:
         super().__init__(ndim, _index_axis)
 
@@ -33,21 +33,21 @@ class _ArrayAxesFactory(_AxesFactory):
 # --- Spatial ---
 
 
-def _SpaceAxes(*names) -> tx.Tuple[SpaceAxis, ...]:
+def SpaceAxes(*names) -> tx.Tuple[SpaceAxis, ...]:
     return tuple(map(SpaceAxis, names))
 
 
-def _SpaceArrayAxis(name: str) -> SpaceAxis:
+def SpaceArrayAxis(name: str) -> SpaceAxis:
     return SpaceAxis(name, unit="index")
 
 
-def _SpaceArrayAxes(*names) -> tx.Tuple[SpaceAxis, ...]:
-    return tuple(map(_SpaceArrayAxis, names))
+def SpaceArrayAxes(*names) -> tx.Tuple[SpaceAxis, ...]:
+    return tuple(map(SpaceArrayAxis, names))
 
 
-def _SpaceAxesFactory(*names) -> Factory:
-    return Factory(lambda: _SpaceAxes(*names))
+def SpaceAxesFactory(*names) -> Factory:
+    return Factory(lambda: SpaceAxes(*names))
 
 
-def _SpaceArrayAxesFactory(*names) -> Factory:
-    return Factory(lambda: _SpaceArrayAxes(*names))
+def SpaceArrayAxesFactory(*names) -> Factory:
+    return Factory(lambda: SpaceArrayAxes(*names))

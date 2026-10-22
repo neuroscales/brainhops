@@ -429,7 +429,7 @@ PACKAGES: tx.Dict[str, Package] = {
                 "AfniMetadata",
                 "AfniNiftiWarp",
                 "AfniRaw",
-                "AfniWarp",
+                "AfniWarpFormat",
                 "cardinal_to_real",
             }
         ),

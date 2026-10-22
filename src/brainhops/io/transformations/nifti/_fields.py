@@ -19,7 +19,11 @@ from brainhops._core.properties import (
 )
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -56,7 +60,6 @@ from brainhops.io.metadata._base import (
 )
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
-    StoredFieldMixin,
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
@@ -138,7 +141,7 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -260,7 +263,7 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
 
 @register_format
 class NiftiRASDisplacementField(
-    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
+    NiftiBasedTransformation, _xforms.DerivedSequence
 ):
     """
     Field of RAS displacements stored in a NIfTI file.
@@ -351,7 +354,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 

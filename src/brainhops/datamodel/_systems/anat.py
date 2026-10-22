@@ -16,7 +16,7 @@ import typing_extensions as tx
 from bagof.magic import Factory, Inherit
 
 from ..axes import A, AxisTuple, L, P, R, S
-from .dispatch import _both, _is_anat, _is_mm
+from .dispatch import both, is_anat, is_mm
 from .spatial import (
     CVoxelCoordinateSystem,
     FVoxelCoordinateSystem,
@@ -28,7 +28,7 @@ from .spatial import (
 
 
 class RASCoordinateSystem(
-    SpatialCoordinateSystem3D, on={"axes": _is_anat("RAS")}, priority=2
+    SpatialCoordinateSystem3D, on={"axes": is_anat("RAS")}, priority=2
 ):
     """The RAS anatomical system, used by NIfTI and many neuroimaging formats.
 
@@ -40,7 +40,7 @@ class RASCoordinateSystem(
 
 
 class LPSCoordinateSystem(
-    SpatialCoordinateSystem3D, on={"axes": _is_anat("LPS")}, priority=2
+    SpatialCoordinateSystem3D, on={"axes": is_anat("LPS")}, priority=2
 ):
     """The LPS anatomical system, used by ITK and hence by ANTs and 3D Slicer.
 
@@ -52,7 +52,7 @@ class LPSCoordinateSystem(
 
 
 class RSACoordinateSystem(
-    SpatialCoordinateSystem3D, on={"axes": _is_anat("RSA")}, priority=2
+    SpatialCoordinateSystem3D, on={"axes": is_anat("RSA")}, priority=2
 ):
     """The RSA anatomical system, found in some FreeSurfer LTA files.
 
@@ -69,7 +69,7 @@ class RSACoordinateSystem(
 class RASmm(
     RASCoordinateSystem,
     MillimetricCoordinateSystem,
-    on={"axes": _both(_is_anat("RAS"), _is_mm)},
+    on={"axes": both(is_anat("RAS"), is_mm)},
 ):
     """A [`RASCoordinateSystem`][] in millimetres."""
 
@@ -86,7 +86,7 @@ class RASmm(
 class LPSmm(
     LPSCoordinateSystem,
     MillimetricCoordinateSystem,
-    on={"axes": _both(_is_anat("LPS"), _is_mm)},
+    on={"axes": both(is_anat("LPS"), is_mm)},
 ):
     """An [`LPSCoordinateSystem`][] in millimetres."""
 
@@ -103,7 +103,7 @@ class LPSmm(
 class RSAmm(
     RSACoordinateSystem,
     MillimetricCoordinateSystem,
-    on={"axes": _both(_is_anat("RSA"), _is_mm)},
+    on={"axes": both(is_anat("RSA"), is_mm)},
 ):
     """An [`RSACoordinateSystem`][] in millimetres."""
 
@@ -129,7 +129,7 @@ class RSAmm(
 # order.
 
 
-@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RAS"))
+@FVoxelCoordinateSystem.register_polymorph(axes=is_anat("RAS"))
 class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in RAS order."""
 
@@ -143,7 +143,7 @@ class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
     )
 
 
-@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("LPS"))
+@FVoxelCoordinateSystem.register_polymorph(axes=is_anat("LPS"))
 class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in LPS order."""
 
@@ -157,7 +157,7 @@ class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
     )
 
 
-@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RSA"))
+@FVoxelCoordinateSystem.register_polymorph(axes=is_anat("RSA"))
 class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
     """An F-ordered voxel grid whose axes point in RSA order."""
 
@@ -171,7 +171,7 @@ class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
     )
 
 
-@CVoxelCoordinateSystem.register_polymorph(axes=_is_anat("SAR"))
+@CVoxelCoordinateSystem.register_polymorph(axes=is_anat("SAR"))
 class CRASCoordinateSystem(
     RASCoordinateSystem, CVoxelCoordinateSystem, on=None
 ):
@@ -188,7 +188,7 @@ class CRASCoordinateSystem(
     )
 
 
-@CVoxelCoordinateSystem.register_polymorph(axes=_is_anat("SPL"))
+@CVoxelCoordinateSystem.register_polymorph(axes=is_anat("SPL"))
 class CLPSCoordinateSystem(
     LPSCoordinateSystem, CVoxelCoordinateSystem, on=None
 ):
@@ -205,7 +205,7 @@ class CLPSCoordinateSystem(
     )
 
 
-@CVoxelCoordinateSystem.register_polymorph(axes=_is_anat("ASR"))
+@CVoxelCoordinateSystem.register_polymorph(axes=is_anat("ASR"))
 class CRSACoordinateSystem(
     RSACoordinateSystem, CVoxelCoordinateSystem, on=None
 ):

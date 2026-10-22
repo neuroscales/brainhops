@@ -15,7 +15,11 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
@@ -50,7 +54,6 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base._conversions import format_options
-from brainhops.io.transformations.base.fields import StoredFieldMixin
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
@@ -60,7 +63,7 @@ from brainhops.io.transformations.nifti._views import (
 
 # this format
 from ._converters import _afni_displacement
-from ._formats import AfniWarp
+from ._formats import AfniWarpFormat
 from ._geometry import _nifti_matrix, nifti_cardinal_matrix
 from ._warp import (
     WARP_LABELS,
@@ -89,10 +92,9 @@ _NIFTI_NUMS = re.compile(r"NIfTI_nums\s*=\s*[\"']([^\"']*)[\"']")
 
 @register_format
 class AfniNiftiWarp(
-    AfniWarp,
+    AfniWarpFormat,
     NiftiBasedTransformation,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    _xforms.DerivedSequence,
 ):
     """
     An AFNI nonlinear warp stored as a NIfTI file, such as the
@@ -102,7 +104,7 @@ class AfniNiftiWarp(
     array without an intent code, with its usual voxel-to-RAS sform and
     qform, and with the displacements unchanged: they are in DICOM (LPS)
     millimetres, `x`, `y` and `z`, and not in RAS, unlike a NIfTI
-    `DISPVECT` field. See [`AfniWarp`][] for what they mean. The grid is
+    `DISPVECT` field. See [`AfniWarpFormat`][] for what they mean. The grid is
     the cardinal grid that AFNI derives from the qform, or else the sform,
     as `3dNwarpApply` does when it reads the file. It is the stored grid
     unless that grid is oblique.
@@ -176,7 +178,7 @@ class AfniNiftiWarp(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 

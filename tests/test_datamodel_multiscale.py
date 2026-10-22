@@ -10,7 +10,7 @@ isotropic 1 mm grid and would hide a wrong normalization.
 import numpy as np
 import pytest
 
-from brainhops.datamodel._transformations.multiscale import _at_resolution
+from brainhops.datamodel.images import _match_resolution, nearest_level
 from brainhops.datamodel.transformations import (
     Affine,
     CoordinatesField,
@@ -83,7 +83,7 @@ def _two_level_displacement(rng: np.random.Generator) -> tuple:
 # Structure
 
 
-# --- structure ---------------------------------------------------------
+# --- structure --------------------------------------------------------
 
 
 def test_a_level_is_a_sequence() -> None:
@@ -134,7 +134,7 @@ def test_the_container_is_not_mutable() -> None:
 # Transparency in composition
 
 
-# --- transparency in composition ---------------------------------------
+# --- transparency in composition --------------------------------------
 
 
 def test_composes_like_its_finest_level() -> None:
@@ -167,16 +167,16 @@ def test_compute_returns_a_plain_transformation() -> None:
 # Level selection
 
 
-# --- level selection ---------------------------------------------------
+# --- level selection --------------------------------------------------
 
 
 def test_nearest_level_matches_the_target_resolution() -> None:
     field, *_ = _two_level_displacement(np.random.default_rng(9))
     # The voxel sizes are (2, 0.5) at level 0 and (4, 1) at level 1.
-    assert field._nearest_level(_rotated_anisotropic_affine(2.0, 0.5)[0]) == 0
-    assert field._nearest_level(_rotated_anisotropic_affine(4.0, 1.0)[0]) == 1
+    assert nearest_level(field, _rotated_anisotropic_affine(2.0, 0.5)[0]) == 0
+    assert nearest_level(field, _rotated_anisotropic_affine(4.0, 1.0)[0]) == 1
     # On a log scale, (3.2, 0.8) is nearer to (4, 1) than to (2, 0.5).
-    assert field._nearest_level(_rotated_anisotropic_affine(3.2, 0.8)[0]) == 1
+    assert nearest_level(field, _rotated_anisotropic_affine(3.2, 0.8)[0]) == 1
 
 
 def test_level_resolution_reads_the_leading_affine() -> None:
@@ -206,13 +206,13 @@ def test_an_identity_led_level_has_no_resolution() -> None:
         ]
     )
     assert field._level_resolution(0) is None
-    assert field._nearest_level(_rotated_anisotropic_affine(4.0, 1.0)[0]) == 0
+    assert nearest_level(field, _rotated_anisotropic_affine(4.0, 1.0)[0]) == 0
 
 
 # Ground truth
 
 
-# --- ground truth ------------------------------------------------------
+# --- ground truth -----------------------------------------------------
 
 
 def test_displacement_level_moves_world_points_by_the_world_field() -> None:
@@ -237,18 +237,15 @@ def test_coordinate_level_recovers_the_stored_coordinates() -> None:
     np.testing.assert_allclose(np.asarray(resolved.field), raw, atol=1e-6)
 
 
-# Reslice wiring
-
-
-# --- reslice wiring ----------------------------------------------------
+# --- reslice wiring ---------------------------------------------------
 
 
 def test_at_resolution_selects_the_matching_level() -> None:
     field, (l0, l1), *_ = _two_level_displacement(np.random.default_rng(13))
     coarse = _rotated_anisotropic_affine(4.0, 1.0)[0]
-    assert _at_resolution(field, coarse) is l1
+    assert _match_resolution(field, coarse) is l1
     fine = _rotated_anisotropic_affine(2.0, 0.5)[0]
-    assert _at_resolution(field, fine) is l0
+    assert _match_resolution(field, fine) is l0
 
 
 def test_at_resolution_walks_a_nested_sequence() -> None:
@@ -256,7 +253,7 @@ def test_at_resolution_walks_a_nested_sequence() -> None:
     outer = Scaling(scale=[2.0, 2.0])
     nested = Sequence([field, outer])
     coarse = _rotated_anisotropic_affine(4.0, 1.0)[0]
-    resolved = _at_resolution(nested, coarse)
+    resolved = _match_resolution(nested, coarse)
     assert isinstance(resolved, Sequence)
     assert resolved.transformations[0] is l1
 
@@ -264,4 +261,4 @@ def test_at_resolution_walks_a_nested_sequence() -> None:
 def test_at_resolution_leaves_a_plain_transformation_unchanged() -> None:
     plain = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
     target = Affine(matrix=np.array([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]]))
-    assert _at_resolution(plain, target) is plain
+    assert _match_resolution(plain, target) is plain

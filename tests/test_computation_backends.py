@@ -1,7 +1,7 @@
 """Tests of the backend in which computations run and return results.
 
 A computation chooses its package with `best_backend`, and
-`match_backends` moves the other arrays to that package. The CuPy tests
+`to_promoted_backend` moves the other arrays to that package. The CuPy tests
 are skipped where CuPy is not installed, and the Dask tests check the
 same paths in memory.
 """
@@ -13,9 +13,9 @@ from dask.callbacks import Callback
 from brainhops._core import bsplines
 from brainhops.backends import (
     backend,
-    match_backends,
-    output_backend,
+    promote_backends,
     to_backend_of,
+    to_promoted_backend,
 )
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine, DisplacementField
@@ -57,7 +57,7 @@ def test_arrays_in_memory_are_not_moved() -> None:
     # because Dask accepts NumPy operands.
     matrix = np.eye(3)
     lazy = da.from_array(FIELD, chunks=6)
-    moved = match_backends(lazy, matrix, None, 2.0)
+    moved = to_promoted_backend(lazy, matrix, None, 2.0)
     assert moved[0] is lazy
     assert moved[1] is matrix
     assert moved[2:] == (None, 2.0)
@@ -65,18 +65,18 @@ def test_arrays_in_memory_are_not_moved() -> None:
     assert to_backend_of(lazy, matrix) is lazy
 
 
-def test_the_output_backend_follows_the_inputs() -> None:
+def test_the_promoted_backend_follows_the_inputs() -> None:
     # Without a setting, a computation is lazy when one of its inputs is
     # lazy. An explicit setting is kept, and no array gives no setting.
     lazy = da.from_array(FIELD, chunks=6)
-    assert output_backend(VOLUME, None) == "numpy"
-    assert output_backend(VOLUME, lazy) == "dask"
-    assert output_backend() is None
+    assert promote_backends(VOLUME, None) == "numpy"
+    assert promote_backends(VOLUME, lazy) == "dask"
+    assert promote_backends() is None
     with backend("numpy"):
-        assert output_backend(lazy) == "numpy"
+        assert promote_backends(lazy) == "numpy"
 
 
-def test_coordinates_are_created_in_the_output_backend(
+def test_coordinates_are_created_in_the_promoted_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The reslice of a Dask image creates the coordinates at which it
@@ -170,7 +170,7 @@ def test_cupy_arrays_attract_the_others() -> None:
     # arrays get CuPy chunks.
     cp = pytest.importorskip("cupy")
     on_gpu = cp.asarray(VOLUME)
-    moved = match_backends(on_gpu, np.eye(3), da.from_array(VOLUME))
+    moved = to_promoted_backend(on_gpu, np.eye(3), da.from_array(VOLUME))
     assert moved[0] is on_gpu
     assert isinstance(moved[1], cp.ndarray)
     assert isinstance(moved[2]._meta, cp.ndarray)

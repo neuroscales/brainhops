@@ -231,8 +231,8 @@ def test_subspace_coords_preserves_interpolation_settings() -> None:
 
 def test_subspace_coords_promotes_an_integer_domain() -> None:
     # An integer coordinate field is promoted to float.
-    ab = get_array_backend()
-    field = ab.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
+    xp = get_array_backend()
+    field = xp.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
     Ti = CoordinatesField(field=field, output=_full4("in"))
     To = _subspace_affine([0, 1, 2])
     got = compose(To, Ti)

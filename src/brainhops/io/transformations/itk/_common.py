@@ -376,9 +376,9 @@ class ItkDisplacementBase(ItkBlockBase):
 
         # Only the linear part of the affine rotates a displacement.
         lps2vox = _affines.inv(vox2lps)
-        backend = get_array_backend(disp)
-        rotate = backend.asarray(lps2vox[:, :ndim], dtype=disp.dtype)
-        return backend.matmul(rotate, disp[..., None])[..., 0]
+        xp = get_array_backend(disp)
+        rotate = xp.asarray(lps2vox[:, :ndim], dtype=disp.dtype)
+        return xp.matmul(rotate, disp[..., None])[..., 0]
 
     # --- slots --------------------------------------------------------
 

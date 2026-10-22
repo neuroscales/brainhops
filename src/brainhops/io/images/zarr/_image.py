@@ -11,7 +11,7 @@ from brainhops._core.dependencies import da
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel._backends import dataproperty
+from brainhops.datamodel._backends import dataobjproperty, dataproperty
 
 # internals
 from brainhops.datamodel.images import SingleScaleImage
@@ -159,7 +159,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the image in the layout of `data`, without reading it.
 

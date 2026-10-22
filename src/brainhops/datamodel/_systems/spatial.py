@@ -25,8 +25,8 @@ from .array_finite import (
     FArrayCoordinateSystem3D,
 )
 from .base import CoordinateSystem, _VariadicAxes
-from .dispatch import _is_spatial
-from .factories import _SpaceArrayAxesFactory, _SpaceAxesFactory
+from .dispatch import is_spatial
+from .factories import SpaceArrayAxesFactory, SpaceAxesFactory
 from .finite import CoordinateSystem2D, CoordinateSystem3D
 from .physical import PhysicalCoordinateSystem
 
@@ -35,7 +35,7 @@ _2SpatialAxes: tx.TypeAlias = AxisTuple[SpaceAxis, SpaceAxis]
 _3SpatialAxes: tx.TypeAlias = AxisTuple[SpaceAxis, SpaceAxis, SpaceAxis]
 
 
-class SpatialCoordinateSystem(CoordinateSystem, on={"axes": _is_spatial}):
+class SpatialCoordinateSystem(CoordinateSystem, on={"axes": is_spatial}):
     """A coordinate system whose axes are all spatial.
 
     Parameters
@@ -77,7 +77,7 @@ class SpatialCoordinateSystem2D(
         The name of the system, if any.
     """  # noqa: E501
 
-    axes: Inherit[_2SpatialAxes] = _SpaceAxesFactory(*_DIMS2D)
+    axes: Inherit[_2SpatialAxes] = SpaceAxesFactory(*_DIMS2D)
 
 
 class SpatialCoordinateSystem3D(
@@ -94,7 +94,7 @@ class SpatialCoordinateSystem3D(
         The name of the system, if any.
     """  # noqa: E501
 
-    axes: Inherit[_3SpatialAxes] = _SpaceAxesFactory(*_DIMS3D)
+    axes: Inherit[_3SpatialAxes] = SpaceAxesFactory(*_DIMS3D)
 
 
 class PixelCoordinateSystem(
@@ -114,7 +114,7 @@ class PixelCoordinateSystem(
     """  # noqa: E501
 
     name: ... = "pixel"
-    axes: Inherit[_2SpatialAxes] = _SpaceArrayAxesFactory(*_DIMS2D)
+    axes: Inherit[_2SpatialAxes] = SpaceArrayAxesFactory(*_DIMS2D)
 
 
 class VoxelCoordinateSystem(
@@ -134,10 +134,10 @@ class VoxelCoordinateSystem(
     """  # noqa: E501
 
     name: ... = "voxel"
-    axes: Inherit[_3SpatialAxes] = _SpaceArrayAxesFactory(*_DIMS3D)
+    axes: Inherit[_3SpatialAxes] = SpaceArrayAxesFactory(*_DIMS3D)
 
 
-@CArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
+@CArrayCoordinateSystem2D.register_polymorph(axes=is_spatial)
 @PixelCoordinateSystem.register_polymorph(order="C")
 class CPixelCoordinateSystem(
     PixelCoordinateSystem, CArrayCoordinateSystem2D, on=None
@@ -157,10 +157,10 @@ class CPixelCoordinateSystem(
 
     name: ... = "cpixel"
     order: Inherit[tx.Literal["C"]] = "C"
-    axes: Inherit[_2SpatialAxes] = _SpaceArrayAxesFactory(*_PIXDIMS[::-1])
+    axes: Inherit[_2SpatialAxes] = SpaceArrayAxesFactory(*_PIXDIMS[::-1])
 
 
-@FArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
+@FArrayCoordinateSystem2D.register_polymorph(axes=is_spatial)
 @PixelCoordinateSystem.register_polymorph(order="F")
 class FPixelCoordinateSystem(
     PixelCoordinateSystem, FArrayCoordinateSystem2D, on=None
@@ -180,7 +180,7 @@ class FPixelCoordinateSystem(
 
     name: ... = "fpixel"
     order: Inherit[tx.Literal["F"]] = "F"
-    axes: Inherit[_2SpatialAxes] = _SpaceArrayAxesFactory(*_PIXDIMS)
+    axes: Inherit[_2SpatialAxes] = SpaceArrayAxesFactory(*_PIXDIMS)
 
 
 class CVoxelCoordinateSystem(
@@ -200,7 +200,7 @@ class CVoxelCoordinateSystem(
     """  # noqa: E501
 
     name: ... = "cvoxel"
-    axes: Inherit[_3SpatialAxes] = _SpaceArrayAxesFactory(*_VOXDIMS[::-1])
+    axes: Inherit[_3SpatialAxes] = SpaceArrayAxesFactory(*_VOXDIMS[::-1])
 
 
 class FVoxelCoordinateSystem(
@@ -220,7 +220,7 @@ class FVoxelCoordinateSystem(
     """  # noqa: E501
 
     name: ... = "fvoxel"
-    axes: Inherit[_3SpatialAxes] = _SpaceArrayAxesFactory(*_VOXDIMS)
+    axes: Inherit[_3SpatialAxes] = SpaceArrayAxesFactory(*_VOXDIMS)
 
 
 class MillimetricCoordinateSystem(

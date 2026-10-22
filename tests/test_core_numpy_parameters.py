@@ -25,7 +25,7 @@ def test_a_lazy_matrix_is_computed_by_the_converter(
     calls = []
     original = backends.to_backend
 
-    def to_backend(x, backend=backends._CURRENT):  # noqa: ANN001, ANN202
+    def to_backend(x, backend=None):  # noqa: ANN001, ANN202
         calls.append(backend)
         return original(x, backend)
 

@@ -131,8 +131,8 @@ def _(query: Linear, kind: IdentityType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows:
             return False
-        ab = get_array_backend(matrix)
-        return bool((matrix == ab.eye(rows)).all())
+        xp = get_array_backend(matrix)
+        return bool((matrix == xp.eye(rows)).all())
     return False
 
 
@@ -144,13 +144,13 @@ def _(query: Affine, kind: IdentityType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        ab = get_array_backend(matrix)
-        return bool((matrix == ab.eye(rows + 1)[:-1]).all())
+        xp = get_array_backend(matrix)
+        return bool((matrix == xp.eye(rows + 1)[:-1]).all())
     return False
 
 
 @checker
-@identity_from("data")
+@identity_from("dataobj")
 def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
     if compute:
         return bool((query.field == 0).all())
@@ -231,13 +231,13 @@ def _(query: Affine, kind: TranslationType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        ab = get_array_backend(matrix)
-        return bool((matrix[:, :-1] == ab.eye(rows)).all())
+        xp = get_array_backend(matrix)
+        return bool((matrix[:, :-1] == xp.eye(rows)).all())
     return False
 
 
 @checker
-@identity_from("data")
+@identity_from("dataobj")
 def _(query: DisplacementField, kind: TranslationType, compute: bool) -> bool:
     if compute:
         field = query.field
@@ -259,8 +259,8 @@ def _(query: Linear, kind: ScaleType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if rows != cols:
             return False
-        ab = get_array_backend(matrix)
-        return not bool((matrix * (1 - ab.eye(rows))).any())
+        xp = get_array_backend(matrix)
+        return not bool((matrix * (1 - xp.eye(rows))).any())
     return False
 
 
@@ -272,10 +272,10 @@ def _(query: Affine, kind: ScaleType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        ab = get_array_backend(matrix)
+        xp = get_array_backend(matrix)
         # The mask keeps the off-diagonal entries and the translation column,
         # both of which vanish for a diagonal affine.
-        return not bool((matrix * (1 - ab.eye(rows + 1)[:-1])).any())
+        return not bool((matrix * (1 - xp.eye(rows + 1)[:-1])).any())
     return False
 
 
@@ -299,8 +299,8 @@ def _diag_pos(scale: ArrayProtocol) -> bool:
 
 
 def _diag_spec(scale: ArrayProtocol) -> bool:
-    ab = get_array_backend(scale)
-    return bool((ab.abs(scale) == 1).all())
+    xp = get_array_backend(scale)
+    return bool((xp.abs(scale) == 1).all())
 
 
 def _diag_iso(scale: ArrayProtocol) -> bool:
@@ -350,7 +350,7 @@ def _diagonal_values(
     matrix = getattr(query, "matrix", None)
     if matrix is None:
         return None
-    ab = get_array_backend(matrix)
+    xp = get_array_backend(matrix)
     if isinstance(query, Affine):
         if bool(matrix[:, -1].any()):
             return None  # a translation, which is not diagonal
@@ -358,9 +358,9 @@ def _diagonal_values(
     rows, cols = matrix.shape
     if rows != cols:
         return None
-    if bool((matrix * (1 - ab.eye(rows))).any()):
+    if bool((matrix * (1 - xp.eye(rows))).any()):
         return None
-    return ab.diagonal(matrix)
+    return xp.diagonal(matrix)
 
 
 def _diagonal_checker(source: type, node: type) -> tx.Callable:
@@ -401,8 +401,8 @@ def _(query: Linear, kind: PermType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if rows != cols:
             return False
-        ab = get_array_backend(matrix)
-        is_binary = bool(ab.isin(matrix, [0, 1]).all())
+        xp = get_array_backend(matrix)
+        is_binary = bool(xp.isin(matrix, [0, 1]).all())
         is_perm = bool(
             (matrix.sum(0) == 1).all() and (matrix.sum(1) == 1).all()
         )
@@ -418,12 +418,12 @@ def _(query: Affine, kind: PermType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        ab = get_array_backend(matrix)
+        xp = get_array_backend(matrix)
         no_translation = bool((matrix[:, -1] == 0).all())
         if not no_translation:
             return False
         linpart = matrix[:, :-1]
-        is_binary = bool(ab.isin(linpart, [0, 1]).all())
+        is_binary = bool(xp.isin(linpart, [0, 1]).all())
         is_perm = bool(
             (linpart.sum(0) == 1).all() and (linpart.sum(1) == 1).all()
         )
@@ -471,9 +471,9 @@ def _(query: Linear, kind: RotType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if rows != cols:
             return False
-        ab = get_array_backend(matrix)
-        is_orthogonal = bool((matrix @ matrix.T == ab.eye(rows)).all())
-        is_posdef = bool(ab.linalg.det(matrix) > 0)
+        xp = get_array_backend(matrix)
+        is_orthogonal = bool((matrix @ matrix.T == xp.eye(rows)).all())
+        is_posdef = bool(xp.linalg.det(matrix) > 0)
         return is_orthogonal and is_posdef
     return False
 
@@ -486,13 +486,13 @@ def _(query: Affine, kind: RotType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        ab = get_array_backend(matrix)
+        xp = get_array_backend(matrix)
         no_translation = bool((matrix[:, -1] == 0).all())
         if not no_translation:
             return False
         linpart = matrix[:, :-1]
-        is_orthogonal = bool((linpart @ linpart.T == ab.eye(rows)).all())
-        is_posdef = bool(ab.linalg.det(linpart) > 0)
+        is_orthogonal = bool((linpart @ linpart.T == xp.eye(rows)).all())
+        is_posdef = bool(xp.linalg.det(linpart) > 0)
         return is_orthogonal and is_posdef
     return False
 
@@ -539,8 +539,8 @@ def _(query: Linear, kind: PosLinType, compute: bool) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    ab = get_array_backend(matrix)
-    return bool(ab.linalg.det(matrix) > 0)
+    xp = get_array_backend(matrix)
+    return bool(xp.linalg.det(matrix) > 0)
 
 
 @checker
@@ -552,8 +552,8 @@ def _(query: Linear, kind: SLType, compute: bool) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    ab = get_array_backend(matrix)
-    return bool(ab.linalg.det(matrix) == 1)
+    xp = get_array_backend(matrix)
+    return bool(xp.linalg.det(matrix) == 1)
 
 
 def _is_conformal(matrix: ArrayProtocol) -> bool:
@@ -563,12 +563,12 @@ def _is_conformal(matrix: ArrayProtocol) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    ab = get_array_backend(matrix)
-    fro = ab.linalg.norm(matrix, ord="fro")
+    xp = get_array_backend(matrix)
+    fro = xp.linalg.norm(matrix, ord="fro")
     if bool(fro == 0):
         return False
     normalized = matrix * (rows**0.5 / fro)
-    return bool((normalized @ normalized.T == ab.eye(rows)).all())
+    return bool((normalized @ normalized.T == xp.eye(rows)).all())
 
 
 @checker
@@ -590,8 +590,8 @@ def _(query: Linear, kind: CSOType, compute: bool) -> bool:
     # The conformal test normalizes the matrix by a positive factor, which
     # does not change the sign of the determinant, so the determinant of the
     # matrix itself decides the orientation.
-    ab = get_array_backend(matrix)
-    return bool(ab.linalg.det(matrix) > 0)
+    xp = get_array_backend(matrix)
+    return bool(xp.linalg.det(matrix) > 0)
 
 
 @checker
@@ -603,8 +603,8 @@ def _(query: Linear, kind: OType, compute: bool) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    ab = get_array_backend(matrix)
-    return bool((matrix @ matrix.T == ab.eye(rows)).all())
+    xp = get_array_backend(matrix)
+    return bool((matrix @ matrix.T == xp.eye(rows)).all())
 
 
 def _is_monomial(matrix: ArrayProtocol) -> bool:
@@ -631,8 +631,8 @@ def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
     matrix = query.matrix
     if not _is_monomial(matrix):
         return False
-    ab = get_array_backend(matrix)
-    return bool(ab.isin(matrix, [-1, 0, 1]).all())
+    xp = get_array_backend(matrix)
+    return bool(xp.isin(matrix, [-1, 0, 1]).all())
 
 
 # ======================================================================
@@ -669,8 +669,8 @@ def _linear_part(t: Transformation) -> tx.Optional[ArrayProtocol]:
     if isinstance(t, Scaling):
         if t.scale is None:
             return None
-        ab = get_array_backend(t.scale)
-        return ab.diag(t.scale)
+        xp = get_array_backend(t.scale)
+        return xp.diag(t.scale)
     return None
 
 
@@ -678,13 +678,13 @@ def _matrix_rank(linear: ArrayProtocol) -> int:
     # When the backend has no matrix_rank, the determinant of a square matrix
     # can still tell full rank from rank deficiency, and that distinction is
     # all the callers need.
-    ab = get_array_backend(linear)
-    matrix_rank = getattr(getattr(ab, "linalg", None), "matrix_rank", None)
+    xp = get_array_backend(linear)
+    matrix_rank = getattr(getattr(xp, "linalg", None), "matrix_rank", None)
     if matrix_rank is not None:
         return int(matrix_rank(linear))
     no, ni = linear.shape
     if no == ni:
-        return ni if bool(ab.linalg.det(linear) != 0) else ni - 1
+        return ni if bool(xp.linalg.det(linear) != 0) else ni - 1
     raise NotImplementedError(
         "the array backend provides neither matrix_rank nor a square "
         "determinant fallback for rank computation"

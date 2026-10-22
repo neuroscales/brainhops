@@ -1,6 +1,6 @@
 """Base class of the data models and its converter."""
 
-__all__ = ["DataModelBase", "DataModelConverter", "IdentityComparison"]
+__all__ = ["DataModelBase", "DataModelConverter", "_ComparesByIdMixin"]
 
 # stdlib
 import re
@@ -17,52 +17,36 @@ from brainhops import errors
 from brainhops._core.magic import SharedOptions
 
 
-class IdentityComparison:
-    """Mixin that makes a class and all its subclasses compare by identity.
-
-    Equality never raises, and instances are hashable. Identity comparison
-    is restored on every subclass, because a subclass that also derives
-    from another data model may otherwise receive a value-based `__eq__`
-    and `__hash__`.
-    """
-
-    __eq__ = object.__eq__
-    __ne__ = object.__ne__
-    __hash__ = object.__hash__
-
-    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
-        super().__init_subclass__(**kwargs)
-        for name in ("__eq__", "__ne__", "__hash__"):
-            setattr(cls, name, getattr(object, name))
-
-
 class DataModelBase(SharedOptions):
     """Base class of all data models.
 
-    Every data model converts the values of its fields to their declared
-    types, and can be built from a mapping or from a similar instance
-    with [`from_any`][].
+    All such classes are [`Magic`][bagof.magic.Magic] classes, and they
+    implicitly convert values to the declared type of their attributes,
+    at construction or during assignment.
 
-    Some data models are polymorphic: calling a class such as `Axis`
-    builds the subclass that the arguments select, according to the `on=`
-    condition with which each subclass is declared. A polymorphic class
-    is built only from arguments that match its own condition and refuses
-    the others, so `OrientedAxis(orientation=None)` raises instead of
-    building an oriented axis without an orientation. A field that a
-    class declares itself keeps the type written there, so the fields
-    that select a subclass are typed narrowly, as in `Literal["space"]`.
+    All instances of these classes can be constructed from
+
+    - an instance of a subclass,
+    - an instance of a superclass,
+    - an instance of "related" class (which shares a superclass), or
+    - a dictionary,
+
+    using the `from_any`, `from_instance` or `from_dict` factories,
+    as long as their attributes or keys are compatible.
+
+    Some classes are polymorphic, meaning that they can return instances
+    of their subclasses based on the value of their arguments.
     """
-
-    # The options given to the class statement apply to the whole hierarchy.
 
     @classmethod
     def _data_model(cls) -> type:
-        """Return the data model that the class instantiates.
+        """Return the type of the general model that this class instantiates.
 
-        A data model is its own data model. A file format returns the
-        data model that it stores, such as `SingleScaleImage` for
-        `NiftiImage`, so that two formats of the same data model are
-        related.
+        Most `DataModelBase` classes are their own data model. However,
+        some are specific implementations that represent a more general model.
+
+        For example, a file format returns the general type of the data
+        that it stores, such as `SingleScaleImage`.
         """
         return cls
 
@@ -70,20 +54,20 @@ class DataModelBase(SharedOptions):
     def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
         """Build an instance from a mapping.
 
-        Only keys that name keyword fields or constructor-only keywords, such
-        as the `matrix=` keyword of an affine, are used. Other keys are
-        ignored, unlike in
-        [`from_any`][brainhops.datamodel.base.DataModelBase.from_any]. A key
-        that names a fixed field, that is, a field whose value the class sets
-        itself, is checked against that value rather than passed on. The
-        extra arguments are passed to the constructor and take precedence
-        over the mapping.
+        Only keys that can be passed to the constructor are used.
+        Other keys are ignored, unlike in [`from_any`][]
+
+        A key that corresponds to a fixed attribute (that is, an attribute
+        that cannot be set by the constructor) is checked against its value.
+
+        Extra arguments (`*args` and `**kwargs`) are passed to the
+        constructor and take precedence over the mapping.
 
         Raises
         ------
         ValueError
-            If a fixed field is given a value other than `None` and the value
-            that the class fixes.
+            If a fixed attribute is given a value other than `None` or
+            the value that the class fixes.
         """
 
         def read(field: tx.Any) -> tx.Any:
@@ -95,24 +79,26 @@ class DataModelBase(SharedOptions):
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Build an instance from an instance of a related data model.
 
-        Two classes are related when one of them is a parent of the
-        other, or when both belong to the same polymorphic family, that
-        is, to the subclasses of a class such as `Axis` whose calls build
-        the subclass that the arguments select. For a file format, the
-        class that is compared is its data model, such as
-        `SingleScaleImage` for `NiftiImage`. Fields with the same name
-        then mean the same thing, so the fields are copied by name.
+        Two classes are related when:
 
-        Only attributes that name keyword fields are used, and an attribute
-        that is `None` leaves the default of the class in place. The extra
-        arguments are passed to the constructor and take precedence. Unless
-        `other` is already an instance of this class, attributes that name
-        fixed fields are checked, so a generic axis oriented right to left
-        cannot be read as a `LeftToRightAxis`. The result is an instance of
-        this class, possibly of the subclass that a polymorphic class
-        selects. This method is the conversion that
-        [`to`][brainhops.datamodel.base.DataModelBase.to] runs with
-        `copy=True`, so the two give the same result.
+        - one of them is a parent of the other, or
+        - when both belong to the same polymorphic family, or
+        - when they represent the same "data model".
+
+        In all these cases, attributes that have the same name also have
+        the same meaning, so they can be copied by name.
+
+        !!! note
+            - Only attributes that name keyword arguments are used.
+            - An attribute that is `None` leaves the default of the
+              class in place.
+            - Extra arguments (`*args` and `**kwargs`) are passed to the
+              constructor and take precedence.
+            - Unless `other` is already an instance of this class, an
+              attribute of the instance that that corresponds to a fixed
+              attribute in the target class is checked against its value.
+            - In genemost casesral, `cls.from_instance(other)` is
+              equivalent to `other.to(cls, copy=True)`.
 
         Parameters
         ----------
@@ -180,12 +166,8 @@ class DataModelBase(SharedOptions):
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Build an instance from a mapping, a data model or an argument.
 
-        A mapping is read field by field. An instance of a data model is
-        converted by
-        [`from_instance`][brainhops.datamodel.base.DataModelBase.from_instance],
-        which refuses a class that is not related to this one. Any other
-        object is passed to the constructor. A file format also reads a
-        file or its content here.
+        This constructors dispatches to [`from_dict`][], [`from_instance`][]
+        or the constructor, depending on the type of `other`.
 
         Raises
         ------
@@ -207,12 +189,12 @@ class DataModelBase(SharedOptions):
     ) -> tx.Any:
         """Convert the object to another class of its data model.
 
-        Without a class, the object keeps its own class. When the object
-        is already of exactly the requested class and no field is given,
-        the object itself is returned, unless `copy` is true. Otherwise,
-        the object is converted by the `from_instance` of the requested
-        class, which copies the fields of a related class by name.
-        Transformations replace this conversion by their converters.
+        Without a class, the object keeps its own class, and its
+        attributes may be replaced by the keyword arguments.
+
+        Otherwise, the object is converted by `cls.from_instance`, which
+        copies the attributes of a related class by name. Some subclasses
+        override this method so that it triggers a more specific conversion.
 
         Parameters
         ----------
@@ -238,6 +220,25 @@ class DataModelBase(SharedOptions):
         if type(self) is target and not kwargs and not copy:
             return self
         return target.from_instance(self, **kwargs)
+
+
+class _ComparesByIdMixin:
+    """Mixin that makes a class and all its subclasses compare by identity.
+
+    Equality never raises, and instances are hashable. Identity comparison
+    is restored on every subclass, because a subclass that also derives
+    from another data model may otherwise receive a value-based `__eq__`
+    and `__hash__`.
+    """
+
+    __eq__ = object.__eq__
+    __ne__ = object.__ne__
+    __hash__ = object.__hash__
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for name in ("__eq__", "__ne__", "__hash__"):
+            setattr(cls, name, getattr(object, name))
 
 
 # --- helpers ----------------------------------------------------------

@@ -489,8 +489,8 @@ class OmeZarrImage(
                 entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
                 moved_placement = True
             rich = rich or _map.needs_rich_version(entry)
-            backend = get_array_backend(data)
-            stored = backend.transpose(data, storage_perm)
+            xp = get_array_backend(data)
+            stored = xp.transpose(data, storage_perm)
             options = dict(kwargs)
             if stored_chunks is not None:
                 options["chunks"] = stored_chunks

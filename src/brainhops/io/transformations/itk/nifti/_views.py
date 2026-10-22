@@ -52,5 +52,5 @@ def _itk_field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     if ndim not in (2, 3) or shape[-1] != ndim:
         return data
     singletons = (1,) * (4 - ndim)
-    backend = get_array_backend(data)
-    return backend.reshape(data, (*shape[:ndim], *singletons, ndim))
+    xp = get_array_backend(data)
+    return xp.reshape(data, (*shape[:ndim], *singletons, ndim))

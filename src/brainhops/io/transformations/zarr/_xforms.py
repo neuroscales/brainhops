@@ -15,7 +15,7 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
-from brainhops.backends import get_array_backend, to_backend
+from brainhops.backends import get_array_backend, to_backend, to_numpy
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
@@ -466,8 +466,8 @@ def _vector_axis_last(
     ndim = len(raw.shape)
     if vector_axis in (-1, ndim - 1):
         return raw
-    ab = get_array_backend(raw)
-    return ab.moveaxis(raw, vector_axis, -1)
+    xp = get_array_backend(raw)
+    return xp.moveaxis(raw, vector_axis, -1)
 
 
 def _to_voxel_displacement(
@@ -478,7 +478,7 @@ def _to_voxel_displacement(
     # computed in the backend of the displacements, so that a Dask array is
     # converted block by block rather than read into memory.
     matrix = _as_affine(voxel2world).matrix
-    inverse = to_backend(_affine_inv(matrix), "numpy")
+    inverse = to_numpy(_affine_inv(matrix))
     ab = get_array_backend(raw)
     return raw @ ab.asarray(inverse[:, :-1].T)
 

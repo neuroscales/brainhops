@@ -36,9 +36,11 @@ from brainhops._core.bsplines import (
 from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops.backends import (
     _creation_options,
+    backend,
     copy_array,
     get_array_backend,
     may_share_memory,
+    resolve_backend,
     to_backend_of,
 )
 from brainhops.datamodel import kinds
@@ -124,8 +126,9 @@ def pull_separable(
     steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
         # The monolithic pull writes into an array that it allocates.
+        coords = _coordinates_like(seq, data)
         return _fresh(
-            pull(data, seq.compute().field, dtype=dtype, **opt),
+            pull(data, coords, dtype=dtype, **opt),
             data,
             copy,
             True,
@@ -134,7 +137,7 @@ def pull_separable(
     # The steps work in floating point so that an integer input is not
     # rounded between them. The gather and pull steps preserve the dtype that
     # they are given, so an integer input is converted to float once here.
-    ab = get_array_backend(data)
+    xp = get_array_backend(data)
     inp_dtype = np.dtype(data.dtype)
     out_dtype = np.dtype(inp_dtype if dtype is None else dtype)
     tmp_dtype = _sampling_dtype(inp_dtype, dtype)
@@ -152,7 +155,7 @@ def pull_separable(
             masks.append((mask, step["G"]))
 
     permutation = [labels.index(("grid", g)) for g in range(data.ndim)]
-    arr = ab.transpose(arr, permutation)
+    arr = xp.transpose(arr, permutation)
     if masks:
         arr = _apply_clip_masks(arr, masks)
         fresh = True
@@ -529,7 +532,7 @@ def _make_gather(
     bound0 = bound if isinstance(bound, str) else 0.0
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
-        ab = get_array_backend(arr)
+        xp = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = np.arange(n_out) * scale + shift
         # Degree-0 weights map each output coordinate to the input sample
@@ -547,14 +550,14 @@ def _make_gather(
         if bool(inbounds.all()) and _is_unit_progression(idx):
             result = _slice_axis(arr, axis, idx)
         else:
-            result = ab.take(arr, ab.asarray(idx), axis=axis)
+            result = xp.take(arr, xp.asarray(idx), axis=axis)
             if not bool(inbounds.all()):
                 cval = 0.0 if isinstance(bound, str) else float(bound)
                 mask_shape = [1] * result.ndim
                 mask_shape[axis] = n_out
                 mask = inbounds.reshape(tuple(mask_shape))
                 mask = to_backend_of(mask, result)
-                result = ab.where(mask, result, cval)
+                result = xp.where(mask, result, cval)
         labels = list(labels)
         labels[axis] = ("grid", g)
         mask = _clip_mask(coords[..., None], (n_in,), clip)
@@ -579,15 +582,15 @@ def _make_matrix(
     n_out = shape[g]
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
-        ab = get_array_backend(arr)
+        xp = get_array_backend(arr)
         axis = labels.index(("data", d))
         # The coordinates are created in the backend of the data, with
         # CuPy chunks when its chunks are CuPy arrays, so that the weights
         # computed from them are there as well.
-        coords = ab.arange(n_out, **_creation_options(arr)) * scale + shift
+        coords = xp.arange(n_out, **_creation_options(arr)) * scale + shift
         weights = spline_matrix(n_in, coords, degree, bound, coeff)
-        out = ab.moveaxis(
-            ab.tensordot(arr, weights, axes=([axis], [1])), -1, axis
+        out = xp.moveaxis(
+            xp.tensordot(arr, weights, axes=([axis], [1])), -1, axis
         )
         if not isinstance(bound, str):
             # A constant boundary is not linear, so the fill value is added
@@ -602,6 +605,20 @@ def _make_matrix(
         return out, labels, mask
 
     return run
+
+
+def _coordinates_like(seq: Sequence, array: ArrayProtocol) -> ArrayProtocol:
+    """Return the coordinates at which a reslice samples an array.
+
+    The coordinates are the field of a sequence that starts with the grid
+    of the output. A grid creates its coordinates with the backend
+    setting in effect, so the field is computed under the setting that
+    names the backend of the array, including its device. The coordinates
+    are then created where the array is, rather than with NumPy and moved
+    afterwards.
+    """
+    with backend(resolve_backend(array, "native")):
+        return seq.compute().field
 
 
 def _make_pull(
@@ -622,7 +639,7 @@ def _make_pull(
         chain.append(inner)
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
-        coords = Sequence(transformations=chain).compute().field
+        coords = _coordinates_like(Sequence(transformations=chain), arr)
         positions = [labels.index(("data", d)) for d in data_axes]
         moved = pull_axes(arr, coords, positions, degree, bound, coeff)
         used = set(positions)
@@ -660,12 +677,12 @@ def _apply_clip_masks(
     bringing clipped samples back. Masks stay lazy and only span the axes
     of their independent group.
     """
-    ab = get_array_backend(arr)
+    xp = get_array_backend(arr)
     for mask, axes in masks:
         order = sorted(range(len(axes)), key=lambda index: axes[index])
-        mask = ab.transpose(ab.asarray(to_backend_of(mask, arr)), order)
+        mask = xp.transpose(xp.asarray(to_backend_of(mask, arr)), order)
         shape = [1] * arr.ndim
         for index, axis in enumerate(sorted(axes)):
             shape[axis] = mask.shape[index]
-        arr = ab.where(mask.reshape(tuple(shape)), arr, ab.zeros_like(arr))
+        arr = xp.where(mask.reshape(tuple(shape)), arr, xp.zeros_like(arr))
     return arr

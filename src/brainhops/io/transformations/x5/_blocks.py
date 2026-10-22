@@ -17,7 +17,7 @@ from bagof.magic import replace
 
 from brainhops._core import affines as _affines
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend, to_backend
+from brainhops.backends import get_array_backend, to_backend, to_numpy
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
@@ -215,7 +215,7 @@ def _read_parameter(stored: tx.Any) -> np.ndarray:
     are read with NumPy rather than with `_read`, which follows the
     setting.
     """
-    return np.asarray(to_backend(_read(stored), "numpy"), dtype=np.float64)
+    return np.asarray(to_numpy(_read(stored)), dtype=np.float64)
 
 
 def _read(stored: tx.Any) -> ArrayProtocol:

@@ -212,7 +212,7 @@ class Resampled(
         affine.
         """
         # Not at the top: see the docstring of the module.
-        from .._transformations.multiscale import _as_affine
+        from .._transformations.compute.multiscale import _as_affine
 
         affine = _as_affine(self.transformation.inverse())
         if affine is None:

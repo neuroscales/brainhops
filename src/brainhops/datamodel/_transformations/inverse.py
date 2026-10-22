@@ -102,7 +102,7 @@ class Inverse(
 # only.
 
 
-class ConcreteInverseMixin:
+class _ConcreteInverseMixin:
     """Mixin that reads the parameter of a typed inverse from its forward.
 
     Each family computes the parameter of its inverse in the `_inverse`
@@ -116,7 +116,7 @@ class ConcreteInverseMixin:
     data = alias("forward._inverse", readonly=True)
 
 
-class FieldInverseMixin(ConcreteInverseMixin):
+class _FieldInverseMixin(_ConcreteInverseMixin):
     """Mixin that decodes the views of an inverse field with the forward flags.
 
     The views are not cached, because a cache would live on the wrapper, which
@@ -140,7 +140,7 @@ class FieldInverseMixin(ConcreteInverseMixin):
 
 
 class InverseTranslation(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[Translation],
     Translation,
     on={"forward": partial(isinstance, PLACEHOLDER, Translation)},
@@ -156,7 +156,7 @@ class InverseTranslation(
 
 
 class InverseScaling(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[Scaling],
     Scaling,
     on={"forward": partial(isinstance, PLACEHOLDER, Scaling)},
@@ -175,7 +175,7 @@ class InverseScaling(
 
 
 class InversePermutation(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[Permutation],
     Permutation,
     on={"forward": partial(isinstance, PLACEHOLDER, Permutation)},
@@ -191,7 +191,7 @@ class InversePermutation(
 
 
 class InverseRotation(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[Rotation],
     Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
@@ -214,7 +214,7 @@ class InverseRotation(
 
 
 class InverseLinear(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[Linear],
     Linear,
     on={"forward": partial(isinstance, PLACEHOLDER, Linear)},
@@ -233,7 +233,7 @@ class InverseLinear(
 
 
 class InverseAffine(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[Affine],
     Affine,
     on={"forward": partial(isinstance, PLACEHOLDER, Affine)},
@@ -256,7 +256,7 @@ class InverseAffine(
 
 
 class InverseDisplacementField(
-    FieldInverseMixin,
+    _FieldInverseMixin,
     Inverse[DisplacementField],
     DisplacementField,
     on={"forward": partial(isinstance, PLACEHOLDER, DisplacementField)},
@@ -312,7 +312,7 @@ class InverseDisplacementField(
 
 
 class InverseCoordinatesField(
-    FieldInverseMixin,
+    _FieldInverseMixin,
     Inverse[CoordinatesField],
     CoordinatesField,
     on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)},
@@ -362,7 +362,7 @@ class InverseCoordinatesField(
 
 
 class InverseAffineExponential(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[AffineExponential],
     AffineExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, AffineExponential)},
@@ -390,7 +390,7 @@ class InverseAffineExponential(
 
 
 class InverseLinearExponential(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[LinearExponential],
     LinearExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, LinearExponential)},
@@ -410,7 +410,7 @@ class InverseLinearExponential(
 
 
 class InverseRotationExponential(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[RotationExponential],
     RotationExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, RotationExponential)},
@@ -433,7 +433,7 @@ class InverseRotationExponential(
 
 
 class InverseScalingExponential(
-    ConcreteInverseMixin,
+    _ConcreteInverseMixin,
     Inverse[ScalingExponential],
     ScalingExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, ScalingExponential)},
@@ -453,7 +453,7 @@ class InverseScalingExponential(
 
 
 class InverseStationaryVelocityField(
-    FieldInverseMixin,
+    _FieldInverseMixin,
     Inverse[StationaryVelocityField],
     StationaryVelocityField,
     on={"forward": partial(isinstance, PLACEHOLDER, StationaryVelocityField)},

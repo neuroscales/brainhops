@@ -15,7 +15,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
@@ -57,7 +61,6 @@ from brainhops.io.transformations.base._converters import (
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
-    StoredFieldMixin,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -246,9 +249,7 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
         return _vox2world(header)
 
 
-class NiftyRegSequence(
-    NiftyRegField, StoredFieldMixin, _xforms.ImmutableSequence
-):
+class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
     """
     NiftyReg field, mapping the reference RAS space to the floating RAS space.
 
@@ -324,7 +325,7 @@ class NiftyRegSequence(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -609,8 +610,7 @@ class NiftyRegSequence(
         affines replace the extensions of that header, because NiftyReg
         reads its affines from the first extensions.
         """
-        backend = get_array_backend(vectors)
-        vectors = _field_to_disk(backend.asarray(vectors))
+        vectors = _field_to_disk(vectors)
         image = _record_image(vectors, self._record(), vox2world, overrides)
         header = image.header
         header.set_intent(
@@ -690,11 +690,11 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        backend = get_array_backend(positions)
+        xp = get_array_backend(positions)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
-        return positions - backend.asarray(grid, dtype=positions.dtype)
+        return positions - xp.asarray(grid, dtype=positions.dtype)
 
     def _encoded(
         self, like: tx.Any = None, **overrides
@@ -722,11 +722,11 @@ class NiftyRegDeformationField(NiftyRegSequence):
         if image is not None:
             return image
         vox2world, vectors = self._split(self.transformations)
-        backend = get_array_backend(vectors)
+        xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
-        positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
+        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
         return self._write(positions, vox2world, DEF_FIELD, like, **overrides)
 
 
@@ -789,11 +789,11 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        backend = get_array_backend(positions)
+        xp = get_array_backend(positions)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
-        return positions - backend.asarray(grid, dtype=positions.dtype)
+        return positions - xp.asarray(grid, dtype=positions.dtype)
 
     def _field_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
         chain = super()._field_chain()
@@ -856,11 +856,11 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             degree=degree,
             bound=self.bound,
         )
-        backend = get_array_backend(vectors)
+        xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
-        positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
+        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
         return self._write(
             positions, vox2world, kinds[degree], like, extensions, **overrides
         )
@@ -959,11 +959,11 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        backend = get_array_backend(positions)
+        xp = get_array_backend(positions)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
-        return positions - backend.asarray(grid, dtype=positions.dtype)
+        return positions - xp.asarray(grid, dtype=positions.dtype)
 
     def _encoded(
         self, like: tx.Any = None, **overrides
@@ -994,11 +994,11 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
             return image
         chain = tuple(self.transformations or ())
         vox2world, vectors = self._split(chain)
-        backend = get_array_backend(vectors)
+        xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
-        positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
+        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
         overrides.setdefault("intent_p2", _written_steps(chain))
         return self._write(
             positions, vox2world, SPLINE_VEL_GRID, like, **overrides
@@ -1024,11 +1024,11 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         vectors = self._stored_vectors()
         if self.niftyreg_type == DISP_VEL_FIELD:
             return vectors
-        backend = get_array_backend(vectors)
+        xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
-        return vectors - backend.asarray(grid, dtype=vectors.dtype)
+        return vectors - xp.asarray(grid, dtype=vectors.dtype)
 
     def _encoded(
         self, like: tx.Any = None, **overrides
@@ -1059,11 +1059,11 @@ class NiftyRegVelocityField(NiftyRegVelocity):
             return image
         chain = tuple(self.transformations or ())
         vox2world, vectors = self._split(chain)
-        backend = get_array_backend(vectors)
+        xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
-        positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
+        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
         overrides.setdefault("intent_p2", _written_steps(chain))
         return self._write(
             positions, vox2world, DEF_VEL_FIELD, like, **overrides
