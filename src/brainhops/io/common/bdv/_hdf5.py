@@ -62,6 +62,15 @@ class _BdvProxy(ArrayProxy):
         """The type of the voxels, which may differ from the stored type."""
         return self._dtype
 
+    @property
+    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        """The shape of an HDF5 chunk of the `cells` dataset, or `None`.
+
+        A chunk is the unit that HDF5 reads at once. `None` is given
+        for a dataset that is stored without chunks.
+        """
+        return self.cells.base_chunks
+
     def _converted(self, values: tx.Any) -> np.ndarray:
         """Return stored values in the type of the voxels."""
         values = np.asarray(values)

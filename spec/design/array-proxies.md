@@ -215,6 +215,10 @@ of an object read from a file is a proxy in the layout of its `data`,
 and `data` reads it with the backend setting (see
 [Array backends](array-backends.md)). The NIfTI and MGH views wrap the
 proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
+The voxels of these files are stored contiguously, so that proxy
+prefers blocks of whole slices along the last spatial axis, with as
+many slices as fit in the block size of Dask (the option
+`array.chunk-size` of its configuration). This is implemented.
 The views of TIFF and OpenSlide keep their own functions, because
 tifffile can give a memory map or a Dask array itself, and an
 OpenSlide level is kept as a Dask array when it is read lazily.
@@ -327,6 +331,15 @@ small base class, because they differ only in the driver name.
 `DelayedH5Array` becomes the shared HDF5 proxy of BigDataViewer, Imaris,
 ITK and X5. Pillow and JPEG 2000 keep reading the whole image, because
 their codecs cannot decode a part of it.
+
+The native block shapes are implemented: the proxies of Zarr, N5,
+precomputed, BigDataViewer, Imaris, OpenSlide and image stacks, and
+`DelayedH5Array`, give them as `base_chunks`. The shared base class of
+N5 and precomputed is not implemented. The readers of transformation
+fields stored in HDF5 (ITK and X5) and in OME-Zarr convert their lazy
+arrays with the backend setting, so that under `"dask"` a field is a
+Dask array with these blocks, and the writer of OME-Zarr fields writes
+it block by block into chunks of the same shape.
 
 ## How each format would read its data
 
