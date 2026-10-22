@@ -46,9 +46,9 @@ transformation between other systems cannot be relabelled as that
 format. The exact converters of such a format, one for each family of
 transformations, bridge the endpoints before they build the format.
 
-The formats that derive their coordinate systems from what they hold,
-such as LTA, FNIRT, M3Z and the NiftyReg, ITK and OME-Zarr fields, have
-no exact converter yet (#312). Such a format registers, for each family
+Some formats that derive their coordinate systems from what they hold,
+such as LTA, FNIRT and the control-point grids of NiftyReg, have no
+exact converter yet (#312). Such a format registers, for each family
 that it holds, one shared converter
 ([`relabelling`][brainhops.io.transformations.base._converters.relabelling])
 that relabels a transformation as the format, and it does so only when
@@ -71,10 +71,14 @@ __all__ = [
     "FieldParts",
     "affine_between",
     "apply_affine",
+    "cardinal_grid",
+    "cardinal_parts",
     "convert_instance",
     "converts_to",
     "coordinates_parts",
     "displacement_parts",
+    "displacements_of",
+    "is_cardinal",
     "format_options",
     "held",
     "register_converter",
@@ -83,6 +87,7 @@ __all__ = [
     "UnusedOptionError",
     "undoes",
     "unrepresentable",
+    "world_pieces",
 ]
 
 # dependencies
@@ -895,3 +900,328 @@ def _grid_like(values: ArrayProtocol) -> ArrayProtocol:
     shape = tuple(int(n) for n in values.shape[:-1])
     axes = [backend.arange(n, dtype=values.dtype) for n in shape]
     return backend.stack(backend.meshgrid(*axes, indexing="ij"), axis=-1)
+
+
+# ----------------------------------------------------------------------
+#   CHAINS AS A FORMAT OF SEVERAL TRANSFORMS STORES THEM
+# ----------------------------------------------------------------------
+
+
+def world_pieces(
+    t: _xforms.Transformation,
+    world: CoordinateSystem,
+    cls: type,
+) -> tx.List[_xforms.Transformation]:
+    """
+    Cut `t` into pieces that each map `world` to `world`.
+
+    A format such as X5 or an MNI transform file stores a chain of
+    transforms, each of which maps the world to the world: an affine, or
+    a field placed on a grid of that world. `t` is read from `world` and
+    written in `world`, with the bridges between them and its own
+    endpoints put on either side of it, as in [`split_field_chain`][],
+    and it may hold any number of fields.
+
+    Each field becomes one piece, which is a chain of three: the affine
+    from the world to the grid of the field, the field as it is, and an
+    affine back to the world. The affines that come before a field are
+    composed into the first affine. A field of displacements is closed
+    by the inverse of that affine, so that it is the sandwich that a
+    field format stores, and the affines that follow it start the next
+    piece. A field of coordinates is closed by the bridge from its output
+    to the world when there is one, by the affines that follow it when
+    it is the last field, and otherwise by the inverse of its first
+    affine. The affines that remain after the last field become one
+    affine piece, which is left out when it is the identity. A chain
+    without a field is one affine piece. The pieces, applied in turn,
+    are the same map as `t`.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation to cut.
+    world : CoordinateSystem
+        The world that every piece maps from and to.
+    cls : type
+        The format, which names the error when `t` cannot be cut.
+
+    Returns
+    -------
+    list of Transformation
+        The pieces, in the order in which they are applied. An affine
+        piece is an `Affine` from `world` to `world`, and a field piece
+        is a `Sequence` of an affine, the field and an affine.
+
+    Raises
+    ------
+    ConversionError
+        If a bridge does not exist, or what lies between the fields is
+        not an affine.
+    """
+    leaves = _leaves(t)
+    fields = [i for i, leaf in enumerate(leaves) if _is_field(leaf)]
+    ndim = next(
+        (
+            _field_ndim(leaves[i])
+            for i in fields
+            if _field_ndim(leaves[i]) is not None
+        ),
+        3,
+    )
+
+    def segment(lo: int, hi: int) -> np.ndarray:
+        # The affine from the output of leaf `lo - 1` (the world when
+        # `lo` is 0) to the input of leaf `hi` (the world at the end).
+        # The world is bridged to the endpoints of `t` itself, which its
+        # leaves may not repeat: the blocks of an ITK chain between LPS
+        # spaces, for example, are made of pieces without systems.
+        chain = []
+        if lo == 0:
+            chain.append(_bridge(world, t.input, t, cls))
+            source = t.input
+        else:
+            source = leaves[lo - 1].output
+        for leaf in leaves[lo:hi]:
+            chain += [_bridge(source, leaf.input, t, cls), leaf]
+            source = leaf.output
+        if hi == len(leaves):
+            chain += [
+                _bridge(source, t.output, t, cls),
+                _bridge(t.output, world, t, cls),
+            ]
+        else:
+            chain.append(_bridge(source, leaves[hi].input, t, cls))
+        return _matrix(chain, t, cls, ndim)
+
+    def affine(
+        matrix: np.ndarray,
+        input: tx.Optional[CoordinateSystem],
+        output: tx.Optional[CoordinateSystem],
+    ) -> _xforms.Affine:
+        return _xforms.Affine(matrix=matrix[:-1], input=input, output=output)
+
+    if not fields:
+        return [affine(segment(0, len(leaves)), world, world)]
+    pieces: tx.List[_xforms.Transformation] = []
+    incoming = np.eye(ndim + 1)
+    for k, i in enumerate(fields):
+        field = leaves[i]
+        before = segment(0 if k == 0 else fields[k - 1] + 1, i) @ incoming
+        last = k == len(fields) - 1
+        after = segment(i + 1, len(leaves)) if last else None
+        if isinstance(field, _xforms.DisplacementField):
+            close = np.linalg.inv(before)
+        elif last:
+            close = after
+        else:
+            close = _world_bridge(field.output, world, ndim)
+            if close is None:
+                close = np.linalg.inv(before)
+        pieces.append(
+            _xforms.Sequence(
+                transformations=[
+                    affine(before, world, field.input),
+                    field,
+                    affine(close, field.output, world),
+                ]
+            )
+        )
+        incoming = np.linalg.inv(close)
+    rest = after @ incoming
+    if not undoes(rest, np.eye(len(rest))):
+        pieces.append(affine(rest, world, world))
+    return pieces
+
+
+def cardinal_grid(
+    grid2world: np.ndarray, shape: tx.Sequence[int]
+) -> np.ndarray:
+    """
+    Return the grid whose axes run along the world axes, nearest to a grid.
+
+    A format such as an AFNI warp or an OME-Zarr field places its grid
+    with a scale and a translation along the world axes, and a field on
+    an oblique grid is sampled on this grid instead
+    ([`sample_on_grid`][]). Each axis of the grid is turned onto the
+    world axis that it is closest to, keeping its direction and its
+    voxel size, and the centre of the grid stays where it is.
+
+    Parameters
+    ----------
+    grid2world : array, shape `(D + 1, D + 1)`
+        The homogeneous affine from the voxels of the grid to the world.
+    shape : sequence of int
+        The shape of the grid.
+
+    Returns
+    -------
+    array, shape `(D + 1, D + 1)`
+        The affine from the voxels of the cardinal grid to the world.
+    """
+    grid2world = np.asarray(grid2world, dtype=np.float64)
+    ndim = len(grid2world) - 1
+    linear = grid2world[:ndim, :ndim]
+    sizes = np.linalg.norm(linear, axis=0)
+    free = list(range(ndim))
+    world_axis = [0] * ndim
+    # The axes that are closest to a world axis choose first.
+    weights = np.abs(linear) / np.where(sizes > 0, sizes, 1.0)
+    for j in np.argsort(-weights.max(axis=0)):
+        best = max(free, key=lambda a: weights[a, j])
+        world_axis[j] = best
+        free.remove(best)
+    cardinal = np.zeros((ndim, ndim))
+    for j, a in enumerate(world_axis):
+        sign = 1.0 if linear[a, j] >= 0 else -1.0
+        cardinal[a, j] = sign * sizes[j]
+    centre = (np.asarray(shape, dtype=np.float64) - 1) / 2
+    result = np.eye(ndim + 1)
+    result[:ndim, :ndim] = cardinal
+    result[:ndim, ndim] = (
+        linear @ centre + grid2world[:ndim, ndim] - cardinal @ centre
+    )
+    return result
+
+
+def _world_bridge(
+    source: tx.Optional[CoordinateSystem],
+    world: CoordinateSystem,
+    ndim: int,
+) -> tx.Optional[np.ndarray]:
+    # The matrix of the exact bridge from a system to the world, or `None`
+    # when there is none, as from a system of voxels.
+    if source is None:
+        return None
+    try:
+        chain = [bridge(source, world, allow_type_grouped_positional=True)]
+        affine = _xforms.Sequence(transformations=chain).to(_xforms.Affine)
+    except (AdaptationError, ConversionError):
+        return None
+    if affine.matrix is None:
+        return np.eye(ndim + 1)
+    return np.asarray(affine.homogeneous_matrix, dtype=np.float64)
+
+
+def is_cardinal(grid2world: np.ndarray, tol: float = 1e-6) -> bool:
+    """
+    Whether each axis of a grid runs along one axis of the world.
+
+    Parameters
+    ----------
+    grid2world : array, shape `(D + 1, D + 1)`
+        The homogeneous affine from the voxels of the grid to the world.
+    tol : float, default=1e-6
+        The tolerance on the cosine between an axis of the grid and the
+        world axis that it runs along.
+
+    Returns
+    -------
+    bool
+        Whether the grid is cardinal.
+    """
+    grid2world = np.asarray(grid2world, dtype=np.float64)
+    ndim = len(grid2world) - 1
+    linear = grid2world[:ndim, :ndim]
+    norms = np.linalg.norm(linear, axis=0)
+    if not np.all(norms > 0):
+        return False
+    unit = np.abs(linear / norms)
+    return bool(np.all(np.abs(unit.max(axis=0) - 1) < tol))
+
+
+def cardinal_parts(
+    parts: FieldParts,
+    t: _xforms.Transformation,
+    input: CoordinateSystem,
+    output: CoordinateSystem,
+    cls: type,
+) -> FieldParts:
+    """
+    Return the parts of a field on a grid whose axes run along the world.
+
+    A format that places its grid with a scale and a translation along
+    the world axes, such as an AFNI warp, holds the parts of a field on
+    an oblique grid only once the field is sampled on the nearest
+    cardinal grid ([`cardinal_grid`][]). Parts that are already on a
+    cardinal grid are returned as they are. Otherwise, `t` is sampled
+    on the cardinal grid with [`sample_on_grid`][], which is a loss, and
+    the result is a field of coordinates in `output`.
+
+    Parameters
+    ----------
+    parts : FieldParts
+        The parts of `t`, as [`displacement_parts`][] or
+        [`coordinates_parts`][] give them.
+    t : Transformation
+        The transformation that the parts are taken from.
+    input : CoordinateSystem
+        The world that the format maps from.
+    output : CoordinateSystem
+        The world that the coordinates are written in.
+    cls : type
+        The format, which names the error when `t` cannot be sampled.
+
+    Returns
+    -------
+    FieldParts
+        The parts on a cardinal grid.
+    """
+    if is_cardinal(parts.grid2world):
+        return parts
+    data = parts.field.data
+    if data is None:
+        raise unrepresentable(
+            t,
+            cls,
+            "its grid is oblique, and the format places its grid along the "
+            "world axes, so the field would be sampled on another grid, "
+            "which needs its values.",
+        )
+    shape = tuple(int(n) for n in data.shape[:-1])
+    grid2world = cardinal_grid(parts.grid2world, shape)
+    sampled = sample_on_grid(
+        t, np.linalg.inv(grid2world), shape, input, output, cls
+    )
+    reason = (
+        "its grid is oblique, and the format places its grid along the "
+        "world axes, so it is sampled on the nearest such grid."
+    )
+    return sampled._replace(loss=_joined(parts.loss, reason))
+
+
+def displacements_of(parts: FieldParts) -> FieldParts:
+    """
+    Return parts of coordinates as parts of displacements in voxels.
+
+    A field of coordinates in the world that the grid is placed in,
+    such as what [`sample_on_grid`][] returns, is the same map inside
+    the grid as the field of displacements that moves each node by the
+    difference between its position and the node, in the voxels of the
+    grid. Parts that already hold displacements are returned as they
+    are.
+
+    Parameters
+    ----------
+    parts : FieldParts
+        The parts, whose coordinates are in the world of the grid.
+
+    Returns
+    -------
+    FieldParts
+        The parts, with a field of displacements in voxels.
+    """
+    field = parts.field
+    if isinstance(field, _xforms.DisplacementField):
+        return parts
+    positions = apply_affine(parts.world2grid, field.values)
+    displacements = positions - _grid_like(positions)
+    result = _xforms.DisplacementField(
+        field=displacements, input=_VOXEL, output=_VOXEL
+    )
+    return parts._replace(field=result)
+
+
+def _joined(*losses: tx.Optional[str]) -> tx.Optional[str]:
+    # The losses that are reported, in one sentence each.
+    kept = [loss for loss in losses if loss]
+    return " ".join(kept) if kept else None

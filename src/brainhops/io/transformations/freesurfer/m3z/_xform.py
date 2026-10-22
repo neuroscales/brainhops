@@ -413,8 +413,9 @@ class M3zMorph(
         image_shape : (int, int, int), optional
             Shape of the source image, on which the RAS centre of the
             image depends. The default is the shape that the current
-            record records. The argument is required for a field of
-            voxel coordinates when no source geometry is recorded.
+            record records, or the shape of the atlas when the source
+            image is placed as the atlas is. Otherwise, the argument is
+            required for a field of voxel coordinates.
         atlas_shape : (int, int, int), optional
             Shape of the atlas. The default is the shape that the
             current record records, or else the shape of the node grid
@@ -616,13 +617,18 @@ def _encode(
         coordinates = GCAM_VOX
         if image_shape is None and old is not None and old.image is not None:
             image_shape = old.image.shape
+        source = homogeneous_matrix(chain[2], what, 3)
+        if image_shape is None and np.allclose(source, atlas_vox2ras):
+            # A source image placed as the atlas is taken to be the atlas,
+            # as a conversion places it when it is not given one.
+            image_shape = tuple(atlas_shape)
         if image_shape is None:
             raise WriterError(
                 "The geometry of the source image includes its shape, "
                 "which the chain does not say: pass image_shape=..."
             )
         image = M3zGeometry.from_vox2ras(
-            homogeneous_matrix(chain[2], what, 3),
+            source,
             image_shape,
             filename=b"" if old is None else old.image_geometry.fname,
         )

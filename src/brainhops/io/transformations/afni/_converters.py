@@ -2,9 +2,10 @@
 Private converters into the AFNI transformation formats.
 
 `t.to(AfniAffine)`, `AfniAffine.from_any(t)` and
-`io.save(t, "x.aff12.1D")` all run these converters. Each one either
-returns an instance of its format that is exactly the map `t` is, or
-raises a `ConversionError` that says what the format cannot hold.
+`io.save(t, "x.aff12.1D")` all run these converters. Each one returns
+an instance of its format that is the map `t` is, raises a
+`LossyConversionError` that carries an approximation of it, or raises a
+`ConversionError` that says what the format cannot hold.
 
 | Source                             | Format                       |
 | ---------------------------------- | ---------------------------- |
@@ -21,21 +22,27 @@ bridged to those of the format. An affine is bridged to the DICOM (LPS)
 world of AFNI, and a warp to RAS, in which it is read. An endpoint that
 is not known is taken to be the system of the format.
 
-A warp is held only as AFNI stores it: a field of displacements between
-a world-to-grid affine and its inverse, read back with linear
+A warp is stored as AFNI stores it: a field of displacements between a
+world-to-grid affine and its inverse, read back with linear
 interpolation and with the nearest value outside the grid, on a grid
-whose axes run along the DICOM axes. A field of coordinates is refused,
-because the two extend differently outside their grid.
+whose axes run along the DICOM axes. A field of coordinates becomes the
+displacement of each node, since the two are the same map inside the
+grid and only extend differently beyond it. A velocity is integrated,
+and the affines on either side of a field are carried into its values
+when they do not undo each other. A field interpolated with another
+degree than 1 is sampled at its nodes, and a field on an oblique grid
+is sampled on the nearest cardinal grid. Both are losses: the converter
+raises a `LossyConversionError`, and `t.to(Format, lossy=True)` returns
+the sampled field.
 
-Each converter makes the decision "exactly, or raise" in one place,
-and nothing is resampled or approximated. A conversion takes no option,
-since every option would change the map. An object that is already in
-its format is changed by the rules of its family, which keep its type.
+A conversion to an `AfniBrikWarp` takes no option, and a conversion to
+an `AfniNiftiWarp` takes `metadata=`, since every other option would
+change the map. An object that is already in its format is changed by
+the rules of its family, which keep its type.
 """
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import replace
 
 # datamodel
 from brainhops.datamodel import systems as _systems
@@ -45,22 +52,24 @@ from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
     smart_replace,
 )
-from brainhops.datamodel.enums import BoundaryCondition
 
 # io
-from brainhops.io.common.afni._constants import DICOM_TO_RAS
 from brainhops.io.transformations.base._conversions import (
+    FIELD_SOURCES,
+    FieldParts,
     affine_between,
+    cardinal_parts,
+    displacement_parts,
+    displacements_of,
     format_options,
-    split_field_chain,
-    undoes,
-    unrepresentable,
+    held,
+    register_converter,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
 from ._affine import AfniAffine
-from ._warp import AfniBrikWarp, _cardinal
+from ._warp import AfniBrikWarp
 
 VOXEL = _systems.VoxelCoordinateSystem()
 """The voxels of the grid of an AFNI warp."""
@@ -110,18 +119,19 @@ def _(t: AfniAffine, cls: tx.Type[AfniAffine], **kwargs) -> AfniAffine:
 # ----------------------------------------------------------------------
 
 
-@converter(_xforms.CoordinatesField, AfniBrikWarp)
-@converter(_xforms.Sequence, AfniBrikWarp)
-@converter
 def _(
-    t: _xforms.DisplacementField, cls: tx.Type[AfniBrikWarp], **kwargs
+    t: _xforms.Transformation, cls: tx.Type[AfniBrikWarp], **kwargs
 ) -> AfniBrikWarp:
-    # Exactly, or raise: one field of displacements, between a world-to-grid
-    # affine and its inverse, on a cardinal grid, sampled as AFNI stores
-    # it.
+    # One field of displacements, between a world-to-grid affine and its
+    # inverse, on a cardinal grid, sampled as AFNI stores it. Anything
+    # else is turned into one, and what loses is reported.
     cls = AfniBrikWarp
     format_options(t, cls, kwargs)
-    return cls(transformations=_afni_displacement(t, cls))
+    parts = afni_displacement(t, cls)
+    return held(cls(transformations=afni_chain(parts)), parts)
+
+
+register_converter(FIELD_SOURCES, AfniBrikWarp)(_)
 
 
 @converter
@@ -136,57 +146,30 @@ def _(t: AfniBrikWarp, cls: tx.Type[AfniBrikWarp], **kwargs) -> AfniBrikWarp:
 # ----------------------------------------------------------------------
 
 
-def _afni_displacement(t: _xforms.Transformation, cls: type) -> tuple:
+def afni_displacement(t: _xforms.Transformation, cls: type) -> FieldParts:
     """
-    Return `t` as the chain of an AFNI warp, or the reason it is not one.
+    Return `t` as the parts of an AFNI warp, or the reason it is not one.
 
-    The chain is `(ras2voxel, displacement, voxel2ras)`: the world-to-grid
-    affine, the displacement field in the voxels of its grid, and the
-    grid-to-world affine, which undoes the first and runs along the DICOM
-    axes.
+    The parts are those of
+    [`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts],
+    in RAS: the world-to-grid affine, the displacement field in the
+    voxels of its grid, and the grid-to-world affine, which undoes the
+    first. A field of coordinates becomes the displacement of each node,
+    a velocity is integrated, and the affines around the field are
+    carried into it when they do not undo each other. A field that is
+    not linear is sampled at its nodes, and a field on an oblique grid
+    is sampled on the nearest grid whose axes run along the DICOM axes,
+    since AFNI places a warp on such a grid. Both are losses, which the
+    parts report.
     """
-    ras2voxel, field, voxel2ras = split_field_chain(t, RAS, RAS, cls)
-    if not isinstance(field, _xforms.DisplacementField):
-        raise unrepresentable(
-            t,
-            cls,
-            f"it holds a {type(field).__name__}, and the format holds "
-            f"displacements. The two extend differently outside their "
-            f"grid, so one is not the other there.",
-        )
-    if field.log:
-        raise unrepresentable(
-            t,
-            cls,
-            "its field is a stationary velocity, and an AFNI warp stores "
-            "the displacement itself. Integrate the velocity first.",
-        )
-    degree = int(field.degree)
-    if degree != 1 or field.bound != BoundaryCondition.nearest:
-        raise unrepresentable(
-            t,
-            cls,
-            f"its field is interpolated with degree {degree} and bound "
-            f"{field.bound!s}, and an AFNI warp stores values that are read "
-            f"with degree 1 and bound 'nearest'.",
-        )
-    if not undoes(ras2voxel, voxel2ras):
-        raise unrepresentable(
-            t,
-            cls,
-            "the affines on either side of its field do not undo each "
-            "other, and an AFNI warp adds its vectors to the point it "
-            "moves.",
-        )
-    if not _cardinal(DICOM_TO_RAS @ voxel2ras):
-        raise unrepresentable(
-            t,
-            cls,
-            "its grid is oblique, and AFNI places a warp on a grid whose "
-            "axes run along the DICOM axes.",
-        )
+    parts = displacement_parts(t, RAS, cls)
+    return displacements_of(cardinal_parts(parts, t, RAS, RAS, cls))
+
+
+def afni_chain(parts: FieldParts) -> tuple:
+    """Return the chain `(ras2voxel, displacement, voxel2ras)` of parts."""
     return (
-        RASToVoxel(matrix=ras2voxel[:-1]),
-        replace(field, input=VOXEL, output=VOXEL),
-        VoxelToRAS(matrix=voxel2ras[:-1]),
+        RASToVoxel(matrix=parts.world2grid[:-1]),
+        parts.field,
+        VoxelToRAS(matrix=parts.grid2world[:-1]),
     )

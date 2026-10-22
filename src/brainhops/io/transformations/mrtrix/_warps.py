@@ -789,6 +789,17 @@ class MrtrixDisplacementField(
 
     HINTS = ("displacement", "disp", "displacements")
 
+    PRIORITY: tx.ClassVar[int] = -1
+    """
+    Priority below the MRtrix field of coordinates.
+
+    A `.mif` name cannot tell a field of displacements from a field of
+    coordinates, and both hold any field exactly. `io.save` writes each
+    kind of field in the format of that kind, and a field of another
+    kind, such as a velocity, as a field of coordinates, which is what
+    every MRtrix command takes.
+    """
+
     degree: tx.ClassVar[int] = 1
     """The spline degree of the interpolation."""
 

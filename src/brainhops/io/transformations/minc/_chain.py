@@ -39,10 +39,20 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.transformations.base.fields import (
+    split_ras_displacement_chain,
+)
 
 # this format
 from ._formats import XfmFormat
-from ._grid import grid_from_volume, read_volume
+from ._grid import (
+    PendingVolume,
+    XfmGridTransform,
+    grid_from_volume,
+    pending_name,
+    read_volume,
+    write_volume,
+)
 from ._metadata import XfmMetadata
 from ._raw import XfmRaw, _decode, _read_bytes, _score, sniff_transforms
 
@@ -185,17 +195,19 @@ class XfmTransform(
         record, byte for byte, with its comments. A transform whose chain
         was assigned is consolidated: each element that this transform
         decoded from its own record is written as that transform of the
-        file, and any other element must convert to an affine from
-        `RASmm` to `RASmm`, which is written as a linear transform.
-        brainhops cannot write MINC volumes, so a grid transform is
-        written only as the displacement volume that it was read from. An
-        element taken from another object, or from a copy made with
-        `replace`, is not recognized and is encoded again.
+        file. Any other [`XfmGridTransform`][] is written as a grid
+        transform whose displacements are a new MINC2 volume, and any
+        other element must convert to an affine from `RASmm` to `RASmm`,
+        which is written as a linear transform. An element taken from
+        another object, or from a copy made with `replace`, is not
+        recognized and is encoded again.
 
         A transform written to a path also places the displacement volume
         of each grid transform where the file names it, relative to the
-        new file, by copying the volume that was read. Written to a
-        stream, only the transform file is written.
+        new file: a volume that was read is copied, and a new volume is
+        written as `<name>_grid_<n>.mnc`, which libminc names it. Written
+        to a stream, only the transform file is written, and the names of
+        the new volumes are `grid_<n>.mnc`.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".xfm",)
@@ -657,7 +669,9 @@ class XfmTransform(
         is encoded into a new record, held by new metadata, with the
         comments of the current record. Each element that this transform
         decoded from its own record is encoded as that transform, and keeps
-        its displacement volume. Any other element must convert to an
+        its displacement volume. Any other [`XfmGridTransform`][] is
+        encoded as a grid transform with a new displacement volume, which
+        is written with the file. Any other element must convert to an
         affine from `RASmm` to `RASmm`, and a sequence that does not is
         encoded element by element. Afterwards the chain is decoded from
         the new record, with the precision of the file.
@@ -798,7 +812,7 @@ class XfmTransform(
         if isinstance(filename, str):
             filename = path.Path(filename)
         copy = self.consolidate(**fields)
-        record = _record(copy)
+        record = _named(_record(copy), copy.rawdata, filename)
         content = record.to_bytes(**kwargs)
         _place_volumes(record, copy.rawdata, filename)
         write_file(filename, content)
@@ -956,6 +970,9 @@ def _encode(
             if isinstance(block, XfmRaw.Grid):
                 number = _grid_number(old, index)
                 grids.append(None if volumes is None else volumes[number])
+        elif isinstance(xform, XfmGridTransform):
+            blocks.append(XfmRaw.Grid(volume=pending_name(len(grids))))
+            grids.append(_pending(xform))
         else:
             blocks.extend(_encode_linear(xform))
     if not blocks:
@@ -966,6 +983,48 @@ def _encode(
     comments = () if old is None else old.comments
     record = XfmRaw(comments=comments, transforms=tuple(blocks))
     return record, tuple(grids) if grids else None
+
+
+def _pending(xform: XfmGridTransform) -> PendingVolume:
+    """Return the volume of displacements that a grid transform writes.
+
+    The displacements are rotated back to RAS millimetres, in the backend
+    of the field, and nothing is computed until the volume is written.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the grid transform does not map RAS to RAS.
+    """
+    _check_ras(xform, "grid transform")
+    vox2ras, vectors = split_ras_displacement_chain(
+        xform.transformations, "A grid transform", ndim=3
+    )
+    return PendingVolume(vectors, vox2ras)
+
+
+def _named(
+    record: XfmRaw, volumes: _Volumes, filename: path.FilenameLike
+) -> XfmRaw:
+    """Name the new displacement volumes after the transform file.
+
+    libminc names the volume of grid transform `n` of `<name>.xfm` as
+    `<name>_grid_<n>.mnc`, beside the file, and so does this writer for
+    a volume that it writes.
+    """
+    stem = os.path.basename(str(filename))
+    if stem.lower().endswith(".xfm"):
+        stem = stem[: -len(".xfm")]
+    blocks = list(record.transforms)
+    number = 0
+    for index, block in enumerate(blocks):
+        if not isinstance(block, XfmRaw.Grid):
+            continue
+        volume = None if volumes is None else volumes[number]
+        if isinstance(volume, PendingVolume):
+            blocks[index] = replace(block, volume=f"{stem}_grid_{number}.mnc")
+        number += 1
+    return replace(record, transforms=tuple(blocks))
 
 
 def _encode_linear(xform: _xforms.Transformation) -> tx.List[XfmRaw.Linear]:
@@ -992,9 +1051,8 @@ def _encode_linear(xform: _xforms.Transformation) -> tx.List[XfmRaw.Linear]:
                 pass
         raise UnrepresentableTransformationError(
             f"An MNI transform file cannot encode a {type(xform).__name__}: "
-            f"it stores affines, and it stores a grid transform only as the "
-            f"displacement volume that it was read from, since brainhops "
-            f"cannot write MINC volumes."
+            f"it stores affines and grid transforms. A field is converted "
+            f"to grid transforms by `t.to(XfmTransform)`."
         ) from error
     _check_ras(xform, "affine")
     matrix = affine.homogeneous_matrix
@@ -1034,8 +1092,8 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
     return None
 
 
-# brainhops cannot write MINC volumes, so a volume is copied as it was
-# read (item 141 of the design memo).
+# A volume that was read is copied as it was read (item 141 of the design
+# memo), and a new volume is written from its displacements.
 
 
 def _place_volumes(
@@ -1060,13 +1118,17 @@ def _place_volumes(
             continue
         target = sibling(filename, block.volume)
         volume = None if volumes is None else volumes[number]
+        if isinstance(volume, PendingVolume):
+            write_volume(target, volume)
+            continue
         source = _volume_source(volume)
         if source is None:
             raise WriterError(
                 f"The displacement volume {block.volume!r} of a grid "
                 f"transform must be placed beside {filename}, and it was "
-                f"not read from a file, or its voxels were changed. "
-                f"brainhops cannot write MINC volumes."
+                f"not read from a file, or its voxels were changed. Convert "
+                f"the grid transform to an XfmGridTransform of its "
+                f"displacements to write it as a new volume."
             )
         if same_file(source, target):
             continue

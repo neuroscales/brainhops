@@ -1,6 +1,11 @@
 """Grid transforms, whose displacements are stored in a MINC volume."""
 
-__all__ = ["XfmGridTransform"]
+__all__ = [
+    "PendingVolume",
+    "XfmGridTransform",
+    "grid_chain",
+    "write_volume",
+]
 
 # stdlib
 import os
@@ -212,6 +217,8 @@ def grid_from_volume(image: tx.Any, name: str) -> XfmGridTransform:
     ParserContentError
         If the volume is not a displacement volume.
     """
+    if isinstance(image, PendingVolume):
+        return XfmGridTransform.from_ras(image.vectors, image.vox2ras)
     record = image.metadata.raw
     names = [dimension.name for dimension in record.dimensions]
     others = [i for i, n in enumerate(names) if n not in _SPATIAL]
@@ -236,3 +243,242 @@ def grid_from_volume(image: tx.Any, name: str) -> XfmGridTransform:
     order = [i for i in range(len(names)) if i != axis] + [axis]
     vectors = image.data.transpose(order)
     return XfmGridTransform.from_ras(vectors, record.vox2world)
+
+
+# ----------------------------------------------------------------------
+#   WRITING A DISPLACEMENT VOLUME
+# ----------------------------------------------------------------------
+# A grid transform that was not read from a file has no volume to copy,
+# so its displacements are held by a pending volume until the transform
+# file is written, and the volume is then written beside it as a MINC2
+# file.
+
+_VECTOR = "vector_dimension"
+"""The name that libminc gives the dimension of the components."""
+
+_PENDING_NAME = "grid_{}.mnc"
+"""The name of a pending volume until the transform file is named."""
+
+
+class PendingVolume:
+    """
+    The displacements of a grid transform that is written to a new volume.
+
+    A grid transform that was not read from a displacement volume, such
+    as one that a field was converted to, holds its displacements here
+    until the transform file is written, and [`write_volume`][] then
+    writes them beside it. Nothing is read or computed before.
+
+    Parameters
+    ----------
+    vectors : ArrayProtocol
+        The displacements, in RAS millimetres, of shape `(X, Y, Z, 3)`.
+    vox2ras : np.ndarray
+        The `(4, 4)` voxel-to-RAS matrix of the grid.
+    """
+
+    def __init__(self, vectors: ArrayProtocol, vox2ras: np.ndarray) -> None:
+        self.vectors = vectors
+        self.vox2ras = np.asarray(vox2ras, dtype=np.float64)
+
+
+def pending_name(number: int) -> str:
+    """Return the name that a pending volume has before it is placed.
+
+    Parameters
+    ----------
+    number : int
+        The number of the grid transform in the file.
+
+    Returns
+    -------
+    str
+        The name, which the writer replaces with one after the file.
+    """
+    return _PENDING_NAME.format(number)
+
+
+def write_volume(filename: path.FilenameLike, volume: PendingVolume) -> None:
+    """
+    Write the displacements of a grid transform as a MINC2 volume.
+
+    The volume has the dimensions `zspace`, `yspace`, `xspace` and
+    `vector_dimension`, slowest first, as libminc writes a displacement
+    volume. Each voxel axis of the grid is named after the world axis
+    that it runs closest to, and its direction cosines, step and start
+    place it exactly, so that the voxel-to-world matrix of the volume is
+    that of the grid. The displacements are written as `float32`.
+
+    Parameters
+    ----------
+    filename : path-like
+        The path of the volume.
+    volume : PendingVolume
+        The displacements and the grid.
+    """
+    import h5py
+
+    from brainhops.backends import to_backend
+
+    vox2ras = volume.vox2ras
+    linear = vox2ras[:3, :3]
+    steps = np.linalg.norm(linear, axis=0)
+    cosines = linear / steps
+    names = _axis_names(cosines)
+    starts = np.linalg.solve(cosines, vox2ras[:3, 3])
+    # Slowest first: z, y, x, then the components.
+    order = [names.index(name) for name in reversed(_SPATIAL)]
+    vectors = np.asarray(to_backend(volume.vectors, "numpy"), np.float32)
+    data = np.ascontiguousarray(vectors.transpose(*order, 3))
+    with h5py.File(str(filename), "w") as file:
+        root = file.create_group("minc-2.0")
+        root.attrs["minc_version"] = np.bytes_("2.0")
+        dimensions = root.create_group("dimensions")
+        for axis, name in enumerate(names):
+            dimension = dimensions.create_dataset(name, data=0, dtype="i4")
+            dimension.attrs["varid"] = np.bytes_("MINC standard variable")
+            dimension.attrs["vartype"] = np.bytes_("dimension____")
+            dimension.attrs["version"] = np.bytes_("MINC Version    1.0")
+            dimension.attrs["spacing"] = np.bytes_("regular__")
+            dimension.attrs["alignment"] = np.bytes_("centre")
+            dimension.attrs["units"] = np.bytes_("mm")
+            dimension.attrs["length"] = np.int32(data.shape[order.index(axis)])
+            dimension.attrs["step"] = np.float64(steps[axis])
+            dimension.attrs["start"] = np.float64(starts[axis])
+            dimension.attrs["direction_cosines"] = cosines[:, axis]
+        vector = dimensions.create_dataset(_VECTOR, data=0, dtype="i4")
+        vector.attrs["length"] = np.int32(_COMPONENTS)
+        image = root.create_group("image").create_group("0")
+        dataset = image.create_dataset("image", data=data)
+        dataset.attrs["dimorder"] = np.bytes_(
+            ",".join([*reversed(_SPATIAL), _VECTOR])
+        )
+        dataset.attrs["complete"] = np.bytes_("true_")
+        finite = data[np.isfinite(data)]
+        low = float(finite.min()) if finite.size else 0.0
+        high = float(finite.max()) if finite.size else 0.0
+        image.create_dataset("image-min", data=np.float64(low))
+        image.create_dataset("image-max", data=np.float64(high))
+
+
+def _axis_names(cosines: np.ndarray) -> tx.List[str]:
+    """Name each voxel axis after the world axis that it runs closest to."""
+    free = list(range(3))
+    names = [""] * 3
+    weights = np.abs(cosines)
+    for axis in np.argsort(-weights.max(axis=0)):
+        best = max(free, key=lambda world: weights[world, axis])
+        names[axis] = _SPATIAL[best]
+        free.remove(best)
+    return names
+
+
+# ----------------------------------------------------------------------
+#   CONVERTING A CHAIN OF FIELDS INTO GRID TRANSFORMS
+# ----------------------------------------------------------------------
+
+
+def grid_chain(
+    t: _xforms.Transformation, cls: type
+) -> tx.Tuple[tx.List[_xforms.Transformation], tx.Optional[str]]:
+    """
+    Return `t` as the transforms of an MNI transform file, and its loss.
+
+    `t` is read from RAS and written in RAS, and an endpoint that is not
+    known is taken to be RAS. It is cut into pieces that each map RAS to
+    RAS, as
+    [`world_pieces`][brainhops.io.transformations.base._conversions.world_pieces]
+    cuts it. Each piece of affines becomes an `Affine`, which the file
+    writes as a linear transform, and each field becomes an
+    [`XfmGridTransform`][], whose displacements the file writes as a new
+    MINC volume. A field of coordinates becomes the displacement of each
+    node, the affines around a field are carried into it when they do
+    not undo each other, and a velocity is integrated.
+
+    libminc interpolates the displacements of a grid with cubic splines,
+    which brainhops reads as cubic B-splines of the values. A field that
+    is interpolated so is held exactly, and any other field is stored as
+    its values at its nodes, which is the same map at the nodes but not
+    between them, so it is reported as a loss.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation to convert.
+    cls : type
+        The format, which names the error when `t` cannot be held.
+
+    Returns
+    -------
+    transforms : list of Transformation
+        The transforms of the file, in the order in which they apply.
+    loss : str or None
+        What the transforms lose, or `None` when they are the map `t` is.
+    """
+    from brainhops.datamodel import systems as _systems
+    from brainhops.io.transformations.base._conversions import (
+        affine_between,
+        displacement_parts,
+        split_field_chain,
+        undoes,
+        world_pieces,
+    )
+    from brainhops.io.transformations.base.affines import (
+        RASToVoxel,
+        VoxelToRAS,
+    )
+
+    ras = _systems.RASmm()
+    voxel = _systems.VoxelCoordinateSystem()
+    transforms: tx.List[_xforms.Transformation] = []
+    losses: tx.List[str] = []
+    for piece in world_pieces(t, ras, cls):
+        if isinstance(piece, _xforms.Affine):
+            # A piece may keep endpoints of its own, such as a block of an
+            # ITK chain between LPS spaces, so it is bridged to RAS.
+            matrix = affine_between(piece, ras, ras, cls)
+            transforms.append(
+                _xforms.Affine(matrix=matrix[:-1], input=ras, output=ras)
+            )
+            continue
+        before, field, after = split_field_chain(piece, ras, ras, cls)
+        cubic = (
+            isinstance(field, _xforms.DisplacementField)
+            and not field.log
+            and int(field.degree) == int(XfmGridTransform.degree)
+            and field.data is not None
+            and undoes(before, after)
+        )
+        if cubic:
+            values = field.values
+            world2grid, grid2world = before, after
+        else:
+            parts = displacement_parts(piece, ras, cls)
+            if parts.field.data is None:
+                continue
+            values = parts.field.values
+            world2grid, grid2world = parts.world2grid, parts.grid2world
+            losses.append(
+                "libminc interpolates the displacements of a grid with "
+                "cubic splines, and its field is stored as its values at "
+                "its nodes, which are the same map at the nodes only."
+            )
+        displacement = _xforms.DisplacementField(
+            data=values,
+            input=voxel,
+            output=voxel,
+            degree=XfmGridTransform.degree,
+            bound=XfmGridTransform.bound,
+            store=XfmGridTransform.store,
+        )
+        transforms.append(
+            XfmGridTransform(
+                transformations=(
+                    RASToVoxel(matrix=world2grid[:-1]),
+                    displacement,
+                    VoxelToRAS(matrix=grid2world[:-1]),
+                )
+            )
+        )
+    loss = " ".join(dict.fromkeys(losses)) if losses else None
+    return transforms, loss

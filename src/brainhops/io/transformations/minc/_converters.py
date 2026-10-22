@@ -3,29 +3,34 @@ Private converters into the formats of MNI transform files.
 
 `t.to(XfmAffine)`, `XfmAffine.from_any(t)` and `io.save(t, "t.xfm")`
 all run these converters. Each one returns an instance of its format
-that is the map `t` is, or raises a `ConversionError` that says what the
+that is the map `t` is, raises a `LossyConversionError` that carries an
+approximation of it, or raises a `ConversionError` that says what the
 format cannot hold.
 
-| Source                             | Format         |
-| ---------------------------------- | -------------- |
-| any affine, `Sequence` of affines  | `XfmAffine`    |
-| any affine, `Sequence` of affines  | `XfmTransform` |
+| Source                                 | Format         |
+| -------------------------------------- | -------------- |
+| any affine, `Sequence` of affines      | `XfmAffine`    |
+| any affine, any field, any `Sequence`  | `XfmTransform` |
 
 In this table, "any affine" means every family that has an affine form
 (see
-[`AFFINE_SOURCES`][brainhops.io.transformations.base._conversions.AFFINE_SOURCES]).
+[`AFFINE_SOURCES`][brainhops.io.transformations.base._conversions.AFFINE_SOURCES]),
+and "any field" every family of fields (see
+[`FIELD_SOURCES`][brainhops.io.transformations.base._conversions.FIELD_SOURCES]).
 Every transform of an MNI transform file maps RAS to RAS, so the
 endpoints of `t` are bridged to RAS, which flips an affine between LPS
-spaces, and a chain of affines is composed into one matrix. An endpoint
-that is not known is taken to be RAS. An `XfmAffine` stores that matrix
-as its single linear transform, and an `XfmTransform` stores it as a
-chain of one linear transform.
+spaces. An endpoint that is not known is taken to be RAS. An
+`XfmAffine` stores a chain of affines composed into one matrix, as its
+single linear transform.
 
-A chain that holds a field is refused by both formats for now. An MNI
-transform file stores a field as a grid transform, whose displacements
-are kept in a separate MINC volume, and the converter of an
-`XfmTransform` is written so that a branch for such a chain can be added
-to it.
+A field, or any chain, is converted to an `XfmTransform` by
+[`grid_chain`][brainhops.io.transformations.minc._grid.grid_chain]: each
+piece of affines becomes a linear transform, and each field becomes a
+grid transform, whose displacements are written as a new MINC volume
+beside the file. libminc interpolates a grid with cubic splines, so a
+field that is interpolated otherwise is the same map at the nodes of its
+grid only, and the converter raises a `LossyConversionError` that
+carries the result, which `t.to(XfmTransform, lossy=True)` returns.
 
 A conversion takes no option, since every option would change the map.
 An `XfmAffine` that is converted to its own class is changed by the
@@ -46,8 +51,10 @@ from brainhops.datamodel._transformations.compute.converters import (
     _convert_withlog,
     smart_replace,
 )
+from brainhops.errors import LossyConversionError
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,
+    FIELD_SOURCES,
     affine_between,
     format_options,
     register_converter,
@@ -55,9 +62,15 @@ from brainhops.io.transformations.base._conversions import (
 
 from ._affine import XfmAffine
 from ._chain import XfmTransform
+from ._grid import grid_chain
 
 RAS = _systems.RASmm()
 """The RAS world, in millimetres, that every MNI transform maps."""
+
+
+# ----------------------------------------------------------------------
+#   AFFINES
+# ----------------------------------------------------------------------
 
 
 @register_converter(AFFINE_SOURCES, XfmAffine)
@@ -78,16 +91,31 @@ def _(t: XfmAffine, cls: tx.Type[XfmAffine], **kwargs) -> XfmAffine:
     return _convert_withlog(t, cls, "matrix", **kwargs)
 
 
-@register_converter(AFFINE_SOURCES, XfmTransform)
+# ----------------------------------------------------------------------
+#   FIELDS AND CHAINS
+# ----------------------------------------------------------------------
+# A field, or a chain that holds fields, is cut into affines and grid
+# transforms by `grid_chain`, whose displacements the file writes as new
+# MINC volumes. A chain of affines alone becomes one linear transform.
+
+
+@register_converter(AFFINE_SOURCES + FIELD_SOURCES, XfmTransform)
 def _(
     t: _xforms.Transformation, cls: tx.Type[XfmTransform], **kwargs
 ) -> XfmTransform:
-    # Exactly, or raise. A chain of affines becomes one linear transform.
-    # A chain that holds a field needs a grid transform, which is not
-    # converted yet, and `affine_between` refuses it with a reason.
+    # One linear transform per piece of affines and one grid transform per
+    # field, each from RAS to RAS. What loses is reported once.
     cls = XfmTransform
     format_options(t, cls, kwargs)
-    return cls(transformations=(_linear(t, cls),))
+    transforms, loss = grid_chain(t, cls)
+    result = cls(transformations=transforms)
+    if loss is None:
+        return result
+    raise LossyConversionError(
+        f"The XfmTransform that this transformation converts to is not "
+        f"the same map: {loss} Pass lossy=True to accept it.",
+        result=result,
+    )
 
 
 @converter
@@ -95,22 +123,3 @@ def _(t: XfmTransform, cls: tx.Type[XfmTransform], **kwargs) -> XfmTransform:
     # A transform that is already in this format is changed by the rules
     # of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)
-
-
-# ----------------------------------------------------------------------
-#   HELPERS
-# ----------------------------------------------------------------------
-
-
-def _linear(t: _xforms.Transformation, cls: type) -> _xforms.Affine:
-    """
-    Return `t` as the affine of one linear transform, from RAS to RAS.
-
-    Raises
-    ------
-    ConversionError
-        If `t` is not an affine, or a chain of affines, between systems
-        that are bridged to RAS.
-    """
-    matrix = affine_between(t, RAS, RAS, cls)
-    return _xforms.Affine(matrix=matrix[:-1], input=RAS, output=RAS)

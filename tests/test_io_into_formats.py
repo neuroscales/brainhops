@@ -168,10 +168,12 @@ FORMATS = [
 ]
 """The formats that are bound to RAS, to LPS or to their own spaces."""
 
-CHAIN_FORMATS = [M3zMorph, X5Transform]
+CHAIN_FORMATS: tx.List[type] = []
 """
 The formats that relabel a chain and read their coordinate systems from
-it, so that they have no systems of their own to refuse.
+it, so that they have no systems of their own to refuse. None is left:
+FNIRT, M3Z and X5 convert a chain exactly, and refuse a chain between
+voxel spaces, which has no bridge to their worlds.
 """
 
 AFFINE_FAMILIES = [
@@ -335,20 +337,19 @@ def test_a_format_without_systems_relabels_between_voxel_spaces(
 @pytest.mark.parametrize(
     "family, cls",
     [
-        (family, ItkNiftiDisplacementField)
+        (family, cls)
+        for cls in (ItkNiftiDisplacementField, NiftyRegDisplacementField)
         for family in ("sequence", "immutable-sequence")
     ],
     ids=lambda x: getattr(x, "__name__", x),
 )
-def test_a_format_without_an_exact_conversion_refuses(
+def test_a_field_format_refuses_a_chain_without_a_field(
     family: str, cls: type
 ) -> None:
-    # A relabel would build a wrong object, such as a field format around
-    # a chain from which it cannot read its own systems. The format may
-    # hold some transformations of the family, and an exact converter
-    # will decide which ones (#312).
+    # A field format converts a chain that holds one field exactly, and
+    # says why it refuses a chain of affines, which holds no field.
     t = _families(RASmm(), RASmm())[family]
-    with pytest.raises(ConversionError, match="#312"):
+    with pytest.raises(ConversionError, match="holds 0 fields"):
         t.to(cls)
 
 
@@ -356,21 +357,27 @@ def test_a_format_without_an_exact_conversion_refuses(
     "family, cls",
     [
         (family, cls)
-        for cls in (NiftyRegDisplacementField, M3zMorph)
+        for cls in (M3zMorph, X5Transform)
         for family in ("sequence", "immutable-sequence")
     ],
     ids=lambda x: getattr(x, "__name__", x),
 )
-def test_a_format_without_an_exact_conversion_relabels_compatible_systems(
+def test_a_chain_format_converts_a_chain_between_ras_spaces(
     family: str, cls: type
 ) -> None:
-    # NiftyReg maps RAS to RAS, and FNIRT and M3Z read their systems from
-    # the chain they hold, so a chain between RAS spaces is relabelled with
-    # the same parameters until an exact converter is written (#312).
+    # X5 holds a chain of affines as one linear transform, and M3Z holds
+    # only a field, so it refuses a chain without one.
     t = _families(RASmm(), RASmm())[family]
+    if cls is M3zMorph:
+        with pytest.raises(ConversionError, match="holds 0 fields"):
+            t.to(cls)
+        return
     for held in _entry_points(t, cls):
         assert type(held) is cls
-        assert list(held.transformations) == list(t.transformations)
+        np.testing.assert_allclose(
+            held.to(xforms.Affine).homogeneous_matrix,
+            t.to(xforms.Affine).homogeneous_matrix,
+        )
 
 
 @pytest.mark.parametrize("family", ["scaling", "linear", "affine", "sequence"])
@@ -455,23 +462,23 @@ def test_the_entry_points_are_one_conversion(
             assert outcome.output == first.output
 
 
-def test_a_chain_between_lps_spaces_is_not_relabelled_as_niftyreg() -> None:
-    # NiftyReg maps RAS to RAS, so a chain between LPS spaces would mean
-    # another map. It is refused by every entry point.
-    t = _families(LPSmm(), LPSmm())["sequence"]
-    for convert in _conversions(NiftyRegDisplacementField):
-        with pytest.raises(ConversionError, match="not compatible"):
-            convert(t)
-
-
-@pytest.mark.parametrize("cls", [NiftyRegDisplacementField, X5Transform])
-def test_a_chain_without_systems_is_relabelled(cls: type) -> None:
-    # A chain whose systems are not known is taken to map the systems of
-    # the format, as `from_any` always took it, and `to` now takes it so.
-    t = _families(None, None)["sequence"]
-    for held in _entry_points(t, cls):
-        assert type(held) is cls
-        assert list(held.transformations) == list(t.transformations)
+def test_a_field_between_lps_spaces_is_bridged_into_niftyreg() -> None:
+    # NiftyReg maps RAS to RAS, so a field between LPS spaces is flipped
+    # into RAS by every entry point.
+    t = xforms.Sequence(
+        transformations=[
+            xforms.Affine(MATRIX[:-1], input=LPSmm(), output=VOXEL),
+            xforms.DisplacementField(
+                field=np.zeros((2, 3, 4, 3)), input=VOXEL, output=VOXEL
+            ),
+            xforms.Affine(
+                np.linalg.inv(MATRIX)[:-1], input=VOXEL, output=LPSmm()
+            ),
+        ]
+    )
+    for held in _entry_points(t, NiftyRegDisplacementField):
+        assert type(held) is NiftyRegDisplacementField
+        assert held.input == RASmm()
 
 
 @pytest.mark.parametrize(
@@ -493,12 +500,12 @@ def test_an_exact_converter_is_chosen_over_relabelling(
     assert find_converter(t, cls) is not None
 
 
-def test_a_format_without_an_exact_converter_is_relabelled() -> None:
+def test_the_chain_formats_convert_rather_than_relabel() -> None:
     chain = _families(None, None)["sequence"]
-    assert relabels(chain, NiftyRegDisplacementField)
     # FNIRT converts a transformation when it is given its two images.
     assert not relabels(chain, FnirtWarpField)
-    assert relabels(chain, X5Transform)
+    assert not relabels(chain, NiftyRegDisplacementField)
+    assert not relabels(chain, X5Transform)
     assert not relabels(chain, NiftiRASDisplacementField)
     # A format that registers no converter is rebuilt by the converters of
     # the data model, or refused by them.
