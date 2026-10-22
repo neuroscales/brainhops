@@ -22,7 +22,7 @@ __all__ = ["Indexed", "Resampled"]
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, Field
+from bagof.magic import Field
 
 # internals
 from ..base import DataModelBase
@@ -35,13 +35,6 @@ if tx.TYPE_CHECKING:  # pragma: no cover
     from ..geometry import Geometry
 
 
-def _index(index: tx.Any) -> tuple:
-    """Ensure input is an nd index (i.e., a tuple)."""
-    if not isinstance(index, tuple):
-        index = (index,)
-    return index
-
-
 class Indexed(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
     """
     An image indexed as its data array is, `image[index]`.
@@ -52,13 +45,20 @@ class Indexed(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
     from the coordinate system (`axes`).
     """
 
-    index: tx.Annotated[tuple, ConvertTo(_index)]
+    # The record is built by `SingleScaleImage.__getitem__`, never by a
+    # user, from values that already have the right type. Converting the
+    # index would also change its meaning: the tuple converter turns a
+    # list such as `[0, 2]`, which selects two positions along one axis,
+    # into the tuple `(0, 2)`, which selects one voxel.
+    index: tx.Annotated[tuple, Field(convert=False)]
     """The full index, as given to `image[index]`."""
 
     shape: tx.Tuple[int, ...]
     """The shape of the indexed image."""
 
-    system: tx.Optional[CoordinateSystem] = None
+    system: tx.Annotated[
+        tx.Optional[CoordinateSystem], Field(convert=False)
+    ] = None
     """
     The coordinate system of the voxels of the image (the input of its
     grid), which gives the type of each axis; `None` when it is not known.

@@ -235,10 +235,10 @@ any other string stays a string, so the vocabulary is documented
 without being closed. The enums live in `brainhops.datamodel.enums`:
 `SpaceEnum`, `IntentEnum`, `Manufacturer`, `IlluminationType`,
 `ContrastMethod`. Truly free text (`name`, `description`, `history`,
-file references) stays `str`. `bagof` does not coerce a string into the
-enum member of a `Union[Enum, str]`, so those fields carry an
-`EnumConverter`. Inherited fields come out of `fields()` in reverse MRO
-order, so every loop over the vocabulary iterates `VOCABULARY`, never
+file references) stays `str`. The converter of `bagof` turns a string
+that names a member into that member and keeps any other string, so
+those fields need no converter of their own. Inherited fields come out
+of `fields()` in reverse MRO order, so every loop over the vocabulary iterates `VOCABULARY`, never
 `fields(Metadata)`.
 
 ### 4.1 Core and provenance (`file`)

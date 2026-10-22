@@ -18,7 +18,6 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
-from brainhops._core.enum import EnumConverter
 from brainhops._core.typing import ArrayLike, DTypeLike
 
 from ..base import DataModelBase
@@ -320,10 +319,6 @@ def _snapped(value: float) -> float:
         if abs(value - exact) <= _SNAP:
             return exact
     return value
-
-
-# The converter of a label of a space (see `_space`).
-_SPACE_TERM = EnumConverter(SpaceEnum)
 
 
 def _bids_vector(value: str) -> tx.Tuple[float, ...]:

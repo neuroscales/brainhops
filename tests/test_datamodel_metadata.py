@@ -437,7 +437,7 @@ def test_indexed_expands_its_index() -> None:
     op = _indexed(Ellipsis, 1)
     assert op.expanded == (slice(None),) * 3 + (1,)
     assert op.axes == (AxisType.space,) * 3 + (AxisType.time,)
-    assert Indexed(0, (4, 5)).index == (0,)
+    assert Indexed((0,), (4, 5)).index == (0,)
     assert Indexed((0,), (4, 5)).axes == (None, None)
 
 
