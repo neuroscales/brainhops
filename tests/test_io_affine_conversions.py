@@ -355,16 +355,7 @@ def test_a_mat_file_is_written_as_flirt_given_the_images(
 @pytest.mark.parametrize(
     ("name", "cls"),
     [
-        pytest.param(
-            "t.mat",
-            FlirtTransform,
-            marks=pytest.mark.xfail(
-                reason="io.save ranks the ITK MATLAB file, which keeps the "
-                "LPS endpoints of the affine, above the FLIRT matrix that "
-                "the images were given for.",
-                strict=True,
-            ),
-        ),
+        ("t.mat", FlirtTransform),
         ("t.dat", RegisterDatTransformationRASToRAS),
         ("t.lta", LtaTransformation),
     ],
