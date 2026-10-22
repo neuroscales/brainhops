@@ -27,6 +27,7 @@ from brainhops.datamodel._transformations.compute.converters import (
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.errors import ConversionError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -196,6 +197,66 @@ def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
     """
     content = np.asarray(matrix, dtype="<f4").reshape(16).tobytes()
     return nb.nifti1.Nifti1Extension(_NIFTI_ECODE_IGNORE, content + bytes(8))
+
+
+def _field_index(chain: tx.Sequence[_xforms.Transformation]) -> int:
+    """
+    Return the position of the field in the chain of a NiftyReg field.
+
+    The field is the middle of its three slots, which an affine may
+    precede and another may follow. A chain without a field, which is not
+    a chain that a NiftyReg field holds, is read as the three slots alone.
+    """
+    for i, element in enumerate(chain):
+        if isinstance(
+            element, (_xforms.DisplacementField, _xforms.CoordinatesField)
+        ):
+            return i
+    return 1
+
+
+def _slot_affines(
+    chain: tx.Sequence[_xforms.Transformation], what: str
+) -> tx.Tuple[
+    tx.Optional[np.ndarray],
+    tx.Tuple[_xforms.Transformation, ...],
+    tx.Optional[np.ndarray],
+]:
+    """
+    Take the affines that NiftyReg keeps in its extensions out of a chain.
+
+    Returns
+    -------
+    before : array or None
+        The (4, 4) affine applied before the field, or `None`.
+    slots : tuple of Transformation
+        The three slots of the field.
+    after : array or None
+        The (4, 4) affine applied after the field, or `None`.
+    """
+    chain = tuple(chain)
+    i = _field_index(chain)
+    before = after = None
+    if i > 1:
+        before = homogeneous_matrix(chain[0], what, _NDIM)
+    if len(chain) > i + 2:
+        after = homogeneous_matrix(chain[-1], what, _NDIM)
+    return before, chain[i - 1 : i + 2], after
+
+
+def _extensions_of(
+    before: tx.Optional[np.ndarray], after: tx.Optional[np.ndarray]
+) -> tx.List[np.ndarray]:
+    """
+    Return the affines to write in the extensions, in the order of NiftyReg.
+
+    NiftyReg applies the affine of the first extension before the field
+    and the affine of the second one after it, so an affine applied after
+    the field alone is written after an identity.
+    """
+    if after is not None:
+        return [np.eye(4) if before is None else before, after]
+    return [] if before is None else [before]
 
 
 # ----------------------------------------------------------------------
@@ -416,9 +477,9 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
 
     def _slot(self, index: int) -> tx.Optional[_xforms.Transformation]:
         chain = self.transformations
-        # A chain that starts with an affine has its field slots shifted by
-        # one.
-        return chain[index + len(chain) - 3]
+        # The affines of the extensions may come before and after the three
+        # slots of the field.
+        return chain[_field_index(chain) - 1 + index]
 
     @property
     def ras2voxel(self) -> tx.Optional[_xforms.Transformation]:
@@ -770,9 +831,12 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
     reproduces how NiftyReg slides the nearest displacement. A linear grid is
     read the same way at degree 1.
 
-    When the header carries an affine in its extensions, as after a symmetric
-    registration, NiftyReg applies that affine before the spline. The chain
-    then starts with a [`RASToRAS`][] in the `affine` slot and has four slots.
+    The header may carry affines in its extensions, as after a symmetric
+    registration. NiftyReg applies the affine of the first extension before
+    the spline and composes the affine of the second extension after it.
+    The chain then starts with a [`RASToRAS`][] in the `affine` slot, and
+    ends with another one in the `affine_after` slot when the header has a
+    second extension.
     """
 
     HINTS = ("cpp", "f3d")
@@ -812,13 +876,21 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         affines = self.extension_affines
         if affines:
             chain = (RASToRAS(matrix=affines[0][:-1]), *chain)
+        if len(affines) > 1:
+            chain = (*chain, RASToRAS(matrix=affines[1][:-1]))
         return chain
 
     @property
     def affine(self) -> tx.Optional[_xforms.Transformation]:
         """The affine applied before the spline, or `None`."""
         chain = self.transformations
-        return chain[0] if len(chain) == 4 else None
+        return chain[0] if _field_index(chain) > 1 else None
+
+    @property
+    def affine_after(self) -> tx.Optional[_xforms.Transformation]:
+        """The affine applied after the spline, or `None`."""
+        chain = self.transformations
+        return chain[-1] if len(chain) > _field_index(chain) + 2 else None
 
     def _encoded(
         self, like: tx.Any = None, **overrides
@@ -826,9 +898,9 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         """
         Encode the grid, with coefficients as positions.
 
-        A grid read from a file keeps its stored positions. Otherwise, a
-        leading affine is encoded in the header extension that NiftyReg
-        reads.
+        A grid read from a file keeps its stored positions. Otherwise, the
+        affines before and after the spline are encoded in the header
+        extensions that NiftyReg reads.
 
         Parameters
         ----------
@@ -847,12 +919,10 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         image = self._read_back(like, **overrides)
         if image is not None:
             return image
-        chain = tuple(self.transformations or ())
-        extensions = []
-        if len(chain) == 4:
-            affine = homogeneous_matrix(chain[0], self._WHAT, _NDIM)
-            extensions.append(affine)
-            chain = chain[1:]
+        before, chain, after = _slot_affines(
+            self.transformations or (), self._WHAT
+        )
+        extensions = _extensions_of(before, after)
         # NiftyReg stores cubic and linear grids, so a field of either degree
         # is
         # written at its own degree, and any other is refitted to cubic.
@@ -896,9 +966,14 @@ class NiftyRegVelocity(NiftyRegSequence):
     whereas NiftyReg squares on the dense reference grid, so the flow matches
     `reg_transform -def` closely but not exactly.
 
-    The affine that a symmetric registration keeps in the extensions of its
-    velocity is not decoded, so building the chain of such a velocity raises
-    `NotImplementedError`. A velocity read from a file is written back as read.
+    NiftyReg composes the affine of the second extension of a velocity after
+    its flow, and the chain then ends with a [`RASToRAS`][]. The affine of the
+    first extension, which a symmetric registration writes, is not composed:
+    NiftyReg subtracts its values from the velocity before integrating it and
+    adds them back to the displacement after. That affine is not decoded
+    unless it is the identity, so building the chain of such a velocity
+    raises `NotImplementedError`. A velocity read from a file is written back
+    as read.
     A velocity built from a chain is written with its steps in `intent_p2`, and
     a displacement field is refused, since no logarithm is computed. This class
     is not registered as a format.
@@ -928,14 +1003,22 @@ class NiftyRegVelocity(NiftyRegSequence):
         """Return the stored vectors as the RAS velocity that they encode."""
         raise NotImplementedError
 
+    def _field_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
+        chain = super()._field_chain()
+        affines = self.extension_affines
+        if len(affines) > 1:
+            chain = (*chain, RASToRAS(matrix=affines[1][:-1]))
+        return chain
+
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
-        if self.extension_affines:
+        affines = self.extension_affines
+        if affines and not np.allclose(affines[0], np.eye(4)):
             raise NotImplementedError(
                 f"{type(self).__name__}: this NiftyReg velocity carries an "
-                f"affine in its header extensions, which NiftyReg removes "
-                f"before integrating it and composes back after; that is not "
-                f"decoded. Integrate it with NiftyReg (`reg_transform -ref "
-                f"<ref> -def <velocity> <out>.nii.gz`) and read the "
+                f"affine in its first header extension, whose values NiftyReg "
+                f"subtracts before integrating it and adds back after; that "
+                f"is not decoded. Integrate it with NiftyReg (`reg_transform "
+                f"-ref <ref> -def <velocity> <out>.nii.gz`) and read the "
                 f"deformation field it writes."
             )
         velocity = self._velocity_vectors(vox2world)
@@ -943,6 +1026,29 @@ class NiftyRegVelocity(NiftyRegSequence):
             # A backward field integrates the negated velocity.
             velocity = -velocity
         return velocity
+
+    def _velocity_slots(
+        self,
+    ) -> tx.Tuple[tx.Tuple[_xforms.Transformation, ...], tx.List[np.ndarray]]:
+        """
+        Return the three slots of the velocity and the extensions to write.
+
+        Raises
+        ------
+        ConversionError
+            If an affine comes before the velocity, which NiftyReg does not
+            compose.
+        """
+        before, chain, after = _slot_affines(
+            self.transformations or (), self._WHAT
+        )
+        if before is not None and not np.allclose(before, np.eye(4)):
+            raise ConversionError(
+                f"{self._WHAT} composes an affine after its velocity, and "
+                f"not before it, so this chain, which starts with an affine, "
+                f"cannot be written."
+            )
+        return chain, _extensions_of(None, after)
 
 
 def _written_steps(chain: tx.Sequence[_xforms.Transformation]) -> int:
@@ -984,8 +1090,9 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
         Encode the velocity grid.
 
         A grid read from a file keeps its stored positions. Otherwise, the
-        coefficients are turned into positions, and the squaring steps are
-        stored in `intent_p2`.
+        coefficients are turned into positions, the squaring steps are
+        stored in `intent_p2`, and an affine after the velocity is stored
+        in the second header extension.
 
         Parameters
         ----------
@@ -1004,7 +1111,7 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
         image = self._read_back(like, **overrides)
         if image is not None:
             return image
-        chain = tuple(self.transformations or ())
+        chain, extensions = self._velocity_slots()
         vox2world, vectors = self._split(chain)
         xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
@@ -1013,7 +1120,12 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
         positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
         overrides.setdefault("intent_p2", _written_steps(chain))
         return self._write(
-            positions, vox2world, SPLINE_VEL_GRID, like, **overrides
+            positions,
+            vox2world,
+            SPLINE_VEL_GRID,
+            like,
+            extensions,
+            **overrides,
         )
 
 
@@ -1056,7 +1168,8 @@ class NiftyRegVelocityField(NiftyRegVelocity):
 
         A field read from a file keeps its stored vectors. Otherwise, it is
         encoded as positions, the type that NiftyReg integrates, with the
-        squaring steps in `intent_p2`.
+        squaring steps in `intent_p2` and an affine after the velocity in
+        the second header extension.
 
         Parameters
         ----------
@@ -1075,7 +1188,7 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         image = self._read_back(like, **overrides)
         if image is not None:
             return image
-        chain = tuple(self.transformations or ())
+        chain, extensions = self._velocity_slots()
         vox2world, vectors = self._split(chain)
         xp = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
@@ -1084,7 +1197,12 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
         overrides.setdefault("intent_p2", _written_steps(chain))
         return self._write(
-            positions, vox2world, DEF_VEL_FIELD, like, **overrides
+            positions,
+            vox2world,
+            DEF_VEL_FIELD,
+            like,
+            extensions,
+            **overrides,
         )
 
 

@@ -154,18 +154,35 @@ B-spline (FNIRT coefficient fields, NiftyReg grids of control points
 and velocity grids, elastix B-spline transforms, X5 B-splines). Every
 field format is therefore converted to by the same helpers of
 `io/transformations/base/_conversions.py`, which take the degree of the
-format. A field of that degree keeps its coefficients. The affine that
-a field does not undo, in a chain `A o (id + d) o B`, is stored in the
-header when the format has a place for it, as the tools write their own
-files: the affine that NiftyReg applies before its grid, the initial
-affine of an FSL coefficient field, another transform of an elastix,
-ITK, X5 or MINC chain. The field then holds the displacement alone,
-placed by `B` or by the inverse of `A`, and nothing is lost
-(`split_affine`). A format without such a place, such as a NIfTI
-displacement field, carries the affine into the coefficients of the
-field, which is also exact, since a B-spline is linear in its
-coefficients and reproduces affine maps. A
-field of another degree is evaluated at its nodes, and its values are
+format. A field of that degree keeps its coefficients. A chain
+`A o (id + d) o B` holds a field between two affines, and everything
+that the header of a format can hold is stored there, as the tools
+write their own files. A NiftyReg grid of control points has two affine
+slots in its header extensions: NiftyReg applies the first one before
+the spline and composes the second one after it, as `reg_f3d -sym`
+writes them, so the grid stores `B` and `A` there and the field keeps
+the grid on which it is placed (`field_slots`). A NiftyReg velocity
+grid or velocity field composes its second extension after the flow,
+and NiftyReg subtracts the values of the first one from the velocity,
+which is not a composition, so the affines around a velocity are
+carried to its end by a change of coordinates, which is exact, and
+stored in the second extension (`split_affine`). The dense NiftyReg
+fields have no affine slot, since NiftyReg does not read their
+extensions. An elastix file chains transforms, and an ITK, X5 or MINC
+file is a chain of its own, so these formats store `B` and `A` as
+transforms on either side of the field, which keeps its grid
+(`world_pieces`). When ITK cannot place that grid, because it places a
+grid by orthonormal directions, elastix stores one affine, `A B`, after
+or before the field. An FSL coefficient field stores the initial affine
+that FNIRT applies first, so it stores `A B` there, and the field is
+placed by `B` (`split_affine`). The header affine of a NIfTI field
+places its grid in the input world, so it holds `B`. A NIfTI field has
+no other affine, and what `A` and `B` do not undo of each other is
+carried into the values of the field. That is also exact, since a
+B-spline is linear in its coefficients and reproduces affine maps. The
+qform and the sform of a NIfTI header are two placements of the same
+grid, from which a reader chooses one, so they cannot hold two affines
+that are applied in turn. A field of another degree is evaluated at its nodes, and its values are
 converted to coefficients by the existing conversion
 `field.to(store="coefficients")`, which is a loss. A format that imposes
 its own grid, such as the reference of an FSL warp or the knots of

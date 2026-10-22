@@ -20,10 +20,13 @@ A grid of control points is a field like any other, interpolated with
 cubic or linear B-splines, so it is converted as the other field
 formats are (see
 [`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]).
-The affine that the field does not undo is stored in the affine slot of
-the grid, which NiftyReg reads from the header extension and applies
-before the spline, so that the spline holds the displacement alone (see
-[`split_affine`][brainhops.io.transformations.base._conversions.split_affine]).
+The field keeps the grid on which it is placed, and the affines that
+come before and after it are stored in the two affine slots of the grid,
+which NiftyReg reads from the header extensions: it applies the affine
+of the first extension before the spline and composes the affine of the
+second extension after it, as a symmetric registration writes them. The
+spline then holds the displacement alone (see
+[`world_pieces`][brainhops.io.transformations.base._conversions.world_pieces]).
 By default, the control points are the nodes of the field of `t`. A
 field of the degree of the grid is then kept as it is, and any other
 field is evaluated at its nodes, and its values are converted to the
@@ -33,8 +36,12 @@ between the control points in millimetres, the field is evaluated on a
 grid laid out as NiftyReg lays it out, with one control point before
 the first voxel of the field, which is a loss.
 
-A velocity grid holds a velocity, which must lie between affines that
-undo each other, since the grid holds no affine. The options of a
+A velocity grid holds a velocity, and NiftyReg composes the affine of
+its second header extension after the flow. The affines around the
+velocity are carried to its end by a change of coordinates, which is
+exact (see
+[`split_affine`][brainhops.io.transformations.base._conversions.split_affine]),
+and the velocity is placed on its grid in the input world. The options of a
 conversion are `degree=` (3, the default, or 1 for a linear grid of
 displacements) and `spacing=`.
 """
@@ -54,6 +61,7 @@ from brainhops.io.transformations.base._conversions import (
     FieldParts,
     displacement_parts,
     displacements_of,
+    field_slots,
     format_options,
     held,
     register_converter,
@@ -111,17 +119,10 @@ def _to_grid(
             f"degree={degree} was asked.",
         )
     spacing = options.get("spacing")
-    # The affine that the field does not undo is applied first, in the
-    # slot that NiftyReg reads from the header extension, so that the
-    # spline holds the displacement alone.
-    affine, field = split_affine(t, RAS, RAS, cls, "before")
-    if field is None:
-        raise unrepresentable(
-            t,
-            cls,
-            "it holds no field, and a NiftyReg grid of control points is "
-            "placed on the grid of a field.",
-        )
+    # The field keeps its own grid, and the affines on either side of it
+    # go to the two slots that NiftyReg reads from the header extensions,
+    # so that the spline holds the displacement alone.
+    before, field, after = field_slots(t, RAS, cls)
     if spacing is None:
         parts = displacement_parts(field, RAS, cls, degree=degree)
     else:
@@ -133,8 +134,12 @@ def _to_grid(
         )
     _check_3d(parts, t, cls)
     chain = _sandwich(parts)
-    if not undoes(affine, np.eye(len(affine))):
-        chain = (RASToRAS(matrix=affine[:-1]), *chain)
+    if before is not None or after is not None:
+        identity = np.eye(len(parts.world2grid))
+        before = identity if before is None else before
+        chain = (RASToRAS(matrix=before[:-1]), *chain)
+    if after is not None:
+        chain = (*chain, RASToRAS(matrix=after[:-1]))
     return held(cls(transformations=chain), parts)
 
 
@@ -149,14 +154,18 @@ def _to_velocity_grid(
     cls = NiftyRegVelocityGrid
     options = format_options(t, cls, dict(kwargs), VELOCITY_OPTIONS)
     spacing = options.get("spacing")
-    velocity = _velocity(t, cls)
+    # The affines around the velocity are carried to its end, where
+    # NiftyReg composes the affine of the second header extension: a
+    # change of coordinates carries the flow of a velocity exactly.
+    after, velocity = split_affine(t, RAS, RAS, cls, "after")
+    velocity = _velocity(velocity if velocity is not None else t, cls)
     if spacing is None:
-        parts = displacement_parts(t, RAS, cls, keep_log=True, degree=3)
+        parts = displacement_parts(velocity, RAS, cls, keep_log=True, degree=3)
     else:
         # The values of the velocity are evaluated on the new grid, as
         # those of a displacement would be, and are read again as a
         # velocity.
-        grid2world, shape = _control_grid(t, cls, spacing)
+        grid2world, shape = _control_grid(velocity, cls, spacing)
         parts = displacements_of(
             sample_on_grid(
                 _as_displacement(velocity),
@@ -180,7 +189,11 @@ def _to_velocity_grid(
             )
         )
     _check_3d(parts, t, cls)
-    return held(cls(transformations=_sandwich(parts)), parts)
+    chain = _sandwich(parts)
+    if not undoes(after, np.eye(len(after))):
+        identity = RASToRAS(matrix=np.eye(len(after))[:-1])
+        chain = (identity, *chain, RASToRAS(matrix=after[:-1]))
+    return held(cls(transformations=chain), parts)
 
 
 @converter(NiftyRegSequence, NiftyRegControlPointGrid)
@@ -213,7 +226,7 @@ def _control_grid(
 
 def _velocity(t: _xforms.Transformation, cls: type) -> _xforms.Transformation:
     # The velocity of `t`, which must lie between affines that undo each
-    # other, since a velocity grid holds no affine.
+    # other once the affine that NiftyReg composes after it is taken out.
     before, field, after = split_field_chain(t, RAS, RAS, cls)
     if not isinstance(field, _xforms.DisplacementField) or not field.log:
         raise unrepresentable(
@@ -227,7 +240,8 @@ def _velocity(t: _xforms.Transformation, cls: type) -> _xforms.Transformation:
             t,
             cls,
             "its velocity lies between affines that do not undo each "
-            "other, and a NiftyReg velocity grid holds no affine.",
+            "other, and a NiftyReg velocity grid holds an affine only "
+            "after its flow.",
         )
     return t
 

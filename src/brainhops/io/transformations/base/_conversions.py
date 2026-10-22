@@ -1070,17 +1070,22 @@ def world_pieces(
 
     Each field becomes one piece, which is a chain of three: the affine
     from the world to the grid of the field, the field as it is, and an
-    affine back to the world. The affines that come before a field are
-    composed into the first affine. A field of displacements is closed
-    by the inverse of that affine, so that it is the sandwich that a
-    field format stores, and the affines that follow it start the next
-    piece. A field of coordinates is closed by the bridge from its output
-    to the world when there is one, by the affines that follow it when
-    it is the last field, and otherwise by the inverse of its first
-    affine. The affines that remain after the last field become one
-    affine piece, which is left out when it is the identity. A chain
-    without a field is one affine piece. The pieces, applied in turn,
-    are the same map as `t`.
+    affine back to the world. When the leaf just before a field of
+    displacements is an affine from a world system, the field keeps the
+    grid that this leaf places it on, and the affines that come before
+    that leaf become an affine piece of their own. Each affine is then
+    stored as a transform of the file, as the tools write their own
+    files, rather than in the placement of the grid. Otherwise, the
+    affines that come before a field are composed into its first affine.
+    A field of displacements is closed by the inverse of its first
+    affine, so that it is the sandwich that a field format stores, and
+    the affines that follow it start the next piece. A field of
+    coordinates is closed by the bridge from its output to the world
+    when there is one, by the affines that follow it when it is the last
+    field, and otherwise by the inverse of its first affine. The affines
+    that remain after the last field become one affine piece, which is
+    left out when it is the identity. A chain without a field is one
+    affine piece. The pieces, applied in turn, are the same map as `t`.
 
     Parameters
     ----------
@@ -1148,13 +1153,40 @@ def world_pieces(
 
     if not fields:
         return [affine(segment(0, len(leaves)), world, world)]
+
+    def placement(lo: int, i: int) -> tx.Optional[np.ndarray]:
+        # The affine from the world to the grid of field `i`, read from
+        # the leaf just before the field when that leaf is an affine from
+        # a world system, or `None`. This keeps the field on the grid that
+        # it was placed on.
+        if i - 1 < lo or _is_field(leaves[i - 1]):
+            return None
+        leaf = leaves[i - 1]
+        to_leaf = _world_bridge(world, leaf.input, ndim)
+        if to_leaf is None:
+            return None
+        try:
+            chain = [leaf, _bridge(leaf.output, leaves[i].input, t, cls)]
+            return _matrix(chain, t, cls, ndim) @ to_leaf
+        except ConversionError:
+            return None
+
     pieces: tx.List[_xforms.Transformation] = []
     incoming = np.eye(ndim + 1)
     for k, i in enumerate(fields):
         field = leaves[i]
-        before = segment(0 if k == 0 else fields[k - 1] + 1, i) @ incoming
+        lo = 0 if k == 0 else fields[k - 1] + 1
+        before = segment(lo, i) @ incoming
         last = k == len(fields) - 1
         after = segment(i + 1, len(leaves)) if last else None
+        place = placement(lo, i)
+        if isinstance(field, _xforms.DisplacementField) and place is not None:
+            # The affines that come before the placement of the field
+            # become an affine piece of their own.
+            first = np.linalg.inv(place) @ before
+            if not undoes(first, np.eye(len(first))):
+                pieces.append(affine(first, world, world))
+            before = place
         if isinstance(field, _xforms.DisplacementField):
             close = np.linalg.inv(before)
         elif last:
@@ -1177,6 +1209,86 @@ def world_pieces(
     if not undoes(rest, np.eye(len(rest))):
         pieces.append(affine(rest, world, world))
     return pieces
+
+
+def field_slots(
+    t: _xforms.Transformation,
+    world: CoordinateSystem,
+    cls: type,
+) -> tx.Tuple[
+    tx.Optional[np.ndarray], _xforms.Transformation, tx.Optional[np.ndarray]
+]:
+    """
+    Take `t` apart as an affine, a field on its own grid, and an affine.
+
+    Some formats store a field with an affine on either side of it, in
+    their header or as other transforms of a chain: NiftyReg applies the
+    affine of the first extension of a grid of control points before the
+    spline and composes the affine of the second one after it, and an
+    elastix file chains transforms. Such a format stores the affines
+    there, as the tools write their own files, and the field keeps the
+    grid on which it is placed. `t` is cut as [`world_pieces`][] cuts
+    it, and must hold one field.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation to take apart.
+    world : CoordinateSystem
+        The world that the format maps from and to.
+    cls : type
+        The format, which names the error when `t` cannot be held.
+
+    Returns
+    -------
+    before : array or None
+        The homogeneous affine applied before the field, in `world`, or
+        `None` when there is none.
+    field : Transformation
+        The field, as a chain of an affine from `world` to its grid, the
+        field and an affine back to `world`.
+    after : array or None
+        The homogeneous affine applied after the field, in `world`, or
+        `None` when there is none.
+
+    Raises
+    ------
+    ConversionError
+        If a bridge does not exist, or `t` does not hold exactly one
+        field, or what lies around it is not an affine.
+    """
+    pieces = world_pieces(t, world, cls)
+    fields = [
+        k
+        for k, piece in enumerate(pieces)
+        if not isinstance(piece, _xforms.Affine)
+    ]
+    if len(fields) != 1:
+        raise unrepresentable(
+            t,
+            cls,
+            f"it holds {len(fields)} fields, and the format holds one. "
+            f"Fields are not composed into one, which would resample them.",
+        )
+    k = fields[0]
+    return (
+        _composed(pieces[:k]),
+        pieces[k],
+        _composed(pieces[k + 1 :]),
+    )
+
+
+def _composed(
+    pieces: tx.Sequence[_xforms.Transformation],
+) -> tx.Optional[np.ndarray]:
+    # The homogeneous matrix of affine pieces applied in turn, or `None`
+    # when there is no piece.
+    if not pieces:
+        return None
+    matrix = np.eye(len(pieces[0].homogeneous_matrix))
+    for piece in pieces:
+        matrix = np.asarray(piece.homogeneous_matrix, np.float64) @ matrix
+    return matrix
 
 
 def cardinal_grid(

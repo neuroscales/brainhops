@@ -392,8 +392,11 @@ def grid_chain(
     writes as a linear transform, and each field becomes an
     [`XfmGridTransform`][], whose displacements the file writes as a new
     MINC volume. A field of coordinates becomes the displacement of each
-    node, the affines around a field are carried into it when they do
-    not undo each other, and a velocity is integrated.
+    node, and a velocity is integrated. A field keeps the grid on which
+    it is placed, and the affines around it become linear transforms of
+    their own; where the chain does not say how the field is placed, the
+    affines around it are carried into it when they do not undo each
+    other.
 
     libminc interpolates the displacements of a grid with cubic splines,
     which brainhops reads as cubic B-splines of the values. A field that

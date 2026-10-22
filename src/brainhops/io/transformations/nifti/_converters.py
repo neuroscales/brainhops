@@ -32,8 +32,11 @@ linear interpolation and with the nearest value outside the grid. A
 field of coordinates is stored as the displacement of each node, and a
 field of displacements as the position of each node, since the two are
 the same map inside the grid and only extend differently beyond it.
-The affines on either side of the field are carried into its values
-when they do not undo each other. A field interpolated with another
+The affine of the header, which places the grid of the field in the
+input world, holds the affines that come before the field. A NIfTI
+field has no other place for an affine, so what the affines on either
+side of the field do not undo of each other is carried into its values,
+which is exact. A field interpolated with another
 degree than 1 is sampled at its nodes, which is a loss: the converter
 raises a `LossyConversionError`, and `t.to(Format, lossy=True)` returns
 the sampled field.

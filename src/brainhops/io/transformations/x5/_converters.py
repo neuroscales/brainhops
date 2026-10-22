@@ -30,8 +30,10 @@ A field is converted as every field format converts it (see
 a field interpolated with cubic B-splines is stored as its
 coefficients, which X5 reads back with cubic B-splines, and any other
 field as its values at the nodes of its grid, which are read back with
-linear interpolation. A velocity is integrated, and the affines around
-a field are carried into it. A field interpolated with a degree other
+linear interpolation. A velocity is integrated. A field keeps the grid
+on which it is placed, and the affines around it become transforms of
+their own; where the chain does not say how the field is placed, they
+are carried into it. A field interpolated with a degree other
 than 1 or 3 is evaluated at its nodes, which is a loss: the converter
 raises a `LossyConversionError`, and `t.to(X5Transform, lossy=True)`
 returns the approximation. How a field is extended beyond its grid,
@@ -129,8 +131,8 @@ def _element(piece: _xforms.Transformation, cls: type) -> tx.Tuple:
         return element, parts
     if int(field.degree) == 3 and field.data is not None:
         # A cubic B-spline is kept as one, with its coefficients, and a
-        # cubic velocity is integrated into one. The affines around the
-        # field are carried into its coefficients.
+        # cubic velocity is integrated into one. The affines of the piece
+        # that do not undo each other are carried into its coefficients.
         parts = displacement_parts(piece, RAS, cls, degree=3)
         element = X5BSplineField(
             transformations=(

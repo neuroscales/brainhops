@@ -73,10 +73,12 @@ from brainhops.io.transformations.base._conversions import (
     affine_between,
     displacement_parts,
     displacements_of,
+    field_slots,
     format_options,
     register_converter,
     sample_on_grid,
     split_affine,
+    undoes,
 )
 from brainhops.io.transformations.base._converters import relabel
 from brainhops.io.transformations.base._splines import (
@@ -278,18 +280,34 @@ def _field_blocks(
     Return the blocks that hold the field of `t`, in the order of
     application, and what they lose.
 
-    The affine that the field does not undo is written as a transform
-    of its own, chained to the B-spline as elastix chains transforms, so
-    that the B-spline holds the displacement alone (see
+    The affines around the field are written as transforms of their own,
+    chained to the B-spline as elastix chains transforms, so that the
+    B-spline holds the displacement alone. The field keeps the grid on
+    which it is placed, with the affines that come before and after it on
+    either side (see
+    [`field_slots`][brainhops.io.transformations.base._conversions.field_slots]).
+    ITK places a grid by orthonormal directions, so when it cannot place
+    that grid, the affine that the field does not undo is applied after
+    the B-spline, which is placed by the affines before it, or before the
+    B-spline, which is then placed by the affines after it (see
     [`split_affine`][brainhops.io.transformations.base._conversions.split_affine]).
-    It is applied after the B-spline, which keeps the grid of the field,
-    or before it when ITK cannot place that grid, since ITK places a grid
-    by orthonormal directions. The field is held as a B-spline of its own
+    The field is held as a B-spline of its own
     degree when elastix has it, and as a cubic B-spline otherwise. A
     field that ITK cannot place on either side is evaluated on the
     nearest grid that it can place, which loses.
     """
     degree = _spline_degree(t)
+    first, field, last = field_slots(t, world, cls)
+    parts = displacement_parts(field, world, cls, degree=degree)
+    if orthonormal_placement(parts.grid2world) is not None:
+        data = parts.field
+        coefficients = data.coefficients if degree > 1 else data.values
+        blocks = [_bspline_block(parts.grid2world, coefficients, degree)]
+        if first is not None and not undoes(first, np.eye(len(first))):
+            blocks.insert(0, _affine_block(first, center))
+        if last is not None and not undoes(last, np.eye(len(last))):
+            blocks.append(_affine_block(last, center))
+        return blocks, parts.loss
     for side in ("after", "before"):
         affine, field = split_affine(t, world, world, cls, side)
         parts = displacement_parts(field, world, cls, degree=degree)
