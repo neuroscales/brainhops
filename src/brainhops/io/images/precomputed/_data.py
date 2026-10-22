@@ -193,6 +193,18 @@ class _PrecomputedProxy(ArrayProxy):
         """The type of the voxels."""
         return self._dtype
 
+    @property
+    def base_chunks(self) -> tx.Tuple[int, ...]:
+        """The shape of a chunk of the scale, read from the record.
+
+        The chunk is the first of the `chunk_sizes` of the scale, which
+        is the one that a reader uses, and it holds every channel.
+        """
+        chunks = tuple(int(n) for n in self.scale.chunk_size)
+        if self.num_channels != 1:
+            chunks += (int(self.num_channels),)
+        return chunks
+
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         state = dict(self.__dict__)
         state["_store"] = None

@@ -1,6 +1,5 @@
 __all__ = [
     "Transformation",
-    "Multiscale",
     "MultiscaleField",
     "CoordinatesField",
     "CartesianField",
@@ -37,6 +36,7 @@ __all__ = [
     "Projection",
     "Sequence",
     "MutableSequence",
+    "DerivedSequence",
     "ImmutableSequence",
     "ModeLike",
     "SimplifyLike",
@@ -50,9 +50,6 @@ __all__ = [
     "is_rotation",
     "is_linear",
 ]
-
-# The transformation errors are defined in `brainhops.errors` rather than here,
-# because the io layer raises them as well.
 
 from .base import Transformation
 
@@ -103,8 +100,13 @@ from .inverse import (
 )
 from .meta import Bijection, Projection, SubspaceTransformation
 from .modes import ModeLike
-from .multiscale import Multiscale, MultiscaleField
-from .sequence import ImmutableSequence, MutableSequence, Sequence
+from .multiscale import MultiscaleField
+from .sequence import (
+    DerivedSequence,
+    ImmutableSequence,
+    MutableSequence,
+    Sequence,
+)
 from .tangents import (
     AffineExponential,
     LinearExponential,

@@ -30,9 +30,10 @@ from .concrete import (
 )
 
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
+_TypeRef = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
 
 
-class TangentMixin:
+class _TangentMixin:
     """Mixin shared by the classes that store the tangent of their map.
 
     The `data` of such a class is a tangent about the identity, so the inverse,
@@ -41,7 +42,7 @@ class TangentMixin:
     which is the target of `.to(log=False)`.
     """
 
-    _tangentof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
+    _tangentof: _TypeRef = None
 
     @lazyproperty
     def _sqrt(self) -> tx.Optional[ArrayProtocol]:
@@ -82,7 +83,7 @@ class TangentMixin:
 
 
 class StationaryVelocityField(
-    TangentMixin, DisplacementField, on={"_log": True}
+    _TangentMixin, DisplacementField, on={"_log": True}
 ):
     """A displacement field stored as a stationary velocity (`log=True`).
 
@@ -109,7 +110,7 @@ class StationaryVelocityField(
 
     # --- class attributes ---------------------------------------------
 
-    _tangentof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
+    _tangentof: _TypeRef = DisplacementField
 
     _base_encoding_fields: _FieldNames = DisplacementField.encoding_fields
     encoding_fields: _FieldNames = (*_base_encoding_fields, "steps")
@@ -192,7 +193,7 @@ class StationaryVelocityField(
 
 
 @kinds.PositiveAffine
-class AffineExponential(TangentMixin, Affine, on={"_log": True}):
+class AffineExponential(_TangentMixin, Affine, on={"_log": True}):
     """An affine transformation stored as its tangent (`log=True`).
 
     The `data` is the `(N, N+1)` tangent `[L, l]` about the identity, and
@@ -209,7 +210,7 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
 
     # --- class attributes ---------------------------------------------
 
-    _tangentof: tx.ClassVar[tx.Type[Transformation]] = Affine
+    _tangentof: _TypeRef = Affine
 
     derived_fields: _FieldNames = (
         *Affine.derived_fields,
@@ -263,7 +264,7 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
         self.logmatrix = to_compact(value) if value is not None else None
 
 
-class MatrixTangentMixin(TangentMixin):
+class MatrixTangentMixin(_TangentMixin):
     """Mixin for linear tangents whose matrix is the exponential of `data`.
 
     `RotationExponential` deliberately does not subclass `LinearExponential`.
@@ -312,7 +313,7 @@ class LinearExponential(
     real axis.
     """
 
-    _tangentof: tx.ClassVar[tx.Type[Transformation]] = Linear
+    _tangentof: _TypeRef = Linear
 
     derived_fields: _FieldNames = (*Linear.derived_fields, "logmatrix")
 
@@ -333,7 +334,7 @@ class RotationExponential(MatrixTangentMixin, Rotation, on={"_log": True}):
     raises a [`DomainError`][] for a half turn, whose logarithm is not unique.
     """
 
-    _tangentof: tx.ClassVar[tx.Type[Transformation]] = Rotation
+    _tangentof: _TypeRef = Rotation
 
     derived_fields: _FieldNames = (*Rotation.derived_fields, "logmatrix")
 
@@ -347,7 +348,7 @@ class RotationExponential(MatrixTangentMixin, Rotation, on={"_log": True}):
 
 
 @kinds.PositiveDiagonal
-class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
+class ScalingExponential(_TangentMixin, Scaling, on={"_log": True}):
     """A scaling stored as the logarithm of its factors (`log=True`).
 
     The `data` is the tangent `s` and `scale` is `exp(s)`, so the factors are
@@ -357,7 +358,7 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
     positive.
     """
 
-    _tangentof: tx.ClassVar[tx.Type[Transformation]] = Scaling
+    _tangentof: _TypeRef = Scaling
 
     derived_fields: _FieldNames = (*Scaling.derived_fields, "logscale")
 
@@ -377,7 +378,8 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
         """
         if self.logscale is None:
             return None
-        return get_array_backend(self.logscale).exp(self.logscale)
+        xp = get_array_backend(self.logscale)
+        return xp.exp(self.logscale)
 
     @scale.setter
     def scale(self, value: tx.Optional[ArrayProtocol]) -> None:
@@ -388,7 +390,8 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
             # flips an axis has no tangent.
             what = f"The logarithm of this {self._tangentof.__name__}"
             require_positive(value, what)
-            self.logscale = get_array_backend(value).log(value)
+            xp = get_array_backend(value)
+            self.logscale = xp.log(value)
 
 
 # --- helpers ----------------------------------------------------------
@@ -443,8 +446,8 @@ def _integrate_field(
 def _squaring_steps(velocity: ArrayProtocol) -> int:
     # Return the smallest number of squarings for which the first step moves
     # no point by more than `_FIRST_STEP` voxels.
-    backend = get_array_backend(velocity)
-    norm = float(backend.max(backend.sqrt((velocity**2).sum(axis=-1))))
+    xp = get_array_backend(velocity)
+    norm = float(xp.max(xp.sqrt((velocity**2).sum(axis=-1))))
     if not math.isfinite(norm):
         raise DomainError(
             "The exponential of this velocity field is not defined: it is "

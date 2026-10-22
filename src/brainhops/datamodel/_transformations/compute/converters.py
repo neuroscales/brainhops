@@ -416,9 +416,9 @@ def _(t: Linear, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
     if "matrix" not in kwargs:
         # Append a zero translation column. The result does not depend on
         # the endpoints, which may be unspecified.
-        ba = get_array_backend(t.matrix)
-        zeros = ba.zeros((*t.matrix.shape[:-1], 1), dtype=t.matrix.dtype)
-        kwargs["matrix"] = ba.concatenate([t.matrix, zeros], axis=-1)
+        xp = get_array_backend(t.matrix)
+        zeros = xp.zeros((*t.matrix.shape[:-1], 1), dtype=t.matrix.dtype)
+        kwargs["matrix"] = xp.concatenate([t.matrix, zeros], axis=-1)
     return _convert_withdata(t, cls, **kwargs)
 
 
@@ -448,7 +448,7 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
     ]
     if t.transformation is None:
         inner_matrix = None
-        ba = np
+        xp = np
     else:
         inner_affine = t.transformation.compute().to(Affine)
         if not isinstance(inner_affine, Affine):
@@ -458,8 +458,8 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
                 "affine"
             )
         inner_matrix = inner_affine.matrix
-        ba = get_array_backend(inner_matrix)
-    matrix = ba.zeros((n_out, n_in + 1))
+        xp = get_array_backend(inner_matrix)
+    matrix = xp.zeros((n_out, n_in + 1))
     acted_in = set(input_axes)
     acted_out = set(output_axes)
     passthrough_in = [i for i in range(n_in) if i not in acted_in]
@@ -518,8 +518,8 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
         if matrix is None:
             matrix = block
             continue
-        ba = get_array_backend(block)
-        product = ba.empty_like(block, shape=(block.shape[0], matrix.shape[1]))
+        xp = get_array_backend(block)
+        product = xp.empty_like(block, shape=(block.shape[0], matrix.shape[1]))
         product[:, :-1] = block[:, :-1] @ matrix[:, :-1]
         product[:, -1:] = block[:, :-1] @ matrix[:, -1:] + block[:, -1:]
         matrix = product
@@ -570,13 +570,13 @@ def _(t: CoordinatesField, cls: tx.Type[SVF], **kwargs) -> SVF:
 def _encoded_grid(t: TransformationField) -> ArrayProtocol:
     """Return the identity grid of the nodes of `t`, encoded like its data."""
     data = t.data
-    ba = get_array_backend(data)
+    xp = get_array_backend(data)
     # The grid is created in the backend of the data, with CuPy chunks when
     # its chunks are CuPy arrays.
     options = _creation_options(data)
-    axes = (ba.arange(s, **options) for s in data.shape[:-1])
-    grid = ba.meshgrid(*axes, indexing="ij")
-    grid = ba.stack(grid, axis=-1).astype(data.dtype)
+    axes = (xp.arange(s, **options) for s in data.shape[:-1])
+    grid = xp.meshgrid(*axes, indexing="ij")
+    grid = xp.stack(grid, axis=-1).astype(data.dtype)
     return _values2data(grid, t.store, t.degree, t.bound)
 
 
@@ -600,9 +600,9 @@ def _(t: Transformation, cls: tx.Type[IDENTITY], **kwargs) -> IDENTITY:
 def _(t: Linear, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
     if t.is_identity():
         return convert(convert(t, Identity), Permutation, **kwargs)
-    ba = get_array_backend(t.matrix)
-    matrix = ba.round(ba.abs(t.matrix))
-    permutation = ba.argmax(matrix, axis=1)
+    xp = get_array_backend(t.matrix)
+    matrix = xp.round(xp.abs(t.matrix))
+    permutation = xp.argmax(matrix, axis=1)
     kwargs.setdefault("permutation", permutation)
     u = _convert_withdata(t, cls, **kwargs)
     if not t.is_permutation(compute=True):
@@ -614,8 +614,8 @@ def _(t: Linear, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
 def _(t: Linear, cls: tx.Type[SCALING], **kwargs) -> SCALING:
     if t.is_identity():
         return convert(convert(t, Identity), Scaling, **kwargs)
-    ba = get_array_backend(t.matrix)
-    scale = ba.diagonal(t.matrix)  # TODO: use SVD instead?
+    xp = get_array_backend(t.matrix)
+    scale = xp.diagonal(t.matrix)  # TODO: use SVD instead?
     kwargs.setdefault("scale", scale)
     u = _convert_withdata(t, cls, **kwargs)
     if not t.is_scaling(compute=True):

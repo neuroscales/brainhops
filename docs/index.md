@@ -34,8 +34,9 @@ brainhops has two interfaces:
 - The [command-line interface](start/cli.md), invoked as `brainhops`,
   exposes a subset of the library. Its `reslice` command applies a chain of
   transformations to an image and resamples the result onto a reference
-  grid. Commands for combining transformations and for converting between
-  formats are planned but not implemented yet.
+  grid, and its `convert` command rewrites an image or a transformation
+  in another format. A command for combining transformations is planned
+  but not implemented yet.
 - The [Python interface](start/python.md), imported as `brainhops`, models
   many kinds of spatial transformation and reads and writes most
   neuroimaging and microscopy formats.

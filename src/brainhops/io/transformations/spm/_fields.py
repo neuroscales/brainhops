@@ -10,9 +10,8 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core.properties import smartproperty
-from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import dataproperty
+from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
@@ -36,7 +35,6 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
-    StoredFieldMixin,
     homogeneous_matrix,
 )
 from brainhops.io.transformations.nifti import (
@@ -52,9 +50,7 @@ from brainhops.io.transformations.nifti._views import (
 
 
 @register_format
-class SpmCoordinatesField(
-    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
-):
+class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
     Field of RAS coordinates written by SPM.
 
@@ -123,7 +119,7 @@ class SpmCoordinatesField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -354,8 +350,7 @@ def _spm_encoded(
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        backend = get_array_backend(coordinates)
-        coordinates = _field_to_disk(backend.asarray(coordinates))
+        coordinates = _field_to_disk(coordinates)
         record = None if base is None else base.copy()
         image = _record_image(coordinates, record, vox2ras, overrides)
     _set_coordinates_intent(image.header)

@@ -557,7 +557,8 @@ the helpers, `replace_directory`, the toy pyramid of the conformance
 tests and the checks P1 to P12. Zarr and OME-Zarr, TIFF, OpenSlide and
 Pillow move to the design in the later steps of the fourth pass, which
 also move the format fields of TIFF and Pillow into their records and
-make `OmeZarrField` read its levels lazily. The pyramids of JPEG 2000
+make `OmeZarrField` read its levels lazily, which is implemented. The
+pyramids of JPEG 2000
 (#273), precomputed (#436), Imaris (#437), N5 (#438) and BigDataViewer
 (#441) were merged before pass 4a. They stay among the formats that are
 not migrated, which the checks P1 to P12 never run on, and move to this

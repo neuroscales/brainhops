@@ -29,7 +29,7 @@ class AfniAffineFormat(AfniTransformationFormat, AffineTransformationFormat):
 
 
 @format_registry
-class AfniWarp(AfniTransformationFormat):
+class AfniWarpFormat(AfniTransformationFormat):
     """A nonlinear warp stored in an AFNI format, as `3dQwarp` writes it.
 
     This class is the family of the AFNI warps and answers to the hint

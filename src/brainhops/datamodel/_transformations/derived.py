@@ -31,8 +31,6 @@ from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import alias, smartproperty
-from brainhops.backends import _CURRENT
-from brainhops.datamodel._backends import _with_fields, voxel_arrays_of
 
 from . import nocycles
 from .base import Transformation, _copied
@@ -46,6 +44,7 @@ from .concrete import (
     Scaling,
     Translation,
 )
+from .meta import MetaTransformation
 from .modes import ModeLike, mode_admits, normalize_modes
 from .nocycles import register_derived
 
@@ -63,7 +62,7 @@ _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 # ======================================================================
 
 
-class DerivedTransformation(Transformation):
+class DerivedTransformation(MetaTransformation):
     """A unary operator applied to a transformation and resolved on demand.
 
     An operation holds its target as `forward` and derives its own parameter
@@ -114,6 +113,7 @@ class DerivedTransformation(Transformation):
     of the forward, swapped.
     """
 
+    meta_fields: _FieldNames = ("forward",)
     data_fields: _FieldNames = ("forward",)
 
     # --- attributes ---------------------------------------------------
@@ -223,40 +223,6 @@ class DerivedTransformation(Transformation):
         # Converting to any other type, even the family's own, resolves the
         # operator first.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
-
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # The operation derives its parameter from its forward.
-        return voxel_arrays_of([self.forward])
-
-    def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
-    ) -> tx.Self:
-        """Return the operation with its forward converted.
-
-        The operation derives its own parameter from its forward, so
-        only the forward is converted, with its own `as_backend`, and the
-        parameter is derived again from it when it is read.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-        inplace : bool, default=False
-            Whether this transformation holds the converted forward and
-            is returned, instead of a new transformation.
-
-        Returns
-        -------
-        DerivedTransformation
-            A transformation of the same class.
-        """
-        forward = self.forward
-        if forward is None:
-            return self
-        converted = forward.as_backend(backend)
-        if converted is forward:
-            return self
-        return _with_fields(self, inplace, forward=converted)
 
     # --- helpers ------------------------------------------------------
 
@@ -370,7 +336,7 @@ class Sqrt(DerivedTransformation, polymorphic="strict"):
 # ======================================================================
 
 
-class ConcreteSqrtMixin:
+class _ConcreteSqrtMixin:
     """Mixin that reads the parameter of a typed square root from its forward.
 
     Each concrete family computes the parameter of its own square root in the
@@ -384,7 +350,7 @@ class ConcreteSqrtMixin:
 
 
 class SqrtTranslation(
-    ConcreteSqrtMixin,
+    _ConcreteSqrtMixin,
     Sqrt,
     Translation,
     on={"forward": partial(isinstance, PLACEHOLDER, Translation)},
@@ -403,7 +369,7 @@ class SqrtTranslation(
 
 
 class SqrtScaling(
-    ConcreteSqrtMixin,
+    _ConcreteSqrtMixin,
     Sqrt,
     Scaling,
     on={"forward": partial(isinstance, PLACEHOLDER, Scaling)},
@@ -422,7 +388,7 @@ class SqrtScaling(
 
 
 class SqrtRotation(
-    ConcreteSqrtMixin,
+    _ConcreteSqrtMixin,
     Sqrt,
     Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
@@ -448,7 +414,7 @@ class SqrtRotation(
 
 
 class SqrtLinear(
-    ConcreteSqrtMixin,
+    _ConcreteSqrtMixin,
     Sqrt,
     Linear,
     on={"forward": partial(isinstance, PLACEHOLDER, Linear)},
@@ -467,7 +433,7 @@ class SqrtLinear(
 
 
 class SqrtAffine(
-    ConcreteSqrtMixin,
+    _ConcreteSqrtMixin,
     Sqrt,
     Affine,
     on={"forward": partial(isinstance, PLACEHOLDER, Affine)},

@@ -20,7 +20,7 @@ from brainhops._core.properties import (
 )
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel._backends import dataproperty
+from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
@@ -306,7 +306,7 @@ class AfniImage(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the image in the layout of `data`, without reading it.
 

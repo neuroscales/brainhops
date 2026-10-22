@@ -3,42 +3,44 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
-from bagof.magic import NoRepr, NotKwOnly, replace
+from bagof.magic import Forget, NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
+from brainhops._core.magic import smart_replace
 from brainhops._core.properties import alias
-from brainhops._core.typing import ArrayProtocol, Clip
-from brainhops.backends import _CURRENT
+from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
+from brainhops.backends import BackendLike, DeviceLike
 
 from ._backends import (
-    _as_backend_data,
     _BackendsMixin,
     _stored_data,
-    _with_fields,
-    as_backend_all,
-    computing_with,
+    as_backend,
+    dataobjproperty,
     dataproperty,
-    voxel_arrays_of,
 )
-from ._transformations.multiscale import (
+from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
-    _at_resolution,
     _nearest_resolution_index,
+    nearest_level,
 )
-from .base import DataModelBase, IdentityComparison
+from ._transformations.compute.separable import pull_separable
+from .base import DataModelBase, _ComparesByIdMixin
+from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry
 from .metadata import Metadata
 from .metadata._derive import Indexed, Resampled
+from .multiscale import Multiscale
 from .transformations import (
     CartesianField,
     Identity,
+    Sequence,
     Transformation,
 )
 
 
 class Image(
     _BackendsMixin,
-    IdentityComparison,
+    _ComparesByIdMixin,
     DataModelBase,
     eq=False,
     kw_only=True,
@@ -55,55 +57,15 @@ class Image(
     """
 
     metadata: NoRepr[tx.Optional[Metadata]] = None
-    """What describes the image beyond its data and geometry, or `None`.
-
-    The metadata holds the common vocabulary of
-    [`Metadata`][brainhops.datamodel.metadata.Metadata], such as a
-    repetition time, a description or a slice timing. An image built
-    from data has none unless it is given some. A file format takes the
-    field over to hold the metadata of its own class, which also holds
-    the header of the file, and converts the metadata it is given into
-    that class. The field is keyword-only and is left out of the
-    representation of the image.
-    """
+    """What describes the image beyond its data and geometry."""
 
     # --- conversions --------------------------------------------------
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """Copy an image, or convert a single-scale image or a pyramid.
-
-        A single-scale image copied into a pyramid, or a pyramid copied
-        into a single-scale image, changes how the image is stored, so it
-        is converted as `other.to(cls)` converts it. Any other image is
-        copied as
-        [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance]
-        copies it. A single-scale image of another class, such as an
-        image read from a file, gives its data as it holds them, without
-        converting them with the backend setting.
-
-        Parameters
-        ----------
-        other : DataModelBase
-            The image to copy or convert.
-        *args : Any
-            Constructor arguments of a copy. A conversion takes keyword
-            arguments only.
-        **kwargs : Any
-            Fields of the result, which take precedence over those of
-            `other`.
-
-        Returns
-        -------
-        Self
-            The new image.
-
-        Raises
-        ------
-        TypeError
-            If positional arguments accompany a conversion.
-        """
-        if _changes_storage(other, cls):
+        if _single_multi_swap(other, cls):
+            # single-scale to multi-scale or multi-scale to single-scale
+            # > convert via `to`
             if args:
                 raise TypeError(
                     f"{cls.__name__}.from_instance() converts a "
@@ -124,43 +86,29 @@ class Image(
         return super().from_instance(other, *args, **kwargs)
 
     def to(
-        self, cls: tx.Optional[type] = None, *, copy: bool = False, **kwargs
+        self,
+        cls: tx.Optional[tx.Type["Image"]] = None,
+        *,
+        copy: bool = False,
+        **fields,
     ) -> tx.Any:
-        """Convert the image to another class of image.
-
-        A single-scale image becomes a pyramid of one level. The level
-        keeps its own transformations and the pyramid adds none, so the
-        image keeps its geometry. A pyramid becomes the single-scale image
-        of its highest-resolution level, in the world space of the
-        pyramid, and its other levels are left out. Any other conversion
-        is as in
-        [`DataModelBase.to`][brainhops.datamodel.base.DataModelBase.to].
-
-        Parameters
-        ----------
-        cls : type, optional
-            The class to convert to. By default, the class of the image.
-        copy : bool, default=False
-            Whether to return a new image even when nothing changes.
-        **kwargs : Any
-            Fields of the result.
-
-        Returns
-        -------
-        Image
-            The converted image, an instance of `cls`.
-        """
         target = type(self) if cls is None else cls
+
+        # --- single-scale to multi-scale ------------------------------
         if isinstance(self, SingleScaleImage) and issubclass(
             target, MultiScaleImage
         ):
             pyramid = MultiScaleImage(images=[self], metadata=self.metadata)
-            return target.from_instance(pyramid, **kwargs)
+            return target.from_instance(pyramid, **fields)
+
+        # --- multi-scale to single-scale ------------------------------
         if isinstance(self, MultiScaleImage) and issubclass(
             target, SingleScaleImage
         ):
-            return target.from_instance(self.to_singlescale(0), **kwargs)
-        return super().to(cls, copy=copy, **kwargs)
+            return target.from_instance(self.to_singlescale(0), **fields)
+
+        # --- edit fields only -----------------------------------------
+        return super().to(cls, copy=copy, **fields)
 
     # --- array API ----------------------------------------------------
 
@@ -169,7 +117,7 @@ class Image(
         return np.asarray(_stored_data(self), dtype=dtype)
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> Shape:
         """The shape of the data."""
         return tuple(self.dataobj.shape)
 
@@ -264,6 +212,9 @@ class Image(
         self.transformations = transformations
 
 
+GeometryLike: tx.TypeAlias = tx.Union[Image, Geometry, Transformation]
+
+
 class SingleScaleImage(Image):
     """The base class of single-resolution images.
 
@@ -282,14 +233,13 @@ class SingleScaleImage(Image):
     """
     The image data.
 
-    Must be an array-like object that supports the array protocol (e.g.
-    numpy, cupy or dask array).
-
-    It defaults to `None` so that subclasses can derive it lazily -- a
-    format reader typically holds a handle to the file and materializes
-    the array on first access, and cannot supply it at construction time.
-    This mirrors `Affine.matrix`, which is optional for the same reason.
+    Must be an array-like object that supports the array protocol
+    (e.g. numpy, cupy or dask array).
     """
+    # It defaults to `None` so that subclasses can derive it lazily -- a
+    # format reader typically holds a handle to the file and materializes
+    # the array on first access, and cannot supply it at construction time.
+    # This mirrors `Affine.matrix`, which is optional for the same reason.
 
     data = dataproperty()
     """The image data, in the backend of the setting in effect.
@@ -299,13 +249,14 @@ class SingleScaleImage(Image):
     of that backend is returned, and the stored array does not change.
     """
 
-    dataobj = alias("_data", readonly=True)
+    dataobj = dataobjproperty()
     """The array of the image, without reading it.
 
     An image built from an array returns that array. An image read
     from a file returns a lazy array of the file in the layout of
     `data`, which reads nothing until it is converted, unless an array
-    was assigned as `data`.
+    was assigned as `data` or `dataobj`. Assigning `dataobj` is the same
+    as assigning `data`.
     """
 
     transformations: NotKwOnly[tx.List[Transformation]] = ()
@@ -318,41 +269,21 @@ class SingleScaleImage(Image):
 
     # --- conversion to another backend -------------------------------
 
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # The voxels of the image decide its backend.
-        dataobj = self.dataobj
-        if dataobj is not None:
-            yield dataobj
-
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Optional[BackendLike] = None,
+        *,
+        device: tx.Optional[DeviceLike] = None,
+        inplace: bool = False,
     ) -> tx.Self:
-        """Return the image with its data converted as a setting says.
-
-        The data are converted, and so are the voxels of the
-        transformations of the image. Small parameters, such as affine
-        matrices, stay NumPy arrays. An image read from a file holds the
-        converted array as assigned data, which a writer encodes again.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-        inplace : bool, default=False
-            Whether this image holds the converted data and is returned,
-            instead of a new image.
-
-        Returns
-        -------
-        SingleScaleImage
-            An image of the same class.
-        """
-        obj = _as_backend_data(self, backend, inplace)
+        # Overrides _BackendsMixin to convert transformations as well.
+        opt = dict(backend=backend, device=device, inplace=inplace)
+        obj = super().as_backend(**opt)
         transformations = obj.transformations
-        converted = as_backend_all(transformations, backend)
+        converted = as_backend(transformations, **opt)
         if converted is transformations:
             return obj
-        return _with_fields(obj, inplace, transformations=converted)
+        return smart_replace(obj, "inplace", transformations=converted)
 
     @property
     def geometry(self) -> Geometry:
@@ -377,11 +308,9 @@ class SingleScaleImage(Image):
 
     def reslice(
         self,
-        geometry: tx.Optional[
-            tx.Union[tx.Self, Geometry, Transformation]
-        ] = None,
-        degree: int = 1,
-        bound: tx.Union[str, float] = "reflect",
+        geometry: tx.Optional[GeometryLike] = None,
+        degree: InterpolationLike = 1,
+        bound: BoundaryLike = "reflect",
         coeff: bool = False,
         copy: bool = False,
         *,
@@ -397,9 +326,11 @@ class SingleScaleImage(Image):
             also determines the output shape, whereas a bare
             transformation keeps the current shape.
             By default, the image is resampled onto its ow geometry.
+
         degree : int, default=1
             Spline degree, from 0 (nearest neighbour) up to 5.
             A degree of 1 gives linear interpolation.
+
         bound : str or float, default="reflect"
             Boundary condition. A float is used as a constant value beyond
             the edge.
@@ -410,9 +341,11 @@ class SingleScaleImage(Image):
                 - 'mirror': mirror at edge        (d c b | a b c d | c b a)
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+
         coeff : bool, default=False
             Whether the data already holds spline coefficients.
             If false, the data is prefiltered before interpolation.
+
         copy : bool, default=False
             If true, the output never shares memory with the input.
             If false, a reslicing that only rearranges existing voxels,
@@ -460,38 +393,25 @@ class SingleScaleImage(Image):
             dtype=dtype,
         )
 
-        if geometry is None:
-            geometry = self.geometry
-        if isinstance(geometry, Image):
-            geometry = geometry.geometry
-        if not isinstance(geometry, Geometry):
-            geometry = Geometry((self.geometry.grid, geometry))
+        geometry: Geometry = _get_geometry(self, geometry)
 
-        # Replace each multiscale field by the level that best matches the
-        # output grid.
-        preferred = _at_resolution(
-            self.transformation, geometry.transformation
-        )
+        # Replace each multiscale transformation field by the level that
+        # best matches the output grid.
+        transformation = self.transformation
+        transformation = _match_resolution(transformation, geometry)
 
-        # Each group of independent axes is resampled separately, so that
-        # rescaling, flipping or permuting axes stays cheap. The function is
-        # imported here to avoid an import cycle.
-        from ._transformations.compute.separable import pull_separable
+        # Build the voxel-to-voxel transformation, and reslice
+        vox2vox = transformation.inverse() @ geometry.transformation
+        transformation = vox2vox @ geometry.grid
+        new_data = pull_separable(self.data, transformation, **opt)
 
-        # The backend of the result is chosen once, from the voxels of the
-        # image and of the fields, so that the voxels are read and the
-        # coordinates are created in that backend.
-        with computing_with(self, preferred, geometry.transformation):
-            new2old = preferred.inverse() @ geometry.transformation
-            transformation = new2old @ geometry.grid
-            new_data = pull_separable(self.data, transformation, **opt)
         metadata = self.metadata
         if metadata is not None:
             # The grid is left out of the map of the voxels: it is the
             # identity on voxel coordinates, but a field, which has no
             # affine form.
             metadata = metadata.derive(
-                Resampled(new2old, geometry), history="reslice"
+                Resampled(vox2vox, geometry), history="reslice"
             )
             if dtype is not None:
                 metadata = replace(metadata, dtype=new_data.dtype)
@@ -501,7 +421,7 @@ class SingleScaleImage(Image):
             metadata=metadata,
         )
 
-    def __call__(self, transform: Transformation) -> "SingleScaleImage":
+    def __call__(self, transformation: Transformation) -> "SingleScaleImage":
         """Apply a transformation lazily, without reslicing.
 
         The output space of `transform` should match the output space of
@@ -510,21 +430,16 @@ class SingleScaleImage(Image):
         existing ones. No voxel moves, so the new image shares the
         metadata of this image.
         """
-        transform = transform.inverse() @ self.transformation
-        if self.transformations:
-            transformations = list(self.transformations)
-            transformations.append(transform)
-        else:
-            transformations = [transform]
+        transformation = transformation.inverse() @ self.transformation
+        transformations = list(self.transformations or [])
+        transformations.append(transformation)
         return SingleScaleImage(
             data=_stored_data(self),
             transformations=transformations,
             metadata=self.metadata,
         )
 
-    def __getitem__(
-        self, index: tx.Tuple[tx.Union[int, slice, None], ...]
-    ) -> "SingleScaleImage":
+    def __getitem__(self, index: CartesianIndex) -> "SingleScaleImage":
         """Index the data, keeping every transformation consistent with it.
 
         The metadata is derived from the metadata of this image with an
@@ -539,7 +454,7 @@ class SingleScaleImage(Image):
 
         Parameters
         ----------
-        index : int, slice, None or tuple
+        index : [tuple of] (int | slice | None)
             The index, as for the data array. A tuple may contain
             integers, slices, `None` and `...`.
 
@@ -566,7 +481,7 @@ class SingleScaleImage(Image):
         )
 
 
-class MultiScaleImage(Image):
+class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
     """The base class of multi-scale (pyramid) images.
 
     `images` and `transformations` are the parameters most often given
@@ -575,6 +490,8 @@ class MultiScaleImage(Image):
     reader from `brainhops.io.common` adds, such as the opened Zarr
     `node` of an OME-Zarr pyramid, which follow `transformations`.
     """
+
+    scales: Forget
 
     images: NotKwOnly[tx.List[SingleScaleImage]] = ()
     """
@@ -602,35 +519,21 @@ class MultiScaleImage(Image):
 
     # --- conversion to another backend -------------------------------
 
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # Every level of the image takes part in the choice.
-        return voxel_arrays_of(self.images)
-
     def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Optional[BackendLike] = None,
+        *,
+        device: tx.Optional[DeviceLike] = None,
+        inplace: bool = False,
     ) -> tx.Self:
-        """Return the pyramid with the data of every level converted.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-        inplace : bool, default=False
-            Whether this pyramid holds the converted levels and is
-            returned, instead of a new pyramid.
-
-        Returns
-        -------
-        MultiScaleImage
-            A pyramid of the same class.
-        """
+        # Overrides _BackendsMixin to convert transformations as well.
         changes = {}
         for name in ("images", "transformations"):
             value = getattr(self, name)
-            converted = as_backend_all(value, backend)
+            converted = as_backend(value, backend, device=device)
             if converted is not value:
                 changes[name] = converted
-        return _with_fields(self, inplace, **changes)
+        return smart_replace(self, "inplace" if inplace else None, **changes)
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
         """Return a level as a single-scale image in world space."""
@@ -642,7 +545,12 @@ class MultiScaleImage(Image):
         return len(self.images)
 
     @property
-    def scales(self) -> tx.Iterator[SingleScaleImage]:
+    def scales(self) -> tx.List[SingleScaleImage]:
+        """The pyramid levels, from highest to lowest resolution."""
+        return list(self.iterscales)
+
+    @property
+    def iterscales(self) -> tx.Iterator[SingleScaleImage]:
         """Every level, as a single-scale image."""
         for i in range(len(self.images)):
             yield self.to_singlescale(i)
@@ -664,11 +572,9 @@ class MultiScaleImage(Image):
 
     def reslice(
         self,
-        geometry: tx.Optional[
-            tx.Union[Image, Geometry, Transformation]
-        ] = None,
-        degree: int = 1,
-        bound: tx.Union[str, float] = "reflect",
+        geometry: tx.Optional[GeometryLike] = None,
+        degree: InterpolationLike = 1,
+        bound: BoundaryLike = "reflect",
         coeff: bool = False,
         copy: bool = False,
         *,
@@ -684,9 +590,11 @@ class MultiScaleImage(Image):
         geometry : Image or Geometry or Transformation, optional
             The target geometry, interpreted as in
             [`SingleScaleImage.reslice`][].
+
         degree : int, default=1
             Spline degree, from 0 (nearest neighbour) up to 5. A degree of 1
             gives linear interpolation.
+
         bound : str or float, default="reflect"
             Boundary condition. A float is used as a constant value beyond
             the edge.
@@ -697,9 +605,11 @@ class MultiScaleImage(Image):
                 - 'mirror': mirror at edge        (d c b | a b c d | c b a)
                 - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
                 - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+
         coeff : bool, default=False
             Whether the data already holds spline coefficients. If false, the
             data is prefiltered before interpolation.
+
         copy : bool, default=False
             If true, the output never shares memory with the input. If false,
             a reslicing that only rearranges existing voxels, such as a flip,
@@ -737,15 +647,14 @@ class MultiScaleImage(Image):
         )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
-            _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),
+            _as_affine_ignoring_fields(_get_voxel2world(self, geometry)),
         )
         return self.to_singlescale(level).reslice(geometry, **opt)
 
     def __call__(self, transform: Transformation) -> "MultiScaleImage":
         """Apply a transformation to the pyramid lazily, without reslicing.
 
-        The transformation is handled as in [`SingleScaleImage.__call__`][],
-        and the new pyramid shares the metadata of this one.
+        The transformation is handled as in [`SingleScaleImage`][].
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -760,9 +669,21 @@ class MultiScaleImage(Image):
         )
 
 
-def _reslice_voxel2world(
+def _get_geometry(
+    image: "MultiScaleImage", geometry: tx.Optional[GeometryLike] = None
+) -> Geometry:
+    if geometry is None:
+        geometry = image.geometry
+    if isinstance(geometry, Image):
+        geometry = geometry.geometry
+    if not isinstance(geometry, Geometry):
+        geometry = Geometry((image.geometry.grid, geometry))
+    return geometry
+
+
+def _get_voxel2world(
     image: "MultiScaleImage",
-    geometry: tx.Optional[tx.Union[Image, Geometry, Transformation]] = None,
+    geometry: tx.Optional[GeometryLike] = None,
 ) -> Transformation:
     """Return the voxel-to-world transformation of the reslicing target."""
     if geometry is None:
@@ -775,7 +696,7 @@ def _reslice_voxel2world(
 
 
 def _level_voxel_sizes(
-    image: "MultiScaleImage",
+    multiscale: MultiScaleImage,
 ) -> tx.List[tx.Optional[ArrayProtocol]]:
     """Return the voxel size of each level in world units, finest first.
 
@@ -784,15 +705,15 @@ def _level_voxel_sizes(
     not affine, even when its fields are ignored, gets `None`.
     """
     sizes = []  # type: tx.List[tx.Optional[ArrayProtocol]]
-    for level in image.images or ():
+    for level in multiscale.images or ():
         affine = _as_affine_ignoring_fields(
-            image.transformation @ level.transformation
+            multiscale.transformation @ level.transformation
         )
         sizes.append(None if affine is None else axis_scales(affine.matrix))
     return sizes
 
 
-def _changes_storage(other: tx.Any, cls: type) -> bool:
+def _single_multi_swap(other: Image, cls: tx.Type[Image]) -> bool:
     """Return whether copying `other` into `cls` changes how it is stored.
 
     A single-scale image holds its data, and a pyramid holds its levels,
@@ -805,3 +726,29 @@ def _changes_storage(other: tx.Any, cls: type) -> bool:
         isinstance(other, MultiScaleImage)
         and issubclass(cls, SingleScaleImage)
     )
+
+
+def _match_resolution(
+    transformation: Transformation, voxel2world: Transformation
+) -> Transformation:
+    """
+    Replace every multiscale field inside the transformation by its
+    scale that best matches the grid of `voxel2world`, the voxel-to-world t
+    ransformation of the grid an image is resliced onto.
+
+    This functions is applied recursively to sequences.
+    A transformation without a multiscale field is returned unchanged.
+    """
+    if isinstance(voxel2world, Geometry):
+        voxel2world = voxel2world.transformation
+    if isinstance(transformation, Multiscale):
+        return transformation.to_singlescale(
+            nearest_level(transformation, voxel2world)
+        )
+    if isinstance(transformation, Sequence):
+        parts = transformation.transformations or []
+        resolved = [_match_resolution(part, voxel2world) for part in parts]
+        if any(new is not old for new, old in zip(resolved, parts)):
+            return replace(transformation, transformations=resolved)
+        return transformation
+    return transformation

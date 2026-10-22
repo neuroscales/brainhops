@@ -391,12 +391,15 @@ def test_composition_products_are_downcast() -> None:
 class _GuardedField:
     """Field values that raise when read.
 
-    Structural checks read only `field is None` and the shape. A plain object
-    is used because the array comparison protocol varies across NumPy versions.
+    Structural checks read only `dataobj is None` and the shape. A plain
+    object is used because the array comparison protocol varies across
+    NumPy versions. The object has a type of values so that loading it,
+    which reading `field` does, reaches `__array__` and raises.
     """
 
     def __init__(self, shape: tuple) -> None:
         self.shape = shape
+        self.dtype = np.dtype("float64")
 
     def _refuse(self, *args: object) -> None:
         raise AssertionError("the field's values were read")

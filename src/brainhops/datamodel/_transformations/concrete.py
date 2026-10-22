@@ -37,7 +37,6 @@ from brainhops._core.typing import (
 )
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.backends import (
-    _CURRENT,
     _creation_options,
     backend,
     get_array_backend,
@@ -46,9 +45,9 @@ from brainhops.backends import (
 )
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
-    _as_backend_data,
-    _follow_setting,
+    _FrozenBackendMixin,
     _stored_data,
+    dataobjproperty,
     dataproperty,
 )
 from brainhops.datamodel.enums import (
@@ -76,14 +75,20 @@ _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
 # --- helpers ----------------------------------------------------------
 
-_FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
+_FORGET_DERIVED = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the cached views listed in `derived_fields`."""
 
 
 def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
-    kwargs.setdefault("invalidates", _FORGET_VIEWS)
+    kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
+
+
+def _invalidating_dataproperty(*args, **kwargs) -> property:
+    """Build a [`dataproperty`][] whose assignment clears the cached views."""
+    kwargs.setdefault("invalidates", _FORGET_DERIVED)
+    return dataproperty(*args, **kwargs)
 
 
 # --- API --------------------------------------------------------------
@@ -94,14 +99,14 @@ class ConcreteTransformation(Transformation):
     Base class of the transformations that hold their own parameters.
 
     A concrete transformation, such as an affine matrix or a displacement
-    field, stores the numbers that define its map. This is in contrast
-    with [`MetaTransformation`][]s or [`DerivedTransformation`][]s,
+    field, stores the parameters that define its spatial map. This is in
+    contrast with [`MetaTransformation`][]s or [`DerivedTransformation`][]s,
     which hold a reference to another transformation.
 
     Computing a concrete transformation means converting it to the
-    cheapest type that still represents it exactly. For example, a
-    [`Scaling`][] for a [`Linear`][] transformation whose matrix is
-    diagonal.
+    cheapest type that still represents it exactly. For example,
+    calling `compute(simplify="numeric")` on a [`Linear`][] transformation
+    whose matrix is diagonal returns a [`Scaling`][] transformation.
 
     Its inverse and its square root are lazy wrappers, which compute
     their parameters eagerly when they are queried.
@@ -311,27 +316,13 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = dataproperty(invalidates=_FORGET_VIEWS)
-
-    dataobj = alias("_data", readonly=True)
-    """The stored field, without reading it.
-
-    It is the array that the field holds, which a field built from
-    an array or assigned `data` keeps as it was given.
-    """
-
+    data = _invalidating_dataproperty()
+    dataobj = dataobjproperty()
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 
     @_invalidating_property
     def store(self) -> StoreEnum:
-        """Whether `data` holds the values or the spline coefficients.
-
-        An unset flag reads as `"values"`, because every constructor argument
-        except `coefficients=` gives the map as values. When the constructor
-        receives `coefficients=` without a flag, it sets the flag to
-        `"coefficients"`.
-        """
         return StoreEnum.values
 
     def _set_derived_fields(self, arguments: tx.Any) -> None:
@@ -346,47 +337,34 @@ class TransformationField(ConcreteTransformation):
 
     # --- derived views ------------------------------------------------
 
-    @smartproperty(fset=False, cache=True, convert=_follow_setting)
+    @smartproperty(cache=True, convert=to_backend)
     def values(self) -> tx.Optional[ArrayProtocol]:
-        """Field as values, of shape `(*shape, ndim)`.
-
-        It is `data` itself when `store` is `"values"`; otherwise it is decoded
-        from the coefficients once and cached. Like `data`, it is returned
-        converted with the backend setting in effect, so that `data`,
-        `values` and `coefficients` are always arrays of the same package.
-        """
         return _data2values(
             _stored_data(self), self.store, self.degree, self.bound
         )
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
-        # Fit coefficients if the field stores them. Assigning `data` clears
-        # every view derived from it,
+        # Fit coefficients if the field stores them.
+        # Assigning `data` clears every view derived from it ...
         self.data = _values2data(value, self.store, self.degree, self.bound)
-        # so the input can be cached only afterwards.
+        # ... so the input can be cached only afterwards.
         self._cache_values = value
 
     field = alias("values")
 
-    @smartproperty(fset=False, cache=True, convert=_follow_setting)
+    @smartproperty(cache=True, convert=to_backend)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
-        """Field as spline coefficients, of shape `(*shape, ndim)`.
-
-        It is `data` itself when `store` is `"coefficients"`; otherwise it is
-        fitted to a spline of degree `degree` once and cached. Like `data`,
-        it is returned converted with the backend setting in effect.
-        """
         return _data2coeffs(
             _stored_data(self), self.store, self.degree, self.bound
         )
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:
-        # Evaluate the spline if the field stores values. Assigning `data`
-        # clears every view derived from it,
+        # Evaluate the spline if the field stores values.
+        # Assigning `data` clears every view derived from it ...
         self.data = _coeffs2data(coeffs, self.store, self.degree, self.bound)
-        # so the input can be cached only afterwards.
+        # ... so the input can be cached only afterwards.
         self._cache_coefficients = coeffs
 
     @lazyproperty
@@ -397,37 +375,6 @@ class TransformationField(ConcreteTransformation):
         flag is assigned, so the lazy inverse runs the inversion only once.
         """
         raise NotImplementedError
-
-    # --- conversion to another backend --------------------------------
-
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # The voxels of the field decide its backend.
-        dataobj = self.dataobj
-        if dataobj is not None:
-            yield dataobj
-
-    def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
-    ) -> tx.Self:
-        """Return the field with its stored array converted.
-
-        The array in `data` holds voxels, so it is converted as the
-        setting says, which is described in [`brainhops.backends`][].
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting. By default, the current setting is used.
-        inplace : bool, default=False
-            Whether this field holds the converted array and is returned,
-            instead of a new field.
-
-        Returns
-        -------
-        TransformationField
-            A field of the same class.
-        """
-        return _as_backend_data(self, backend, inplace)
 
 
 class DisplacementField(TransformationField, polymorphic=True):
@@ -520,7 +467,7 @@ class DisplacementField(TransformationField, polymorphic=True):
             return None
         # The inverse is cached, so it is computed from the stored values
         # rather than from values converted for a temporary setting.
-        with backend(None):
+        with backend("native"):
             field = self.field
         ifield = _inverse_disp(field)
         return _values2data(ifield, self.store, self.degree, self.bound)
@@ -598,7 +545,7 @@ class CoordinatesField(TransformationField):
         )
 
 
-class CartesianField(CoordinatesField):
+class CartesianField(_FrozenBackendMixin, CoordinatesField):
     """Identity over a regular grid of coordinates.
 
     A grid stores only its `shape`. The coordinates of its points (`field`) and
@@ -663,10 +610,10 @@ class CartesianField(CoordinatesField):
             return None
         # The grid is created in the backend of the setting in effect,
         # which a computation sets to the backend of its result.
-        ab = get_array_backend()
+        xp = get_array_backend()
         options = _creation_options()
-        grid = [ab.arange(s, dtype=float, **options) for s in self.shape]
-        return ab.stack(ab.meshgrid(*grid, indexing="ij"), -1)
+        grid = [xp.arange(s, dtype=float, **options) for s in self.shape]
+        return xp.stack(xp.meshgrid(*grid, indexing="ij"), -1)
 
     values = alias("field", readonly=True)
 
@@ -707,36 +654,12 @@ class CartesianField(CoordinatesField):
         require_endomorphism(self, "square root")
         return self.compute(**kwargs) if compute else self
 
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        # A grid creates its coordinates in the backend of the computation,
-        # so it decides nothing.
-        return iter(())
 
-    def as_backend(
-        self, backend: tx.Any = _CURRENT, *, inplace: bool = False
-    ) -> tx.Self:
-        """Return the grid as it is.
-
-        A grid stores only its shape, and its coordinates are created
-        when they are read, so there is no stored array to convert.
-
-        Parameters
-        ----------
-        backend : str or module, optional
-            The setting, which is not used.
-        inplace : bool, default=False
-            Whether the grid itself is returned, which it always is.
-
-        Returns
-        -------
-        CartesianField
-            This grid.
-        """
-        return self
+class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation): ...
 
 
 @kinds.Affine
-class Affine(ConcreteTransformation, polymorphic=True):
+class Affine(_CompactTransformation, polymorphic=True):
     """Affine transformation.
 
     `data` is a matrix of shape `(No, Ni+1)`, whose last column is the
@@ -840,7 +763,7 @@ class Affine(ConcreteTransformation, polymorphic=True):
 
 
 @kinds.Linear
-class Linear(ConcreteTransformation, polymorphic=True):
+class Linear(_CompactTransformation, polymorphic=True):
     """Linear transformation.
 
     `data` is a matrix of shape `(No, Ni)`. `Linear(..., log=True)` builds a
@@ -972,7 +895,7 @@ class Rotation(Linear):
 
 
 @kinds.Permutation
-class Permutation(ConcreteTransformation):
+class Permutation(_CompactTransformation):
     """Permutation of the axes.
 
     !!! note "Mutually exclusive arguments"
@@ -1023,11 +946,11 @@ class Permutation(ConcreteTransformation):
         perm = self.permutation
         if perm is None:
             return None
-        backend = get_array_backend(perm)
+        xp = get_array_backend(perm)
         inverse_permutation = [0] * len(perm)
         for i, p in enumerate(perm):
             inverse_permutation[p] = i
-        return backend.asarray(inverse_permutation, dtype=perm.dtype)
+        return xp.asarray(inverse_permutation, dtype=perm.dtype)
 
     # --- methods ------------------------------------------------------
 
@@ -1046,7 +969,7 @@ class Permutation(ConcreteTransformation):
 
 
 @kinds.Diagonal
-class Scaling(ConcreteTransformation, polymorphic=True):
+class Scaling(_CompactTransformation, polymorphic=True):
     """Scaling of the axes.
 
     `data` holds one scale factor per axis. `Scaling(..., log=True)` builds a
@@ -1115,17 +1038,19 @@ class Scaling(ConcreteTransformation, polymorphic=True):
             return None
         what = f"The square root of this {type(self).__name__}"
         require_positive(self.scale, what)
-        return get_array_backend(self.scale).sqrt(self.scale)
+        xp = get_array_backend(self.scale)
+        return xp.sqrt(self.scale)
 
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
         if self.scale is None:
             return None
-        return get_array_backend(self.scale).reciprocal(self.scale)
+        xp = get_array_backend(self.scale)
+        return xp.reciprocal(self.scale)
 
 
 @kinds.Translation
-class Translation(ConcreteTransformation):
+class Translation(_CompactTransformation):
     """Translation by a vector.
 
     !!! note "Mutually exclusive arguments"
@@ -1181,7 +1106,7 @@ class Translation(ConcreteTransformation):
 
 
 @kinds.Identity
-class Identity(ConcreteTransformation):
+class Identity(_CompactTransformation):
     """Identity transformation.
 
     When the input and output systems differ, the identity maps the input axes
@@ -1391,7 +1316,7 @@ def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
     so a Dask field is computed, with NumPy or with CuPy depending on its
     chunks, and its inverse is converted back to a Dask array.
     """
-    target = resolve_backend(disp, None)
+    target = resolve_backend(disp, "native")
     if target in ("numpy", "cupy"):
         return inverse_disp(disp)
     loaded = "cupy" if target == "dask+cupy" else "numpy"
@@ -1408,7 +1333,7 @@ def _grid_like(field: ArrayProtocol) -> ArrayProtocol:
     the grid is created under the setting that names the backend of the
     field, including its device, and it is born where the field is.
     """
-    with backend(resolve_backend(field, None)):
+    with backend(resolve_backend(field, "native")):
         return CartesianField(shape=field.shape[:-1]).field
 
 

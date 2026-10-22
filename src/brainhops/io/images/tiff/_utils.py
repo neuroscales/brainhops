@@ -65,6 +65,7 @@ from bagof.magic import Magic
 
 from brainhops._core import path
 from brainhops._core.dependencies import tifffile
+from brainhops.backends import _is_lazy
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.images.base import _utils_raster as raster
 
@@ -768,10 +769,7 @@ def read_series(
                 order="C",
             )
         if lazy is None:
-            from brainhops.backends import is_lazy
-
-            nbytes = math.prod(one.shape) * np.dtype(one.dtype).itemsize
-            lazy = is_lazy(nbytes)
+            lazy = _is_lazy(one)
         if lazy:
             array = _read_lazily(source, series, level)
             if array is not None:

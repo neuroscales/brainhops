@@ -10,7 +10,7 @@ Readers and writers for AFNI transformations: affine matrices
 | [`AfniNiftiWarp`][] | `x_WARP.nii[.gz]`           | `"afni.warp.nifti"` |
 
 All of them answer to `hint="afni"`, and the two warps to
-`hint="afni.warp"`, through their family [`AfniWarp`][]. Only NumPy is
+`hint="afni.warp"`, through their family [`AfniWarpFormat`][]. Only NumPy is
 needed, except for the NIfTI warps, which need nibabel.
 
 A matrix file is short and is read in one pass, so its whole content is
@@ -146,7 +146,7 @@ __all__ = [
     "AfniBrikWarp",
     "AfniMetadata",
     "AfniRaw",
-    "AfniWarp",
+    "AfniWarpFormat",
     "cardinal_to_real",
 ]
 
@@ -154,7 +154,7 @@ from brainhops.io.base._dispatch import register_missing_format
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
 
 from ._affine import AfniAffine
-from ._formats import AfniWarp
+from ._formats import AfniWarpFormat
 from ._geometry import cardinal_to_real
 from ._metadata import AfniAffineMetadata
 from ._raw import AfniAffineRaw

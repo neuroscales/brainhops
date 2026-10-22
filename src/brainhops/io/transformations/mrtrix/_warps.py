@@ -27,7 +27,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import dataproperty
+from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -72,7 +72,6 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
-    StoredFieldMixin,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -466,8 +465,7 @@ class MrtrixWarp(
 class MrtrixCoordinatesField(
     MrtrixWarp,
     MrtrixTransformationFormat,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    _xforms.DerivedSequence,
 ):
     """
     Field of scanner RAS coordinates (an MRtrix *deformation*), stored
@@ -527,7 +525,7 @@ class MrtrixCoordinatesField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -759,8 +757,7 @@ class MrtrixCoordinatesField(
 class MrtrixDisplacementField(
     MrtrixWarp,
     MrtrixTransformationFormat,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    _xforms.DerivedSequence,
 ):
     """
     Field of scanner RAS displacements (an MRtrix *displacement*),
@@ -820,7 +817,7 @@ class MrtrixDisplacementField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -1047,8 +1044,7 @@ class MrtrixDisplacementField(
 class MrtrixWarpFull(
     MrtrixWarp,
     MrtrixTransformationFormat,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    _xforms.DerivedSequence,
 ):
     """
     The four midway-space warps and two linear transforms of a
@@ -1132,7 +1128,7 @@ class MrtrixWarpFull(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 

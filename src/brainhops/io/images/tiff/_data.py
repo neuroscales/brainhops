@@ -97,7 +97,9 @@ class _TiffProxy(ArrayProxy):
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         return np.asanyarray(self._level_array()[index])
 
-    def to_dask(self, *, cupy: bool = False, **kwargs: tx.Any) -> tx.Any:
+    def to_dask(
+        self, *, device: tx.Union[str, int, None] = "cpu", **kwargs: tx.Any
+    ) -> tx.Any:
         """Return a Dask array of the pixels, reading nothing.
 
         For the whole level, the array is the Dask array that tifffile
@@ -107,8 +109,8 @@ class _TiffProxy(ArrayProxy):
 
         Parameters
         ----------
-        cupy : bool, default=False
-            Whether the blocks are CuPy arrays.
+        device : str or int, default="cpu"
+            The device for the chunks.
         **kwargs : Any
             Options of `dask.array.from_array`.
 
@@ -120,14 +122,12 @@ class _TiffProxy(ArrayProxy):
         from brainhops import backends
 
         if self.is_view or backends.da is None:
-            return super().to_dask(cupy=cupy, **kwargs)
+            return super().to_dask(device=device, **kwargs)
         level = self._level_array()
         if not isinstance(level, backends.da.Array):
             kwargs.setdefault("chunks", self.chunks or "auto")
             level = backends.da.from_array(level, **kwargs)
-        if cupy:
-            return backends.to_backend(level, "dask+cupy")
-        return level
+        return backends.to_dask(level, device=device)
 
     def read_bytes(self) -> bytes:
         """Return the bytes of the whole file that the proxy reads.
