@@ -295,7 +295,7 @@ class _BrikProxy(StridedProxy):
             facs = np.asarray(record.float_facs, dtype=np.float64)
             facs = np.where(facs == 0, 1.0, facs)
             slope = facs if nvals > 1 else facs[0]
-        return cls.dense(
+        return cls.contiguous(
             brik,
             record.dtypes[0],
             shape,

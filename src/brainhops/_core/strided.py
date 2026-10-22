@@ -31,7 +31,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from bagof.magic import Alias, Magic
+from bagof.magic import Alias
 
 from brainhops._core import path
 from brainhops._core.proxy import ArrayProxy
@@ -41,7 +41,7 @@ _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
 
 
-class StridedProxy(ArrayProxy, Magic, eq=False):
+class StridedProxy(ArrayProxy, convert=True):
     """A lazy array of fixed-size values laid out with strides in a file.
 
     The values are those of the decoded stream, which is the content of
@@ -50,8 +50,9 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
     `(i, j, ...)` starts at the byte `offset + i * strides[0] + j *
     strides[1] + ...` of that stream, as in a NumPy array. The proxy
     applies a linear scaling `slope * value + inter` to the values that
-    it reads. A format that stores a dense array in C or Fortran order,
-    with its axes permuted or reversed, describes it with [`dense`][].
+    it reads. A format that stores a contiguous array in C or Fortran
+    order, with its axes permuted or reversed, describes it with
+    [`contiguous`][].
 
     A read gets the range of bytes that holds the selected box, from its
     first byte to its last one. A local file that is not compressed is
@@ -65,12 +66,13 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
     The proxy keeps no file open between reads. When `source` is a stream,
     the caller must keep it open while the values may be read.
 
-    The proxy is a [`Magic`][bagof.magic.Magic] class, so its constructor
-    is built from the fields below. The stored type and shape are given
-    as `dtype=` and `shape=`, and kept as `stored_dtype` and
-    `stored_shape`, because `dtype` is the type of the scaled values and
-    `shape` is that of a view. A proxy is compared by identity, since its
-    scaling factors may be arrays.
+    Its constructor is built from the fields below, as for any
+    [`Magic`][bagof.magic.Magic] class, and it converts each argument to
+    the type of its field, such as a list of sizes to a tuple of integers
+    or a number to an array. The stored type and shape are given as
+    `dtype=` and `shape=`, and kept as `stored_dtype` and `stored_shape`,
+    because `dtype` is the type of the scaled values and `shape` is that
+    of a view.
     """
 
     source: tx.Annotated[
@@ -102,14 +104,14 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
         ),
     ] = 0
     slope: tx.Annotated[
-        tx.Any,
+        tx.Optional[np.ndarray],
         tx.Doc(
             "The factor of the scaling, a number or an array that "
             "broadcasts against the shape, or `None`."
         ),
     ] = None
     inter: tx.Annotated[
-        tx.Any,
+        tx.Optional[np.ndarray],
         tx.Doc(
             "The offset of the scaling, a number or an array that "
             "broadcasts against the shape, or `None`."
@@ -130,31 +132,20 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
     ] = True
 
     def __post_init__(self) -> None:
-        # The fields are put in the forms that the reads use, and the
-        # layout is checked before anything is read.
-        self.stored_dtype = np.dtype(self.stored_dtype)
-        self.stored_shape = tuple(int(n) for n in self.stored_shape)
-        self.strides = tuple(int(n) for n in self.strides)
+        # The layout is checked before anything is read.
         if len(self.strides) != len(self.stored_shape):
             raise ValueError(
                 f"The proxy has {len(self.stored_shape)} axes and "
                 f"{len(self.strides)} strides."
             )
-        self.offset = int(self.offset)
         if self._count and self._whole_span[0] < 0:
             raise ValueError(
                 f"The strides {self.strides} reach before the start of the "
                 f"stream from the offset {self.offset}."
             )
-        if self.slope is not None:
-            self.slope = np.asarray(self.slope)
-        if self.inter is not None:
-            self.inter = np.asarray(self.inter)
-        self.start = int(self.start)
-        self.mmap = bool(self.mmap)
 
     @classmethod
-    def dense(
+    def contiguous(
         cls,
         source: tx.Any,
         dtype: tx.Any,
@@ -166,9 +157,9 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
         **kwargs: tx.Any,
     ) -> tx.Self:
         """
-        Return the proxy of a dense array, presented with its axes moved.
+        Return the proxy of a contiguous array, presented with its axes moved.
 
-        A dense array is stored without gaps, in C order (the last axis
+        A contiguous array is stored without gaps, in C order (the last axis
         varies fastest) or in Fortran order (the first axis varies
         fastest), from the byte `offset` of the decoded stream. The proxy
         presents it with its axes reordered by `axes` and the axes listed
@@ -216,7 +207,7 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
                 f"axes {axes} is not a permutation of the {len(shape)} "
                 f"stored axes."
             )
-        stored = _dense_strides(shape, dtype.itemsize, order)
+        stored = _contiguous_strides(shape, dtype.itemsize, order)
         strides = [stored[axis] for axis in axes]
         presented = [shape[axis] for axis in axes]
         offset = int(offset)
@@ -421,10 +412,10 @@ class StridedProxy(ArrayProxy, Magic, eq=False):
 # ----------------------------------------------------------------------
 
 
-def _dense_strides(
+def _contiguous_strides(
     shape: tx.Sequence[int], itemsize: int, order: str
 ) -> tx.List[int]:
-    """Return the strides in bytes of a dense array in C or Fortran order."""
+    """Return the strides in bytes of a contiguous array in C or F order."""
     strides = [0] * len(shape)
     step = itemsize
     axes = range(len(shape) - 1, -1, -1) if order == "C" else range(len(shape))

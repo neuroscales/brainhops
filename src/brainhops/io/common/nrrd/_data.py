@@ -398,7 +398,7 @@ class _NrrdProxy(ArrayProxy):
 
     def _strided(self, file: tx.Any, start: int, skip: int) -> StridedProxy:
         """The strided reader of the samples that lie in `file`."""
-        return StridedProxy.dense(
+        return StridedProxy.contiguous(
             file,
             self.record.dtype,
             self.record.sizes,

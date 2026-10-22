@@ -231,7 +231,7 @@ class _MrtrixProxy(StridedProxy):
         shape, position = _storage_shape(record.dim, record.layout)
         flips = [axis for axis, s in enumerate(record.layout) if s < 0]
         scaling = record.scaling if _is_scaled(record) else None
-        return cls.dense(
+        return cls.contiguous(
             source,
             np.dtype(np.uint8) if record.is_bit else record.dtype,
             shape,

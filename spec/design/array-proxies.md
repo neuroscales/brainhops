@@ -403,7 +403,7 @@ each value lies is given as the layout above describes it, by the
 position of the first value and one stride in bytes for each axis,
 which may be negative, so the proxy holds a layout in its own fields
 rather than in a separate `Layout` class. Its constructor
-`StridedProxy.dense` builds the strides of an array stored in C or
+`StridedProxy.contiguous` builds the strides of an array stored in C or
 Fortran order and presented through an axis permutation and flips,
 which are the layouts of MRtrix, NRRD and AFNI. The proxy also applies
 a scaling that broadcasts against its shape. A read gets the range of
@@ -414,10 +414,18 @@ the axis with the largest stride, as many as fit in the option
 `array.chunk-size` of Dask, so that each block reads one contiguous
 range of bytes. It has no cache, so a compressed file is decompressed
 from its start for each block that Dask reads, which indexed_gzip makes
-cheap when it is installed. The proxy is a `Magic` class of bagof, whose
-constructor is built from its fields, and the MRtrix and AFNI proxies
-add the record of their file as a field and build themselves from it
-with `from_record`. Status: implemented.
+cheap when it is installed. Its constructor is built from its fields,
+which convert their arguments to their types, and the MRtrix and AFNI
+proxies add the record of their file as a field and build themselves
+from it with `from_record`. Status: implemented.
+
+`ArrayProxy` is a `Magic` class of bagof without fields, so a proxy may
+declare its state as fields, as `StridedProxy` does, or write its own
+`__init__`, as the other proxies still do. The metaclass of `Magic` is
+that of an abstract base class, so the members that a subclass must
+define stay abstract. A proxy is compared by identity, and the state of
+a view (`_root`, `_selection` and `_axes`) is held in class variables
+that are not fields of the constructor. Status: implemented.
 
 The cases that do not fit a single block of fixed-size values are still
 decoded whole: packed `Bit` data of MRtrix, NRRD samples split between

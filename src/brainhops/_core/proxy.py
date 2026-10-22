@@ -21,6 +21,7 @@ import operator
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Magic
 
 # internals
 from brainhops import backends
@@ -68,7 +69,7 @@ class ArrayProxyProtocol(tx.Protocol):
     ) -> np.ndarray: ...
 
 
-class ArrayProxy(abc.ABC):
+class ArrayProxy(Magic, eq=False, repr=False):
     """A lazy array, which reads its values when it is converted.
 
     A proxy is the object that a reader keeps instead of the voxels of a
@@ -103,6 +104,16 @@ class ArrayProxy(abc.ABC):
     `np.asarray(proxy)[index]` instead. Indexing a view again with an
     array along another axis is allowed, and it selects the positions of
     each axis independently, as NumPy does for successive indexes.
+
+    The class is a [`Magic`][bagof.magic.Magic] class without fields, so
+    that a subclass may declare its state as fields and have its
+    constructor built from them, as
+    [`StridedProxy`][brainhops._core.strided.StridedProxy] does. A
+    subclass may also write its own `__init__`. The members that a
+    subclass defines are abstract, since the metaclass of `Magic` is that
+    of an abstract base class, so a subclass that forgets one cannot be
+    built. A proxy is compared by identity and keeps the default
+    representation of an object, unless a subclass asks otherwise.
     """
 
     # ------------------------------------------------------------------
@@ -157,10 +168,13 @@ class ArrayProxy(abc.ABC):
 
     # A proxy that was never indexed selects everything, so these class
     # attributes stand in for the state that `__getitem__` and
-    # `transpose` give a view. A subclass need not set them.
-    _root: tx.Optional["ArrayProxy"] = None
-    _selection: tx.Optional[tx.Tuple[_Selection, ...]] = None
-    _axes: tx.Optional[tx.Tuple[tx.Union[int, _Selection], ...]] = None
+    # `transpose` give a view. A subclass need not set them, and they are
+    # class variables so that they are not fields of the constructor.
+    _root: tx.ClassVar[tx.Optional["ArrayProxy"]] = None
+    _selection: tx.ClassVar[tx.Optional[tx.Tuple[_Selection, ...]]] = None
+    _axes: tx.ClassVar[
+        tx.Optional[tx.Tuple[tx.Union[int, _Selection], ...]]
+    ] = None
 
     def _view_state(
         self,
