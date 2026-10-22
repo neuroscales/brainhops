@@ -10,7 +10,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly
+from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
@@ -256,7 +256,7 @@ class _BrikProxy(StridedProxy):
     """
 
     record: KwOnly[
-        tx.Annotated[
+        NoRepr[
             AfniRaw,
             tx.Doc("The record of the dataset, which describes the BRIK."),
         ]
@@ -382,9 +382,6 @@ class _BrikProxy(StridedProxy):
         if self.record.nvals == 1:
             values = values[..., 0]
         return values[index]
-
-    def __repr__(self) -> str:
-        return f"_BrikProxy({str(self.brik)!r}, shape={self.shape})"
 
 
 def read_afni(

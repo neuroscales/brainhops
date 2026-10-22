@@ -21,7 +21,7 @@ import operator
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Magic
+from bagof.magic import HideIfDefault, Magic
 
 # internals
 from brainhops import backends
@@ -69,7 +69,7 @@ class ArrayProxyProtocol(tx.Protocol):
     ) -> np.ndarray: ...
 
 
-class ArrayProxy(Magic, eq=False, repr=False):
+class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
     """A lazy array, which reads its values when it is converted.
 
     A proxy is the object that a reader keeps instead of the voxels of a
@@ -112,8 +112,9 @@ class ArrayProxy(Magic, eq=False, repr=False):
     subclass may also write its own `__init__`. The members that a
     subclass defines are abstract, since the metaclass of `Magic` is that
     of an abstract base class, so a subclass that forgets one cannot be
-    built. A proxy is compared by identity and keeps the default
-    representation of an object, unless a subclass asks otherwise.
+    built. A proxy is compared by identity. The fields of a subclass
+    convert their arguments to their types, and its representation shows
+    the fields that do not hold their defaults.
     """
 
     # ------------------------------------------------------------------
@@ -295,9 +296,6 @@ class ArrayProxy(Magic, eq=False, repr=False):
                 chunk = max(1, chunk // abs(kept.step))
             chunks.append(max(1, min(chunk, len(kept))))
         return tuple(chunks)
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(shape={self.shape}, dtype={self.dtype})"
 
     # ------------------------------------------------------------------
     #   LAZY INDEXING

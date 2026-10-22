@@ -41,7 +41,7 @@ _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
 
 
-class StridedProxy(ArrayProxy, convert=True):
+class StridedProxy(ArrayProxy):
     """A lazy array of fixed-size values laid out with strides in a file.
 
     The values are those of the decoded stream, which is the content of
@@ -293,12 +293,6 @@ class StridedProxy(ArrayProxy, convert=True):
     def _slowest(self) -> int:
         # The axis whose neighbours lie furthest apart in the stream.
         return int(np.argmax([abs(s) for s in self.strides]))
-
-    def __repr__(self) -> str:
-        return (
-            f"StridedProxy({_describe(self.source)}, shape={self.shape}, "
-            f"dtype={self.dtype})"
-        )
 
     # ------------------------------------------------------------------
     #   READING

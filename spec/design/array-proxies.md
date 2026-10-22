@@ -425,7 +425,11 @@ declare its state as fields, as `StridedProxy` does, or write its own
 that of an abstract base class, so the members that a subclass must
 define stay abstract. A proxy is compared by identity, and the state of
 a view (`_root`, `_selection` and `_axes`) is held in class variables
-that are not fields of the constructor. Status: implemented.
+that are not fields of the constructor. The fields of a subclass
+convert their arguments to their types, and its representation is the
+one that `Magic` builds, which shows the fields that do not hold their
+defaults. A view shares the fields of its proxy, so it shows them too,
+and its own shape is read from `shape`. Status: implemented.
 
 The cases that do not fit a single block of fixed-size values are still
 decoded whole: packed `Bit` data of MRtrix, NRRD samples split between

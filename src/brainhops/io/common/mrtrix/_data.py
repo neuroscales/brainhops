@@ -7,7 +7,7 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import KwOnly
+from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
@@ -183,7 +183,7 @@ class _MrtrixProxy(StridedProxy):
     """
 
     record: KwOnly[
-        tx.Annotated[
+        NoRepr[
             MrtrixRaw,
             tx.Doc(
                 "The record of the image, which describes how its voxels "
