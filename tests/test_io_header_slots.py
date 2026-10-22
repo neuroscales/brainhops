@@ -211,3 +211,11 @@ def test_a_chain_format_stores_the_affines_as_transforms() -> None:
     np.testing.assert_allclose(
         _apply(result, points), _apply(t, points), atol=1e-6
     )
+
+
+def test_a_grid_is_written_in_single_precision(tmp_path: Path) -> None:
+    # NiftyReg refuses a grid whose type differs from that of its float32
+    # deformation fields, so float64 coefficients are stored as float32.
+    path = tmp_path / "cpp.nii.gz"
+    io.save(_chain().to(NiftyRegControlPointGrid), path)
+    assert nb.load(path).get_data_dtype() == np.float32
