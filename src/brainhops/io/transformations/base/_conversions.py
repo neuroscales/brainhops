@@ -80,6 +80,7 @@ __all__ = [
     "register_converter",
     "sample_on_grid",
     "split_field_chain",
+    "UnusedOptionError",
     "undoes",
     "unrepresentable",
 ]
@@ -177,6 +178,22 @@ def register_converter(
         return func
 
     return decorate
+
+
+class UnusedOptionError(ConversionError):
+    """
+    A conversion was given options that the format does not take.
+
+    [`format_options`][] raises it, with the names of the options in
+    `names`. `io.save` passes the same conversion options to every
+    format it may write, such as the reference image that an FSL warp
+    needs, so it converts again without these options when a format
+    does not take them.
+    """
+
+    def __init__(self, *args: tx.Any, names: tx.Sequence[str] = ()) -> None:
+        super().__init__(*args)
+        self.names = tuple(names)
 
 
 def unrepresentable(
@@ -281,20 +298,21 @@ def format_options(
 
     Raises
     ------
-    ConversionError
+    UnusedOptionError
         If an option is not one of `allowed`.
     """
     refused = sorted(set(options) - set(allowed))
     if refused:
         names = ", ".join(f"{name}=" for name in refused)
         takes = ", ".join(f"{name}=" for name in allowed) or "no option"
-        raise unrepresentable(
+        error = unrepresentable(
             t,
             cls,
             f"{names} cannot be overridden by a conversion, which gives the "
             f"format the very map it converts, between the format's own "
             f"coordinate systems. It takes {takes}.",
         )
+        raise UnusedOptionError(str(error), names=refused)
     return options
 
 

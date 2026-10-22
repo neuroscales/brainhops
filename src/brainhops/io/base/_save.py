@@ -266,14 +266,19 @@ def _convert(
 
     The result is returned with the error that says what the conversion
     loses, or `None` when it is exact. A lossy result is the one that
-    `obj.to(fmt, lossy=True)` returns. A format
+    `obj.to(fmt, lossy=True)` returns. The options of the conversion are
+    given to every format, so a format that does not take some of them is
+    converted without them. A format
     without an exact converter for `obj` may relabel it (#312). Such a
     format is not chosen by this pass, so that a format that converts
     `obj` is not made ambiguous by the formats that would only relabel
     it.
     """
-    # The transformation formats import this package, so their helper is
-    # imported when it is used.
+    # The transformation formats import this package, so their helpers are
+    # imported when they are used.
+    from brainhops.io.transformations.base._conversions import (
+        UnusedOptionError,
+    )
     from brainhops.io.transformations.base._converters import relabels
 
     if relabels(obj, fmt):
@@ -283,7 +288,17 @@ def _convert(
             f"by relabelling it only in a format of its own data model."
         )
     try:
-        return convert(obj, fmt, **options), None
+        try:
+            return convert(obj, fmt, **options), None
+        except UnusedOptionError as error:
+            # The options are given to every format, and one that does not
+            # take some of them is converted without them.
+            options = {
+                key: value
+                for key, value in options.items()
+                if key not in error.names
+            }
+            return convert(obj, fmt, **options), None
     except LossyConversionError as error:
         if error.result is None:
             raise
