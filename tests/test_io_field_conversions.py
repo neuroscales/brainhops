@@ -473,3 +473,29 @@ def test_a_dask_field_stays_lazy(files: dict) -> None:
             else:
                 data = converted.transformations[1].data
             assert isinstance(data, da.Array), cls.__name__
+
+
+@pytest.mark.parametrize("name", ["warp.h5", "warp.tfm"])
+def test_a_dense_field_is_written_as_an_itk_displacement_field(
+    tmp_path,  # noqa: ANN001
+    name: str,
+) -> None:
+    # A text or HDF5 ITK file holds a DisplacementFieldTransform, which
+    # stores the displacement of each node in LPS millimetres.
+    pytest.importorskip("h5py")
+    from test_io_convert_formats import (
+        VOX2WORLD,
+        _apply,
+        _ras_displacement_chain,
+        _voxels,
+    )
+
+    chain = _ras_displacement_chain()
+    io.save(chain, tmp_path / name)
+    back = io.transformations.load(tmp_path / name)
+    inside = _voxels()[:6]
+    ras = inside @ VOX2WORLD[:3, :3].T + VOX2WORLD[:3, 3]
+    flip = np.array([-1.0, -1.0, 1.0])
+    np.testing.assert_allclose(
+        _apply(back, ras * flip) * flip, _apply(chain, ras), atol=1e-8
+    )
