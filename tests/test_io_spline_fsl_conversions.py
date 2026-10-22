@@ -500,15 +500,17 @@ def test_a_cubic_field_is_saved_as_a_niftyreg_grid(tmp_path) -> None:  # noqa: A
     assert _error(back, chain) < EXACT
 
 
-def test_images_given_to_save_do_not_make_a_nifti_field_ambiguous(
+def test_images_given_to_save_select_the_fsl_format(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    # The field lies on the grid of the reference, so FNIRT holds it
-    # exactly as well, and the NIfTI field is still chosen without a
-    # hint.
+    # The field lies on the grid of the reference, so both FNIRT and NIfTI
+    # hold it exactly. FNIRT takes the images that the save was given, so
+    # it is chosen, and a NIfTI field is written without them.
     path = str(tmp_path / "warp.nii.gz")
     conversion = {"reference": REF, "moving": SRC}
     io.save(_chain(), path, conversion=conversion)
+    assert type(io.load(path)) is FnirtWarpField
+    io.save(_chain(), path)
     assert type(io.load(path)) is NiftiRASDisplacementField
     io.save(_chain(), path, hint="fnirt", conversion=conversion)
     assert type(io.load(path)) is FnirtWarpField

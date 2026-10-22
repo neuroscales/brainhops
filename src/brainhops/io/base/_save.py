@@ -14,7 +14,6 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
-from brainhops.datamodel._transformations.compute.convert import convert
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -88,8 +87,10 @@ def save(
 
     In step 4, the conversions are ranked. The extension and the prefix
     of the name come first, so that a `y_` prefix asks for an SPM
-    deformation. An exact conversion then comes before a lossy one. Then
-    comes the conversion that keeps more of what `obj` holds: a field
+    deformation. An exact conversion then comes before a lossy one, and a
+    format that takes every option of `conversion` before one that does
+    not, so that the images given for an FSL file select it. Then comes
+    the conversion that keeps more of what `obj` holds: a field
     of the same kind (displacements, coordinates or a velocity), and the
     known endpoints of `obj`, so that a field between LPS spaces is
     written as an ITK field rather than as a NIfTI field between RAS
@@ -258,11 +259,12 @@ def _convert(
     fmt: type,
     options: tx.Mapping[str, tx.Any],
     own: bool = False,
-) -> tx.Tuple[tx.Any, tx.Optional[LossyConversionError]]:
-    """`obj` converted to `fmt`, as `obj.to(fmt)` converts it.
+) -> tx.Tuple[tx.Any, tx.Optional[LossyConversionError], int]:
+    """`obj` converted to `fmt`, as `obj.to(fmt, **options)` converts it.
 
     The result is returned with the error that says what the conversion
-    loses, or `None` when it is exact. A lossy result is the one that
+    loses, or `None` when it is exact, and with the number of options
+    that the format did not take. A lossy result is the one that
     `obj.to(fmt, lossy=True)` returns. The options of the conversion are
     given to every format, so a format that does not take some of them is
     converted without them. A format without an exact converter for
@@ -270,6 +272,10 @@ def _convert(
     says that it is a file-backed version of the data model of `obj`, so
     that a format that converts `obj` is not made ambiguous by the formats
     that would only relabel it.
+
+    The conversion goes through `obj.to`, so that a transformation that
+    takes options of its own, such as an FSL warp given the images it
+    was estimated for, receives them too.
     """
     # The transformation formats import this package, so their helpers are
     # imported when they are used.
@@ -284,22 +290,24 @@ def _convert(
             f"{type(obj).__name__} (#312), and a transformation is saved "
             f"by relabelling it only in a format of its own data model."
         )
+    unused = 0
     try:
         try:
-            return convert(obj, fmt, **options), None
+            return obj.to(fmt, **options), None, unused
         except UnusedOptionError as error:
             # The options are given to every format, and one that does not
             # take some of them is converted without them.
-            options = {
+            kept = {
                 key: value
                 for key, value in options.items()
                 if key not in error.names
             }
-            return convert(obj, fmt, **options), None
+            unused = len(options) - len(kept)
+            return obj.to(fmt, **kept), None, unused
     except LossyConversionError as error:
         if error.result is None:
             raise
-        return error.result, error
+        return error.result, error, unused
 
 
 def _write_best(
@@ -318,7 +326,9 @@ def _write_best(
 
     `obj` is converted to every candidate. The conversions are then
     ranked: first by the extension and the prefix of the name that the
-    format matches, then by whether the conversion is exact, then by how
+    format matches, then by whether the conversion is exact, then by the
+    number of conversion options that the format did not take, so that a
+    FLIRT matrix given its images comes before another matrix, then by how
     closely the format keeps what `obj` holds (see [`_fidelity`][]), and
     last by the declared extensions and the `PRIORITY` of the format. A
     lossy conversion is kept only when `lossy` is true. Several
@@ -344,7 +354,7 @@ def _write_best(
         )
         try:
             with metadata_loss_policy(report):
-                writer, loses = _convert(obj, fmt, options, fmt in own)
+                writer, loses, unused = _convert(obj, fmt, options, fmt in own)
         except OSError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -358,6 +368,7 @@ def _write_best(
             -extension,
             -prefix,
             int(loses is not None),
+            unused,
             -_fidelity(obj, writer),
             0 if fmt.EXTENSIONS else 1,
             len(fmt.EXTENSIONS),
