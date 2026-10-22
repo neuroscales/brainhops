@@ -419,9 +419,16 @@ which convert their arguments to their types, and the MRtrix and AFNI
 proxies add the record of their file as a field and build themselves
 from it with `from_record`. Status: implemented.
 
-`ArrayProxy` is a `Magic` class of bagof without fields, so a proxy may
-declare its state as fields, as `StridedProxy` does, or write its own
-`__init__`, as the other proxies still do. The metaclass of `Magic` is
+`ArrayProxy` is a `Magic` class of bagof without fields, and every proxy
+of brainhops declares its state as fields, so that its constructor is
+built from them. A value that a proxy computes rather than receives is
+a property, such as a shape or a type read from the record, and a cache
+that it fills on the first read, such as an open store or file, is a
+private field that is not an argument of the constructor and is not
+shown. A private field also keeps what the file stores when a property
+shows something else: the `_dtype` of `StridedProxy` is the stored type,
+given as `dtype=`, and its property `dtype` is the type of the scaled
+values. The metaclass of `Magic` is
 that of an abstract base class, so the members that a subclass must
 define stay abstract. A proxy is compared by identity, and the state of
 a view (`_root`, `_selection` and `_axes`) is held in class variables

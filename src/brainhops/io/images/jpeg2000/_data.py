@@ -14,6 +14,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 from PIL import Image, ImageFile
 
 from brainhops._core import path
@@ -97,16 +98,17 @@ class _Jpeg2000Proxy(ArrayProxy):
     [`ArrayProxy`][]), but Pillow decodes the whole level for any read.
     """
 
-    def __init__(
-        self, source: _Jpeg2000Source, record: Jpeg2000Raw, level: int
-    ) -> None:
-        self.source = source
-        """Where the file lies."""
-        self.record = record
-        """The record that the file was read with, which gives the shape
-        and the type of the samples."""
-        self.level = level
-        """The resolution level, where 0 is the full resolution."""
+    source: tx.Annotated[tx.Any, tx.Doc("Where the file lies.")]
+    record: NoRepr[
+        Jpeg2000Raw,
+        tx.Doc(
+            "The record that the file was read with, which gives the shape "
+            "and the type of the samples."
+        ),
+    ]
+    level: tx.Annotated[
+        int, tx.Doc("The resolution level, where 0 is the full resolution.")
+    ]
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -151,12 +153,6 @@ class _Jpeg2000Proxy(ArrayProxy):
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         return self.read_samples()[index]
-
-    def __repr__(self) -> str:
-        return (
-            f"_Jpeg2000Proxy(level={self.level}, shape={self.shape}, "
-            f"dtype={self.dtype})"
-        )
 
 
 def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:

@@ -7,6 +7,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
@@ -44,11 +45,14 @@ class _MincProxy(ArrayProxy):
     as many as fit in the block size of Dask.
     """
 
-    def __init__(self, source: tx.Any, record: MincRaw) -> None:
-        self.source = source
-        """The path of the file, or the bytes of the decompressed file."""
-        self.record = record
-        """The record of the image, which gives its shape and type."""
+    source: tx.Annotated[
+        tx.Any,
+        tx.Doc("The path of the file, or the bytes of the decompressed file."),
+    ]
+    record: NoRepr[
+        MincRaw,
+        tx.Doc("The record of the image, which gives its shape and type."),
+    ]
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:

@@ -47,10 +47,14 @@ class _BdvProxy(ArrayProxy):
     reads only the selected part of the dataset.
     """
 
-    def __init__(self, cells: DelayedH5Array, dtype: tx.Any) -> None:
-        self.cells = cells
-        """The lazy `cells` dataset."""
-        self._dtype = np.dtype(dtype)
+    cells: tx.Annotated[DelayedH5Array, tx.Doc("The lazy `cells` dataset.")]
+    _dtype: tx.Annotated[
+        np.dtype,
+        tx.Doc(
+            "The type of the voxels that the record gives, given as "
+            "`dtype=`, which may differ from the stored type."
+        ),
+    ]
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -84,9 +88,6 @@ class _BdvProxy(ArrayProxy):
         # h5py reads the integers and the slices with a positive step that
         # the base class gives.
         return self._converted(self.cells._read(index))
-
-    def __repr__(self) -> str:
-        return f"_BdvProxy(shape={self.shape}, dtype={self.dtype})"
 
 
 def read_dataset(

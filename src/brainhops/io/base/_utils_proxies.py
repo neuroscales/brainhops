@@ -42,16 +42,9 @@ class NibabelProxy(ArrayProxy):
     `array.chunk-size` of its configuration, and every value of the
     axes that follow the spatial axes, such as the time and the vector
     components.
-
-    Parameters
-    ----------
-    proxy : nibabel.arrayproxy.ArrayProxy
-        The proxy of nibabel.
     """
 
-    def __init__(self, proxy: tx.Any) -> None:
-        self.proxy = proxy
-        """The proxy of nibabel."""
+    proxy: tx.Annotated[tx.Any, tx.Doc("The proxy of nibabel.")]
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:

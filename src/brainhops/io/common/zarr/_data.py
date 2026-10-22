@@ -8,6 +8,7 @@ import shutil
 import numpy as np
 import typing_extensions as tx
 from abczarr import create
+from bagof.magic import NoRepr
 
 # core
 from brainhops import backends
@@ -40,27 +41,23 @@ class _ZarrProxy(ArrayProxy):
     `numpy.transpose`. A plain Zarr array has none. The levels of an
     OME-Zarr pyramid use it to present their axes in the brainhops order,
     because the order depends on the record of the pyramid.
-
-    Parameters
-    ----------
-    node : ZarrArray
-        The opened array.
-    location : str or PathLike or None
-        The location of the store of the array, or `None` when it is not
-        known.
-    perm : sequence of int, optional
-        The permutation from the stored axes to the axes of the proxy.
     """
 
-    def __init__(
-        self,
-        node: tx.Any,
-        location: tx.Any,
-        perm: tx.Optional[tx.Sequence[int]] = None,
-    ) -> None:
-        self.node = node
-        self.location = location
-        self.perm = None if perm is None else tuple(int(p) for p in perm)
+    node: NoRepr[tx.Any, tx.Doc("The opened array.")]
+    location: tx.Annotated[
+        tx.Any,
+        tx.Doc(
+            "The location of the store of the array, or `None` when it is "
+            "not known."
+        ),
+    ]
+    perm: tx.Annotated[
+        tx.Optional[tx.Tuple[int, ...]],
+        tx.Doc(
+            "The permutation from the stored axes to the axes of the proxy, "
+            "or `None` when the axes are those of the store."
+        ),
+    ] = None
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:

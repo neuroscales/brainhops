@@ -10,6 +10,7 @@ import zlib
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
@@ -266,26 +267,30 @@ class _NrrdProxy(ArrayProxy):
     or preceded by skipped lines are decoded whole for any read.
     """
 
-    def __init__(
-        self,
-        source: tx.Any,
-        start: int,
-        files: tx.Sequence[tx.Any],
-        record: NrrdRaw,
-        mmap: bool,
-    ) -> None:
-        self.source = source
-        """The path of the header file, or the stream that holds it."""
-        self.start = int(start)
-        """The position of the header in a stream."""
-        self.files = tuple(files)
-        """The paths of the data files, which are empty for attached
-        samples."""
-        self.record = record
-        """The record of the image, which describes how samples are
-        stored."""
-        self.mmap = bool(mmap)
-        """Whether raw samples in a single local file are memory-mapped."""
+    source: tx.Annotated[
+        tx.Any,
+        tx.Doc("The path of the header file, or the stream that holds it."),
+    ]
+    start: tx.Annotated[int, tx.Doc("The position of the header in a stream.")]
+    files: tx.Annotated[
+        tx.Tuple[tx.Any, ...],
+        tx.Doc(
+            "The paths of the data files, which are empty for attached "
+            "samples."
+        ),
+    ]
+    record: NoRepr[
+        NrrdRaw,
+        tx.Doc(
+            "The record of the image, which describes how samples are stored."
+        ),
+    ]
+    mmap: tx.Annotated[
+        bool,
+        tx.Doc(
+            "Whether raw samples in a single local file are memory-mapped."
+        ),
+    ]
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:

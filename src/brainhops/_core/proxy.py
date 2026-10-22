@@ -106,10 +106,12 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
     each axis independently, as NumPy does for successive indexes.
 
     The class is a [`Magic`][bagof.magic.Magic] class without fields, so
-    that a subclass may declare its state as fields and have its
-    constructor built from them, as
+    that a subclass declares its state as fields and has its constructor
+    built from them, as
     [`StridedProxy`][brainhops._core.strided.StridedProxy] does. A
-    subclass may also write its own `__init__`. The members that a
+    private field, whose name starts with an underscore, is given by its
+    public name: the field `_dtype` is the argument `dtype=`, which
+    leaves the name `dtype` free for a property. The members that a
     subclass defines are abstract, since the metaclass of `Magic` is that
     of an abstract base class, so a subclass that forgets one cannot be
     built. A proxy is compared by identity. The fields of a subclass

@@ -31,8 +31,6 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from bagof.magic import Alias
-
 from brainhops._core import path
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed, preserve_position
@@ -70,24 +68,29 @@ class StridedProxy(ArrayProxy):
     [`Magic`][bagof.magic.Magic] class, and it converts each argument to
     the type of its field, such as a list of sizes to a tuple of integers
     or a number to an array. The stored type and shape are given as
-    `dtype=` and `shape=`, and kept as `stored_dtype` and `stored_shape`,
-    because `dtype` is the type of the scaled values and `shape` is that
-    of a view.
+    `dtype=` and `shape=` and kept in the private fields `_dtype` and
+    `_shape`, because the properties `dtype` and `shape` are the type of
+    the scaled values and the shape of a view.
     """
 
     source: tx.Annotated[
         tx.Any,
         tx.Doc("The file, by its path, or a stream open in binary mode."),
     ]
-    stored_dtype: tx.Annotated[
+    _dtype: tx.Annotated[
         np.dtype,
-        Alias("dtype"),
-        tx.Doc("The type of the stored values, with their byte order."),
+        tx.Doc(
+            "The type of the stored values, with their byte order. It is "
+            "given as `dtype=`, and the property `dtype` is the type of "
+            "the scaled values."
+        ),
     ]
-    stored_shape: tx.Annotated[
+    _shape: tx.Annotated[
         tx.Tuple[int, ...],
-        Alias("shape"),
-        tx.Doc("The shape of the array."),
+        tx.Doc(
+            "The shape of the array, given as `shape=`. The property "
+            "`shape` is the shape of a view."
+        ),
     ]
     strides: tx.Annotated[
         tx.Tuple[int, ...],
@@ -133,9 +136,9 @@ class StridedProxy(ArrayProxy):
 
     def __post_init__(self) -> None:
         # The layout is checked before anything is read.
-        if len(self.strides) != len(self.stored_shape):
+        if len(self.strides) != len(self._shape):
             raise ValueError(
-                f"The proxy has {len(self.stored_shape)} axes and "
+                f"The proxy has {len(self._shape)} axes and "
                 f"{len(self.strides)} strides."
             )
         if self._count and self._whole_span[0] < 0:
@@ -224,7 +227,7 @@ class StridedProxy(ArrayProxy):
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
         """The shape of the array."""
-        return self.stored_shape
+        return self._shape
 
     @property
     def dtype(self) -> np.dtype:
@@ -235,8 +238,8 @@ class StridedProxy(ArrayProxy):
         stays one, whatever the type of the factors.
         """
         if not self.scaled:
-            return self.stored_dtype
-        return np.result_type(self.stored_dtype, np.float32)
+            return self._dtype
+        return np.result_type(self._dtype, np.float32)
 
     @property
     def scaled(self) -> bool:
@@ -263,7 +266,7 @@ class StridedProxy(ArrayProxy):
         A block holds every value of the other axes, and as many slabs as
         fit in the block size of Dask, with at least one slab.
         """
-        shape = self.stored_shape
+        shape = self._shape
         if not shape:
             return ()
         slowest = self._slowest
@@ -277,15 +280,15 @@ class StridedProxy(ArrayProxy):
     @property
     def _count(self) -> int:
         # The number of values of the array.
-        return math.prod(self.stored_shape)
+        return math.prod(self._shape)
 
     @property
     def _whole_span(self) -> tx.Tuple[int, int]:
         # The range of bytes that holds the whole array.
         return _span(
-            self.stored_shape,
+            self._shape,
             self.strides,
-            self.stored_dtype.itemsize,
+            self._dtype.itemsize,
             self.offset,
         )
 
@@ -329,7 +332,7 @@ class StridedProxy(ArrayProxy):
         first = self.offset
         shape = []
         strides = []
-        for entry, size, stride in zip(index, self.stored_shape, self.strides):
+        for entry, size, stride in zip(index, self._shape, self.strides):
             if isinstance(entry, (int, np.integer)):
                 first += int(entry) * stride
                 continue
@@ -337,7 +340,7 @@ class StridedProxy(ArrayProxy):
             first += start * stride
             shape.append(len(range(start, stop, step)))
             strides.append(step * stride)
-        dtype = self.stored_dtype
+        dtype = self._dtype
         local = _local(self.source)
         if (
             local is not None

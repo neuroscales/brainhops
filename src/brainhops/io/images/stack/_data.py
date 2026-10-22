@@ -7,6 +7,7 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import NoInit, NoRepr
 
 from brainhops._core.properties import alias
 
@@ -38,20 +39,43 @@ class _StackProxy(ArrayProxy):
     permuted layouts of MRtrix do.
     """
 
-    def __init__(
-        self, folder: str, record: StackRaw, fill: tx.Any = None
-    ) -> None:
-        self.folder = folder
-        """The path of the folder that holds the files."""
-        self.record = record
-        """The record of the stack, which lists the files in order."""
-        self.fill = fill_value(fill, record.dtype)
-        """The value of the pixels of a missing slice."""
-        first = record.members[0].number if record.members else 0
+    folder: tx.Annotated[
+        tx.Any, tx.Doc("The path of the folder that holds the files.")
+    ]
+    record: NoRepr[
+        StackRaw,
+        tx.Doc("The record of the stack, which lists the files in order."),
+    ]
+    _fill: tx.Annotated[
+        tx.Any,
+        tx.Doc(
+            "The value of the pixels of a missing slice, as it was given "
+            "as `fill=`, or `None` for the default of the type."
+        ),
+    ] = None
+    _members: NoInit[
+        NoRepr[
+            tx.Optional[tx.Dict[int, int]],
+            tx.Doc("The index in the record of the file of each slice."),
+        ]
+    ] = None
+
+    def __post_init__(self) -> None:
+        # A fill value that the type of the stack cannot hold is refused
+        # before anything is read.
+        fill_value(self._fill, self.record.dtype)
+        # Each slice is found by its number, counted from the first file.
+        members = self.record.members
+        first = members[0].number if members else 0
         self._members = {
             member.number - first: index
-            for index, member in enumerate(record.members)
+            for index, member in enumerate(members)
         }
+
+    @property
+    def fill(self) -> tx.Any:
+        """The value of a missing pixel, in the type of the stack."""
+        return fill_value(self._fill, self.record.dtype)
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
