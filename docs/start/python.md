@@ -147,27 +147,30 @@ Every family with an affine form, such as a `Scaling` or a
 coordinate systems, such as `VoxelToRAS`, accepts only endpoints that
 are compatible with those systems. A transformation between other
 systems is therefore refused with a `ConversionError`, rather than given
-the class with its parameters unchanged. A format that reads its
-coordinate systems from what it holds, such as LTA, and has no exact
-conversion yet (#312) is given the parameters of the transformation
-unchanged, which is called relabelling, but only when the coordinate
-systems of the transformation are not known or are compatible with
-those of the format. `t.to(Format)`, `Format.from_any(t)` and
-`Format.from_instance(t)` give the same result, or raise the same
-error.
+the class with its parameters unchanged. `t.to(Format)`,
+`Format.from_any(t)` and `Format.from_instance(t)` give the same result,
+or raise the same error.
 
-An LTA file states which coordinate systems its affine maps between. A
-general `Affine` is therefore written to an LTA file only if its `input`
-and `output` say so as well: both must be `RASmm` (or both `RSAmm`), or
-both must be the voxel or physical system of an LTA volume. An affine read
-from an LTA file is written back as it was read.
+Every affine file format converts any affine between worlds, and a
+chain of affines, into its own coordinate systems. An affine between
+LPS spaces is flipped into RAS for an LTA or an MNI `.xfm` file, and an
+affine between RAS spaces into LPS for an ITK file. An affine whose
+systems are not known is taken to map the systems of the format. A
+format that places its matrix with the geometry of two images, such as
+a FLIRT matrix or a `register.dat` file, takes the images as the options
+`reference=`, the image of the input, and `moving=`, the image of the
+output, and refuses the conversion without them.
 
 ```python
-from brainhops.datamodel.systems import RASmm
+from brainhops.datamodel.systems import LPSmm
+from brainhops.io.transformations.fsl.flirt import FlirtTransform
 
 matrix = np.eye(3, 4)
-io.save(Affine(matrix, input=RASmm(), output=RASmm()), "affine.lta")
+affine = Affine(matrix, input=LPSmm(), output=LPSmm())
+io.save(affine, "affine.lta")  # an LTA file between RAS spaces
 io.save(io.load("affine.lta"), "copy.lta")  # -> the same file
+flirt = affine.to(FlirtTransform, reference=src, moving=dst)
+flirt.save("affine.mat")
 ```
 
 ## Images

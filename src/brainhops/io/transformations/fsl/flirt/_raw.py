@@ -170,7 +170,10 @@ class FlirtRaw(Raw, TextFileReader, TextFileWriter):
                 f"was given {', '.join(sorted(kwargs))}."
             )
         return iter(
-            ["".join(_format_number(v) + "  " for v in row) for row in self.matrix]
+            [
+                "".join(_format_number(v) + "  " for v in row)
+                for row in self.matrix
+            ]
         )
 
     def to_text(self, **kwargs) -> str:

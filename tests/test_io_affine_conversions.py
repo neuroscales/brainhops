@@ -173,9 +173,7 @@ FORMATS = {
         MatTransform, "t.mat", fixture="itk_affine3d_0GenericAffine.mat"
     ),
     "itk-tfm": Format(TfmTransform, "t.tfm", fixture="itk_affine3d.tfm"),
-    "itk-h5": Format(
-        H5Transform, "t.h5", fixture="itk_composite_affine3d.h5"
-    ),
+    "itk-h5": Format(H5Transform, "t.h5", fixture="itk_composite_affine3d.h5"),
     "nifti": Format(NiftiVoxelToRAS, "t.nii.gz", voxels=True),
     "bdv": Format(BdvViewRegistration, "t.xml", voxels=True),
 }
@@ -323,10 +321,16 @@ def test_an_xfm_chain_with_a_field_is_refused() -> None:
 
 @pytest.mark.parametrize(
     ("systems", "cls"),
-    [((RAS, RAS), C3dAffine), ((LPS, LPS), MatTransform), ((None, None), C3dAffine)],
+    [
+        ((RAS, RAS), C3dAffine),
+        ((LPS, LPS), MatTransform),
+        ((None, None), C3dAffine),
+    ],
 )
 def test_a_mat_file_is_written_in_the_format_that_keeps_the_endpoints(
-    systems: tuple, cls: type, tmp_path  # noqa: ANN001
+    systems: tuple,
+    cls: type,
+    tmp_path,  # noqa: ANN001
 ) -> None:
     t = xforms.Affine(MATRIX[:-1], input=systems[0], output=systems[1])
     filename = str(tmp_path / "t.mat")
@@ -335,7 +339,8 @@ def test_a_mat_file_is_written_in_the_format_that_keeps_the_endpoints(
 
 
 def test_a_mat_file_is_written_as_flirt_given_the_images(
-    images, tmp_path  # noqa: ANN001
+    images: dict,
+    tmp_path,  # noqa: ANN001
 ) -> None:
     t = xforms.Affine(MATRIX[:-1], input=RAS, output=RAS)
     filename = str(tmp_path / "t.mat")
@@ -359,7 +364,10 @@ def test_a_mat_file_is_written_as_flirt_given_the_images(
     ],
 )
 def test_io_save_gives_the_images_to_the_conversion(
-    name: str, cls: type, images, tmp_path  # noqa: ANN001
+    name: str,
+    cls: type,
+    images: dict,
+    tmp_path,  # noqa: ANN001
 ) -> None:
     t = xforms.Affine(MATRIX[:-1], input=LPS, output=LPS)
     filename = str(tmp_path / name)

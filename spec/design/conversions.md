@@ -134,18 +134,19 @@ pyramid adds none, so the image keeps its geometry. A pyramid becomes
 the single-scale image of its highest-resolution level, placed in the
 world space of the pyramid, and its other levels are left out.
 
-A file format without an exact converter yet (#312) relabels a
-transformation, and it first carries the transformation into its own
-coordinate systems when they differ. Each such endpoint is bridged as
-composition bridges two neighbours, by reordering, flipping and
-rescaling axes, which is exact. This is done for the formats that store
-an affine, such as the MNI `.xfm` file and the RAS variant of an LTA
-file. A voxel system is not bridged to a world system, because that
-needs the geometry of the volume, and a format that holds that geometry,
-such as an LTA file with valid volume information, uses it only in its
-own exact converter. `save()` writes through the same conversion, so an
-affine between LPS systems is saved in an `.xfm` file as the equivalent
-affine between RAS systems.
+Every affine file format has an exact converter from each family with
+an affine form, and from a chain of affines. The converter carries the
+transformation into the coordinate systems of the format: each endpoint
+is bridged as composition bridges two neighbours, by reordering,
+flipping and rescaling axes, which is exact, and the chain is composed
+into one matrix. A voxel system is not bridged to a world system,
+because that needs the geometry of a volume. A format that places its
+matrix with the geometries of two volumes (FLIRT, `register.dat`, and
+LTA between voxels) takes them as the conversion options `reference=`,
+the volume of the input, and `moving=`, the volume of the output, and
+refuses the conversion without them. `save()` writes through the same
+conversion, so an affine between LPS systems is saved in an `.xfm` file
+as the equivalent affine between RAS systems. Status: implemented.
 
 ## 4. Refusals that are deliberate
 

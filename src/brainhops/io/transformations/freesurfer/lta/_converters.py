@@ -83,7 +83,12 @@ of its input and of the volume of its output."""
 RAS = _systems.RASmm()
 """The RAS world, in millimetres, of the `LINEAR_RAS_TO_RAS` type."""
 
-_KEPT = (FreesurferTkrSystem, LtaVoxelSystem, LtaPhysicalSystem, _systems.RSAmm)
+_KEPT = (
+    FreesurferTkrSystem,
+    LtaVoxelSystem,
+    LtaPhysicalSystem,
+    _systems.RSAmm,
+)
 """The systems that an LTA file stores as they are, each with its type."""
 
 

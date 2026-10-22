@@ -356,7 +356,6 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
         self.transformations = None
         return self
 
-
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the transformation into an empty HDF5 file.
 

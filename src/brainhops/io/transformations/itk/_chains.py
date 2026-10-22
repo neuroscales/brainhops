@@ -320,9 +320,6 @@ def _type_name(block: ItkStruct) -> str:
         f"{ItkPrecision(block.precision).value}_"
         f"{block.ndim_input}_{block.ndim_output}"
     )
-    if (
-        block.type == ItkTransformClass.BSplineTransform
-        and block.degree != 3
-    ):
+    if block.type == ItkTransformClass.BSplineTransform and block.degree != 3:
         name += f"_{block.degree}"
     return name
