@@ -41,12 +41,10 @@ degree than 1 is sampled at its nodes, which is a loss: the converter
 raises a `LossyConversionError`, and `t.to(Format, lossy=True)` returns
 the sampled field.
 
-A NIfTI-1 header stores its affine in single precision. An affine whose
-matrix does not read back as the same numbers in single precision is
-therefore written with rounded numbers, which is a loss: the converter
-builds the format and raises a `LossyConversionError` that carries it,
-unless the header of its metadata is a NIfTI-2 header, which stores the
-affine in double precision.
+A NIfTI-1 header stores its affine in single precision, and a NIfTI-2
+header in double precision. The rounding to single precision is not
+counted as a loss, since the precision in which a format stores its
+numbers is not a change of the map.
 
 The options a converter is given are the format's own (`metadata=`,
 and `log=` and `steps=` for a displacement field); one that would
@@ -58,7 +56,6 @@ NIfTI file.
 """
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
@@ -71,8 +68,7 @@ from brainhops.datamodel._transformations.compute.converters import (
     _convert_withsplines,
     smart_replace,
 )
-from brainhops.errors import ConversionError, LossyConversionError
-from brainhops.io.common.nifti._header import _header
+from brainhops.errors import ConversionError
 
 # io
 from brainhops.io.transformations.base._conversions import (
@@ -135,7 +131,7 @@ def _(
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
     matrix = affine_between(t, VOXEL, RAS, cls)
-    return _single(cls(matrix=matrix[:-1], **options), matrix)
+    return cls(matrix=matrix[:-1], **options)
 
 
 @converter(_xforms.Identity, NiftiRASToVoxel)
@@ -158,7 +154,7 @@ def _(
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
     matrix = affine_between(t, RAS, VOXEL, cls)
-    return _single(cls(matrix=matrix[:-1], **options), np.linalg.inv(matrix))
+    return cls(matrix=matrix[:-1], **options)
 
 
 @converter(NiftiRASToVoxel, NiftiRASToVoxel)
@@ -259,34 +255,6 @@ def _(
     # Within its own format, a field is changed by the rules of any field
     # of coordinates (a new `field=`, say), which keep its type.
     return _convert_withsplines(t, cls, **kwargs)
-
-
-def _single(result: tx.Any, voxel2ras: np.ndarray) -> tx.Any:
-    """
-    Return a NIfTI affine, or report that its header rounds it.
-
-    A NIfTI-1 header stores the voxel-to-RAS affine `voxel2ras` in single
-    precision, and a NIfTI-2 header in double precision.
-
-    Raises
-    ------
-    LossyConversionError
-        If the header stores single precision and the affine does not
-        read back as the same numbers in it.
-    """
-    if isinstance(_header(result), nb.Nifti2Header):
-        return result
-    rounded = voxel2ras.astype(np.float32).astype(np.float64)
-    if np.array_equal(rounded, voxel2ras):
-        return result
-    raise LossyConversionError(
-        f"The {type(result).__name__} that this transformation converts "
-        f"to is not the same map: a NIfTI-1 header stores its affine in "
-        f"single precision, which rounds this one by up to "
-        f"{np.abs(rounded - voxel2ras).max():.3g}. Pass lossy=True to "
-        f"accept it, or give the format the metadata of a NIfTI-2 header.",
-        result=result,
-    )
 
 
 # ----------------------------------------------------------------------

@@ -191,7 +191,10 @@ interpolated with its degree, which is exact only when the
 transformation is already a B-spline of that degree on that grid. No
 spline is fitted by least squares. How a field is extended beyond its
 grid, and the boundary condition of the spline, are not counted as
-losses. FNIRT and FLIRT need the geometry of their two images, which a
+losses. Neither is the precision in which a format stores its numbers,
+such as the single precision of a NIfTI-1 affine or of a NiftyReg
+field: a change of data type rounds the numbers but does not change the
+map. FNIRT and FLIRT need the geometry of their two images, which a
 conversion takes as the options `reference=` and `moving=`. Status:
 implemented.
 

@@ -609,9 +609,9 @@ def test_a_ras_to_voxel_member_of_a_family_is_a_nifti_affine(
     family: str,
 ) -> None:
     t = _families(RASmm(), VOXEL)[family]
-    # The header stores the inverse affine in single precision, which
-    # rounds the inverse of most of these affines.
-    nifti = t.to(NiftiRASToVoxel, lossy=True)
+    # The header rounds the inverse affine to single precision, which is
+    # the precision of the format and not a loss.
+    nifti = t.to(NiftiRASToVoxel)
     assert type(nifti) is NiftiRASToVoxel
     np.testing.assert_array_equal(
         nifti.homogeneous_matrix, t.to(xforms.Affine).homogeneous_matrix

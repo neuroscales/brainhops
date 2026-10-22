@@ -39,7 +39,6 @@ from brainhops.datamodel.systems import (  # noqa: E402
 )
 from brainhops.errors import (  # noqa: E402
     ConversionError,
-    LossyConversionError,
 )
 from brainhops.io.common.bdv._geometry import (  # noqa: E402
     global_system,
@@ -386,12 +385,18 @@ def test_an_xfm_file_is_written_as_an_affine(tmp_path) -> None:  # noqa: ANN001
     assert type(io.load(filename)) is XfmAffine
 
 
-def test_a_nifti_affine_that_single_precision_rounds_is_lossy() -> None:
+def test_a_nifti_affine_that_single_precision_rounds_is_exact(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # A NIfTI-1 header rounds the affine to single precision, which is the
+    # precision of the format and not a loss.
     t = xforms.Affine(VOXEL2RAS[:-1] * 0.1, input=VOXEL, output=RAS)
-    with pytest.raises(LossyConversionError):
-        t.to(NiftiVoxelToRAS)
-    affine = t.to(NiftiVoxelToRAS, lossy=True)
+    affine = t.to(NiftiVoxelToRAS)
     np.testing.assert_allclose(affine.matrix, t.matrix)
+    filename = str(tmp_path / "affine.nii.gz")
+    io.save(affine, filename)
+    back = NiftiVoxelToRAS.load(filename)
+    np.testing.assert_allclose(back.matrix, t.matrix, rtol=1e-6, atol=1e-6)
 
 
 def test_a_trakem2_affine_converts_from_a_2d_affine() -> None:
