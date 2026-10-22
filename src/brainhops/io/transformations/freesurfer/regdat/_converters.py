@@ -28,18 +28,27 @@ reference, so it is the inverse of the LTA file built here, which is the
 file that `lta_convert --inreg ... --invert` writes. Either conversion
 refuses, with a reason, when a geometry that it needs is missing.
 
-Any other family with an affine form is relabelled as a
-`RegisterDatTransformation` by the converter
-[`relabelling`][brainhops.io.transformations.base._converters.relabelling],
-which this module registers. It keeps the parameters of the
-transformation only when its coordinate systems are not known or are
-compatible with those of the format. Whether the format can write those
-systems is decided when it is written. A `RegisterDatTransformation`
-that is converted to its own class is changed by the rules of any
-affine. Another variant of the format that reads its matrix from a
-record reads the same record in its own coordinate systems, which is
-exact, and one that holds a matrix of its own is relabelled, as any
-other transformation is.
+Every other family with an affine form, and a `Sequence` of affines,
+converts exactly to a `RegisterDatTransformation` when the geometries of
+both volumes are known. An affine between two tkregister spaces is kept
+as it is, with the geometries that its systems hold. Any other affine is
+read between the scanner RAS spaces of the two volumes, with its
+endpoints bridged to RAS, which flips an affine between LPS spaces, and
+an endpoint that is not known is taken to be RAS. Its matrix between
+the tkregister spaces is then computed from the geometries, which the
+conversion takes as the options `reference=`, the volume of the input,
+and `moving=`, the volume of the output, as a FLIRT matrix does. The
+conversion is refused, with the names of the options, when either is
+missing. An LTA file without valid geometries also takes them as
+options. A geometry is a
+[`Geometry`][brainhops.datamodel.geometry.Geometry], an image, whose
+geometry is used, or the geometry block of an LTA file.
+
+A `RegisterDatTransformation` that is converted to its own class is
+changed by the rules of any affine. Another variant of the format that
+reads its matrix from a record reads the same record in its own
+coordinate systems, which is exact, and one that holds a matrix of its
+own is converted as any other affine is.
 """
 
 import numpy as np
@@ -54,10 +63,12 @@ from brainhops.datamodel._transformations.compute.converters import (
 )
 from brainhops.io.base.parsers import UnrepresentableTransformationError
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.transformations.base._conversions import unrepresentable
-from brainhops.io.transformations.base._converters import (
-    relabel,
-    relabelling,
+from brainhops.io.transformations.base._conversions import (
+    AFFINE_SOURCES,
+    affine_between,
+    format_options,
+    register_converter,
+    unrepresentable,
 )
 from brainhops.io.transformations.base._records import matrix_to_disk
 
@@ -71,23 +82,72 @@ from ..lta._xforms import _lta_written
 from ._raw import RegisterDatRaw
 from ._xforms import (
     RegisterDatTransformation,
+    _as_moving_geometry,
+    _as_reference_geometry,
+    _scanner_to_tkr,
     _tkr_to_scanner,
 )
 
-# A `register.dat` file stores an affine between tkregister spaces, and
-# no exact conversion into it is written yet for the families of the
-# data model, so each family with an affine form is relabelled.
-converter(_xforms.Identity, RegisterDatTransformation)(relabelling)
-converter(_xforms.Translation, RegisterDatTransformation)(relabelling)
-converter(_xforms.Scaling, RegisterDatTransformation)(relabelling)
-converter(_xforms.Permutation, RegisterDatTransformation)(relabelling)
-converter(_xforms.Linear, RegisterDatTransformation)(relabelling)
-converter(_xforms.Affine, RegisterDatTransformation)(relabelling)
-converter(_xforms.AffineExponential, RegisterDatTransformation)(relabelling)
-converter(_xforms.SubspaceTransformation, RegisterDatTransformation)(
-    relabelling
-)
-converter(_xforms.Sequence, RegisterDatTransformation)(relabelling)
+OPTIONS = ("reference", "moving")
+"""What a conversion to a `register.dat` file takes: the geometries of
+the volume of its input and of the volume of its output."""
+
+RAS = _systems.RASmm()
+"""The scanner RAS world, in millimetres, of a volume."""
+
+
+@register_converter(AFFINE_SOURCES, RegisterDatTransformation)
+def _(
+    t: _xforms.Transformation,
+    cls: tx.Type[RegisterDatTransformation],
+    **kwargs,
+) -> RegisterDatTransformation:
+    # Exactly, or raise: the affine between the tkregister spaces of the
+    # two volumes, kept as it is or computed from the scanner RAS affine
+    # and the geometries of both volumes.
+    options = format_options(t, cls, kwargs, OPTIONS)
+    reference, moving = _geometries(t, cls, options)
+    src, dst = t.input, t.output
+    if isinstance(src, FreesurferTkrSystem) and isinstance(
+        dst, FreesurferTkrSystem
+    ):
+        matrix = affine_between(t, src, dst, cls)
+        reference = src.geometry if reference is None else reference
+        moving = dst.geometry if moving is None else moving
+    else:
+        missing = [
+            name
+            for name, value in zip(OPTIONS, (reference, moving))
+            if value is None
+        ]
+        if missing:
+            names = " and ".join(f"{name}=" for name in missing)
+            raise unrepresentable(
+                t,
+                cls,
+                f"a register.dat file maps the tkregister spaces of two "
+                f"volumes, which the geometries of both volumes place in "
+                f"scanner RAS, and the conversion is not given {names}. "
+                f"Pass the geometry of the volume of its input as "
+                f"reference= and that of its output as moving=.",
+            )
+        scanner = affine_between(t, RAS, RAS, cls)
+        matrix = _scanner_to_tkr(scanner, reference, moving)
+    if matrix.shape != (4, 4):
+        raise unrepresentable(
+            t,
+            cls,
+            f"a register.dat file holds a 3-D affine, and this one has "
+            f"{len(matrix) - 1} dimensions.",
+        )
+    result = RegisterDatTransformation(
+        matrix=matrix[:-1], reference=reference, moving=moving
+    )
+    if cls is RegisterDatTransformation:
+        return result
+    # A view reads the record in its own systems, so the matrix between
+    # the tkregister spaces is encoded first.
+    return _view(result.consolidate(), cls)
 
 
 @converter
@@ -100,13 +160,13 @@ def _(
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type. Another variant of the format reads
     # the record of `t`, when it has one, in its own systems, with the
-    # same geometries. A matrix of its own is relabelled only when its
-    # systems are compatible.
+    # same geometries. A matrix of its own is converted as the matrix of
+    # any affine.
     if isinstance(t, cls):
         return _convert_withlog(t, cls, "matrix", **kwargs)
     if t._data is None:
         return _view(t, cls, **kwargs)
-    return relabel(t, cls, **kwargs)
+    return _plain(t).to(cls, **kwargs)
 
 
 @converter
@@ -145,19 +205,25 @@ def _(
 ) -> RegisterDatTransformation:
     # The affine between the tkregister spaces of the source and the
     # destination volume of the record that `t` writes, whose geometries
-    # become those of the reference and the movable volume.
-    for name in ("reference", "moving"):
-        if name in kwargs:
-            raise TypeError(
-                f"The {name} geometry of a register.dat converted from an "
-                f"LTA file is that of the LTA file, so {name}= cannot be "
-                f"given."
-            )
+    # become those of the reference and the movable volume. A record
+    # without valid geometries takes them as options, as any affine does.
     try:
         record, _ = _lta_written(t, {})
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     src, dst = _valid(record.src), _valid(record.dst)
+    given = [name for name in OPTIONS if kwargs.get(name) is not None]
+    if given and record.type != LtaType.REGISTER_DAT:
+        if src is not None or dst is not None:
+            names = " and ".join(f"{name}=" for name in given)
+            raise unrepresentable(
+                t,
+                cls,
+                f"the geometries of a register.dat converted from an LTA "
+                f"file are those of the LTA file, so {names} cannot be "
+                f"given.",
+            )
+        return _plain(t).to(cls, **kwargs)
     if record.type != LtaType.REGISTER_DAT and (src is None or dst is None):
         raise unrepresentable(
             t,
@@ -179,6 +245,26 @@ def _(
 # ----------------------------------------------------------------------
 #   HELPERS
 # ----------------------------------------------------------------------
+
+
+def _plain(t: _xforms.Affine) -> _xforms.Affine:
+    # The affine that a format holds, between its own systems, as a plain
+    # affine of the data model.
+    return _xforms.Affine(matrix=t.matrix, input=t.input, output=t.output)
+
+
+def _geometries(
+    t: _xforms.Transformation, cls: type, options: tx.Dict[str, tx.Any]
+) -> tx.Tuple[tx.Any, tx.Any]:
+    # The geometries that the options give, as a register.dat file checks
+    # them, or `None` for a geometry that is not given.
+    try:
+        return (
+            _as_reference_geometry(options.get("reference")),
+            _as_moving_geometry(options.get("moving")),
+        )
+    except (TypeError, ValueError) as error:
+        raise unrepresentable(t, cls, str(error)) from error
 
 
 def _view(
