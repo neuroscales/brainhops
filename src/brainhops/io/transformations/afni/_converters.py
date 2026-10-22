@@ -119,6 +119,7 @@ def _(t: AfniAffine, cls: tx.Type[AfniAffine], **kwargs) -> AfniAffine:
 # ----------------------------------------------------------------------
 
 
+@register_converter(FIELD_SOURCES, AfniBrikWarp)
 def _(
     t: _xforms.Transformation, cls: tx.Type[AfniBrikWarp], **kwargs
 ) -> AfniBrikWarp:
@@ -129,9 +130,6 @@ def _(
     format_options(t, cls, kwargs)
     parts = afni_displacement(t, cls)
     return held(cls(transformations=afni_chain(parts)), parts)
-
-
-register_converter(FIELD_SOURCES, AfniBrikWarp)(_)
 
 
 @converter

@@ -127,6 +127,7 @@ def _(
 # ----------------------------------------------------------------------
 
 
+@register_converter(FIELD_SOURCES, MrtrixCoordinatesField)
 def _(
     t: _xforms.Transformation,
     cls: tx.Type[MrtrixCoordinatesField],
@@ -146,9 +147,7 @@ def _(
     return held(cls(transformations=chain), parts)
 
 
-register_converter(FIELD_SOURCES, MrtrixCoordinatesField)(_)
-
-
+@register_converter(FIELD_SOURCES, MrtrixDisplacementField)
 def _(
     t: _xforms.Transformation,
     cls: tx.Type[MrtrixDisplacementField],
@@ -168,9 +167,6 @@ def _(
         VoxelToRAS(matrix=parts.grid2world[:-1]),
     )
     return held(cls(transformations=chain), parts)
-
-
-register_converter(FIELD_SOURCES, MrtrixDisplacementField)(_)
 
 
 @converter

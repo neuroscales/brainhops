@@ -754,6 +754,7 @@ def _niml_extension(nums: str) -> bytes:
 # _converters`.
 
 
+@register_converter(FIELD_SOURCES, AfniNiftiWarp)
 def _(
     t: _xforms.Transformation, cls: tx.Type[AfniNiftiWarp], **kwargs
 ) -> AfniNiftiWarp:
@@ -771,9 +772,6 @@ def _(
     options.setdefault("metadata", metadata)
     parts = afni_displacement(t, cls)
     return held(cls(transformations=afni_chain(parts), **options), parts)
-
-
-register_converter(FIELD_SOURCES, AfniNiftiWarp)(_)
 
 
 @converter

@@ -75,6 +75,7 @@ OPTIONS = ("moving",)
 """What a conversion to a morph may set: the source image."""
 
 
+@register_converter(FIELD_SOURCES, M3zMorph)
 def _(t: _xforms.Transformation, cls: tx.Type[M3zMorph], **kwargs) -> M3zMorph:
     # An affine from atlas RAS to the nodes, the position of each node in
     # the voxels of the source image, and the voxel-to-RAS affine of the
@@ -121,9 +122,6 @@ def _(t: _xforms.Transformation, cls: tx.Type[M3zMorph], **kwargs) -> M3zMorph:
         morph = cls(metadata=M3zMetadata.from_raw(record))
         morph.transformations = chain
     return held(morph, parts)
-
-
-register_converter(FIELD_SOURCES, M3zMorph)(_)
 
 
 def _geometry(

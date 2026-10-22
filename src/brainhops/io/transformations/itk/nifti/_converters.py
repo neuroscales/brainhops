@@ -82,6 +82,7 @@ fields is listed, so that the other variant of the format reaches the
 converter of the format it is converted to."""
 
 
+@register_converter(SOURCES, ItkNiftiDisplacementField)
 def _(
     t: _xforms.Transformation,
     cls: tx.Type[ItkNiftiDisplacementField],
@@ -105,9 +106,7 @@ def _(
     return held(cls(transformations=chain), parts)
 
 
-register_converter(SOURCES, ItkNiftiDisplacementField)(_)
-
-
+@register_converter(SOURCES, ItkNiftiCoordinatesField)
 def _(
     t: _xforms.Transformation,
     cls: tx.Type[ItkNiftiCoordinatesField],
@@ -130,9 +129,6 @@ def _(
         ),
     )
     return held(cls(transformations=chain), parts)
-
-
-register_converter(SOURCES, ItkNiftiCoordinatesField)(_)
 
 
 def _check_known(t: _xforms.Transformation, cls: type) -> None:

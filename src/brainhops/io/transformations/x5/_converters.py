@@ -80,6 +80,7 @@ SOURCES = tuple(dict.fromkeys((*AFFINE_SOURCES, *FIELD_SOURCES)))
 """The families that the converter takes: every affine and every field."""
 
 
+@register_converter(SOURCES, X5Transform)
 def _(
     t: _xforms.Transformation, cls: tx.Type[X5Transform], **kwargs
 ) -> X5Transform:
@@ -105,9 +106,6 @@ def _(
     if lossy is None:
         return result
     return held(result, lossy._replace(loss=" ".join(losses)))
-
-
-register_converter(SOURCES, X5Transform)(_)
 
 
 def _element(piece: _xforms.Transformation, cls: type) -> tx.Tuple:

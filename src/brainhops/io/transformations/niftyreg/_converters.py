@@ -85,6 +85,8 @@ def _chain(parts: FieldParts) -> tx.Tuple[_xforms.Transformation, ...]:
     )
 
 
+@register_converter(SOURCES, NiftyRegDisplacementField)
+@register_converter(SOURCES, NiftyRegDeformationField)
 def _(
     t: _xforms.Transformation,
     cls: tx.Type[NiftyRegSequence],
@@ -100,10 +102,7 @@ def _(
     return held(cls(transformations=_chain(parts)), parts)
 
 
-register_converter(SOURCES, NiftyRegDisplacementField)(_)
-register_converter(SOURCES, NiftyRegDeformationField)(_)
-
-
+@register_converter(SOURCES, NiftyRegVelocityField)
 def _(
     t: _xforms.Transformation,
     cls: tx.Type[NiftyRegVelocityField],
@@ -127,6 +126,3 @@ def _(
             "logarithm of a displacement.",
         )
     return held(cls(transformations=_chain(parts)), parts)
-
-
-register_converter(SOURCES, NiftyRegVelocityField)(_)

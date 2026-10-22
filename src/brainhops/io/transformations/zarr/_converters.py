@@ -74,6 +74,7 @@ _SPACE = ("x", "y", "z")
 """The names of the spatial axes, which are those of the RAS world."""
 
 
+@register_converter(FIELD_SOURCES, OmeZarrField)
 def _(
     t: _xforms.Transformation, cls: tx.Type[OmeZarrField], **kwargs
 ) -> OmeZarrField:
@@ -94,9 +95,6 @@ def _(
         values = _world_vectors(parts)
     values, scale, translation = _along_world(values, parts.grid2world)
     return held(_field(values, kind, scale, translation), parts)
-
-
-register_converter(FIELD_SOURCES, OmeZarrField)(_)
 
 
 @converter
