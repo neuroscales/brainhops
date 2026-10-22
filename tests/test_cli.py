@@ -331,12 +331,16 @@ def test_convert_writes_an_affine_with_its_operators(tmp_path) -> None:  # noqa:
 
 
 def test_convert_needs_lossy_for_an_approximation(tmp_path, capsys) -> None:  # noqa: ANN001
+    # A NiftyReg grid of control points holds the cubic B-spline exactly,
+    # so the NIfTI displacement field, which samples it, is asked for by
+    # its hint.
     source = str(DATA / "itk_bspline3d.tfm")
     out = tmp_path / "bspline.nii.gz"
-    assert main(["convert", source, "-o", str(out)]) == 3
+    target = f"{out}|nifti.displacements"
+    assert main(["convert", source, "-o", target]) == 3
     assert "lossy" in capsys.readouterr().err
     assert not out.exists()
-    assert main(["convert", source, "-o", str(out), "--lossy"]) == 0
+    assert main(["convert", source, "-o", target, "--lossy"]) == 0
     assert out.exists()
 
 

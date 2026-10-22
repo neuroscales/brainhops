@@ -11,7 +11,6 @@ __all__ = ["FnirtWarpField"]
 from ._base import FnirtWarpField
 
 # Importing the private converters registers them with the data model,
-# so that a conversion into one of these formats, such as
-# `t.to(Format)`, fails with a reason instead of building a wrong
-# object.
+# so that a transformation converts into a FNIRT warp when it is given
+# the reference and moving images.
 from . import _converters  # noqa: E402, F401  isort: skip

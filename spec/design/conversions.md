@@ -147,6 +147,24 @@ own exact converter. `save()` writes through the same conversion, so an
 affine between LPS systems is saved in an `.xfm` file as the equivalent
 affine between RAS systems.
 
+The formats that store a B-spline on a grid of control points (FNIRT
+coefficient fields, NiftyReg grids of control points and velocity
+grids, and elastix B-spline transforms) have exact converters, which
+share the helpers of `io/transformations/base/_splines.py`. A field
+between two affines is held exactly when it is a B-spline of a degree
+that the format stores, because a displacement is linear in its
+coefficients and the affine that the other one does not undo can be
+moved to one side of the field: NiftyReg keeps it in its header
+extension, elastix in an initial transform, and FNIRT in its initial
+affine. Any other field is sampled on the grid of control points, and
+the coefficients are fitted to the samples by least squares, which is a
+loss reported by `LossyConversionError`. The choice keeps every pair of
+these formats convertible, which users expect, while `lossy=True` marks
+the approximations. How a field is extended beyond its grid, and the
+boundary condition of the spline, are not counted as losses. FNIRT and
+FLIRT need the geometry of their two images, which a conversion takes
+as the options `reference=` and `moving=`. Status: implemented.
+
 ## 4. Refusals that are deliberate
 
 The completeness test lists them. A field cannot be built from a
