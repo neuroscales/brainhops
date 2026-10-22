@@ -14,7 +14,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel._backends import dataproperty
+from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -166,7 +166,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the image in the layout of `data`, without reading it.
 

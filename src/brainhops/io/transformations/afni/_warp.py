@@ -17,7 +17,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.datamodel.metadata._vocabulary import FIELDS
@@ -52,13 +56,12 @@ from brainhops.io.common.afni._raw import (
 from brainhops.io.images.afni import AfniImage
 from brainhops.io.metadata._base import requested_fields
 from brainhops.io.transformations.base.fields import (
-    StoredFieldMixin,
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
 
 # this format
-from ._formats import AfniWarp
+from ._formats import AfniWarpFormat
 from ._views import _warp_to_disk, _warp_to_model
 
 WARP_LABELS: tx.Tuple[str, str, str] = ("x_delta", "y_delta", "z_delta")
@@ -76,9 +79,8 @@ _NDIM = 3
 class AfniBrikWarp(
     BinaryFileReader,
     BinaryFileWriter,
-    AfniWarp,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    AfniWarpFormat,
+    _xforms.DerivedSequence,
 ):
     """
     An AFNI nonlinear warp stored as an AFNI dataset (`.HEAD` and
@@ -88,7 +90,7 @@ class AfniBrikWarp(
     in DICOM millimetres, labelled `x_delta`, `y_delta` and `z_delta`.
     A warp saved with `3dQwarp -saveall` may have three more, `hexvol`,
     `BulkEn` and `ShearEn`, which are kept but not read. See
-    [`AfniWarp`][] for what the displacements mean.
+    [`AfniWarpFormat`][] for what the displacements mean.
 
     The warp holds the header of its dataset as [`AfniMetadata`][], whose
     record is an [`AfniRaw`][], and the sub-bricks as the BRIK stores
@@ -163,7 +165,7 @@ class AfniBrikWarp(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -687,11 +689,11 @@ def _dicom_vectors(data: tx.Optional[ArrayProtocol]) -> ArrayProtocol:
     """
     if data is None:
         raise ParserContentError("This warp has no data to read.")
-    backend = get_array_backend(data)
+    xp = get_array_backend(data)
     shape = tuple(int(d) for d in data.shape)
     if len(shape) == _NDIM + 2 and shape[_NDIM] == 1:
         # The NIfTI layout, (X, Y, Z, 1, n), keeps a singleton axis.
-        data = backend.reshape(data, shape[:_NDIM] + shape[_NDIM + 1 :])
+        data = xp.reshape(data, shape[:_NDIM] + shape[_NDIM + 1 :])
         shape = shape[:_NDIM] + shape[_NDIM + 1 :]
     if len(shape) != _NDIM + 1 or shape[-1] < _NDIM:
         raise ParserContentError(
@@ -711,8 +713,8 @@ def _dicom_chain(
     read-only.
     """
     vox2ras = DICOM_TO_RAS @ np.asarray(vox2dicom, dtype=np.float64)
-    backend = get_array_backend(vectors)
-    flip = backend.asarray(_DICOM_RAS_VECTOR.astype(vectors.dtype))
+    xp = get_array_backend(vectors)
+    flip = xp.asarray(_DICOM_RAS_VECTOR.astype(vectors.dtype))
     chain = ras_displacement_chain(
         vectors * flip,
         vox2ras,
@@ -755,9 +757,9 @@ def _dicom_field(
             "the DICOM axes, and the grid of this warp is oblique. Resample "
             "it on a cardinal grid first."
         )
-    backend = get_array_backend(vectors)
-    rotate = backend.asarray(to_dicom[:3, :3].astype(vectors.dtype))
-    vectors = backend.matmul(rotate, vectors[..., None])[..., 0]
+    xp = get_array_backend(vectors)
+    rotate = xp.asarray(to_dicom[:3, :3].astype(vectors.dtype))
+    vectors = xp.matmul(rotate, vectors[..., None])[..., 0]
     return vox2dicom, vectors
 
 

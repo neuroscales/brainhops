@@ -6,7 +6,11 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
@@ -39,7 +43,6 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.fields import (
-    StoredFieldMixin,
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
@@ -110,8 +113,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 class FnirtWarpField(
     FslTransformationFormat,
     NiftiBasedTransformation,
-    StoredFieldMixin,
-    _xforms.ImmutableSequence,
+    _xforms.DerivedSequence,
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.
 
@@ -228,7 +230,7 @@ class FnirtWarpField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -596,13 +598,13 @@ class FnirtWarpField(
         relative. The array backend is preserved.
         """
         field = self._raw_field()
-        backend = get_array_backend(field)
+        xp = get_array_backend(field)
         if self._is_coeff():
             return field
 
         shape = tuple(int(s) for s in field.shape[:3])
         grid_to_scaled = ref.vox2fsl @ np.linalg.inv(self._ref_to_field(ref))
-        ref_scaled = _voxel_grid_in_scaled_mm(shape, grid_to_scaled, backend)
+        ref_scaled = _voxel_grid_in_scaled_mm(shape, grid_to_scaled, xp)
 
         deformation_type = self.deformation_type
         if deformation_type is None:

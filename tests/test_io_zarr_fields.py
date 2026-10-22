@@ -10,6 +10,9 @@ import numpy as np
 import pytest
 
 from brainhops.datamodel import transformations as X
+from brainhops.datamodel._transformations.compute.multiscale import (
+    nearest_level,
+)
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import (
     Axis,
@@ -351,8 +354,8 @@ def test_reader_selects_a_level_by_target_resolution() -> None:
     # The finest voxel size is (2, 0.5); a doubled target selects level 1.
     fine_target = placement
     coarse_target = (placement @ Scaling(scale=[2.0, 2.0])).compute()
-    assert reader._nearest_level(fine_target) == 0
-    assert reader._nearest_level(coarse_target) == 1
+    assert nearest_level(reader, fine_target) == 0
+    assert nearest_level(reader, coarse_target) == 1
 
 
 def test_to_axis_maps_each_ome_type() -> None:

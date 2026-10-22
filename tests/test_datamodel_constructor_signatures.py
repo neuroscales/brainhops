@@ -95,6 +95,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "SqrtTranslation": ("forward",),
     },
     "brainhops.datamodel._transformations.sequence": {
+        "DerivedSequence": ("transformations",),
         "ImmutableSequence": ("transformations",),
         "MutableSequence": ("transformations",),
         "Sequence": ("transformations",),

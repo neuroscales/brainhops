@@ -4,45 +4,39 @@ Every class that holds data, images and transformations alike, has two
 families of methods. The `to_*` methods return the data of an object as a
 bare array of a backend, and the `as_*` methods return an object of the
 same class whose data are arrays of that backend. The backend settings
-are described in [`brainhops.backends`][], and the design in the memo
-`spec/design/array-backends.md`.
+are described in [`brainhops.backends`][].
 
 The mixin below gives every class both families. A class whose data
 need more than the default conversion overrides `to_backend` or
 `as_backend`, and the methods named after each backend call them.
 """
 
-# stdlib
-from contextlib import contextmanager
-
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
 
 # internals
-from brainhops import backends
+from brainhops._core.magic import smart_replace
 from brainhops._core.properties import smartproperty
-from brainhops.backends import _CURRENT, Setting
-
-_Default = tx.Union[Setting, tx.Any]
-"""The type of a backend argument, whose default is the current setting."""
+from brainhops._core.typing import ArrayProtocol
+from brainhops.backends import (
+    BackendLike,
+    DeviceLike,
+    _is_loaded,
+    backend,
+    to_backend,
+)
 
 _T = tx.TypeVar("_T")
 
 
 class _BackendsMixin:
-    """The `to_*` and `as_*` methods of the classes that hold data.
-
-    By default, `to_backend` converts `data`, and `as_backend` returns
-    the object as it is, because most transformations hold only small
-    parameters, which stay NumPy arrays. Images, transformation fields
-    and the transformations that hold other transformations override
-    `as_backend`.
+    """
+    The `to_*` and `as_*` methods of the classes that hold data.
     """
 
     @property
-    def dataobj(self) -> tx.Any:
+    def dataobj(self) -> ArrayProtocol:
         """The array of the object, without reading it.
 
         By default, it is the data that the object holds. An object read
@@ -53,18 +47,12 @@ class _BackendsMixin:
         """
         return _stored_data(self)
 
-    def _voxel_arrays(self) -> tx.Iterator[tx.Any]:
-        """Yield the voxel arrays of the object, without reading them.
-
-        The voxel arrays decide in which backend a computation on the
-        object runs (see [`computing_with`][]). By default, an object
-        holds only small parameters, which decide nothing, and yields
-        nothing. Images and fields yield their `dataobj`, and the
-        objects that hold other objects yield the arrays of those.
-        """
-        return iter(())
-
-    def to_backend(self, backend: _Default = _CURRENT) -> tx.Any:
+    def to_backend(
+        self,
+        backend: tx.Optional[BackendLike] = None,
+        *,
+        device: tx.Optional[DeviceLike] = None,
+    ) -> tx.Optional[ArrayProtocol]:
         """Return the data as a bare array of the backend of a setting.
 
         The object does not change. Small parameters, such as the matrix
@@ -74,23 +62,30 @@ class _BackendsMixin:
 
         Parameters
         ----------
-        backend : str or module, optional
+        backend : str | module, optional
             The setting. By default, the current setting is used.
+        device : str | int, optional
+            The device for converted arrays. The backend supplies its default.
 
         Returns
         -------
-        array or None
+        array | None
             The data.
         """
         data = _stored_data(self)
         if data is None:
             return None
-        return backends.to_backend(data, backend)
+        return to_backend(data, backend, device=device)
 
     def as_backend(
-        self, backend: _Default = _CURRENT, *, inplace: bool = False
+        self,
+        backend: tx.Optional[BackendLike] = None,
+        *,
+        device: tx.Optional[DeviceLike] = None,
+        inplace: bool = False,
     ) -> tx.Self:
-        """Return the object with its voxels converted as a setting says.
+        """
+        Return the object with its data converted to the requested backend.
 
         By default, the object holds no voxels and is returned as it is.
         Small parameters stay NumPy arrays where they are stored, so that
@@ -98,8 +93,10 @@ class _BackendsMixin:
 
         Parameters
         ----------
-        backend : str or module, optional
+        backend : str | module, optional
             The setting. By default, the current setting is used.
+        device : str | int, optional
+            The device for converted arrays. The backend supplies its default.
         inplace : bool, default=False
             Whether this object holds the converted data and is returned,
             instead of a new object.
@@ -109,19 +106,19 @@ class _BackendsMixin:
         object
             An object of the same class.
         """
-        return self
+        return _as_backend_data(self, backend, inplace, device=device)
 
-    def to_numpy(self) -> tx.Any:
+    def to_numpy(self) -> ArrayProtocol:
         """Return the data as a NumPy array, reading or computing them."""
         return self.to_backend("numpy")
 
-    def to_cupy(self) -> tx.Any:
+    def to_cupy(self, device: tx.Optional[DeviceLike] = None) -> ArrayProtocol:
         """Return the data as a CuPy array on the GPU."""
-        return self.to_backend("cupy")
+        return self.to_backend("cupy", device=device)
 
-    def to_dask(self) -> tx.Any:
+    def to_dask(self, device: tx.Optional[DeviceLike] = None) -> ArrayProtocol:
         """Return the data as a Dask array, without reading them."""
-        return self.to_backend("dask")
+        return self.to_backend("dask", device=device)
 
     def as_numpy(self, *, inplace: bool = False) -> tx.Self:
         """Return the object with its data as NumPy arrays.
@@ -141,11 +138,16 @@ class _BackendsMixin:
         """
         return self.as_backend("numpy", inplace=inplace)
 
-    def as_cupy(self, *, inplace: bool = False) -> tx.Self:
+    def as_cupy(
+        self, device: tx.Union[str, int, None] = None, *, inplace: bool = False
+    ) -> tx.Self:
         """Return the object with its data as CuPy arrays on the GPU.
 
         Parameters
         ----------
+        device : str | int | None, optional
+            The device, such as `"cuda:0"` or `0`. By default, the
+            backend supplies its device.
         inplace : bool, default=False
             Whether this object holds the converted data and is returned.
 
@@ -154,13 +156,18 @@ class _BackendsMixin:
         object
             An object of the same class.
         """
-        return self.as_backend("cupy", inplace=inplace)
+        return self.as_backend("cupy", device=device, inplace=inplace)
 
-    def as_dask(self, *, inplace: bool = False) -> tx.Self:
+    def as_dask(
+        self, device: tx.Union[str, int, None] = None, *, inplace: bool = False
+    ) -> tx.Self:
         """Return the object with its data as Dask arrays.
 
         Parameters
         ----------
+        device : str | int | None, optional
+            The device, such as `"cuda:0"` or `0`.
+            By default, the backend supplies its device.
         inplace : bool, default=False
             Whether this object holds the converted data and is returned.
 
@@ -169,91 +176,193 @@ class _BackendsMixin:
         object
             An object of the same class.
         """
-        return self.as_backend("dask", inplace=inplace)
+        return self.as_backend("dask", device=device, inplace=inplace)
 
 
-@contextmanager
-def computing_with(*objects: tx.Any) -> tx.Iterator[tx.Optional[str]]:
-    """Run a computation under the setting of its result.
-
-    A computation, such as the reslice of an image or the composition of
-    two transformations, decides once in which backend its result lives,
-    with [`output_backend`][brainhops.backends.output_backend], and runs
-    under that setting. The `data` of its inputs is then read directly in
-    that backend, and the arrays that it creates, such as a grid of
-    coordinates, are created there, so that nothing is moved from one
-    backend to another later. Under an explicit setting, the setting is
-    kept. Objects that hold no voxels, such as affine transformations, do
-    not take part in the choice, and `None` is ignored.
-
-    Parameters
-    ----------
-    *objects : Any
-        The images and transformations that the computation reads.
-
-    Yields
-    ------
-    str or None
-        The setting under which the computation runs.
-    """
-    arrays = [
-        array
-        for obj in objects
-        if obj is not None and hasattr(obj, "_voxel_arrays")
-        for array in obj._voxel_arrays()
-    ]
-    setting = backends.output_backend(*arrays)
-    with backends.backend(setting):
-        yield setting
-
-
-def voxel_arrays_of(objects: tx.Iterable[tx.Any]) -> tx.Iterator[tx.Any]:
-    """Yield the voxel arrays of several objects, for the containers.
-
-    Parameters
-    ----------
-    objects : iterable of object
-        The objects held by a container, such as the members of a
-        sequence. `None` is skipped.
-
-    Yields
-    ------
-    array
-        The voxel arrays, without reading them.
-    """
-    for obj in objects:
-        if obj is not None and hasattr(obj, "_voxel_arrays"):
-            yield from obj._voxel_arrays()
-
-
-def as_backend_all(
-    objects: tx.Optional[tx.Sequence[_BackendsMixin]], backend: _Default
+def as_backend(
+    objects: tx.Union[tx.Sequence[_BackendsMixin], _BackendsMixin, None],
+    backend: tx.Optional[BackendLike] = None,
+    *,
+    device: tx.Optional[DeviceLike] = None,
+    inplace: bool = False,
 ) -> tx.Any:
-    """Convert every object of a list or a tuple with its `as_backend`.
+    """
+    Apply `as_backend` to an object or a list of objects.
 
-    The list or the tuple is returned as it is when no object changes.
+    A list or tuple is returned as it is when no object changes.
 
     Parameters
     ----------
-    objects : list or tuple, optional
-        The objects, such as the members of a sequence.
-    backend : str or module
+    objects : object | sequence, optional
+        The object(s), such as the members of a sequence.
+    backend : str | module
         The setting.
+    device : str | int, optional
+        The device for converted arrays. The backend supplies its default.
+    inplace : bool, default=False
+        Whether to assign the converted arrays in the objects themselves,
+        or to return new objects with the converted arrays.
 
     Returns
     -------
-    list or tuple or None
-        The converted objects.
+    object | sequence | None
+        The converted object(s).
     """
     if not objects:
         return objects
-    converted = [obj.as_backend(backend) for obj in objects]
+    if isinstance(objects, _BackendsMixin):
+        return objects.as_backend(backend, device=device, inplace=inplace)
+    converted = [
+        obj.as_backend(backend, device=device, inplace=inplace)
+        for obj in objects
+    ]
     if all(new is old for new, old in zip(converted, objects)):
         return objects
     return type(objects)(converted)
 
 
-def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
+class _FrozenBackendMixin(_BackendsMixin):
+    """
+    Mixin for classes that only support one backend, such as concrete
+    transformations with small parameters.
+    """
+
+    def as_backend(
+        self,
+        backend: tx.Optional[BackendLike] = None,
+        *,
+        device: tx.Optional[DeviceLike] = None,
+        inplace: bool = False,
+    ) -> tx.Self:
+        return self
+
+
+class _MetaBackendMixin(_BackendsMixin):
+    """
+    Mixin for classes that do not hold their own data, but instead
+    hold references to other objects that do.
+    """
+
+    def as_backend(
+        self,
+        backend: tx.Optional[BackendLike] = None,
+        *,
+        device: tx.Optional[DeviceLike] = None,
+        inplace: bool = False,
+    ) -> tx.Self:
+        opt = dict(backend=backend, device=device, inplace=inplace)
+        changes = {}
+        for field in getattr(self, "meta_fields", ()):
+            value = getattr(self, field)
+            if value is None:
+                continue
+            converted = as_backend(value, **opt)
+            if converted is not value:
+                changes[field] = converted
+        return smart_replace(self, "inplace" if inplace else None, **changes)
+
+
+def dataproperty(**kwargs: tx.Any) -> property:
+    """Declare the `data` of an image or a field, a view of its `dataobj`.
+
+    An object stores its array in `dataobj`, and `data` is the same
+    array, loaded and in the backend of the setting in effect. Assigning
+    `data` stores the new array in `dataobj`.
+
+    A NumPy, CuPy or Dask array in `dataobj` is read as it is. Any other
+    array, such as the lazy array of a file or a zarr array that was
+    assigned, is loaded at the first read with the setting in effect, and
+    the result is cached: under the default setting, a small array is
+    read with NumPy and a large one is kept lazy as a Dask array, and
+    under `with backend("dask"):` the array is kept lazy whatever its
+    size. Each read then converts the loaded array with the setting in
+    effect at that read, as [`to_backend`][] does, and the loaded array
+    does not change. An object that should hold another backend for good
+    is converted with an `as_*` method, or its backend is chosen before
+    its first read. Assigning `data` or `dataobj` clears the cache.
+
+    Parameters
+    ----------
+    **kwargs : Any
+        Other options of [`smartproperty`][], such as `invalidates`.
+
+    Returns
+    -------
+    property
+        The property `data`, stored in `_data`.
+    """
+
+    # The getter runs when `_data` holds nothing or an array that is not
+    # loaded, so `dataobj` is then the lazy array of a file or the array
+    # that was assigned. The property is named after its getter, so the
+    # getter is `data`.
+    def data(self: tx.Any) -> tx.Any:
+        dataobj = self.dataobj
+        if dataobj is None:
+            return None
+        return _load(dataobj)
+
+    return smartproperty(
+        data, cache=True, convert=to_backend, unset=_not_loaded, **kwargs
+    )
+
+
+def dataobjproperty(
+    fget: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None,
+) -> property:
+    """Declare the `dataobj` of an image or a field, where its array lives.
+
+    `dataobj` is the array that the object stores, without reading it.
+    By default, it is the array that was assigned as `data` or `dataobj`.
+    A file format passes its own getter, which returns the assigned array
+    if there is one and the lazy array of its file otherwise. Assigning
+    `dataobj` is the same as assigning `data`: the array is stored, and
+    the loaded array that `data` caches is cleared.
+
+    !!! example
+        ```python
+        class Format(SingleScaleImage):
+            @dataobjproperty
+            def dataobj(self):
+                if self._data is not None:
+                    return self._data
+                return lazy_array_of_the_file(self)
+        ```
+
+    Parameters
+    ----------
+    fget : callable, optional
+        The getter. By default, the getter returns `_data`.
+
+    Returns
+    -------
+    property
+        The property `dataobj`.
+    """
+    if fget is None:
+
+        def fget(self: tx.Any) -> ArrayProtocol:
+            return getattr(self, "_data", None)
+
+    def dataobj(self: tx.Any, value: tx.Any) -> None:
+        self.data = value
+
+    return property(fget, dataobj, doc=fget.__doc__)
+
+
+def _not_loaded(value: tx.Any) -> bool:
+    # A stored value that is not a NumPy, CuPy or Dask array reads as
+    # unset, so that `data` loads it once and caches the result.
+    return value is None or not _is_loaded(value)
+
+
+def _as_backend_data(
+    obj: _T,
+    backend: tx.Optional[BackendLike],
+    inplace: bool,
+    *,
+    device: tx.Optional[DeviceLike] = None,
+) -> _T:
     """Return an object with its `data` converted, for the overrides.
 
     The object is returned as it is when the conversion keeps the array,
@@ -267,6 +376,8 @@ def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
         The setting.
     inplace : bool
         Whether the object itself holds the converted array.
+    device : str or int, optional
+        The device for converted arrays. The backend supplies its default.
 
     Returns
     -------
@@ -276,36 +387,10 @@ def _as_backend_data(obj: _T, backend: _Default, inplace: bool) -> _T:
     data = _stored_data(obj)
     if data is None:
         return obj
-    converted = backends.to_backend(data, backend)
+    converted = to_backend(data, backend, device=device)
     if converted is data:
         return obj
-    return _with_fields(obj, inplace, data=converted)
-
-
-def _with_fields(obj: _T, inplace: bool, **changes: tx.Any) -> _T:
-    """Assign new values of fields to an object, or to a copy of it.
-
-    Parameters
-    ----------
-    obj : object
-        An image or a transformation.
-    inplace : bool
-        Whether the object itself is changed.
-    **changes : Any
-        The new value of each field, by name.
-
-    Returns
-    -------
-    object
-        The object, or the copy.
-    """
-    if not changes:
-        return obj
-    if inplace:
-        for name, value in changes.items():
-            setattr(obj, name, value)
-        return obj
-    return replace(obj, **changes)
+    return smart_replace(obj, "inplace" if inplace else None, data=converted)
 
 
 def _stored_data(obj: tx.Any) -> tx.Any:
@@ -313,25 +398,12 @@ def _stored_data(obj: tx.Any) -> tx.Any:
 
     The `data` of an image or a field follows the backend setting in
     effect when it is read (see [`dataproperty`][]). The conversion
-    methods read it under the setting `None`, which returns the stored or
+    methods read it under the setting `"native"`, which returns the stored or
     cached array itself, so that they convert it once, from what the
     object holds.
     """
-    with backends.backend(None):
+    with backend("native"):
         return obj.data
-
-
-def _follow_setting(value: tx.Any) -> tx.Any:
-    """Convert an array with the backend setting in effect, if any.
-
-    Under the default setting, `None`, the array is returned as it is.
-    Under any other setting, it is converted as
-    [`to_backend`][brainhops.backends.to_backend] says, and a new array is
-    returned at each call.
-    """
-    if backends.get_backend() is None:
-        return value
-    return backends.to_backend(value)
 
 
 def _load(dataobj: tx.Any) -> tx.Any:
@@ -339,63 +411,20 @@ def _load(dataobj: tx.Any) -> tx.Any:
 
     Under the default setting, a lazy array of a file is read with NumPy
     when it is small and kept lazy as a Dask array when it is large, and
-    an explicit setting chooses the backend (see
-    [`to_backend`][brainhops.backends.to_backend]). A NumPy array that is
-    read from a file is made read-only, because the writers encode what
-    the object holds, not this array, so a change made to it in place
-    would be lost. A loaded array is returned as it is.
+    an explicit setting chooses the backend (see [`to_backend`][]). A
+    NumPy array that is read from a file is made read-only, because the
+    writers encode what the object holds, not this array, so a change
+    made to it in place would be lost. A loaded array is returned as it is.
     """
-    if backends._is_loaded(dataobj):
+    if _is_loaded(dataobj):
         return dataobj
-    return _read_only(backends.to_backend(dataobj), dataobj)
+    return _read_only(to_backend(dataobj), dataobj)
 
 
 def _read_only(data: tx.Any, dataobj: tx.Any) -> tx.Any:
     # A NumPy array read from a lazy array of a file is made read-only,
     # as `_load` explains. A loaded array is the array itself, or a view
     # of it, so its flag is left as it is.
-    if isinstance(data, np.ndarray) and not backends._is_loaded(dataobj):
+    if isinstance(data, np.ndarray) and not _is_loaded(dataobj):
         data.flags.writeable = False
     return data
-
-
-def dataproperty(**kwargs: tx.Any) -> property:
-    """Declare the `data` of an image or a field, which follows the setting.
-
-    `data` is the array of values of an object, read from its `dataobj`.
-    An array that was assigned is returned converted with the backend
-    setting in effect: as it is under the default setting, and as a new
-    array of the requested backend under any other setting, such as
-    `with backend("dask"):`.
-
-    When no array was assigned, `dataobj` is the lazy array of a file.
-    The first read converts it with the setting in effect and caches the
-    result: under the default setting, a small file is read with NumPy
-    and a large one is kept lazy as a Dask array, and under
-    `with backend("dask"):` the file is kept lazy whatever its size.
-    Later reads return the cached array, converted with the setting in
-    effect at that read. The cached array does not change, so an object
-    that should hold another backend for good is converted with an
-    `as_*` method, or its backend is chosen before its first read.
-
-    Parameters
-    ----------
-    **kwargs : Any
-        Other options of [`smartproperty`][], such as `invalidates`.
-
-    Returns
-    -------
-    property
-        The property `data`, stored in `_data`.
-    """
-
-    # The getter runs only when no array is assigned, so `dataobj` is the
-    # lazy array of the file, or None. The property is named after its
-    # getter, so the getter is `data`.
-    def data(self: tx.Any) -> tx.Any:
-        dataobj = self.dataobj
-        if dataobj is None:
-            return None
-        return _load(dataobj)
-
-    return smartproperty(data, cache=True, convert=_follow_setting, **kwargs)

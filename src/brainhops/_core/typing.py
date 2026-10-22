@@ -24,6 +24,8 @@ __all__ = [
     "is_instance_or_subclass",
     "ToNumpyParameter",
 ]
+import sys
+
 import typing_extensions as tx
 from bagof.converters import Converter
 from bagof.core.magic import safe_get_origin
@@ -36,6 +38,11 @@ from bagof.hints.numpy import dtype, ndarray
 from bagof.magic import Frozen, NoInit, NoRepr
 
 from brainhops import backends
+
+if sys.version_info >= (3, 10):
+    from types import EllipsisType
+else:
+    EllipsisType = type(Ellipsis)
 
 T = tx.TypeVar("T")
 
@@ -65,9 +72,9 @@ class ToNumpyParameter(Converter):
     """Converter of a small parameter, such as a matrix, to a NumPy array.
 
     Small parameters are NumPy arrays whatever the backend setting (see
-    the memo `spec/design/array-backends.md`), but a user may build one
-    from an array of another backend, such as the CuPy matrix of an
-    affine transformation. The NumPy converter of bagof calls
+    [`brainhops.backends`][]), but a user may build one from an array of
+    another backend, such as the CuPy matrix of an affine
+    transformation. The NumPy converter of bagof calls
     `numpy.asanyarray`, which CuPy refuses. This converter first moves
     the value to memory with
     [`to_backend`][brainhops.backends.to_backend], which copies an array
@@ -111,7 +118,6 @@ npmatrix = tx.Annotated[
 ]
 """Two-dimensional NumPy array, converted from an array of any backend."""
 
-
 Clip = tx.Optional[
     tx.Union[
         float,
@@ -120,3 +126,19 @@ Clip = tx.Optional[
     ]
 ]
 """Voxel margin: symmetric scalar, shared pair, per-axis pairs, or None."""
+
+CartesianIndexElement: tx.TypeAlias = tx.Union[
+    tx.SupportsIndex, slice, None, EllipsisType
+]
+"""
+Element of a Cartesian index, which can be an integer, a slice, or `...`.
+"""
+
+CartesianIndex: tx.TypeAlias = tx.Union[
+    CartesianIndexElement, tx.Tuple[CartesianIndexElement, ...]
+]
+"""
+Cartesian index, which can be a single index or a tuple of indices.
+"""
+
+Shape: tx.TypeAlias = tx.Tuple[int, ...]

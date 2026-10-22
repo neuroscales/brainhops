@@ -16,7 +16,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import _stored_data, dataproperty
+from brainhops.datamodel._backends import (
+    _stored_data,
+    dataobjproperty,
+    dataproperty,
+)
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
@@ -54,10 +58,7 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
-from brainhops.io.transformations.base.fields import (
-    LPSCoordinatesField,
-    StoredFieldMixin,
-)
+from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
@@ -150,9 +151,7 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ItkNiftiField(
-    NiftiBasedTransformation, StoredFieldMixin, _xforms.ImmutableSequence
-):
+class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
     Base class of the fields stored in ITK NIfTI vector images.
 
@@ -206,7 +205,7 @@ class ItkNiftiField(
     change.
     """
 
-    @property
+    @dataobjproperty
     def dataobj(self) -> tx.Optional[ArrayProtocol]:
         """The array of the field in the layout of `data`, without reading it.
 
@@ -310,14 +309,14 @@ class ItkNiftiField(
         data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
-        backend = get_array_backend(data)
+        xp = get_array_backend(data)
         shape = tuple(int(d) for d in data.shape)
         if len(shape) != ndim + 1:
-            data = backend.reshape(data, (*shape[:ndim], ndim))
+            data = xp.reshape(data, (*shape[:ndim], ndim))
         dispvect = _nifti_intent(_header(self)) == _NIFTI_INTENT_DISPVECT
         if dispvect and ndim == 3:
             flip = np.diag(_RAS_LPS)[:ndim]
-            data = data * backend.asarray(flip, dtype=data.dtype)
+            data = data * xp.asarray(flip, dtype=data.dtype)
         return data
 
     @staticmethod
@@ -500,8 +499,8 @@ class ItkNiftiField(
         header, and its fields that describe the layout and the geometry are
         encoded again.
         """
-        backend = get_array_backend(vectors)
-        vectors = backend.asarray(vectors)
+        xp = get_array_backend(vectors)
+        vectors = xp.asarray(vectors)
         ndim = int(vectors.shape[-1])
         if ndim not in _NDIMS or vectors.ndim != ndim + 1:
             raise WriterError(
@@ -601,10 +600,10 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         # of the
         # world-to-voxel affine.
         vectors = self._lps_vectors(ndim)
-        backend = get_array_backend(vectors)
+        xp = get_array_backend(vectors)
         lps2vox = np.linalg.inv(vox2lps[:, :ndim])
-        rotate = backend.asarray(lps2vox, dtype=vectors.dtype)
-        field = backend.matmul(rotate, vectors[..., None])[..., 0]
+        rotate = xp.asarray(lps2vox, dtype=vectors.dtype)
+        field = xp.matmul(rotate, vectors[..., None])[..., 0]
         return (
             LPSToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
@@ -681,10 +680,10 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         vox2lps = _homogeneous(chain[2])
         ndim = vox2lps.shape[0] - 1
         field = displacement.data
-        backend = get_array_backend(field)
-        field = backend.asarray(field)
-        rotate = backend.asarray(vox2lps[:ndim, :ndim], dtype=field.dtype)
-        vectors = backend.matmul(rotate, field[..., None])[..., 0]
+        xp = get_array_backend(field)
+        field = xp.asarray(field)
+        rotate = xp.asarray(vox2lps[:ndim, :ndim], dtype=field.dtype)
+        vectors = xp.matmul(rotate, field[..., None])[..., 0]
         return self._write_vectors(vectors, vox2lps, like, **overrides)
 
 

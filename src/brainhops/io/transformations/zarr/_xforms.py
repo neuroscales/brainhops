@@ -15,7 +15,7 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
 from brainhops._core.affines import inv as _affine_inv
-from brainhops.backends import get_array_backend, to_backend
+from brainhops.backends import get_array_backend, to_numpy
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
@@ -191,9 +191,9 @@ class OmeZarrField(
                 "This node's OME metadata names no field datasets, so it has "
                 "no resolution levels to read."
             )
-        backend = get_array_backend()
+        xp = get_array_backend()
         raw_levels = [
-            backend.asarray(_node.follow_path(node, str(ds.path))[...])
+            xp.asarray(_node.follow_path(node, str(ds.path))[...])
             for ds in datasets
         ]
         ndim = int(raw_levels[0].ndim)
@@ -272,9 +272,7 @@ class OmeZarrField(
             )
             # Zarr writes arrays from memory, so an array on a GPU is copied
             # to memory first, whatever the backend setting.
-            node.create_array(
-                dataset_path, data=to_backend(array, "numpy"), **kwargs
-            )
+            node.create_array(dataset_path, data=to_numpy(array), **kwargs)
         node.ome = ome
         return node
 
@@ -371,8 +369,8 @@ def _vector_axis_last(
     ndim = len(raw.shape)
     if vector_axis in (-1, ndim - 1):
         return raw
-    ab = get_array_backend(raw)
-    return ab.moveaxis(raw, vector_axis, -1)
+    xp = get_array_backend(raw)
+    return xp.moveaxis(raw, vector_axis, -1)
 
 
 def _to_voxel_displacement(
@@ -382,8 +380,8 @@ def _to_voxel_displacement(
     # L^-1 of the linear part of the placement: raw @ L^-T.
     matrix = _as_affine(voxel2world).matrix
     inverse = _affine_inv(matrix)
-    ab = get_array_backend(matrix)
-    raw = ab.asarray(raw)
+    xp = get_array_backend(matrix)
+    raw = xp.asarray(raw)
     return raw @ inverse[:, :-1].T
 
 
