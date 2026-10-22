@@ -328,7 +328,8 @@ def affine_between(
 
     The bridges from `input` to the input of `t`, and from the output of
     `t` to `output`, are put around it, and the three are composed into
-    one affine.
+    one affine. A system that declares a distinct origin, such as a
+    tkregister space, is bridged only to a system of its own class.
 
     Raises
     ------
@@ -456,7 +457,29 @@ def _bridge(
 ) -> _xforms.Transformation:
     # The exact bridge between two systems, built as a composition builds
     # it (pairing still-unmatched axes by position within their type, as
-    # `Sequence.compute` does), or the reason why there is none.
+    # `Sequence.compute` does), or the reason why there is none. A system
+    # that declares a distinct origin, such as a tkregister space, has the
+    # axes of another space but is not it, so it is bridged only to a
+    # system of its own class.
+    distinct = [
+        getattr(system, "DISTINCT_ORIGIN", False)
+        for system in (source, target)
+    ]
+    if (
+        source is not None
+        and target is not None
+        and any(distinct)
+        and type(source) is not type(target)
+    ):
+        odd = source if distinct[0] else target
+        other = target if distinct[0] else source
+        raise unrepresentable(
+            t,
+            cls,
+            f"the {odd.name} space has the axes of the {other.name} space "
+            f"but another origin, so one is not the other. Compose the "
+            f"transformation with the affine between the two spaces first.",
+        )
     try:
         return bridge(source, target, allow_type_grouped_positional=True)
     except AdaptationError as error:

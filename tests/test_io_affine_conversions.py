@@ -400,3 +400,22 @@ def test_a_trakem2_affine_converts_from_a_2d_affine() -> None:
     np.testing.assert_allclose(affine.matrix, t.matrix)
     with pytest.raises(ConversionError):
         xforms.Affine(MATRIX[:-1]).to(TrakEM2PatchAffine)
+
+
+@pytest.mark.parametrize("name", ["C3dAffine", "XfmAffine", "NiftyRegAffine"])
+def test_a_tkregister_space_is_not_scanner_ras(name: str) -> None:
+    # A tkregister space has the axes of scanner RAS but another origin,
+    # so a format of scanner RAS refuses an affine from it.
+    from brainhops.io import transformations as formats
+    from brainhops.io.common.freesurfer import FreesurferTkrSystem
+
+    cls = {
+        "C3dAffine": formats.c3d.C3dAffine,
+        "XfmAffine": formats.minc.XfmAffine,
+        "NiftyRegAffine": formats.niftyreg.NiftyRegAffine,
+    }[name]
+    affine = xforms.Affine(
+        np.eye(4)[:-1], input=FreesurferTkrSystem(), output=RASmm()
+    )
+    with pytest.raises(ConversionError, match="another origin"):
+        affine.to(cls)
