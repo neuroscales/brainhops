@@ -495,12 +495,23 @@ def test_a_decoded_grid_is_reused_in_an_assigned_chain(
     assert (tmp_path / "out" / "nl_grid_0.mnc").exists()
 
 
-def test_a_new_displacement_field_is_refused(tmp_path: Path) -> None:
+def test_a_new_displacement_field_is_written_as_a_volume(
+    tmp_path: Path,
+) -> None:
+    # A grid transform that was not read from a volume is written as a
+    # new MINC2 volume beside the file, named as libminc names it.
     chain = io.load(_grid_file(tmp_path))
     grid = XfmGridTransform.from_ras(_field(), np.eye(4))
     chain.transformations = [grid]
-    with pytest.raises(UnrepresentableTransformationError, match="MINC"):
-        chain.consolidate()
+    path = tmp_path / "new.xfm"
+    chain.save(path)
+    assert (tmp_path / "new_grid_0.mnc").exists()
+    back = io.load(path)
+    np.testing.assert_allclose(
+        np.asarray(back[0].displacement.data),
+        np.asarray(grid.displacement.data),
+        atol=1e-5,
+    )
 
 
 def test_a_grid_read_from_bytes_has_no_volume(tmp_path: Path) -> None:
@@ -510,7 +521,7 @@ def test_a_grid_read_from_bytes_has_no_volume(tmp_path: Path) -> None:
     with pytest.raises(ParserContentError, match="without its path"):
         _ = chain.transformations
     assert chain.to_bytes() == path.read_bytes()
-    with pytest.raises(WriterError, match="cannot write MINC"):
+    with pytest.raises(WriterError, match="not read from a file"):
         chain.save(tmp_path / "copy.xfm")
     # An open file has a name, against which the volume is found.
     with open(path, "rb") as file:

@@ -106,6 +106,10 @@ if HAS_NIBABEL:
         "NiftyRegVelocityField",
         "NiftyRegVelocityGrid",
     ]
+
+    # Importing the private converters registers the exact conversions
+    # into the dense fields with the data model.
+    from . import _converters  # noqa: E402, F401  isort: skip
 else:
     register_missing_format(
         [

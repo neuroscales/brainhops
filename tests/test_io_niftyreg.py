@@ -18,6 +18,7 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as bio  # noqa: E402
 from brainhops.datamodel import systems  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
+from brainhops.errors import ConversionError  # noqa: E402
 from brainhops.io.base._dispatch import format_hints  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
@@ -918,9 +919,8 @@ def test_a_displacement_copied_to_a_velocity_is_refused(
 ) -> None:
     """A NIfTI displacement field has no logarithm to write as a velocity."""
     path = _dispvect(tmp_path, np.zeros((*REF_SHAPE, 3)) + 0.5)
-    copied = NiftyRegVelocityField.from_instance(load(path))
-    with pytest.raises(NotImplementedError, match="logarithm"):
-        copied.to_nibabel()
+    with pytest.raises(ConversionError, match="logarithm"):
+        NiftyRegVelocityField.from_instance(load(path))
 
 
 def test_a_velocity_copied_to_niftyreg_keeps_its_steps(tmp_path: Path) -> None:

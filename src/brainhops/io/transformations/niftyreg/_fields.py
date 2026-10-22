@@ -642,6 +642,12 @@ class NiftyRegDisplacementField(NiftyRegSequence):
 
     HINTS = ("displacement", "disp")
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DISP_FIELD})
+
+    PRIORITY: tx.ClassVar[int] = -1
+    """Priority below the NIfTI field of RAS displacements, which `io.save`
+    writes a field to a `.nii.gz` name as, unless it already is of this
+    format. A NiftyReg reader claims only the files that NiftyReg names,
+    so the priority does not change what is read."""
     _WHAT: tx.ClassVar[str] = "A NiftyReg displacement field"
 
     def _encoded(
@@ -686,6 +692,12 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
     HINTS = ("deformation", "def")
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DEF_FIELD})
+
+    PRIORITY: tx.ClassVar[int] = -1
+    """Priority below the NIfTI field of RAS displacements, which `io.save`
+    writes a field to a `.nii.gz` name as, unless it already is of this
+    format. A NiftyReg reader claims only the files that NiftyReg names,
+    so the priority does not change what is read."""
     _WHAT: tx.ClassVar[str] = "A NiftyReg deformation field"
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
@@ -1018,6 +1030,12 @@ class NiftyRegVelocityField(NiftyRegVelocity):
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset(
         {DEF_VEL_FIELD, DISP_VEL_FIELD}
     )
+
+    PRIORITY: tx.ClassVar[int] = -1
+    """Priority below the NIfTI field of RAS displacements, which `io.save`
+    writes a field to a `.nii.gz` name as, unless it already is of this
+    format. A NiftyReg reader claims only the files that NiftyReg names,
+    so the priority does not change what is read."""
     _WHAT: tx.ClassVar[str] = "A NiftyReg velocity field"
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
@@ -1076,8 +1094,9 @@ class NiftyRegVelocityField(NiftyRegVelocity):
 
 
 # NiftyReg stores a field on the grid of its file, in one of several
-# encodings, and no exact conversion into it is written yet (#312). A chain
-# is relabelled as the format, which carries the chain over rather than
+# encodings. The dense fields have exact converters (`_converters.py`), and
+# no exact conversion into the control-point grids is written yet (#312). A
+# chain is relabelled as a grid, which carries the chain over rather than
 # letting this reader decode the header of another format.
 converter(_xforms.Sequence, NiftyRegSequence)(relabelling)
 

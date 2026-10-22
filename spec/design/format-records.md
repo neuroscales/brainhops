@@ -1738,12 +1738,14 @@ its status.
      transform has no `rawdata`, so check 18 does not apply to the
      exemplar, and check 6 is vacuous, as for LTA and M3Z (item 66).
      Status: accepted, pending review.
-141. brainhops cannot write MINC volumes, so an `XfmTransform` writes a
-     grid transform only as the volume that it was read from, which it
-     recognizes by the identity of the decoded element, as X5 does (item
-     36), and which it copies beside a file written elsewhere. A new
-     displacement field raises `UnrepresentableTransformationError`.
-     Status: open, until a MINC writer exists.
+141. An `XfmTransform` writes a grid transform that it decoded as the
+     volume that it was read from, which it recognizes by the identity of
+     the decoded element, as X5 does (item 36), and which it copies
+     beside a file written elsewhere. Any other `XfmGridTransform`, such
+     as one that a field is converted to, is written as a new MINC2
+     volume named `<name>_grid_<n>.mnc`, with the dimensions `zspace`,
+     `yspace`, `xspace` and `vector_dimension`, by a minimal writer in
+     `minc/_grid.py`. Status: implemented.
 142. libminc writes a MINC1 displacement volume without a variable for
      `vector_dimension` (`volume_io/Volumes/output_mnc.c`), and both the
      MINC reader of brainhops and nibabel refuse such a file, so only

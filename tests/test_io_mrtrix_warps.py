@@ -552,9 +552,16 @@ def test_spm_coordinates_are_written_as_mrtrix_warps(tmp_path) -> None:  # noqa:
     )
 
 
-def test_a_displacement_is_not_written_as_a_deformation(displacement) -> None:  # noqa: ANN001
-    with pytest.raises(ConversionError):
-        MrtrixCoordinatesField.from_instance(io.load(displacement))
+def test_a_displacement_is_written_as_a_deformation(displacement) -> None:  # noqa: ANN001
+    # The two are the same map inside the grid, so a field of
+    # displacements is held as the position of each voxel.
+    field = io.load(displacement)
+    deformation = MrtrixCoordinatesField.from_instance(field)
+    assert isinstance(deformation, MrtrixCoordinatesField)
+    points = _grid_points()
+    np.testing.assert_allclose(
+        _apply(deformation, points), _apply(field, points), atol=1e-5
+    )
     with pytest.raises(ConversionError):
         MrtrixWarpFull.from_instance(io.load(displacement))
 

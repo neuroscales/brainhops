@@ -294,10 +294,27 @@ def test_an_lps_displacement_chain_is_bridged_into_ras(tmp_path) -> None:  # noq
     lps = _flip(_world())
     expected = _flip(_apply(chain, lps))
     np.testing.assert_allclose(_apply(nifti, _flip(lps)), expected, atol=1e-12)
-    io.save(chain, tmp_path / "warp.nii.gz")
+    io.save(nifti, tmp_path / "warp.nii.gz")
     back = io.transformations.load(tmp_path / "warp.nii.gz")
     assert isinstance(back, NiftiRASDisplacementField)
     np.testing.assert_allclose(_apply(back, _flip(lps)), expected, atol=1e-10)
+
+
+def test_an_lps_displacement_chain_is_saved_as_an_itk_field(tmp_path) -> None:  # noqa: ANN001
+    # `io.save` keeps the LPS endpoints of the chain in an ITK field, which
+    # is read back with its hint, since its header cannot say ITK.
+    from brainhops.io.transformations.itk.nifti import (
+        ItkNiftiDisplacementField,
+    )
+
+    chain = _lps_displacement_chain()
+    lps = _flip(_world())
+    io.save(chain, tmp_path / "warp.nii.gz")
+    back = io.transformations.load(tmp_path / "warp.nii.gz", hint="itk")
+    assert isinstance(back, ItkNiftiDisplacementField)
+    np.testing.assert_allclose(
+        _apply(back, lps), _apply(chain, lps), atol=1e-10
+    )
 
 
 def test_a_velocity_is_held_and_written_as_its_displacement(tmp_path) -> None:  # noqa: ANN001

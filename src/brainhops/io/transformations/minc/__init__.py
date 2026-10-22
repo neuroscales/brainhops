@@ -120,9 +120,11 @@ changes is written byte for byte. The displacement volumes of an
 their voxels only when the chain is decoded.
 
 !!! note "Limitations"
-    brainhops cannot write MINC volumes, so a grid transform is written
-    only as the volume that it was read from, which is copied beside the
-    new file. MINC1 volumes written by libminc have no variable for
+    A grid transform that was read is written as the volume that it was
+    read from, which is copied beside the new file. Any other grid
+    transform, such as one that a field was converted to, is written as
+    a new MINC2 volume named `<name>_grid_<n>.mnc`, as libminc names
+    it. MINC1 volumes written by libminc have no variable for
     `vector_dimension`, which the MINC reader of brainhops refuses, so
     only MINC2 displacement volumes are read. Thin-plate splines are read
     and written back unchanged, but cannot be decoded. FreeSurfer reads
