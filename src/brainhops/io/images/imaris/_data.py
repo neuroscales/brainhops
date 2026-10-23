@@ -11,7 +11,7 @@ import typing_extensions as tx
 from bagof.magic import NoInit, NoRepr
 
 # internals
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 
 # this format
 from ._raw import ImarisLevel, ImarisRaw
@@ -23,7 +23,7 @@ an HDF5 file that the caller opened.
 """
 
 
-class _ImarisProxy(ArrayProxy):
+class _ImarisProxy(StoredProxy):
     """A lazy array of the voxels of one resolution level of an Imaris file.
 
     An Imaris file stores each channel at each time point of a level as
@@ -34,7 +34,7 @@ class _ImarisProxy(ArrayProxy):
     its shape and type from the record, and it reads the file only when
     its values are needed, opening the file each time unless the caller
     gave an open file. Indexing the proxy returns another lazy array (see
-    [`ArrayProxy`][]), and converting that array reads only the datasets
+    [`StoredProxy`][]), and converting that array reads only the datasets
     and the voxels that it covers, so that Dask reads one block at a
     time.
     """
@@ -60,7 +60,7 @@ class _ImarisProxy(ArrayProxy):
         return self.record.levels[self.level]
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape `(channels, time points, z, y, x)`, from the record."""
         x, y, z = self._level.size
         return (self.record.channels, self.record.timepoints, z, y, x)
@@ -71,29 +71,28 @@ class _ImarisProxy(ArrayProxy):
         return self._level.dtype
 
     @property
-    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The shape of the chunks of the file, or `None` if it has none.
 
         A chunk covers one channel at one time point. Dask reads it to
         choose blocks that hold whole chunks. The file is opened once to
         read it, and the voxels are not read.
         """
-        owner = self._root if self._root is not None else self
-        if owner._chunks is None:
+        if self._chunks is None:
             with _opened(self.source) as f:
                 chunks = f[_path(self.level, 0, 0)].chunks
             if chunks is None:
                 return None
-            owner._chunks = (1, 1) + tuple(
-                min(int(c), n) for c, n in zip(chunks, self.base_shape[2:])
+            self._chunks = (1, 1) + tuple(
+                min(int(c), n) for c, n in zip(chunks, self.shape[2:])
             )
-        return owner._chunks
+        return self._chunks
 
     # --- methods ----
 
     def _read(self, parts: tx.Tuple[tx.Union[int, slice], ...]) -> np.ndarray:
         """Read a box of integers and slices, one per axis."""
-        shape = self.base_shape
+        shape = self.shape
         channels = _positions(parts[0], shape[0])
         times = _positions(parts[1], shape[1])
         spatial = [_span(p, n) for p, n in zip(parts[2:], shape[2:])]

@@ -15,7 +15,7 @@ from brainhops import backends
 from brainhops._core import path
 from brainhops._core.dependencies import da
 from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy, StoredProxy
 
 # internals
 from brainhops.io.base._utils_files import is_local, same_file
@@ -28,13 +28,13 @@ from ._raw import ZarrRaw, _document_keys, same_storage
 # ----------------------------------------------------------------------
 
 
-class _ZarrProxy(ArrayProxy):
+class _ZarrProxy(StoredProxy):
     """A lazy array that reads an opened Zarr array when it is converted.
 
     The proxy holds the abczarr node of the array, the location of its
     store, and an optional permutation of its axes. Opening it reads
     nothing but the document of the array. Indexing it returns another
-    lazy array (see [`ArrayProxy`][]), and converting that array reads
+    lazy array (see [`StoredProxy`][]), and converting that array reads
     only the chunks that the selection needs.
 
     The permutation `perm` presents the stored axes in another order:
@@ -63,7 +63,7 @@ class _ZarrProxy(ArrayProxy):
     # --- properties ----
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the array, in the order of the proxy."""
         shape = tuple(int(n) for n in self.node.shape)
         if self.perm is None:
@@ -74,7 +74,7 @@ class _ZarrProxy(ArrayProxy):
     """The type of the values of the array."""
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, ...]:
+    def chunks(self) -> tx.Tuple[int, ...]:
         """The shape of a chunk, in the order of the proxy."""
         chunks = tuple(int(n) for n in self.node.chunks)
         if self.perm is None:
@@ -128,6 +128,7 @@ def reads_store(raw: tx.Any, location: tx.Any) -> bool:
     A local location is compared once its symbolic links are resolved,
     and a remote location is compared by its URL.
     """
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _ZarrProxy) or raw.location is None:
         return False
     source = raw.location
@@ -148,6 +149,7 @@ def reads_inside(raw: tx.Any, location: tx.Any) -> bool:
     once its symbolic links are resolved, and a remote location is
     compared by its URL.
     """
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _ZarrProxy) or raw.location is None:
         return False
     source = raw.location
@@ -262,7 +264,7 @@ def store_chunks(raw: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
 
 def _copies_chunks(raw: tx.Any, record: ZarrRaw) -> bool:
     """Tell whether the chunk files of the store of `raw` can be copied."""
-    if not isinstance(raw, _ZarrProxy) or raw.is_view:
+    if not isinstance(raw, _ZarrProxy):
         return False
     if raw.perm is not None:
         return False

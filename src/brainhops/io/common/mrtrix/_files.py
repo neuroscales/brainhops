@@ -19,6 +19,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base._utils_files import same_file as _same_file
 from brainhops.io.base._utils_files import sibling as _sibling
@@ -33,7 +34,13 @@ from ._codecs import (
     parse_layout,
 )
 from ._constants import _FILE, _RESERVED
-from ._data import _is_scaled, _MrtrixProxy, _scaled_dtype, encode_data
+from ._data import (
+    _is_scaled,
+    _MrtrixProxy,
+    _scaled_dtype,
+    encode_data,
+    whole_file,
+)
 from ._raw import MrtrixRaw
 
 # ----------------------------------------------------------------------
@@ -187,9 +194,10 @@ def stores_as_recorded(raw: tx.Any, record: MrtrixRaw) -> bool:
     bool
         Whether the voxels can be written under the record as they are.
     """
-    if not _stored_proxy(raw):
+    proxy = whole_file(raw)
+    if proxy is None:
         return True
-    stored = raw.record
+    stored = proxy.record
     if stored is record:
         return True
     if tuple(stored.dim) != tuple(record.dim):
@@ -312,8 +320,9 @@ def payload(record: MrtrixRaw, source: ArrayProtocol) -> bytes:
     bytes
         The stored voxels.
     """
-    if _stored_proxy(source):
-        return source.read_stored()
+    proxy = whole_file(source)
+    if proxy is not None:
+        return proxy.read_stored()
     if record.scaling and tuple(record.scaling) != (0.0, 1.0):
         offset, scale = record.scaling
         source = (np.asarray(source) - offset) / scale
@@ -343,7 +352,7 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
     array
         The voxels that a file of the record holds.
     """
-    if _stored_proxy(source):
+    if whole_file(source) is not None:
         return source
     stored = _scaled_dtype(record).newbyteorder("=")
     if not _is_scaled(record) and stored == np.dtype(
@@ -352,16 +361,6 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
         return source
     content = BytesIO(payload(record, source))
     return _MrtrixProxy.from_record(content, 0, 0, record, mmap=False)
-
-
-def _stored_proxy(raw: tx.Any) -> bool:
-    """Tell whether an array is a lazy array of a whole MRtrix file.
-
-    The stored bytes of such a lazy array can be copied as they are. A
-    view of a lazy array, which selects a part of the file or reorders
-    its axes, is encoded like an array in memory.
-    """
-    return isinstance(raw, _MrtrixProxy) and not raw.is_view
 
 
 # ----------------------------------------------------------------------
@@ -384,6 +383,7 @@ def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     bool
         Whether `raw` is a lazy array of one of these files.
     """
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _MrtrixProxy):
         return False
     return any(_same_file(raw.source, file) for file in written)

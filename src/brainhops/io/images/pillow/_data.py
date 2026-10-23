@@ -13,7 +13,7 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 
 # internals
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy, StoredProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import open_path, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
@@ -23,7 +23,7 @@ from ._raw import PillowRaw
 from ._utils import read_pillow
 
 
-class _PillowProxy(ArrayProxy):
+class _PillowProxy(StoredProxy):
     """A lazy array of the pixels of a frame of a raster file.
 
     The proxy holds where the file lies, which is a path or the stream
@@ -35,7 +35,7 @@ class _PillowProxy(ArrayProxy):
     the file is the whole stream. The values are `(rows, columns)`, or
     `(rows, columns, samples)`, as Pillow decodes them, and their shape and
     type are known from the record without decoding anything. Indexing
-    the proxy returns another lazy array (see [`ArrayProxy`][]), but
+    the proxy returns another lazy array (see [`StoredProxy`][]), but
     Pillow decodes the whole frame for any read.
 
     The proxy also gives the bytes of the file, with [`read_stored`][], so
@@ -55,7 +55,7 @@ class _PillowProxy(ArrayProxy):
     # --- properties ----
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the decoded frame, read from the record."""
         return tuple(self.record.layout(self.palette)[0])
 
@@ -68,9 +68,6 @@ class _PillowProxy(ArrayProxy):
 
     def read_stored(self) -> bytes:
         """Return the bytes of the file.
-
-        The bytes are those of the whole file, whatever part of it a view
-        of the proxy selects.
 
         Returns
         -------
@@ -87,7 +84,7 @@ class _PillowProxy(ArrayProxy):
                 f, frame=self.record.frame, palette=self.palette
             )
         values = frame.array
-        shape = self.base_shape
+        shape = self.shape
         if values.shape != shape or values.dtype != self.dtype:
             raise ParserContentError(
                 f"Pillow decoded frame {self.record.frame} as an array of "
@@ -155,8 +152,9 @@ def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
     Returns
     -------
     bool
-        Whether `raw` is a lazy array of that file.
+        Whether `raw` is a lazy array of that file, or an index of one.
     """
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _PillowProxy) or not _is_path(raw.source):
         return False
     return same_file(raw.source, filename)

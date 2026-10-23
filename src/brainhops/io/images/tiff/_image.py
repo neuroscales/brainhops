@@ -10,6 +10,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
@@ -654,8 +655,9 @@ class TiffImage(
         kwargs.setdefault("name", _to_filename(filename))
         options, encoding = split_options(kwargs)
         raw = self.rawdata
-        reading = isinstance(raw, _TiffProxy) and same_file(
-            raw.source.filename, filename
+        stored = raw.root if isinstance(raw, ArrayProxy) else raw
+        reading = isinstance(stored, _TiffProxy) and same_file(
+            stored.source.filename, filename
         )
         if not encoding and self._copies_source(**options):
             if not reading:
@@ -736,7 +738,6 @@ class TiffImage(
         return (
             self._untouched(dialect, name, bigtiff)
             and isinstance(raw, _TiffProxy)
-            and not raw.is_view
             and raw.level == 0
             and raw.record is self.metadata.raw
         )

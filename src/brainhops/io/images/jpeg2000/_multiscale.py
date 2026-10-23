@@ -11,6 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import cached_value, smartproperty
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata._report import OnLoss
@@ -551,7 +552,8 @@ def _record_levels(
 
     A pyramid without a lazy array of a file has no level.
     """
-    if not isinstance(raw, _Jpeg2000Proxy):
+    stored = raw.root if isinstance(raw, ArrayProxy) else raw
+    if not isinstance(stored, _Jpeg2000Proxy):
         return []
     # The full-resolution level reads the lazy array of the pyramid itself,
     # so that consolidating an untouched pyramid through that level shares
@@ -560,10 +562,10 @@ def _record_levels(
         Jpeg2000Image(
             rawdata=raw
             if level == 0
-            else _Jpeg2000Proxy(raw.source, raw.record, level),
+            else _Jpeg2000Proxy(stored.source, stored.record, level),
             metadata=metadata,
         )
-        for level in range(raw.record.n_levels)
+        for level in range(stored.record.n_levels)
     ]
 
 
@@ -626,6 +628,8 @@ def _file_levels(level: Jpeg2000Image) -> tx.Optional[int]:
 
     A level that reads no file gives `None`.
     """
-    if not isinstance(level.rawdata, _Jpeg2000Proxy):
+    raw = level.rawdata
+    stored = raw.root if isinstance(raw, ArrayProxy) else raw
+    if not isinstance(stored, _Jpeg2000Proxy):
         return None
-    return level.rawdata.record.n_levels - level.rawdata.level
+    return stored.record.n_levels - stored.level

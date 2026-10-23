@@ -24,7 +24,7 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import openslide
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import _is_lazy, da
 from brainhops.io.base._utils_files import is_local
@@ -247,7 +247,7 @@ def read_associated(slide: _Slide, name: str) -> np.ndarray:
 # ----------------------------------------------------------------------
 
 
-class _SlideArray(ArrayProxy):
+class _SlideArray(StoredProxy):
     """A lazy array of one level of a slide, which reads only what is selected.
 
     The array holds the slide, the record of the slide and the index of the
@@ -255,7 +255,7 @@ class _SlideArray(ArrayProxy):
     colour from the record, without opening the file. It presents the level
     as an F-ordered `(x, y, c)` RGB `uint8` array whose row 0 is the top of
     the slide. Indexing it returns another lazy array (see
-    [`ArrayProxy`][]), and converting that array with `numpy.asarray` reads
+    [`StoredProxy`][]), and converting that array with `numpy.asarray` reads
     the region that it covers with `read_region`. OpenSlide decodes RGBA
     pixels whose alpha channel only marks the pixels outside the scanned
     area, and these pixels are composited onto the background colour of the
@@ -286,7 +286,7 @@ class _SlideArray(ArrayProxy):
     # --- properties ----
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the level: width, height and three samples."""
         return tuple(int(n) for n in self.record.levels[self.level].shape)
 
@@ -296,9 +296,9 @@ class _SlideArray(ArrayProxy):
         return np.dtype(self.record.levels[self.level].dtype)
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, int, int]:
+    def chunks(self) -> tx.Tuple[int, int, int]:
         """The blocks that group whole tiles of the level."""
-        return _chunks(self.record, self.level, self.base_shape)
+        return _chunks(self.record, self.level, self.shape)
 
     # --- methods ----
 

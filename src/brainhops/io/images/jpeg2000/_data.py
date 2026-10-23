@@ -21,7 +21,7 @@ from brainhops._core import path
 from brainhops._core.properties import alias
 
 # internals
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
@@ -85,7 +85,7 @@ class _Jpeg2000Source:
         return f"_Jpeg2000Source(<{len(self.content)} bytes>)"
 
 
-class _Jpeg2000Proxy(ArrayProxy):
+class _Jpeg2000Proxy(StoredProxy):
     """A lazy array of the samples of one resolution level.
 
     The proxy holds the source of the file, the record that the file was
@@ -95,7 +95,7 @@ class _Jpeg2000Proxy(ArrayProxy):
     columns, samples)`, with the values that the codestream holds: the
     scaling of Pillow to 8 or 16 bits, and its offset of signed samples,
     are undone. Indexing the proxy returns another lazy array (see
-    [`ArrayProxy`][]), but Pillow decodes the whole level for any read.
+    [`StoredProxy`][]), but Pillow decodes the whole level for any read.
     """
 
     # --- magic attributes ----
@@ -115,7 +115,7 @@ class _Jpeg2000Proxy(ArrayProxy):
     # --- properties ----
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the samples, read from the record."""
         return tuple(self.record.stored_shape(self.level))
 
@@ -126,9 +126,6 @@ class _Jpeg2000Proxy(ArrayProxy):
 
     def read_samples(self) -> np.ndarray:
         """Decode all the samples of the level.
-
-        The samples are those of the whole level, whatever part of it a
-        view of the proxy selects.
 
         Returns
         -------
@@ -148,7 +145,7 @@ class _Jpeg2000Proxy(ArrayProxy):
             Pillow, even when a coarse level is asked for.
         """
         values = _decode_level(self.source, self.record, self.level)
-        shape = self.base_shape
+        shape = self.shape
         if values.shape != shape or values.dtype != self.dtype:
             raise ParserContentError(
                 f"Pillow decoded level {self.level} of this JPEG 2000 file "

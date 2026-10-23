@@ -6,7 +6,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
@@ -14,7 +14,7 @@ from . import _utils as backend
 from ._raw import TiffRaw
 
 
-class _TiffProxy(ArrayProxy):
+class _TiffProxy(StoredProxy):
     """A lazy array of the pixels of one level of a series of a TIFF file.
 
     The proxy holds the source of the file, which is a local file name or
@@ -30,7 +30,7 @@ class _TiffProxy(ArrayProxy):
     [`read_series`][brainhops.io.images.tiff._utils.read_series] describes:
     a local, uncompressed and contiguous level is memory-mapped, a level
     may be read as a dask array, and any other level is read in full.
-    Indexing the proxy returns another lazy array (see [`ArrayProxy`][]),
+    Indexing the proxy returns another lazy array (see [`StoredProxy`][]),
     which reads only its selection of a memory map or of a dask array.
     """
 
@@ -57,7 +57,7 @@ class _TiffProxy(ArrayProxy):
     # --- properties ----
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the level in the order of brainhops."""
         stored = self.record.levels[self.level].shape
         perm = raster.canonical_permutation(self.record.storage_axes)
@@ -75,16 +75,13 @@ class _TiffProxy(ArrayProxy):
 
         The array is a transposed view of the memory map, of the dask array
         or of the NumPy array that tifffile gives, so a memory map and a
-        dask array are not read here. A view of the proxy reads its
-        selection and returns it as a NumPy array.
+        dask array are not read here.
 
         Raises
         ------
         ParserContentError
             If tifffile cannot decode the level.
         """
-        if self.is_view:
-            return np.asarray(self)
         return self._level_array()
 
     def _level_array(self) -> tx.Any:
@@ -107,10 +104,11 @@ class _TiffProxy(ArrayProxy):
     ) -> tx.Any:
         """Return a Dask array of the pixels, reading nothing.
 
-        For the whole level, the array is the Dask array that tifffile
-        gives, or a Dask array over the memory map or the decoded level,
-        so that tifffile reads the level once rather than once per block.
-        A view of the proxy reads its blocks as [`ArrayProxy`][] does.
+        The array is the Dask array that tifffile gives, or a Dask array
+        over the memory map or the decoded level, so that tifffile reads
+        the level once rather than once per block. An index of the proxy
+        is an [`IndexedProxy`][brainhops._core.proxy.IndexedProxy], which
+        reads its blocks through the proxy instead.
 
         Parameters
         ----------
@@ -126,7 +124,7 @@ class _TiffProxy(ArrayProxy):
         """
         from brainhops import backends
 
-        if self.is_view or backends.da is None:
+        if backends.da is None:
             return super().to_dask(device=device, **kwargs)
         level = self._level_array()
         if not isinstance(level, backends.da.Array):

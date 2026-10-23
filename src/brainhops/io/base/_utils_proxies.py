@@ -4,7 +4,7 @@ The NIfTI and MGH formats read their voxels with nibabel, whose
 `ArrayProxy` reads a selection when it is indexed and returns a NumPy
 array. The `dataobj` of an object read from a file is a lazy array that
 reads nothing until it is converted (see
-[`ArrayProxy`][brainhops._core.proxy.ArrayProxy]), so the views of these
+[`StoredProxy`][brainhops._core.proxy.StoredProxy]), so the views of these
 formats wrap the nibabel proxy in the class below, which brainhops can
 index and transpose without reading anything.
 """
@@ -18,7 +18,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.dependencies import dk
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 
 _SPATIAL = 3
 """The number of leading axes of a NIfTI or MGH array that are spatial."""
@@ -27,11 +27,11 @@ _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
 
 
-class NibabelProxy(ArrayProxy):
+class NibabelProxy(StoredProxy):
     """A lazy array that reads its values through a nibabel proxy.
 
     The class gives the nibabel proxy the lazy indexing of
-    [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]. A box that a view
+    [`StoredProxy`][brainhops._core.proxy.StoredProxy]. A box that a view
     selects is read by indexing the nibabel proxy, which reads only the
     bytes of that box and applies the scaling of the header.
 
@@ -48,7 +48,7 @@ class NibabelProxy(ArrayProxy):
     """The proxy of nibabel."""
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the stored array."""
         return tuple(int(n) for n in self.proxy.shape)
 
@@ -67,13 +67,13 @@ class NibabelProxy(ArrayProxy):
         ).dtype
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, ...]:
+    def chunks(self) -> tx.Tuple[int, ...]:
         """The block shape: whole slices along the last spatial axis.
 
         A block holds every value of the other axes, and as many slices
         as fit in the block size of Dask, with at least one slice.
         """
-        shape = self.base_shape
+        shape = self.shape
         if not shape:
             return shape
         last = min(_SPATIAL, len(shape)) - 1

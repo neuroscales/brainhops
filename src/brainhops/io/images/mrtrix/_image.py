@@ -13,6 +13,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.axes import Axis
@@ -45,7 +46,11 @@ from brainhops.io.common._geometry import (
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
 from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
-from brainhops.io.common.mrtrix._data import _MrtrixProxy, read_mrtrix
+from brainhops.io.common.mrtrix._data import (
+    _MrtrixProxy,
+    read_mrtrix,
+    whole_file,
+)
 from brainhops.io.common.mrtrix._files import (
     file_entry,
     keeps_storage,
@@ -651,7 +656,7 @@ class MrtrixImage(
         options = _options(kwargs)
         reading = reads_from(self.rawdata, written_files(filename))
         if reading:
-            mmap = self.rawdata.mmap
+            mmap = self.rawdata.root.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
@@ -750,19 +755,23 @@ def _encoded(
     arranged = voxel_to_ras(xform, voxel_axes)
     moved = arranged.layout is not None and not arranged.layout.trivial
 
+    whole = whole_file(raw)
     if (
-        isinstance(raw, _MrtrixProxy)
-        and not raw.is_view
+        whole is not None
         and not moved
-        and keeps_storage(raw.record, layout, datatype, scaling)
+        and keeps_storage(whole.record, layout, datatype, scaling)
     ):
         source = raw
-        shape, strides = raw.record.dim, raw.record.layout
-        stored_type, stored_scaling = raw.record.datatype, raw.record.scaling
+        shape, strides = whole.record.dim, whole.record.layout
+        stored_type = whole.record.datatype
+        stored_scaling = whole.record.scaling
     else:
         # A lazy array is read here rather than through `data`, so that no
         # cached view of the old file outlives a write over that file.
-        source = np.asarray(raw) if isinstance(raw, _MrtrixProxy) else raw
+        reads = isinstance(raw, ArrayProxy) and isinstance(
+            raw.root, _MrtrixProxy
+        )
+        source = np.asarray(raw) if reads else raw
         if moved:
             source = arranged.layout.apply(source)
         shape = tuple(int(d) for d in np.shape(source))

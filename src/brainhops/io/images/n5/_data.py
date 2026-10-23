@@ -12,7 +12,7 @@ from bagof.magic import NoInit, NoRepr
 from brainhops._core import path
 from brainhops._core.dependencies import ts
 from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -147,7 +147,7 @@ def stream_location(file: tx.Any) -> str:
     return node_location(name)
 
 
-class _N5Proxy(ArrayProxy):
+class _N5Proxy(StoredProxy):
     """A lazy array of the samples of an N5 dataset.
 
     The proxy holds the directory of the dataset and its record, whose
@@ -157,7 +157,7 @@ class _N5Proxy(ArrayProxy):
     A missing block reads as zeros, since N5 datasets are sparse. The
     samples are indexed in the order of the `dimensions` of the dataset,
     fastest first. Indexing the proxy
-    returns another lazy array (see [`ArrayProxy`][]), which shares the
+    returns another lazy array (see [`StoredProxy`][]), which shares the
     open dataset. The proxy keeps no open dataset when it is pickled.
     """
 
@@ -172,14 +172,14 @@ class _N5Proxy(ArrayProxy):
 
     # --- properties ----
 
-    base_shape = alias("record.dimensions", readonly=True)
+    shape = alias("record.dimensions", readonly=True)
     """The shape of the samples, read from the record."""
 
     dtype = alias("record.dtype", readonly=True)
     """The type of the samples, in the native byte order."""
 
     @property
-    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The shape of a block of the dataset, read from the record.
 
         Each block is a file of the dataset, so a Dask chunk of this
@@ -242,14 +242,14 @@ class _N5Proxy(ArrayProxy):
                 f"TensorStore cannot open the N5 dataset at {self.location}: "
                 f"{e}"
             ) from e
-        if tuple(
-            store.shape
-        ) != self.base_shape or store.dtype.numpy_dtype != (self.dtype):
+        if tuple(store.shape) != self.shape or store.dtype.numpy_dtype != (
+            self.dtype
+        ):
             raise ParserContentError(
                 f"The N5 dataset at {self.location} holds {store.dtype} "
                 f"samples of shape {tuple(store.shape)}, but the attributes "
                 f"that the image was read with say {self.dtype} and "
-                f"{self.base_shape}."
+                f"{self.shape}."
             )
         self._store = store
         return store

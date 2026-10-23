@@ -18,6 +18,7 @@ from brainhops._core import path
 from brainhops._core.properties import (
     smartproperty,
 )
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
@@ -59,6 +60,7 @@ from brainhops.io.common.afni._data import (
     read_afni,
     reads_brik,
     stores_brik,
+    whole_brik,
     write_brik,
 )
 from brainhops.io.common.afni._files import (
@@ -799,7 +801,7 @@ class AfniImage(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )
         if reading:
-            mmap = self.rawdata.mmap
+            mmap = self.rawdata.root.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
@@ -988,14 +990,15 @@ def _stored_data(
         raw = _image_to_disk(image._data)
     else:
         raw = image.rawdata
-    if isinstance(raw, _BrikProxy):
-        if not raw.is_view:
-            if datatype is None:
-                return raw
-            stored = brick_dtype(datatype)
-            native = [dtype.newbyteorder("=") for dtype in raw.record.dtypes]
-            if all(dtype == stored for dtype in native):
-                return raw
+    whole = whole_brik(raw)
+    if whole is not None:
+        if datatype is None:
+            return raw
+        stored = brick_dtype(datatype)
+        native = [dtype.newbyteorder("=") for dtype in whole.record.dtypes]
+        if all(dtype == stored for dtype in native):
+            return raw
+    if isinstance(raw, ArrayProxy) and isinstance(raw.root, _BrikProxy):
         # The lazy array is read here rather than through `data`, so that
         # no cached view of the old file outlives a write over that file.
         raw = np.asarray(raw)
@@ -1045,11 +1048,12 @@ def _layout(
     little-endian order without scale factors, and its statistics are
     computed from its values.
     """
-    if stores_brik(data):
+    whole = whole_brik(data)
+    if whole is not None:
         return OrderedDict(
-            (name, data.record[name])
+            (name, whole.record[name])
             for name in _LAYOUT
-            if name in data.record
+            if name in whole.record
         )
     if datatype is None:
         datatype = getattr(data, "dtype", np.dtype(np.float32))

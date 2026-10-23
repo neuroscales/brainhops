@@ -13,6 +13,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.base import _utils_raster as raster
@@ -184,6 +185,7 @@ def reads_from(raw: tx.Any, target: Target, record: StackRaw) -> bool:
     bool
         Whether `raw` is a lazy array that reads one of those files.
     """
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _StackProxy):
         return False
     read = {os.path.realpath(name) for name in raw.filenames()}
@@ -247,11 +249,7 @@ def write_stack(
             "This stack has no slice, so there is nothing to write."
         )
     names = target.names(record)
-    copied = (
-        isinstance(raw, _StackProxy)
-        and not raw.is_view
-        and raw.record is record
-    )
+    copied = isinstance(raw, _StackProxy) and raw.record is record
     sources = raw.filenames() if copied else [None] * len(names)
 
     def fill(folder: str) -> None:

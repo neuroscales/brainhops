@@ -366,7 +366,7 @@ def test_intensity_scaling(tmp_path) -> None:  # noqa: ANN001
     )
     source = _write(tmp_path / "a.mif", _single_file(head, payload))
     image = MrtrixImage.load(source)
-    assert np.array_equal(image.rawdata.get_unscaled(), stored)
+    assert np.array_equal(image.rawdata.root.get_unscaled(), stored)
     assert image.rawdata.dtype == np.float32
     assert np.allclose(np.asarray(image.data), -1 + 0.5 * stored)
 

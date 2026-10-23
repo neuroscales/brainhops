@@ -28,7 +28,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     the reader option `lazy=True` is returned as its Dask array, which
     also reads nothing, so that it stays lazy whatever its size.
     """
-    if isinstance(raw, _TiffProxy) and raw.lazy and not raw.is_view:
+    if isinstance(raw, _TiffProxy) and raw.lazy:
         return raw.to_dask()
     return raw
 

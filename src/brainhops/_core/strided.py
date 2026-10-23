@@ -6,7 +6,9 @@ file that may be compressed: MRtrix, NRRD and AFNI images, for example.
 decodes the whole file because it reads only the bytes that a selection
 needs, and because it tells Dask to split the array into slabs of the
 axis with the largest stride, so that each block of a Dask array reads
-one contiguous range of bytes.
+one contiguous range of bytes. A format that also stores a scaling of
+the values wraps the proxy in a
+[`ScaledProxy`][brainhops._core.proxy.ScaledProxy].
 
 Where each value lies is given as NumPy gives it for an array in
 memory: the position of the first value, and one stride in bytes for
@@ -32,7 +34,8 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.properties import alias
+from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import DTypeLike
 
@@ -40,18 +43,16 @@ _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
 
 
-class StridedProxy(ArrayProxy):
+class StridedProxy(StoredProxy):
     """A lazy array of fixed-size values laid out with strides in a file.
 
     The values are those of the decoded stream, which is the content of
     `source` from the position `start`, decompressed when it is
     compressed with gzip, bzip2, xz or zstd. The value at the index
     `(i, j, ...)` starts at the byte `offset + i * strides[0] + j *
-    strides[1] + ...` of that stream, as in a NumPy array. The proxy
-    applies a linear scaling `slope * value + inter` to the values that
-    it reads. A format that stores a contiguous array in C or Fortran
-    order, with its axes permuted or reversed, describes it with
-    [`contiguous`][].
+    strides[1] + ...` of that stream, as in a NumPy array. A format that
+    stores a contiguous array in C or Fortran order, with its axes
+    permuted or reversed, describes it with [`contiguous`][].
 
     A read gets the range of bytes that holds the selected box, from its
     first byte to its last one. A local file that is not compressed is
@@ -67,29 +68,23 @@ class StridedProxy(ArrayProxy):
 
     Its constructor is built from the fields below, as for any
     [`Magic`][bagof.magic.Magic] class, and it converts each argument to
-    the type of its field, such as a list of sizes to a tuple of integers
-    or a number to an array. The stored type and shape are given as
-    `dtype=` and `shape=` and kept in the private fields `_dtype` and
-    `_shape`, because the properties `dtype` and `shape` are the type of
-    the scaled values and the shape of a view.
+    the type of its field, such as a list of sizes to a tuple of integers.
+    The stored type and shape are given as `dtype=` and `shape=` and kept
+    in the private fields `_dtype` and `_shape`, which the read-only
+    aliases `dtype` and `shape` give, because the base class declares
+    `dtype` and `shape` as abstract properties, which a field cannot
+    implement.
     """
 
     source: tx.Any
     """The file, by its path, or a stream open in binary mode."""
 
     _dtype: np.dtype
-    """
-    The type of the stored values, with their byte order.
-
-    It is  given as `dtype=`, and the property `dtype` is the type of
-    the scaled values.
-    """
+    """The type of the stored values, with their byte order, given as
+    `dtype=`."""
 
     _shape: tx.Tuple[int, ...]
-    """
-    The shape of the array, given as `shape=`.
-    The property `shape` is the shape of a view.
-    """
+    """The shape of the array, given as `shape=`."""
 
     strides: tx.Tuple[int, ...]
     """
@@ -101,18 +96,6 @@ class StridedProxy(ArrayProxy):
     """
     The position in the decoded stream of the value whose index is zero
     along every axis.
-    """
-
-    slope: tx.Optional[np.ndarray] = None
-    """
-    The factor of the scaling, a number or an array that broadcasts
-    against the shape, or `None`.
-    """
-
-    inter: tx.Optional[np.ndarray] = None
-    """
-    The offset of the scaling, a number or an array that broadcasts
-    against the shape, or `None`.
     """
 
     start: int = 0
@@ -176,8 +159,8 @@ class StridedProxy(ArrayProxy):
         flips : sequence of int, default=()
             The presented axes that are reversed.
         **kwargs : Any
-            The other fields of the proxy: `slope`, `inter`, `start`,
-            `mmap`, and those of a subclass.
+            The other fields of the proxy: `start`, `mmap`, and those of
+            a subclass.
 
         Returns
         -------
@@ -214,32 +197,11 @@ class StridedProxy(ArrayProxy):
     #   DESCRIPTION
     # ------------------------------------------------------------------
 
-    @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the array."""
-        return self._shape
+    shape = alias("_shape", readonly=True)
+    """The shape of the array."""
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the values once the scaling applies.
-
-        Values that are not scaled keep the stored type, with its byte
-        order. A scaled integer becomes a float32, as a scaled float32
-        stays one, whatever the type of the factors.
-        """
-        if not self.scaled:
-            return self._dtype
-        return np.result_type(self._dtype, np.float32)
-
-    @property
-    def scaled(self) -> bool:
-        """Whether the scaling changes any value."""
-        slope = self.slope
-        inter = self.inter
-        return not (
-            (slope is None or bool(np.all(slope == 1)))
-            and (inter is None or bool(np.all(inter == 0)))
-        )
+    dtype = alias("_dtype", readonly=True)
+    """The type of the stored values, with their byte order."""
 
     @property
     def nbytes_stored(self) -> int:
@@ -250,7 +212,7 @@ class StridedProxy(ArrayProxy):
         return high - low
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, ...]:
+    def chunks(self) -> tx.Tuple[int, ...]:
         """The block shape: slabs of the axis with the largest stride.
 
         A block holds every value of the other axes, and as many slabs as
@@ -294,9 +256,7 @@ class StridedProxy(ArrayProxy):
     def read_stored(self) -> bytes:
         """Return the bytes from the first stored value to the last.
 
-        The bytes are those of the whole array, whatever part of it a view
-        of the proxy selects. A writer copies them when it stores the same
-        layout.
+        A writer copies these bytes when it stores the same layout.
 
         Raises
         ------
@@ -309,12 +269,6 @@ class StridedProxy(ArrayProxy):
         return self._read_bytes(low, self.nbytes_stored)
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
-        values = self._read_box(index)
-        if self.scaled:
-            values = self._scale(values, index)
-        return values
-
-    def _read_box(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         # The stored values of a box. The position of its first value, its
         # shape and its strides follow from the index, and the bytes
         # between its first and its last value are read and viewed with
@@ -382,17 +336,6 @@ class StridedProxy(ArrayProxy):
             )
         return content
 
-    def _scale(
-        self, values: np.ndarray, index: tx.Tuple[tx.Any, ...]
-    ) -> np.ndarray:
-        # The scaling, with its factors indexed as the values were.
-        values = np.asarray(values, dtype=self.dtype)
-        if self.slope is not None:
-            values = values * _index_factor(self.slope, index, self.ndim)
-        if self.inter is not None:
-            values = values + _index_factor(self.inter, index, self.ndim)
-        return values.astype(self.dtype, copy=False)
-
 
 # ----------------------------------------------------------------------
 #   HELPERS
@@ -442,25 +385,6 @@ def _chunk_bytes() -> int:
         return _CHUNK_BYTES
     size = dask.config.get("array.chunk-size", _CHUNK_BYTES)
     return int(parse_bytes(size)) if isinstance(size, str) else int(size)
-
-
-def _index_factor(
-    factor: np.ndarray, index: tx.Tuple[tx.Any, ...], ndim: int
-) -> np.ndarray:
-    # A scaling factor that broadcasts against the presented array, indexed
-    # as the presented array was: an axis of length one is kept as it is.
-    if factor.ndim == 0:
-        return factor
-    factor = factor.reshape((1,) * (ndim - factor.ndim) + factor.shape)
-    selection = []
-    for axis, entry in enumerate(index):
-        if factor.shape[axis] == 1:
-            selection.append(
-                0 if isinstance(entry, (int, np.integer)) else slice(None)
-            )
-        else:
-            selection.append(entry)
-    return factor[tuple(selection)]
 
 
 def _local(source: tx.Any) -> tx.Optional[str]:

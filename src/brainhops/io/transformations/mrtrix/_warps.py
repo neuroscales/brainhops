@@ -24,6 +24,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from brainhops._core import affines as _affines
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -43,7 +44,11 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
 from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
-from brainhops.io.common.mrtrix._data import _MrtrixProxy, read_mrtrix
+from brainhops.io.common.mrtrix._data import (
+    _MrtrixProxy,
+    read_mrtrix,
+    whole_file,
+)
 from brainhops.io.common.mrtrix._files import (
     file_entry,
     keeps_storage,
@@ -432,7 +437,7 @@ class MrtrixWarp(
         options = {**writer_options(kwargs), **fields}
         reading = reads_from(self.rawdata, written_files(filename))
         if reading:
-            mmap = self.rawdata.mmap
+            mmap = self.rawdata.root.mmap
             xform = self.consolidate(inplace=True, **options)
         else:
             xform = self.consolidate(**options)
@@ -1953,18 +1958,19 @@ def _encoded(
     layout, datatype = options["layout"], options["datatype"]
     scaling = options["scaling"]
     merged = merged_keyval(held, options["keyval"])
-    if (
-        isinstance(source, _MrtrixProxy)
-        and not source.is_view
-        and keeps_storage(source.record, layout, datatype, scaling)
+    whole = whole_file(source)
+    if whole is not None and keeps_storage(
+        whole.record, layout, datatype, scaling
     ):
-        shape, strides = source.record.dim, source.record.layout
+        shape, strides = whole.record.dim, whole.record.layout
         stored_type, stored_scaling = (
-            source.record.datatype,
-            source.record.scaling,
+            whole.record.datatype,
+            whole.record.scaling,
         )
     else:
-        if isinstance(source, _MrtrixProxy):
+        if isinstance(source, ArrayProxy) and isinstance(
+            source.root, _MrtrixProxy
+        ):
             # A lazy array is read here rather than through `data`, so that
             # no cached view of the old file outlives a write over that file.
             source = np.asarray(source)

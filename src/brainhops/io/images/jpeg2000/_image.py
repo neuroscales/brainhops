@@ -12,6 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.images import SingleScaleImage
@@ -202,8 +203,10 @@ class Jpeg2000Image(
         An image whose `rawdata` is not a lazy array of a file holds the full
         resolution of the file that it would write.
         """
-        if isinstance(self.rawdata, _Jpeg2000Proxy):
-            return self.rawdata.level
+        raw = self.rawdata
+        stored = raw.root if isinstance(raw, ArrayProxy) else raw
+        if isinstance(stored, _Jpeg2000Proxy):
+            return stored.level
         return 0
 
     @property
@@ -513,7 +516,6 @@ class Jpeg2000Image(
         copied = (
             self._data is None
             and isinstance(self.rawdata, _Jpeg2000Proxy)
-            and not self.rawdata.is_view
             and self.rawdata.level == 0
             and num_resolutions is None
             and not options
@@ -940,6 +942,7 @@ def _written(image: Jpeg2000Image) -> bytes:
 
 def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
     """Tell whether a lazy array of samples reads a local file by name."""
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     return isinstance(raw, _Jpeg2000Proxy) and raw.source.is_file(file)
 
 

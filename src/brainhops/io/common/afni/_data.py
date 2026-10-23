@@ -15,6 +15,7 @@ from bagof.magic import KwOnly, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.properties import alias
+from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import is_local, replace_file
@@ -146,25 +147,6 @@ def _stored_dtype(header: AfniRaw) -> np.dtype:
     return np.result_type(*dtypes)
 
 
-def scale_bricks(header: AfniRaw, stored: tx.Any) -> tx.Any:
-    """
-    Apply the `BRICK_FLOAT_FACS` scale factors to stored values.
-
-    When no sub-brick is scaled, the values are returned unchanged, so that
-    a memory map stays one. Otherwise they are scaled in at least single
-    precision.
-    """
-    if not _is_scaled(header):
-        return stored
-    facs = np.asarray(header.float_facs, dtype=np.float64)
-    facs = np.where(facs == 0, 1.0, facs)
-    stored = np.asarray(stored)
-    dtype = np.result_type(stored.dtype, np.float32)
-    if stored.ndim == len(header.shape):
-        return stored.astype(dtype) * dtype.type(facs[0])
-    return stored.astype(dtype) * facs.astype(dtype)
-
-
 def encode_bricks(header: AfniRaw, data: tx.Any) -> tx.Iterator[bytes]:
     """
     Encode an `(nx, ny, nz, nvals)` array into BRIK content, sub-brick by
@@ -238,9 +220,10 @@ class _BrikProxy(StridedProxy):
     stored. It opens the file each time its values are needed and keeps
     no open file, so it can be pickled. Its shape is that of the image:
     `(x, y, z)` for a single sub-brick and `(x, y, z, sub-brick)`
-    otherwise. The scale factors of `BRICK_FLOAT_FACS` are applied when
-    the values are read, as nibabel's proxy applies the scaling of a
-    NIfTI header.
+    otherwise. Its values are the stored values: when `BRICK_FLOAT_FACS`
+    scales a sub-brick, the reader wraps the proxy in a
+    [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] that applies the
+    factors, as nibabel's proxy applies the scaling of a NIfTI header.
 
     When the sub-bricks share a type, the BRIK is one Fortran-ordered
     array, and a read gets only the bytes that its selection needs (see
@@ -250,9 +233,10 @@ class _BrikProxy(StridedProxy):
     blocks that the proxy gives Dask are groups of sub-bricks, or slabs
     of slices for a single sub-brick. Sub-bricks of several types are
     joined in their common type, which needs the whole BRIK, so any read
-    of such a BRIK decodes and scales all of it.
+    of such a BRIK decodes all of it.
 
-    A reader builds the proxy from the record of the dataset with
+    A reader builds the lazy array of the dataset, scaled or not, from
+    its record with
     [`from_record`][brainhops.io.common.afni._data._BrikProxy.from_record].
     """
 
@@ -262,14 +246,16 @@ class _BrikProxy(StridedProxy):
     @classmethod
     def from_record(
         cls, brik: tx.Any, record: AfniRaw, mmap: bool
-    ) -> "_BrikProxy":
+    ) -> ArrayProxy:
         """
-        Return the proxy of the voxels of a BRIK that a record describes.
+        Return the lazy array of the voxels of a BRIK that a record describes.
 
         The layout is read from the record: a BRIK is a Fortran-ordered
         array of shape `(x, y, z, sub-brick)`, with the last axis dropped
-        for a single sub-brick, and the factors of `BRICK_FLOAT_FACS`
-        scale each sub-brick. A factor of zero means no scaling.
+        for a single sub-brick. When the factors of `BRICK_FLOAT_FACS`
+        scale a sub-brick, the proxy is wrapped in a
+        [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] that applies
+        them. A factor of zero means no scaling.
 
         Parameters
         ----------
@@ -282,25 +268,17 @@ class _BrikProxy(StridedProxy):
 
         Returns
         -------
-        _BrikProxy
-            The proxy of the voxels.
+        _BrikProxy or ScaledProxy
+            The lazy array of the voxels.
         """
         nvals = record.nvals
         shape = record.shape + ((nvals,) if nvals > 1 else ())
-        slope = None
-        if _is_scaled(record):
-            facs = np.asarray(record.float_facs, dtype=np.float64)
-            facs = np.where(facs == 0, 1.0, facs)
-            slope = facs if nvals > 1 else facs[0]
-        return cls.contiguous(
-            brik,
-            record.dtypes[0],
-            shape,
-            order="F",
-            slope=slope,
-            mmap=mmap,
-            record=record,
+        proxy = cls.contiguous(
+            brik, record.dtypes[0], shape, order="F", mmap=mmap, record=record
         )
+        if not _is_scaled(record):
+            return proxy
+        return ScaledProxy(proxy, _slope(record))
 
     brik = alias("source")
     """The path of the BRIK file, which is the source of the proxy."""
@@ -312,27 +290,23 @@ class _BrikProxy(StridedProxy):
 
     @property
     def dtype(self) -> np.dtype:
-        """The type of the values once they are scaled."""
-        stored = _stored_dtype(self.record)
-        if _is_scaled(self.record):
-            return np.result_type(stored, np.float32)
-        return stored
+        """The type of the stored values, once the sub-bricks are joined."""
+        return _stored_dtype(self.record)
 
     nbytes_stored = alias("record.nbytes", readonly=True)
     """The number of bytes of the BRIK."""
 
     @property
-    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The block shape, or `None` for sub-bricks of several types."""
         if not self._single_type:
             return None
-        return super().base_chunks
+        return super().chunks
 
     def get_unscaled(self) -> np.ndarray:
         """Return all the stored values as a `(x, y, z, sub-brick)` array.
 
-        The values are those of the whole BRIK, whatever part of it a view
-        of the proxy selects, and the scale factors are not applied.
+        The scale factors are not applied.
         """
         return _read_bricks(self.record, self.brik, self.mmap)
 
@@ -371,15 +345,26 @@ class _BrikProxy(StridedProxy):
                     f"{self.record.nbytes} bytes that its header asks for. "
                     f"{error}"
                 ) from error
-        values = scale_bricks(self.record, self.get_unscaled())
+        values = self.get_unscaled()
         if self.record.nvals == 1:
             values = values[..., 0]
         return values[index]
 
 
+def _slope(record: AfniRaw) -> np.ndarray:
+    """Return the factor of each sub-brick, with 1 for a factor of zero.
+
+    A single sub-brick has a single factor, since its array has no axis
+    of sub-bricks.
+    """
+    facs = np.asarray(record.float_facs, dtype=np.float64)
+    facs = np.where(facs == 0, 1.0, facs)
+    return facs if record.nvals > 1 else facs[0]
+
+
 def read_afni(
     filename: path.FilenameLike, mmap: bool = True
-) -> tx.Tuple[AfniRaw, _BrikProxy]:
+) -> tx.Tuple[AfniRaw, ArrayProxy]:
     """Read the record and a lazy array of the voxels of a dataset.
 
     The path may name the `.HEAD` file, the `.BRIK` file or the bare
@@ -483,13 +468,13 @@ def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
 def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
     """Write a BRIK, compressed according to its suffix.
 
-    A [`_BrikProxy`][] that is not a view is copied as the file stores
-    it. A local BRIK is written beside its target and moved over it, so
-    that a proxy that reads the target copies the old file. When the
-    proxy reads a remote file that is written, its bytes are read into
-    memory first, since opening the file for writing empties it. Any
-    other array is encoded with the types and the scale factors of the
-    header.
+    The lazy array of a whole BRIK (see [`whole_brik`][]) is copied as
+    the file stores it. A local BRIK is written beside its target and
+    moved over it, so that a proxy that reads the target copies the old
+    file. When the proxy reads a remote file that is written, its bytes
+    are read into memory first, since opening the file for writing
+    empties it. Any other array is encoded with the types and the scale
+    factors of the header.
 
     Raises
     ------
@@ -511,8 +496,8 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         else:
             out = f
         try:
-            if stores_brik(data):
-                data.copy_to(out)
+            if whole_brik(data) is not None:
+                whole_brik(data).copy_to(out)
             elif isinstance(data, bytes):
                 out.write(data)
             else:
@@ -529,9 +514,10 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
     if is_local(brik):
         replace_file(brik, write_named)
         return
-    if stores_brik(data) and _same_file(data.brik, brik):
+    whole = whole_brik(data)
+    if whole is not None and _same_file(whole.brik, brik):
         copied = BytesIO()
-        data.copy_to(copied)
+        whole.copy_to(copied)
         data = copied.getvalue()
     with brik.open("wb") as f:
         write(f)
@@ -549,7 +535,7 @@ def stores_brik(raw: tx.Any) -> bool:
     """Tell whether an array is a lazy array of a whole BRIK file.
 
     The bytes of such a lazy array can be copied as the BRIK stores
-    them. A view of a lazy array, which selects a part of the BRIK or
+    them. An index of a lazy array, which selects a part of the BRIK or
     reorders its axes, is encoded like an array in memory.
 
     Parameters
@@ -560,9 +546,46 @@ def stores_brik(raw: tx.Any) -> bool:
     Returns
     -------
     bool
-        Whether `raw` is a lazy array of a BRIK that is not a view.
+        Whether `raw` is the lazy array of a whole BRIK.
     """
-    return isinstance(raw, _BrikProxy) and not raw.is_view
+    return whole_brik(raw) is not None
+
+
+def whole_brik(raw: tx.Any) -> tx.Optional[_BrikProxy]:
+    """Return the lazy array of a whole BRIK that an array reads, or `None`.
+
+    A writer copies the stored bytes of such a lazy array as they are.
+    The array qualifies when it is the lazy array that the reader built
+    for the BRIK: the stored proxy itself, or the scaled proxy that
+    applies the factors of `BRICK_FLOAT_FACS`. An index, a permutation,
+    or a scaling that differs from the header is encoded like an array
+    in memory.
+
+    Parameters
+    ----------
+    raw : array
+        The `rawdata` array of an object.
+
+    Returns
+    -------
+    _BrikProxy or None
+        The proxy of the stored voxels, or `None`.
+    """
+    scaled = isinstance(raw, ScaledProxy)
+    proxy = raw.base if scaled else raw
+    if not isinstance(proxy, _BrikProxy):
+        return None
+    if not scaled:
+        return None if _is_scaled(proxy.record) else proxy
+    if not _is_scaled(proxy.record) or raw.inter is not None:
+        return None
+    slope = np.asarray(_slope(proxy.record))
+    if raw.slope is None or not np.array_equal(
+        np.broadcast_to(raw.slope, proxy.shape),
+        np.broadcast_to(slope, proxy.shape),
+    ):
+        return None
+    return proxy
 
 
 def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
@@ -580,4 +603,5 @@ def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
     bool
         Whether `raw` is a lazy array that reads `brik`.
     """
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)

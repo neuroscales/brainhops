@@ -601,7 +601,7 @@ class AfniBrikWarp(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )
         if reading:
-            mmap = self.rawdata.mmap
+            mmap = self.rawdata.root.mmap
             xform = self.consolidate(inplace=True, **options)
         else:
             xform = self.consolidate(**options)

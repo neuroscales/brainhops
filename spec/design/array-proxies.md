@@ -162,55 +162,104 @@ proxy cannot describe that selection without reading. Indexing with
 them raises an `IndexError` that tells the caller to write
 `np.asarray(proxy)[index]`, so that the read is explicit.
 
-### Second layer: a base class
+### Second layer: a base class and three kinds of proxy
 
 `ArrayProxy` is an abstract class that implements everything the
-proxies repeated. A subclass of the base class defines `base_shape`,
-the shape of the stored array, `dtype`, and one method, `_read(index)`,
-which reads a box of the stored array. The index of `_read` has one
-entry for each stored axis: an integer, or a slice whose start, stop
-and step are integers with a positive step. A subclass may also define
-`base_chunks`, the block shape that the storage prefers, such as the
-chunks of a Zarr array or one slice of a stack. The base class provides
-the rest.
+proxies repeated: `ndim`, `size`, `nbytes`, `len()`, `T`, and the
+conversions `to_numpy`, `to_cupy`, `to_backend` and `to_dask`. Its
+subclasses fall in three kinds, and each kind does one thing.
 
-- `__getitem__` returns a new proxy, called a view, and reads nothing,
-  so the shortcut for an empty selection is no longer needed. A view
-  keeps, for each stored axis, either the position that it selects,
-  which drops the axis, or the ordered positions that it keeps, as a
-  `range` or as an array of integers. It also keeps the order of its
-  axes, which may include new axes. Indexing a view composes the new
-  index with these positions by indexing the `range` objects and the
-  arrays, so an index applied to a view gives what NumPy gives for the
-  same chain of indexes.
-- `transpose(perm)` and `T` return a view in another axis order.
-- A view reads through the proxy that a reader built, which it keeps
-  as `_root`, so that a handle that this proxy opens, such as an open
-  store, is opened once and shared by every view.
-- `__array__` calls `_read` with the smallest box with a positive step
-  that holds the positions of the view. It then applies negative steps,
-  arrays of positions, the order of the axes and new axes in memory, so
-  that a subclass never sees them. It honors `dtype`, and it raises a
-  `ValueError` when `copy=False` is asked for, since the values cannot
-  be read without making them.
-- `shape`, `ndim`, `size`, `nbytes` and `len()` describe the view, and
-  `chunks` carries `base_chunks` through the index of the view.
-- `to_dask()` calls `da.from_array` with these chunks, with
-  `asarray=True`, with `fancy=False`, and with a `meta` argument, so
-  that Dask does not index the proxy to learn the type.
-- `is_view` tells whether the proxy presents something else than the
-  stored array. A writer that copies the stored bytes of a proxy as
-  they are, which every format with such a shortcut does through an
-  `isinstance` check, also checks that the proxy is not a view, because
-  the bytes would hold the whole stored array. The test
-  `tests/test_io_proxy_views.py` writes a flipped view of a file in
+- A `StoredProxy` presents an array as its storage holds it. The proxy
+  of each file format is one. A subclass defines `shape`, `dtype`, and
+  one method, `_read(box)`, which reads a box of the stored array. The
+  box has one entry for each stored axis: an integer, or a slice whose
+  start, stop and step are integers with a positive step. A subclass
+  may also define `chunks`, the block shape that the storage prefers,
+  such as the chunks of a Zarr array or one slice of a stack.
+- An `IndexedProxy` presents a part of a stored proxy. Indexing a
+  stored proxy returns one, and it reads nothing, so the shortcut for
+  an empty selection is no longer needed. It holds the stored proxy as
+  `base` and the index as `selection`, a NumPy index normalized to one
+  entry for each stored axis: an integer, which drops the axis, a
+  slice, or an array of integers. A `NewAxis` entry stands for each
+  axis that `None` added, with the positions of its single value that
+  a later index keeps, removes or repeats.
+- A `ScaledProxy` presents the values of another proxy multiplied by a
+  factor and shifted by an offset, which broadcast against the shape,
+  as in `slope * stored + inter`. It covers the single factor of
+  MRtrix and NIfTI, and the factor of each AFNI sub-brick. The stored
+  type alone decides the type of the scaled values, which is the
+  floating-point type that NumPy gives for the stored type and a
+  float32. The factors are cast to that type before they are applied,
+  because the type of a factor says how the header writes it, not how
+  precise the values are, and a float64 factor would otherwise make a
+  float64 copy of float32 values.
+
+A fourth class, `PermutedProxy`, is a stored proxy that presents the
+axes of another stored proxy in another order. Transposing a stored
+proxy returns one, and transposing it again composes the two
+permutations, so permuted proxies never nest.
+
+The kinds are kept in a fixed order, which every operation preserves:
+a scaled proxy holds an indexed proxy or a stored one, and an indexed
+proxy holds a stored proxy. Each layer keeps the proxy below it as
+`base`, and the property `root` of every proxy is the stored proxy at
+the bottom, the one that a reader built. The `root` of a stored proxy
+is the proxy itself.
+
+- Indexing an indexed proxy composes the new index with its selection,
+  so a chain of indexes gives what NumPy gives for the same chain, and
+  the result holds the same stored proxy. An index that selects every
+  value in order returns the stored proxy itself.
+- Transposing an indexed proxy moves the entries of its selection with
+  their axes and transposes the stored proxy, so that the selection
+  stays in the order of the stored axes.
+- Indexing or transposing a scaled proxy does the same to its `base`
+  and to the factors. An axis of length one of a factor stays of
+  length one, so a factor never grows to the shape of the values, and
+  only the values that are read are scaled.
+- NumPy moves the axis of an array index to the front of the result
+  when the array and the integers of the index are not next to each
+  other in the index as written, and every proxy does the same.
+
+Reading follows from this order. An indexed proxy calls the `_read`
+method of its stored proxy with the smallest box with a positive step
+that holds the selected values, and then applies the negative steps,
+the arrays of positions and the new axes in memory, so a stored proxy
+never sees them. A scaled proxy reads its `base` and scales the
+values. `__array__` honors `dtype`, and it raises a `ValueError` when
+`copy=False` is asked for, since the values cannot be read without
+making them.
+
+The order also answers the two questions that writers ask.
+
+- A writer that copies the stored bytes of a proxy as they are checks
+  the class of the proxy: an instance of the proxy of its format is the
+  whole stored array, since an index or a transpose of it is an
+  indexed or a permuted proxy. The MRtrix and AFNI writers also accept
+  the scaled proxy that their reader builds, when its factors are those
+  of the header (`whole_file` and `whole_brik`). The test
+  `tests/test_io_proxy_views.py` writes a flipped index of a file in
   each of these formats.
+- A writer that must not empty a file that a proxy still reads
+  compares the file of the `root` of the proxy, which lies below any
+  scaling, index or permutation, with the target.
+
+Every indexed proxy reads through the stored proxy that a reader built,
+so a handle that the stored proxy opens on its first read, such as an
+open store, is opened once and shared by every index of it.
+`to_dask()` calls `da.from_array` with the `chunks` of the proxy, which
+an indexed proxy carries through its selection, with `asarray=True`,
+with `fancy=False`, and with a `meta` argument, so that Dask does not
+index the proxy to learn the type.
+
+Status: implemented, in `brainhops._core.proxy`.
 
 Two members are not implemented yet. `reads(file)` will tell whether
 the proxy reads a given file, and replace the functions that do so
 today (`reads_brik`, `reads_from`, `reads_store` and others). `stored`
 will return a description of the bytes that a writer may copy as they
-are, or `None` for a view, and replace the `isinstance` and `is_view`
+are, or `None` for an indexed proxy, and replace the `isinstance`
 checks of the writers.
 
 The format views only index and transpose the proxy, so the `dataobj`
@@ -313,15 +362,16 @@ the file system, such as an AWS profile. Options passed to the path,
 such as a key and a secret, are pickled with the proxy and sent to
 every Dask worker.
 
-Two generic proxies complete the layer. `ScaledProxy` applies a slope
-and an intercept that broadcast against the shape, which covers the
-single factor of NIfTI and MRtrix, the factor of each AFNI sub-brick and
-the slice-wise scaling of MINC. Because it scales only what it reads, a
-chunk costs only its own values. Indexing a `ScaledProxy` indexes its
-slope and intercept with the same index. `ConcatenatedProxy` joins
-proxies along one axis. It covers NRRD data split into several files,
-AFNI sub-bricks of different types, and image stacks. Indexing a
-`ConcatenatedProxy` indexes only the proxies that the selection reaches.
+Two generic proxies complete the layer. `ScaledProxy`, described with
+the second layer, applies a slope and an intercept that broadcast
+against the shape, which covers the single factor of NIfTI and MRtrix,
+the factor of each AFNI sub-brick and the slice-wise scaling of MINC.
+Because it scales only what it reads, a chunk costs only its own
+values. It is implemented, and MRtrix and AFNI use it.
+`ConcatenatedProxy` joins proxies along one axis. It covers NRRD data
+split into several files, AFNI sub-bricks of different types, and image
+stacks. Indexing a `ConcatenatedProxy` indexes only the proxies that the
+selection reaches.
 
 ### Fourth layer: chunked stores keep their libraries
 
@@ -337,7 +387,7 @@ their codecs cannot decode a part of it.
 
 The native block shapes are implemented: the proxies of Zarr, N5,
 precomputed, BigDataViewer, Imaris, OpenSlide and image stacks, and
-`H5ArrayProxy`, give them as `base_chunks`. The shared base class of
+`H5ArrayProxy`, give them as `chunks`. The shared base class of
 N5 and precomputed is not implemented. The readers of transformation
 fields stored in HDF5 (ITK and X5) and in OME-Zarr convert their lazy
 arrays with the backend setting, so that under `"dask"` a field is a
@@ -405,8 +455,9 @@ which may be negative, so the proxy holds a layout in its own fields
 rather than in a separate `Layout` class. Its constructor
 `StridedProxy.contiguous` builds the strides of an array stored in C or
 Fortran order and presented through an axis permutation and flips,
-which are the layouts of MRtrix, NRRD and AFNI. The proxy also applies
-a scaling that broadcasts against its shape. A read gets the range of
+which are the layouts of MRtrix, NRRD and AFNI. The proxy presents the
+stored values, and the MRtrix and AFNI readers wrap it in a
+`ScaledProxy` when their header scales them. A read gets the range of
 bytes from the first value of the selected box to its last one, rather
 than a merged list of byte ranges, and a local file that is not
 compressed is memory-mapped. The blocks that it gives Dask are slabs of
@@ -425,18 +476,16 @@ built from them. A value that a proxy computes rather than receives is
 a property, such as a shape or a type read from the record, and a cache
 that it fills on the first read, such as an open store or file, is a
 private field that is not an argument of the constructor and is not
-shown. A private field also keeps what the file stores when a property
-shows something else: the `_dtype` of `StridedProxy` is the stored type,
-given as `dtype=`, and its property `dtype` is the type of the scaled
-values. The metaclass of `Magic` is
-that of an abstract base class, so the members that a subclass must
-define stay abstract. A proxy is compared by identity, and the state of
-a view (`_root`, `_selection` and `_axes`) is held in class variables
-that are not fields of the constructor. The fields of a subclass
-convert their arguments to their types, and its representation is the
-one that `Magic` builds, which shows the fields that do not hold their
-defaults. A view shares the fields of its proxy, so it shows them too,
-and its own shape is read from `shape`. Status: implemented.
+shown. The metaclass of `Magic` is that of an abstract base class, so
+the members that a subclass must define stay abstract. A field cannot
+implement an abstract property, so a proxy that receives its shape or
+its type keeps it in a private field, given by its public name, and
+returns it from the property: the `_shape` and `_dtype` of
+`StridedProxy` are given as `shape=` and `dtype=`. A proxy is compared
+by identity. The fields of a subclass convert their arguments to their
+types, and its representation is the one that `Magic` builds, which
+shows the fields that do not hold their defaults. An indexed proxy
+shows its stored proxy and its selection. Status: implemented.
 
 The cases that do not fit a single block of fixed-size values are still
 decoded whole: packed `Bit` data of MRtrix, NRRD samples split between
