@@ -194,13 +194,13 @@ def _world(index: tx.Sequence[float]) -> np.ndarray:
 
 def _apply(xform: tx.Any, points: np.ndarray) -> np.ndarray:
     """Map points through a transformation."""
-    points = xforms.CoordinatesField(field=np.asarray(points, float))
+    points = xforms.CoordinateField(field=np.asarray(points, float))
     if isinstance(xform, (xforms.Sequence, list)):
         chain = list(xform)
     else:
         chain = [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _affine_apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:

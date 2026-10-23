@@ -15,7 +15,7 @@ from ..base import Transformation
 from ..concrete import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -41,7 +41,7 @@ from .utils import get_ndim
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 DISP = tx.TypeVar("DISP", bound=DisplacementField)
-COORD = tx.TypeVar("COORD", bound=CoordinatesField)
+COORD = tx.TypeVar("COORD", bound=CoordinateField)
 AFFINE = tx.TypeVar("AFFINE", bound=Affine)
 LINEAR = tx.TypeVar("LINEAR", bound=Linear)
 ROTATION = tx.TypeVar("ROTATION", bound=Rotation)
@@ -274,7 +274,7 @@ def _(t: StationaryVelocityField, cls: tx.Type[DISP], **kwargs) -> DISP:
 
 
 @converter
-def _(t: CoordinatesField, cls: tx.Type[COORD], **kwargs) -> COORD:
+def _(t: CoordinateField, cls: tx.Type[COORD], **kwargs) -> COORD:
     return _convert_withsplines(t, cls, **kwargs)
 
 
@@ -545,7 +545,7 @@ def _(t: DisplacementField, cls: tx.Type[COORD], **kwargs) -> COORD:
 
 
 @converter
-def _(t: CoordinatesField, cls: tx.Type[DISP], **kwargs) -> DISP:
+def _(t: CoordinateField, cls: tx.Type[DISP], **kwargs) -> DISP:
     # The displacement is the coordinates minus the grid, in the encoding of
     # `t`: the inverse of the converter above, with the same caveat (#313).
     flags = dict(store=t.store, degree=t.degree, bound=t.bound)
@@ -558,7 +558,7 @@ def _(t: CoordinatesField, cls: tx.Type[DISP], **kwargs) -> DISP:
 
 
 @converter
-def _(t: CoordinatesField, cls: tx.Type[SVF], **kwargs) -> SVF:
+def _(t: CoordinateField, cls: tx.Type[SVF], **kwargs) -> SVF:
     # Coordinates minus the grid are a displacement, not a velocity.
     raise ConversionError(
         f"A {type(t).__name__} converts to a DisplacementField, not to a "

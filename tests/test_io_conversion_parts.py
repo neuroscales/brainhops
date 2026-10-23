@@ -3,7 +3,7 @@ The parts that a field format stores, taken from any transformation.
 
 A field format stores an affine from the world to a grid and the
 displacement or the position of each node of that grid. These tests
-check that `displacement_parts`, `coordinates_parts` and
+check that `displacement_parts`, `coordinate_parts` and
 `sample_on_grid` give the same map as the transformation inside the
 grid, whatever kind of field it holds, and that they report a loss when
 the field is interpolated otherwise or sampled on another grid.
@@ -17,7 +17,7 @@ from brainhops.datamodel.systems import LPSmm, RASmm, VoxelCoordinateSystem
 from brainhops.errors import ConversionError, LossyConversionError
 from brainhops.io.transformations.base._conversions import (
     FieldParts,
-    coordinates_parts,
+    coordinate_parts,
     displacement_parts,
     held,
     sample_on_grid,
@@ -74,9 +74,9 @@ def _inside() -> np.ndarray:
 
 
 def _apply(xform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
-    points = xforms.CoordinatesField(field=points[:, None, None, :])
+    points = xforms.CoordinateField(field=points[:, None, None, :])
     out = xforms.Sequence(transformations=[points, xform]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)[:, 0, 0, :]
+    return np.asarray(out.to(xforms.CoordinateField).field)[:, 0, 0, :]
 
 
 def _sandwich(parts: FieldParts) -> xforms.Sequence:
@@ -110,7 +110,7 @@ def test_a_displacement_sandwich_is_kept_as_it_is() -> None:
 
 def test_coordinates_become_displacements() -> None:
     chain = _chain()
-    coordinates = coordinates_parts(chain, RASmm(), RASmm(), Format)
+    coordinates = coordinate_parts(chain, RASmm(), RASmm(), Format)
     assert coordinates.exact
     again = displacement_parts(_coordinates(coordinates), RASmm(), Format)
     assert again.exact

@@ -24,7 +24,7 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.transformations import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     MultiscaleField,
@@ -113,7 +113,7 @@ def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
     ]
     # One level builds as a two-element coordinate sandwich.
     parts = reader.transformations
-    assert isinstance(parts[-1], CoordinatesField)
+    assert isinstance(parts[-1], CoordinateField)
     # The metadata is kept exactly as read.
     assert reader.to_ome() is reader.ome
 
@@ -197,7 +197,7 @@ def test_coordinate_field_round_trips_through_a_store(tmp_path: Path) -> None:
     back = OmeZarrField.from_store(out)
 
     assert isinstance(back, MultiscaleField)
-    assert isinstance(back.transformations[-1], CoordinatesField)
+    assert isinstance(back.transformations[-1], CoordinateField)
     np.testing.assert_allclose(
         np.asarray(back.raw_levels[0]), np.asarray(read.raw_levels[0])
     )
@@ -309,8 +309,8 @@ def test_coordinate_level_stores_the_raw_array_without_a_copy() -> None:
     parts = reader.transformations
     assert len(parts) == 2
     assert isinstance(parts[0], Affine)
-    assert isinstance(parts[1], CoordinatesField)
-    # A coordinates field stores the raw world coordinates unchanged.
+    assert isinstance(parts[1], CoordinateField)
+    # A coordinate field stores the raw world coordinates unchanged.
     assert parts[1].field is raw
 
 

@@ -55,13 +55,13 @@ def _samples() -> tx.Dict[str, tx.Tuple[X.Transformation, X.Transformation]]:
 _SOURCES = list(_samples())
 _TARGETS = [
     *_SOURCES,
-    "CoordinatesField",
+    "CoordinateField",
     "StationaryVelocityField",
     "LinearExponential",
     "RotationExponential",
     "ScalingExponential",
 ]
-_FIELDS = {"DisplacementField", "CoordinatesField", "StationaryVelocityField"}
+_FIELDS = {"DisplacementField", "CoordinateField", "StationaryVelocityField"}
 _MATRICES = set(_TARGETS) - _FIELDS - {"Sequence"}
 
 # The pairs that are refused on purpose, and the reason.
@@ -81,7 +81,7 @@ _REFUSED = {
 }
 # A displacement field converts to a field of coordinates.
 del _REFUSED["DisplacementField", "DisplacementField"]
-del _REFUSED["DisplacementField", "CoordinatesField"]
+del _REFUSED["DisplacementField", "CoordinateField"]
 
 # The general samples whose map has no real logarithm, so that a tangent
 # class cannot hold it: a permutation that swaps two axes has a negative

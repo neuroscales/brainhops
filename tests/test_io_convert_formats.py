@@ -47,14 +47,14 @@ from brainhops.io.transformations.fsl.fnirt import (  # noqa: E402
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiMetadata,
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiRASDisplacementField,
     NiftiRASToVoxel,
     NiftiRaw,
     NiftiVoxelToRAS,
 )
 from brainhops.io.transformations.spm import (  # noqa: E402
-    SpmCoordinatesField,
+    SpmCoordinateField,
 )
 
 SHAPE = (4, 5, 6)
@@ -106,9 +106,9 @@ def _world(vox2world: np.ndarray = VOX2WORLD) -> np.ndarray:
 
 def _apply(xform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
     """Map points through a transformation."""
-    points = xforms.CoordinatesField(field=points[:, None, None, :])
+    points = xforms.CoordinateField(field=points[:, None, None, :])
     out = xforms.Sequence(transformations=[points, xform]).compute()
-    field = out.to(xforms.CoordinatesField).field
+    field = out.to(xforms.CoordinateField).field
     return np.asarray(field)[:, 0, 0, :]
 
 
@@ -160,7 +160,7 @@ def _lps_spm_chain() -> xforms.Sequence:
     return xforms.Sequence(
         transformations=[
             LPSToVoxel(matrix=np.linalg.inv(vox2lps)[:-1]),
-            xforms.CoordinatesField(
+            xforms.CoordinateField(
                 field=_flip(_coordinates()), input=VOXEL, output=LPSmm()
             ),
         ]
@@ -371,7 +371,7 @@ def test_two_fields_are_not_composed_into_one() -> None:
 def test_coordinates_and_displacements_convert_into_each_other() -> None:
     # They are the same map inside their grid, and only extend differently
     # outside it, which is not a loss.
-    coordinates = xforms.CoordinatesField(
+    coordinates = xforms.CoordinateField(
         field=_coordinates(), input=VOXEL, output=RASmm()
     )
     chain = xforms.Sequence(
@@ -385,7 +385,7 @@ def test_coordinates_and_displacements_convert_into_each_other() -> None:
     np.testing.assert_allclose(
         _apply(displacement, points), _apply(chain, points), atol=1e-10
     )
-    nifti = _ras_displacement_chain().to(SpmCoordinatesField)
+    nifti = _ras_displacement_chain().to(SpmCoordinateField)
     np.testing.assert_allclose(
         _apply(nifti, points),
         _apply(_ras_displacement_chain(), points),
@@ -399,30 +399,30 @@ def test_coordinates_and_displacements_convert_into_each_other() -> None:
 
 
 def test_a_field_of_lps_coordinates_is_bridged_into_ras(tmp_path) -> None:  # noqa: ANN001
-    field = xforms.CoordinatesField(
+    field = xforms.CoordinateField(
         field=_flip(_coordinates()), input=VOXEL, output=LPSmm()
     )
     points = _voxels()
     expected = _flip(_apply(field, points))
-    for nifti in _conversions(field, NiftiRASCoordinatesField):
-        assert type(nifti) is NiftiRASCoordinatesField
+    for nifti in _conversions(field, NiftiRASCoordinateField):
+        assert type(nifti) is NiftiRASCoordinateField
         np.testing.assert_array_equal(np.asarray(nifti.field), _coordinates())
         np.testing.assert_allclose(_apply(nifti, points), expected, atol=1e-12)
     io.save(field, tmp_path / "coordinates.nii.gz")
     back = io.transformations.load(tmp_path / "coordinates.nii.gz")
-    assert isinstance(back, NiftiRASCoordinatesField)
+    assert isinstance(back, NiftiRASCoordinateField)
     np.testing.assert_allclose(_apply(back, points), expected, atol=1e-10)
 
 
 def test_an_affine_after_the_coordinates_is_applied_to_them() -> None:
-    field = xforms.CoordinatesField(
+    field = xforms.CoordinateField(
         field=_coordinates(), input=VOXEL, output=RASmm()
     )
     scale = xforms.Affine(
         np.diag([2.0, 3.0, 4.0, 1.0])[:-1], input=RASmm(), output=RASmm()
     )
     chain = xforms.Sequence(transformations=[field, scale])
-    nifti = chain.to(NiftiRASCoordinatesField)
+    nifti = chain.to(NiftiRASCoordinateField)
     points = _voxels()
     np.testing.assert_allclose(
         _apply(nifti, points), _apply(chain, points), atol=1e-12
@@ -434,10 +434,10 @@ def test_an_affine_before_the_coordinates_is_refused() -> None:
     shift = xforms.Affine(
         np.eye(4)[:-1] + [[0, 0, 0, 1]] * 3, input=VOXEL, output=VOXEL
     )
-    field = xforms.CoordinatesField(field=_coordinates(), input=VOXEL)
+    field = xforms.CoordinateField(field=_coordinates(), input=VOXEL)
     chain = xforms.Sequence(transformations=[shift, field])
     with pytest.raises(ConversionError, match="voxels of the file"):
-        chain.to(NiftiRASCoordinatesField)
+        chain.to(NiftiRASCoordinateField)
 
 
 # ----------------------------------------------------------------------
@@ -449,14 +449,14 @@ def test_an_lps_deformation_is_written_as_spm(tmp_path) -> None:  # noqa: ANN001
     chain = _lps_spm_chain()
     lps = _flip(_world())
     expected = _flip(_apply(chain, lps))
-    for spm in _conversions(chain, SpmCoordinatesField):
-        assert type(spm) is SpmCoordinatesField
+    for spm in _conversions(chain, SpmCoordinateField):
+        assert type(spm) is SpmCoordinateField
         np.testing.assert_allclose(
             _apply(spm, _flip(lps)), expected, atol=1e-10
         )
     io.save(chain, tmp_path / "y_deformation.nii")
     back = io.transformations.load(tmp_path / "y_deformation.nii")
-    assert isinstance(back, SpmCoordinatesField)
+    assert isinstance(back, SpmCoordinateField)
     np.testing.assert_allclose(_apply(back, _flip(lps)), expected, atol=1e-10)
     np.testing.assert_array_equal(
         back.metadata.raw.header.get_best_affine(), VOX2WORLD
@@ -469,10 +469,10 @@ def test_an_spm_file_round_trips(tmp_path) -> None:  # noqa: ANN001
     image.header.set_intent(1007, name="Mapping")
     nb.save(image, str(path))
     spm = io.transformations.load(path)
-    assert isinstance(spm, SpmCoordinatesField)
+    assert isinstance(spm, SpmCoordinateField)
     io.save(spm, tmp_path / "y_copy.nii")
     back = io.transformations.load(tmp_path / "y_copy.nii")
-    assert isinstance(back, SpmCoordinatesField)
+    assert isinstance(back, SpmCoordinateField)
     np.testing.assert_array_equal(
         back.metadata.raw.header.get_best_affine(), VOX2WORLD
     )
@@ -485,7 +485,7 @@ def test_an_spm_file_round_trips(tmp_path) -> None:  # noqa: ANN001
 def test_a_map_from_ras_is_not_a_nifti_field_of_coordinates() -> None:
     # A NIfTI field of coordinates maps the voxels of its grid.
     with pytest.raises(ConversionError, match="SPM deformation"):
-        _ras_displacement_chain().to(NiftiRASCoordinatesField)
+        _ras_displacement_chain().to(NiftiRASCoordinateField)
 
 
 # ----------------------------------------------------------------------
@@ -507,12 +507,12 @@ def test_a_map_from_ras_is_not_a_nifti_field_of_coordinates() -> None:
             NiftiRASDisplacementField,
         ),
         (
-            xforms.CoordinatesField(field=_coordinates()),
+            xforms.CoordinateField(field=_coordinates()),
             "coordinates.nii.gz",
-            NiftiRASCoordinatesField,
+            NiftiRASCoordinateField,
         ),
         (_ras_displacement_chain(), "warp.nii.gz", NiftiRASDisplacementField),
-        (_lps_spm_chain(), "y_deformation.nii.gz", SpmCoordinatesField),
+        (_lps_spm_chain(), "y_deformation.nii.gz", SpmCoordinateField),
     ],
     ids=["affine", "displacements", "coordinates", "chain", "spm"],
 )
@@ -625,14 +625,12 @@ def test_log_writes_a_velocity_as_it_is(tmp_path) -> None:  # noqa: ANN001
     np.testing.assert_allclose(written, 0.1 * _displacements(), atol=1e-12)
 
 
-@pytest.mark.parametrize(
-    "cls", [NiftiRASCoordinatesField, SpmCoordinatesField]
-)
+@pytest.mark.parametrize("cls", [NiftiRASCoordinateField, SpmCoordinateField])
 def test_a_field_of_coordinates_without_data_is_held_without_data(
     cls: type,
 ) -> None:
     # As a displacement field without data is: both are the identity.
-    converted = xforms.CoordinatesField().to(cls)
+    converted = xforms.CoordinateField().to(cls)
     assert type(converted) is cls
     empty = xforms.DisplacementField().to(NiftiRASDisplacementField)
     assert empty.displacement.data is None
@@ -644,25 +642,25 @@ def test_no_coordinates_cannot_carry_an_affine() -> None:
     )
     chain = xforms.Sequence(
         transformations=[
-            xforms.CoordinatesField(input=VOXEL, output=RASmm()),
+            xforms.CoordinateField(input=VOXEL, output=RASmm()),
             scale,
         ]
     )
     with pytest.raises(ConversionError, match="holds no coordinates"):
-        chain.to(NiftiRASCoordinatesField)
+        chain.to(NiftiRASCoordinateField)
 
 
 def test_a_nearly_singular_grid_is_refused_by_spm() -> None:
     chain = xforms.Sequence(
         transformations=[
             RASToVoxel(matrix=np.diag([1.0, 1.0, 1e-14, 1.0])[:-1]),
-            xforms.CoordinatesField(
+            xforms.CoordinateField(
                 field=_coordinates(), input=VOXEL, output=RASmm()
             ),
         ]
     )
     with pytest.raises(ConversionError, match="nearly so"):
-        chain.to(SpmCoordinatesField)
+        chain.to(SpmCoordinateField)
 
 
 @pytest.mark.parametrize(
@@ -671,8 +669,8 @@ def test_a_nearly_singular_grid_is_refused_by_spm() -> None:
         NiftiVoxelToRAS,
         NiftiRASToVoxel,
         NiftiRASDisplacementField,
-        NiftiRASCoordinatesField,
-        SpmCoordinatesField,
+        NiftiRASCoordinateField,
+        SpmCoordinateField,
     ],
 )
 def test_the_converted_formats_still_read_files(tmp_path, cls: type) -> None:  # noqa: ANN001

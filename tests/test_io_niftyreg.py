@@ -32,7 +32,7 @@ from brainhops.io.transformations.itk.nifti import (  # noqa: E402
 )
 from brainhops.io.transformations.matrix import TxtMatrixAffine  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
 )
 from brainhops.io.transformations.niftyreg import (  # noqa: E402
     NiftyRegAffine,
@@ -71,10 +71,10 @@ AFFINE = np.array(
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    points = xforms.CoordinatesField(field=np.asarray(points, float))
+    points = xforms.CoordinateField(field=np.asarray(points, float))
     chain = list(xform) if isinstance(xform, xforms.Sequence) else [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _world(ijk: np.ndarray, vox2world: np.ndarray) -> np.ndarray:
@@ -381,7 +381,7 @@ def test_intent_p1_picks_the_reader(
 def test_generic_vector_readers_decline_niftyreg_files() -> None:
     image = _nreg_image(np.zeros((3, 4, 5, 3)), REF_VOX2RAS, 1)
     header = image.header
-    assert NiftiRASCoordinatesField._score_nibabel(header) == Confidence.NO
+    assert NiftiRASCoordinateField._score_nibabel(header) == Confidence.NO
     assert ItkNiftiDisplacementField._score_nibabel(header) == Confidence.NO
 
 

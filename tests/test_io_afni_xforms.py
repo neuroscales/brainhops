@@ -66,9 +66,9 @@ def _homog(matrix: np.ndarray) -> np.ndarray:
 
 def _apply(xform, points: np.ndarray, space) -> np.ndarray:  # noqa: ANN001
     """Map points (in `space`) through a transformation."""
-    field = T.CoordinatesField(field=np.asarray(points, float), output=space)
+    field = T.CoordinateField(field=np.asarray(points, float), output=space)
     out = T.Sequence(transformations=[field, xform]).compute()
-    return np.asarray(out.to(T.CoordinatesField).field)
+    return np.asarray(out.to(T.CoordinateField).field)
 
 
 # ----------------------------------------------------------------------

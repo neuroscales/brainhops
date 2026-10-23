@@ -27,20 +27,20 @@ from brainhops.io.transformations.itk._common import (  # noqa: E402
 )
 from brainhops.io.transformations.itk.mat import MatTransform  # noqa: E402
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
-    ItkNiftiCoordinatesField,
+    ItkNiftiCoordinateField,
     ItkNiftiDisplacementField,
 )
 from brainhops.io.transformations.spm import (  # noqa: E402
-    SpmCoordinatesField,
+    SpmCoordinateField,
 )
 
 try:  # X5 needs h5py.
     from brainhops.io.transformations.x5 import (
-        X5CoordinatesField,
+        X5CoordinateField,
         X5DisplacementField,
     )
 except ImportError:  # pragma: no cover
-    X5CoordinatesField = X5DisplacementField = None
+    X5CoordinateField = X5DisplacementField = None
 
 DATA = Path(__file__).parent / "data"
 VECTOR = 1007
@@ -74,7 +74,7 @@ def _write_vector(path: Path, vectors: np.ndarray) -> Path:
     return path
 
 
-def _spm(tmp_path: Path) -> SpmCoordinatesField:
+def _spm(tmp_path: Path) -> SpmCoordinateField:
     # An SPM y_ map holds absolute RAS coordinates.
     ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), -1)
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
@@ -99,7 +99,7 @@ def _itk_nifti(cls: type, tmp_path: Path) -> xforms.Sequence:
 def _x5(cls: type) -> xforms.Sequence:
     # One RAS displacement or coordinate vector per voxel of a 3-D grid.
     vectors = _vectors()[:, :, :, 0].astype("float64")
-    if cls is X5CoordinatesField:
+    if cls is X5CoordinateField:
         ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), -1)
         vectors = vectors + ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
     return cls.from_ras(vectors, VOX2RAS)
@@ -112,7 +112,7 @@ def _itk_block(name: str) -> xforms.Sequence:
 
 
 FORMATS = {
-    "spm": (SpmCoordinatesField, _spm),
+    "spm": (SpmCoordinateField, _spm),
     "fnirt-dense": (FnirtWarpField, lambda _: _fnirt("displacementfield")),
     "fnirt-coeff": (FnirtWarpField, lambda _: _fnirt("coefficientfield")),
     "itk-nifti-displacement": (
@@ -120,8 +120,8 @@ FORMATS = {
         lambda tmp: _itk_nifti(ItkNiftiDisplacementField, tmp),
     ),
     "itk-nifti-coordinates": (
-        ItkNiftiCoordinatesField,
-        lambda tmp: _itk_nifti(ItkNiftiCoordinatesField, tmp),
+        ItkNiftiCoordinateField,
+        lambda tmp: _itk_nifti(ItkNiftiCoordinateField, tmp),
     ),
     "itk-block-affine": (
         ItkAffineBase,
@@ -146,8 +146,8 @@ if X5DisplacementField is not None:
         lambda _: _x5(X5DisplacementField),
     )
     FORMATS["x5-coordinates"] = (
-        X5CoordinatesField,
-        lambda _: _x5(X5CoordinatesField),
+        X5CoordinateField,
+        lambda _: _x5(X5CoordinateField),
     )
 
 
@@ -193,9 +193,9 @@ def _kinds(chain: tx.Iterable[xforms.Transformation]) -> list:
 
 def _apply(xform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
     # Declaring the input space keeps adaptors from guessing the axes.
-    points = xforms.CoordinatesField(field=points, output=xform.input)
+    points = xforms.CoordinateField(field=points, output=xform.input)
     out = xforms.Sequence([points, xform])
-    return np.asarray(out.compute().to(xforms.CoordinatesField).field)
+    return np.asarray(out.compute().to(xforms.CoordinateField).field)
 
 
 # ----------------------------------------------------------------------
@@ -288,7 +288,7 @@ def test_the_inverse_is_a_plain_sequence(loaded) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("region", REGIONS)
 @pytest.mark.parametrize(
-    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinateField]
 )
 def test_an_itk_nifti_field_round_trips(tmp_path, cls, region) -> None:  # noqa: ANN001
     first = _itk_nifti(cls, tmp_path)

@@ -1,5 +1,5 @@
 """
-RAS coordinates fields and RAS displacement fields stored in NIfTI files.
+RAS coordinate fields and RAS displacement fields stored in NIfTI files.
 
 The intent codes and the reasons for them are described in
 [`brainhops.io.transformations.nifti`][].
@@ -61,7 +61,9 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.fields import (
-    RASCoordinatesField,
+    COORDINATE_HINTS,
+    DISPLACEMENT_HINTS,
+    RASCoordinateField,
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
@@ -79,10 +81,10 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 
 
 @register_format
-class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
+class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
     """Field of RAS coordinates stored in a NIfTI file."""
 
-    HINTS = ("coordinates",)
+    HINTS = COORDINATE_HINTS
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -175,7 +177,7 @@ class NiftiRASCoordinatesField(NiftiBasedTransformation, RASCoordinatesField):
         """Encode the pending field into `rawdata` and a new header.
 
         The header carries the `VECTOR` intent (1007) with the SPM intent
-        name `"Mapping"`, which marks a coordinates field, rather than
+        name `"Mapping"`, which marks a coordinate field, rather than
         `DISPVECT` (1006), which ITK and brainhops read as displacements.
         The field holds no grid of its own, so a copy of the header of the
         metadata, with its voxel-to-RAS affine, is the base of the new
@@ -316,7 +318,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
     `save`.
     """
 
-    HINTS = ("displacements",)
+    HINTS = DISPLACEMENT_HINTS
 
     degree: tx.ClassVar[int] = 1
     """Spline degree of the interpolation."""
@@ -451,7 +453,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
 
         Only a `DISPVECT` image (1006) is claimed, with `Confidence.CERTAIN`.
         Other images may hold coordinates and are left to
-        [`NiftiRASCoordinatesField`][].
+        [`NiftiRASCoordinateField`][].
         """
         if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
@@ -717,7 +719,7 @@ def _with_encoding(
 
 
 def _coordinates_encoded(
-    field: NiftiRASCoordinatesField,
+    field: NiftiRASCoordinateField,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
     base: tx.Optional[NiftiRaw],

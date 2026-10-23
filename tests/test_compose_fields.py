@@ -29,7 +29,7 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     InverseDisplacementField,
@@ -80,12 +80,12 @@ ARRAY_BACKENDS = [
 def _evaluate(field, points):  # noqa: ANN001, ANN202
     """Return the coordinates of a field evaluated at the given points."""
     computed = Sequence(
-        transformations=[CoordinatesField(field=points), field]
+        transformations=[CoordinateField(field=points), field]
     ).compute()
-    return np.asarray(computed.to(CoordinatesField).field)
+    return np.asarray(computed.to(CoordinateField).field)
 
 
-@pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
+@pytest.mark.parametrize("field_type", [CoordinateField, DisplacementField])
 @pytest.mark.parametrize("degree, store", DEGREE_STORE)
 def test_fold_affine_into_field_keeps_interpolation_settings(
     field_type: type,
@@ -93,7 +93,7 @@ def test_fold_affine_into_field_keeps_interpolation_settings(
     store: str,
 ) -> None:
     rng = np.random.default_rng(0)
-    scale = 1.0 if field_type is CoordinatesField else 0.1
+    scale = 1.0 if field_type is CoordinateField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
     field = field_type(
         field=values, degree=degree, bound=BoundaryCondition.mirror
@@ -107,7 +107,7 @@ def test_fold_affine_into_field_keeps_interpolation_settings(
 
 
 @pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
-@pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
+@pytest.mark.parametrize("field_type", [CoordinateField, DisplacementField])
 @pytest.mark.parametrize("degree, store", DEGREE_STORE)
 def test_fold_affine_into_field_matches_inorder_reference(
     field_type: type,
@@ -116,7 +116,7 @@ def test_fold_affine_into_field_matches_inorder_reference(
     array_backend: str,
 ) -> None:
     rng = np.random.default_rng(0)
-    scale = 1.0 if field_type is CoordinatesField else 0.1
+    scale = 1.0 if field_type is CoordinateField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
 
     # Under dask, the folded field is a dask array prefiltered chunk by chunk,
@@ -176,10 +176,10 @@ def _subspace_affine(positions) -> SubspaceTransformation:  # noqa: ANN001
     )
 
 
-def _coords_4d(seed: int = 0) -> CoordinatesField:
+def _coords_4d(seed: int = 0) -> CoordinateField:
     rng = np.random.default_rng(seed)
     field = rng.standard_normal((5, 6, 4))
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         output=_full4("in"),
         degree=3,
@@ -233,7 +233,7 @@ def test_subspace_coords_promotes_an_integer_domain() -> None:
     # An integer coordinate field is promoted to float.
     xp = get_array_backend()
     field = xp.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
-    Ti = CoordinatesField(field=field, output=_full4("in"))
+    Ti = CoordinateField(field=field, output=_full4("in"))
     To = _subspace_affine([0, 1, 2])
     got = compose(To, Ti)
     assert np.asarray(got.field).dtype.kind == "f"
@@ -263,7 +263,7 @@ def _empty_subspace_3d(input_axes, output_axes) -> SubspaceTransformation:  # no
     )
 
 
-def _coords_3d() -> CoordinatesField:
+def _coords_3d() -> CoordinateField:
     # Each component has distinct values, so that a swap or drop is visible.
     field = np.stack(
         [
@@ -273,7 +273,7 @@ def _coords_3d() -> CoordinatesField:
         ],
         axis=-1,
     )
-    return CoordinatesField(field=field, output=_sub3("in"))
+    return CoordinateField(field=field, output=_sub3("in"))
 
 
 def test_empty_subspace_coords_reindexes_like_the_affine_reduction() -> None:
@@ -283,7 +283,7 @@ def test_empty_subspace_coords_reindexes_like_the_affine_reduction() -> None:
     Ti = _coords_3d()
     got = compose(To, Ti)
     ref = compose(To.to(Affine), Ti)
-    assert isinstance(got, CoordinatesField)
+    assert isinstance(got, CoordinateField)
     np.testing.assert_array_equal(np.asarray(got.field), np.asarray(ref.field))
     x = np.asarray(Ti.field)
     np.testing.assert_array_equal(np.asarray(got.field), x[..., [1, 0, 2]])
@@ -309,7 +309,7 @@ def test_empty_subspace_coords_matching_axes_is_unchanged() -> None:
     To = _empty_subspace_3d([0, 1], [0, 1])
     Ti = _coords_3d()
     got = compose(To, Ti)
-    assert isinstance(got, CoordinatesField)
+    assert isinstance(got, CoordinateField)
     np.testing.assert_array_equal(np.asarray(got.field), np.asarray(Ti.field))
     assert got.output == _sub3("out")
     assert got.degree == Ti.degree
@@ -584,7 +584,7 @@ def test_a_3d_affine_refuses_a_4d_field() -> None:
         Linear(matrix=SUB_AFFINE[:, :-1], input=system, output=system),
     ):
         with pytest.raises(ValueError):
-            compose(transform, CoordinatesField(field=points))
+            compose(transform, CoordinateField(field=points))
 
 
 def test_restrictive_mode_prevents_field_through_field_composition() -> None:
@@ -633,7 +633,7 @@ def test_compose_identity_with_lazy_inverse_stays_unmaterialized(
 def test_compose_tries_the_pair_simplifiers_before_any_composer() -> None:
     # No composer can materialize the inverse of a coordinate field, so only
     # the pair simplifiers can cancel the pair.
-    cf = CoordinatesField(field=np.zeros((5, 6, 2)))
+    cf = CoordinateField(field=np.zeros((5, 6, 2)))
     assert isinstance(compose(cf.inverse(), cf), Identity)
 
 

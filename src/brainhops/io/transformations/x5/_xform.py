@@ -91,7 +91,7 @@ class X5Transform(
     | -------------------------------------- | --------------------------- |
     | `linear`, a 4x4 matrix                 | `Affine` (`RASmm` to `RASmm`) |
     | `nonlinear`, `displacements`           | [`X5DisplacementField`][]   |
-    | `nonlinear`, `deformations`            | [`X5CoordinatesField`][]    |
+    | `nonlinear`, `deformations`            | [`X5CoordinateField`][]    |
     | `nonlinear`, `bspline`                 | [`X5BSplineField`][]        |
 
     The content of the file, including each node's JSON metadata, `Domain`,

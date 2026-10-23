@@ -55,7 +55,7 @@ from brainhops.datamodel.systems import (
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Inverse,
@@ -1487,7 +1487,7 @@ def test_compose_refuses_interpolating_subspace_on_discrete_axis() -> None:
         input=full,
         output=full,
     )
-    coords = CoordinatesField(
+    coords = CoordinateField(
         field=np.zeros((6, 7, 5, 3, 4)), input=full, output=full
     )
     with pytest.raises(CompositionError):

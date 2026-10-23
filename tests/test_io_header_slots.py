@@ -77,7 +77,7 @@ def _chain(log: bool = False) -> xforms.Sequence:
 def _apply(t: xforms.Transformation, points: np.ndarray) -> np.ndarray:
     # The map of `t` on RAS points, written in RAS. A format between LPS
     # spaces, such as elastix, is bridged to RAS on both sides.
-    points = xforms.CoordinatesField(field=points[:, None, None, :])
+    points = xforms.CoordinateField(field=points[:, None, None, :])
     chain = [points, t]
     if t.input is not None and t.input != RAS:
         chain = [
@@ -87,7 +87,7 @@ def _apply(t: xforms.Transformation, points: np.ndarray) -> np.ndarray:
             bridge(t.output, RAS, allow_type_grouped_positional=True),
         ]
     out = xforms.Sequence(transformations=chain).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)[:, 0, 0, :]
+    return np.asarray(out.to(xforms.CoordinateField).field)[:, 0, 0, :]
 
 
 def _points() -> np.ndarray:

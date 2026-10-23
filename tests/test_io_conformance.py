@@ -149,7 +149,7 @@ from brainhops.io.transformations.base._records import (
     matrix_to_model,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.base.fields import RASCoordinateField
 from brainhops.io.transformations.bdv import BdvViewRegistration
 from brainhops.io.transformations.bdv._xform import (
     _matrix_to_disk as _bdv_matrix_to_disk,
@@ -231,7 +231,7 @@ from brainhops.io.transformations.minc._affine import (
     _matrix_to_model as _xfm_matrix_to_model,
 )
 from brainhops.io.transformations.mrtrix import (
-    MrtrixCoordinatesField,
+    MrtrixCoordinateField,
     MrtrixDisplacementField,
     MrtrixLinearMetadata,
     MrtrixLinearTransform,
@@ -285,7 +285,7 @@ try:
     )
     from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
     from brainhops.io.transformations.itk.nifti import (
-        ItkNiftiCoordinatesField,
+        ItkNiftiCoordinateField,
         ItkNiftiDisplacementField,
     )
     from brainhops.io.transformations.itk.nifti._views import (
@@ -293,7 +293,7 @@ try:
         _itk_field_to_model,
     )
     from brainhops.io.transformations.nifti import (
-        NiftiRASCoordinatesField,
+        NiftiRASCoordinateField,
         NiftiRASDisplacementField,
         NiftiRASToVoxel,
         NiftiVoxelToRAS,
@@ -311,7 +311,7 @@ try:
         NiftyRegVelocityField,
         NiftyRegVelocityGrid,
     )
-    from brainhops.io.transformations.spm import SpmCoordinatesField
+    from brainhops.io.transformations.spm import SpmCoordinateField
 except ImportError:
     nb = None
 
@@ -2125,7 +2125,7 @@ def _ras_displacements(data: np.ndarray) -> tx.Any:
 
 def _spm_coordinates(data: np.ndarray) -> tx.Any:
     return Sequence(
-        [RASToVoxel(matrix=np.eye(4)[:-1]), RASCoordinatesField(field=data)]
+        [RASToVoxel(matrix=np.eye(4)[:-1]), RASCoordinateField(field=data)]
     )
 
 
@@ -2179,10 +2179,10 @@ if nb is not None:
         derived=("homogeneous_matrix",),
         stored=_header_matrix,
     )
-    EXEMPLARS[NiftiRASCoordinatesField] = _NIFTI_FIELD._replace(
+    EXEMPLARS[NiftiRASCoordinateField] = _NIFTI_FIELD._replace(
         geometry=_data_geometry,
         change_geometry=_data_change_geometry,
-        foreign=lambda data: RASCoordinatesField(field=data),
+        foreign=lambda data: RASCoordinateField(field=data),
         derived=("values",),
     )
     EXEMPLARS[NiftiRASDisplacementField] = _NIFTI_FIELD._replace(
@@ -2192,8 +2192,8 @@ if nb is not None:
         foreign=_ras_displacements,
         options=frozenset({"log", "steps"}),
     )
-    EXEMPLARS[SpmCoordinatesField] = _NIFTI_FIELD._replace(
-        build=lambda data: SpmCoordinatesField(rawdata=_field_to_disk(data)),
+    EXEMPLARS[SpmCoordinateField] = _NIFTI_FIELD._replace(
+        build=lambda data: SpmCoordinateField(rawdata=_field_to_disk(data)),
         foreign=_spm_coordinates,
         prefix="y_",
     )
@@ -2207,7 +2207,7 @@ if nb is not None:
         EXEMPLARS[_cls] = _NIFTYREG._replace(
             build=lambda data, cls=_cls: cls(rawdata=_field_to_disk(data))
         )
-    for _cls in (ItkNiftiCoordinatesField, ItkNiftiDisplacementField):
+    for _cls in (ItkNiftiCoordinateField, ItkNiftiDisplacementField):
         EXEMPLARS[_cls] = _ITK._replace(
             build=lambda data, cls=_cls: cls(rawdata=_itk_field_to_disk(data))
         )
@@ -2606,7 +2606,7 @@ if h5py is not None:
 
 
 def _m3z_chain(data: tx.Any) -> tx.Tuple[tx.Any, ...]:
-    return (RASToVoxel(matrix=np.eye(4)[:-1]), RASCoordinatesField(field=data))
+    return (RASToVoxel(matrix=np.eye(4)[:-1]), RASCoordinateField(field=data))
 
 
 def _m3z_data(xform: tx.Any) -> tx.Any:
@@ -2615,7 +2615,7 @@ def _m3z_data(xform: tx.Any) -> tx.Any:
 
 def _m3z_set_data(xform: tx.Any, value: tx.Any) -> None:
     chain = list(xform.transformations)
-    chain[1] = RASCoordinatesField(field=value)
+    chain[1] = RASCoordinateField(field=value)
     xform.transformations = tuple(chain)
 
 
@@ -3177,8 +3177,8 @@ _MRTRIX_WARP = _MRTRIX._replace(
     change_geometry=_chain_change_geometry,
     derived=("transformations",),
 )
-EXEMPLARS[MrtrixCoordinatesField] = _MRTRIX_WARP._replace(
-    build=lambda data: MrtrixCoordinatesField(data=data),
+EXEMPLARS[MrtrixCoordinateField] = _MRTRIX_WARP._replace(
+    build=lambda data: MrtrixCoordinateField(data=data),
     foreign=_spm_coordinates,
 )
 EXEMPLARS[MrtrixDisplacementField] = _MRTRIX_WARP._replace(
@@ -4566,13 +4566,13 @@ RAWDATA: tx.FrozenSet[str] = frozenset(
         "brainhops.io.transformations.afni.AfniBrikWarp",
         "brainhops.io.transformations.afni.AfniNiftiWarp",
         "brainhops.io.transformations.fsl.fnirt.FnirtWarpField",
-        "brainhops.io.transformations.itk.nifti.ItkNiftiCoordinatesField",
+        "brainhops.io.transformations.itk.nifti.ItkNiftiCoordinateField",
         "brainhops.io.transformations.itk.nifti.ItkNiftiDisplacementField",
         "brainhops.io.transformations.minc.XfmTransform",
-        "brainhops.io.transformations.mrtrix.MrtrixCoordinatesField",
+        "brainhops.io.transformations.mrtrix.MrtrixCoordinateField",
         "brainhops.io.transformations.mrtrix.MrtrixDisplacementField",
         "brainhops.io.transformations.mrtrix.MrtrixWarpFull",
-        "brainhops.io.transformations.nifti.NiftiRASCoordinatesField",
+        "brainhops.io.transformations.nifti.NiftiRASCoordinateField",
         "brainhops.io.transformations.nifti.NiftiRASDisplacementField",
         "brainhops.io.transformations.nifti.NiftiVoxelToRAS",
         "brainhops.io.transformations.niftyreg.NiftyRegControlPointGrid",
@@ -4580,7 +4580,7 @@ RAWDATA: tx.FrozenSet[str] = frozenset(
         "brainhops.io.transformations.niftyreg.NiftyRegDisplacementField",
         "brainhops.io.transformations.niftyreg.NiftyRegVelocityField",
         "brainhops.io.transformations.niftyreg.NiftyRegVelocityGrid",
-        "brainhops.io.transformations.spm.SpmCoordinatesField",
+        "brainhops.io.transformations.spm.SpmCoordinateField",
     )
 ) | frozenset(SHARED)
 """The registered formats that hold their stored arrays in `rawdata`.
@@ -4766,9 +4766,9 @@ if n5_needs is not None:
 
 VARIANTS.append(
     (
-        "MrtrixCoordinatesField-gz",
-        MrtrixCoordinatesField,
-        EXEMPLARS[MrtrixCoordinatesField]._replace(suffix=".mif.gz"),
+        "MrtrixCoordinateField-gz",
+        MrtrixCoordinateField,
+        EXEMPLARS[MrtrixCoordinateField]._replace(suffix=".mif.gz"),
     )
 )
 VARIANTS.append(

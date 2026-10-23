@@ -34,12 +34,12 @@ from brainhops.io.metadata._base import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
-    RASCoordinatesField,
+    RASCoordinateField,
     homogeneous_matrix,
 )
 from brainhops.io.transformations.nifti import (
     NiftiBasedTransformation,
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiRASToVoxel,
 )
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
@@ -50,7 +50,7 @@ from brainhops.io.transformations.nifti._views import (
 
 
 @register_format
-class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
+class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
     Field of RAS coordinates written by SPM.
 
@@ -84,13 +84,13 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
         """
         Score a header as an SPM field.
 
-        The score is that of [`NiftiRASCoordinatesField`][], since the content
+        The score is that of [`NiftiRASCoordinateField`][], since the content
         of the file cannot distinguish the two readers, and pretending
         otherwise would invent evidence. The `y_` or `iy_` prefix decides the
         tie instead, through
-        [`PREFIXES`][brainhops.io.transformations.spm.SpmCoordinatesField.PREFIXES].
+        [`PREFIXES`][brainhops.io.transformations.spm.SpmCoordinateField.PREFIXES].
         """
-        return NiftiRASCoordinatesField._score_nibabel(header)
+        return NiftiRASCoordinateField._score_nibabel(header)
 
     # --- data -----------------------------------------------------------
 
@@ -152,7 +152,7 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
     @smartproperty(cache=True)
     def transformations(
         self,
-    ) -> tx.Tuple[RASToVoxel, RASCoordinatesField]:
+    ) -> tx.Tuple[RASToVoxel, RASCoordinateField]:
         """The transformations, decoded from the NIfTI file unless stored.
 
         The decoded chain is made of the RAS-to-voxel affine of the header
@@ -162,7 +162,7 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
         """
         return (
             NiftiRASToVoxel(metadata=self.metadata),
-            NiftiRASCoordinatesField(
+            NiftiRASCoordinateField(
                 data=self._data, rawdata=self.rawdata, metadata=self.metadata
             ),
         )
@@ -173,7 +173,7 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
         value: tx.Optional[
             tx.Tuple[
                 tx.Optional[RASToVoxel],
-                tx.Optional[RASCoordinatesField],
+                tx.Optional[RASCoordinateField],
             ]
         ],
     ) -> None:
@@ -189,11 +189,11 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
         return xform
 
     @property
-    def rasfield(self) -> tx.Optional[RASCoordinatesField]:
+    def rasfield(self) -> tx.Optional[RASCoordinateField]:
         """The field of RAS coordinates."""
         xform = self.transformations[1]
         if xform is None:
-            xform = NiftiRASCoordinatesField(
+            xform = NiftiRASCoordinateField(
                 data=self._data, rawdata=self.rawdata, metadata=self.metadata
             )
         return xform
@@ -203,7 +203,7 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
         self._transformations = (value, self.transformations[1])
 
     @rasfield.setter
-    def rasfield(self, value: RASCoordinatesField) -> None:
+    def rasfield(self, value: RASCoordinateField) -> None:
         self._transformations = (self.transformations[0], value)
 
     # --- writing ------------------------------------------------------
@@ -314,7 +314,7 @@ class SpmCoordinatesField(NiftiBasedTransformation, _xforms.DerivedSequence):
 
 
 def _spm_encoded(
-    field: SpmCoordinatesField,
+    field: SpmCoordinateField,
     like: tx.Any,
     overrides: tx.Mapping[str, tx.Any],
     base: tx.Optional[NiftiRaw],

@@ -45,13 +45,13 @@ from brainhops.io.transformations.freesurfer.m3z import M3zMetadata, M3zMorph
 from brainhops.io.transformations.fsl.fnirt import FnirtWarpField
 from brainhops.io.transformations.itk.nifti import ItkNiftiDisplacementField
 from brainhops.io.transformations.nifti import (
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiRASDisplacementField,
     NiftiRASToVoxel,
     NiftiVoxelToRAS,
 )
 from brainhops.io.transformations.niftyreg import NiftyRegDisplacementField
-from brainhops.io.transformations.spm import SpmCoordinatesField
+from brainhops.io.transformations.spm import SpmCoordinateField
 from brainhops.io.transformations.x5 import X5Metadata, X5Transform
 
 # Each format that takes `metadata` over, with the class of its metadata.
@@ -67,10 +67,10 @@ _FORMATS = [
     (M3zMorph, M3zMetadata),
     (NiftiRASToVoxel, NiftiMetadata),
     (NiftiVoxelToRAS, NiftiMetadata),
-    (NiftiRASCoordinatesField, NiftiMetadata),
+    (NiftiRASCoordinateField, NiftiMetadata),
     (NiftiRASDisplacementField, NiftiMetadata),
     (NiftyRegDisplacementField, NiftiMetadata),
-    (SpmCoordinatesField, NiftiMetadata),
+    (SpmCoordinateField, NiftiMetadata),
     (ItkNiftiDisplacementField, NiftiMetadata),
     (FnirtWarpField, NiftiMetadata),
 ]

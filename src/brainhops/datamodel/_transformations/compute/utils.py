@@ -122,7 +122,7 @@ def axis_counts(
       homogeneous column of an affine;
     * the length of `scale`, `translation` or `permutation`;
     * a field: the last dimension of a displacement field, the spatial rank and
-      last dimension of a coordinates field, the rank of a grid;
+      last dimension of a coordinate field, the rank of a grid;
     * a lazy inverse: the counts of its forward transformation, swapped;
     * a lazy square root, exponential or logarithm: the counts of its
       forward transformation;
@@ -138,7 +138,7 @@ def axis_counts(
     from ..concrete import (
         Affine,
         CartesianField,
-        CoordinatesField,
+        CoordinateField,
         DisplacementField,
         Linear,
         Permutation,
@@ -182,7 +182,7 @@ def axis_counts(
         if isinstance(t, CartesianField):
             if t.shape is not None:
                 ni = no = len(t.shape)
-        elif isinstance(t, (DisplacementField, CoordinatesField)):
+        elif isinstance(t, (DisplacementField, CoordinateField)):
             # Only the shape is read, so a spline-coefficient field is never
             # decoded.
             field = t.data

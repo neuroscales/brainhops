@@ -29,18 +29,18 @@ from brainhops.io.transformations.base.affines import (  # noqa: E402
     VoxelToLPS,
 )
 from brainhops.io.transformations.base.fields import (  # noqa: E402
-    LPSCoordinatesField,
+    LPSCoordinateField,
 )
 from brainhops.io.transformations.itk._systems import (  # noqa: E402
     _make_system,
 )
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
-    ItkNiftiCoordinatesField,
+    ItkNiftiCoordinateField,
     ItkNiftiDisplacementField,
     ItkNiftiField,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiRASDisplacementField,
     NiftiVoxelToRAS,
 )
@@ -128,9 +128,9 @@ def _write(path, vectors: np.ndarray, intent: int = VECTOR):  # noqa: ANN001, AN
 
 def _apply(xform, points_lps: np.ndarray) -> np.ndarray:  # noqa: ANN001
     """Map LPS points through an LPS-to-LPS transformation."""
-    points = xforms.CoordinatesField(field=np.asarray(points_lps, float))
+    points = xforms.CoordinateField(field=np.asarray(points_lps, float))
     out = xforms.Sequence(transformations=[points, *xform]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _apply_ras(xform, points_ras: np.ndarray) -> np.ndarray:  # noqa: ANN001
@@ -304,11 +304,11 @@ def test_coordinates_and_displacements_agree(tmp_path, ndim) -> None:  # noqa: A
     positions = _grid_points(_vox2lps(ndim)) + _ramp(ndim)
     coords = _write(tmp_path / "coords.nii.gz", positions.astype("float32"))
     disp = ItkNiftiDisplacementField.from_file(disp)
-    coords = ItkNiftiCoordinatesField.from_file(coords)
+    coords = ItkNiftiCoordinateField.from_file(coords)
     assert coords.input == _make_system(ndim)
     assert coords.output == _make_system(ndim)
     assert isinstance(coords.lps2voxel, LPSToVoxel)
-    assert isinstance(coords.coordinates, LPSCoordinatesField)
+    assert isinstance(coords.coordinates, LPSCoordinateField)
     assert coords.coordinates.output == _make_system(ndim)
     points = _all_nodes_ras(ndim)
     np.testing.assert_allclose(
@@ -361,7 +361,7 @@ def _clamped_voxels(points_lps: np.ndarray) -> np.ndarray:
     ],
 )
 @pytest.mark.parametrize(
-    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinateField]
 )
 @pytest.mark.parametrize("region", ["before", "after", "around", "centred"])
 def test_points_outside_the_grid_take_the_nearest_vector(
@@ -377,7 +377,7 @@ def test_points_outside_the_grid_take_the_nearest_vector(
     d = np.arange(ndim)
     ramp = (d + 1.0) + 0.1 * (d + 1) * voxels
     vox2lps = _vox2lps(ndim)
-    if cls is ItkNiftiCoordinatesField:
+    if cls is ItkNiftiCoordinateField:
         vectors = _grid_points(vox2lps) + _ramp(ndim)
         world = voxels @ vox2lps[:ndim, :ndim].T + vox2lps[:ndim, ndim]
         expected = world + ramp
@@ -387,10 +387,10 @@ def test_points_outside_the_grid_take_the_nearest_vector(
     path = _write(tmp_path / "field.nii.gz", vectors.astype("float32"))
     with backend(array_backend):
         field = cls.from_file(path)
-        source = xforms.CoordinatesField(field=points, output=field.input)
+        source = xforms.CoordinateField(field=points, output=field.input)
         for _ in range(3):
             sequence = xforms.Sequence([source, field])
-            out = sequence.compute().to(xforms.CoordinatesField).field
+            out = sequence.compute().to(xforms.CoordinateField).field
             np.testing.assert_allclose(
                 np.asarray(out), expected, rtol=1e-5, atol=1e-4
             )
@@ -403,7 +403,7 @@ def test_a_dispvect_file_read_as_itk_coordinates_is_converted_to_lps(
     coords_ras = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
     path = tmp_path / "ras.nii.gz"
     _write(path, coords_ras, DISPVECT)
-    itk = ItkNiftiCoordinatesField.from_file(path)
+    itk = ItkNiftiCoordinateField.from_file(path)
     np.testing.assert_allclose(
         np.asarray(itk.coordinates.field) * _flip(3), coords_ras, rtol=1e-6
     )
@@ -422,7 +422,7 @@ def test_an_itk_vector_file_is_ambiguous_without_a_hint(itk_warp) -> None:  # no
     with pytest.raises(AmbiguousFormatError):
         io.load(itk_warp)
     assert ItkNiftiDisplacementField.sniff(itk_warp) == pytest.approx(
-        NiftiRASCoordinatesField.sniff(itk_warp)
+        NiftiRASCoordinateField.sniff(itk_warp)
     )
 
 
@@ -433,7 +433,7 @@ def test_a_vector_file_named_mapping_is_not_claimed(tmp_path, ndim) -> None:  # 
     img.header.set_intent(VECTOR, name="Mapping")
     nb.save(img, str(path))
     assert ItkNiftiDisplacementField.sniff(path) == 0
-    assert ItkNiftiCoordinatesField.sniff(path) == 0
+    assert ItkNiftiCoordinateField.sniff(path) == 0
     sniffed = io.transformations.sniff(path)
     assert sniffed is not None
     assert not issubclass(sniffed, ItkNiftiField)
@@ -446,13 +446,13 @@ def test_a_brainhops_coordinates_field_loads_without_a_hint(tmp_path) -> None:  
     """brainhops names its VECTOR fields "Mapping" to avoid ambiguity."""
     coords = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
     path = tmp_path / "coords.nii.gz"
-    NiftiRASCoordinatesField(field=coords).save(path)
+    NiftiRASCoordinateField(field=coords).save(path)
     header = nb.load(str(path)).header
     assert header.get_intent() == ("vector", (), "Mapping")
     assert header.get_data_shape() == (*SHAPES[3], 1, 3)
-    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
-    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
-    assert type(io.load(path)) is NiftiRASCoordinatesField
+    assert io.transformations.sniff(path) is NiftiRASCoordinateField
+    assert type(io.transformations.load(path)) is NiftiRASCoordinateField
+    assert type(io.load(path)) is NiftiRASCoordinateField
 
     bare = _write(tmp_path / "bare.nii.gz", coords, VECTOR)
     assert nb.load(str(bare)).header.get_intent()[2] == ""
@@ -479,21 +479,21 @@ def test_a_hint_selects_the_itk_displacement_reader(itk_warp, hint) -> None:  # 
 @pytest.mark.parametrize("hint", ["itk.coordinates", "ants.coordinates"])
 def test_a_hint_selects_the_itk_coordinates_reader(itk_warp, hint) -> None:  # noqa: ANN001
     loaded = io.transformations.load(itk_warp, hint=hint)
-    assert type(loaded) is ItkNiftiCoordinatesField
+    assert type(loaded) is ItkNiftiCoordinateField
 
 
 def test_a_hint_selects_the_ras_reader(tmp_path) -> None:  # noqa: ANN001
     """The coordinates hint alone reaches the RAS reader."""
     path = _write(tmp_path / "warp.nii.gz", _ramp(3))
     loaded = io.transformations.load(path, hint="coordinates")
-    assert type(loaded) is NiftiRASCoordinatesField
+    assert type(loaded) is NiftiRASCoordinateField
 
 
 @pytest.mark.parametrize(
     "intent, ras",
     [
         (DISPVECT, NiftiRASDisplacementField),
-        (NONE, NiftiRASCoordinatesField),
+        (NONE, NiftiRASCoordinateField),
     ],
 )
 def test_non_itk_intents_stay_with_the_ras_reader(
@@ -544,7 +544,7 @@ def test_other_layouts_are_not_claimed(tmp_path, shape) -> None:  # noqa: ANN001
 
 
 def test_coordinates_are_never_claimed_on_content(itk_warp) -> None:  # noqa: ANN001
-    assert ItkNiftiCoordinatesField.sniff(itk_warp) == 0
+    assert ItkNiftiCoordinateField.sniff(itk_warp) == 0
 
 
 # ----------------------------------------------------------------------
@@ -647,11 +647,11 @@ def test_a_dispvect_field_with_a_new_chain_is_written_as_lps_vectors(
 
 
 @pytest.mark.parametrize(
-    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinateField]
 )
 def test_the_fields_round_trip(tmp_path, cls, ndim) -> None:  # noqa: ANN001
     vectors = _ramp(ndim)
-    if cls is ItkNiftiCoordinatesField:
+    if cls is ItkNiftiCoordinateField:
         vectors = (_grid_points(_vox2lps(ndim)) + vectors).astype("float32")
     path = _write(tmp_path / "in.nii.gz", vectors)
     out = tmp_path / "out.nii.gz"

@@ -17,7 +17,7 @@ bridge does not exist, the converter raises a
 built by [`unrepresentable`][], that says what cannot be held.
 
 A field is taken apart into what a field format stores by
-[`displacement_parts`][] and [`coordinates_parts`][]: the affine from
+[`displacement_parts`][] and [`coordinate_parts`][]: the affine from
 the world to the grid of the field, and the displacement or the
 position of each node of that grid. A field of displacements and a
 field of coordinates are the same map inside their grid, and are only
@@ -71,7 +71,7 @@ __all__ = [
     "cardinal_parts",
     "convert_instance",
     "converts_to",
-    "coordinates_parts",
+    "coordinate_parts",
     "displacement_parts",
     "displacements_of",
     "is_cardinal",
@@ -111,7 +111,7 @@ from brainhops.errors import (
     LossyConversionError,
 )
 
-_Field = tx.Union[_xforms.DisplacementField, _xforms.CoordinatesField]
+_Field = tx.Union[_xforms.DisplacementField, _xforms.CoordinateField]
 
 AFFINE_SOURCES: tx.Tuple[type, ...] = (
     _xforms.Identity,
@@ -136,7 +136,7 @@ transformation instead of bridging them to those of the format.
 FIELD_SOURCES: tx.Tuple[type, ...] = (
     _xforms.DisplacementField,
     _xforms.StationaryVelocityField,
-    _xforms.CoordinatesField,
+    _xforms.CoordinateField,
     _xforms.CartesianField,
     _xforms.Sequence,
 )
@@ -366,7 +366,7 @@ def split_field_chain(
     -------
     before : array, shape `(D + 1, D + 1)`
         The affine that carries `input` to the grid of the field.
-    field : DisplacementField or CoordinatesField
+    field : DisplacementField or CoordinateField
         The field, as it is.
     after : array, shape `(D + 1, D + 1)`
         The affine that carries the output of the field to `output`.
@@ -499,7 +499,7 @@ def _leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
 
 
 def _is_field(t: _xforms.Transformation) -> bool:
-    return isinstance(t, (_xforms.DisplacementField, _xforms.CoordinatesField))
+    return isinstance(t, (_xforms.DisplacementField, _xforms.CoordinateField))
 
 
 def _field_ndim(field: _Field) -> tx.Optional[int]:
@@ -542,7 +542,7 @@ class FieldParts(tx.NamedTuple):
 
     A field format stores the values of a field on the nodes of a grid,
     together with the affine that carries the world to that grid. These
-    parts are what [`displacement_parts`][] and [`coordinates_parts`][]
+    parts are what [`displacement_parts`][] and [`coordinate_parts`][]
     return, so that each format only arranges them as its file does.
     """
 
@@ -790,7 +790,7 @@ def split_affine(
     except ConversionError:
         pass
     before, field, after = split_field_chain(t, input, output, cls)
-    if isinstance(field, _xforms.CoordinatesField):
+    if isinstance(field, _xforms.CoordinateField):
         parts = displacement_parts(t, input, cls, degree=int(field.degree))
         before, field = parts.world2grid, parts.field
         after = parts.grid2world
@@ -813,7 +813,7 @@ def split_affine(
     return affine, chain
 
 
-def coordinates_parts(
+def coordinate_parts(
     t: _xforms.Transformation,
     input: CoordinateSystem,
     output: CoordinateSystem,
@@ -866,7 +866,7 @@ def coordinates_parts(
     """
     before, field, after = split_field_chain(t, input, output, cls)
     values, store, bound, loss = _node_data(field, degree)
-    if values is None and isinstance(field, _xforms.CoordinatesField):
+    if values is None and isinstance(field, _xforms.CoordinateField):
         raise unrepresentable(
             t,
             cls,
@@ -885,7 +885,7 @@ def coordinates_parts(
     if isinstance(field, _xforms.DisplacementField):
         positions = positions + _grid_like(values)
     coordinates = apply_affine(after, positions)
-    result = _xforms.CoordinatesField(
+    result = _xforms.CoordinateField(
         data=coordinates,
         degree=degree,
         store=store,
@@ -948,7 +948,7 @@ def sample_on_grid(
     world2grid = np.asarray(world2grid, dtype=np.float64)
     shape = tuple(int(n) for n in shape)
     try:
-        native = coordinates_parts(t, input, output, cls, degree)
+        native = coordinate_parts(t, input, output, cls, degree)
     except ConversionError:
         native = None
     if (
@@ -964,14 +964,14 @@ def sample_on_grid(
     nodes = _xforms.CartesianField(shape=shape).field
     points = apply_affine(grid2world, nodes)
     chain = [
-        _xforms.CoordinatesField(field=points, input=_VOXEL, output=input),
+        _xforms.CoordinateField(field=points, input=_VOXEL, output=input),
         _bridge(input, t.input, t, cls),
         t,
         _bridge(t.output, output, t, cls),
     ]
     try:
         mapped = _xforms.Sequence(transformations=chain).compute()
-        mapped = mapped.to(_xforms.CoordinatesField)
+        mapped = mapped.to(_xforms.CoordinateField)
     except ConversionError as error:
         raise unrepresentable(
             t, cls, f"it cannot be sampled on the grid of the format. {error}"
@@ -983,7 +983,7 @@ def sample_on_grid(
             "it does not map the grid of the format into a space of the "
             "same dimension.",
         )
-    result = _xforms.CoordinatesField(
+    result = _xforms.CoordinateField(
         field=mapped.values, degree=degree, input=_VOXEL, output=output
     )
     loss = (
@@ -1409,7 +1409,7 @@ def cardinal_parts(
     ----------
     parts : FieldParts
         The parts of `t`, as [`displacement_parts`][] or
-        [`coordinates_parts`][] give them.
+        [`coordinate_parts`][] give them.
     t : Transformation
         The transformation that the parts are taken from.
     input : CoordinateSystem

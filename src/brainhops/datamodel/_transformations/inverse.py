@@ -8,7 +8,7 @@ from brainhops._core.typing import ArrayProtocol
 from .base import Transformation
 from .concrete import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Linear,
     Permutation,
@@ -311,19 +311,19 @@ class InverseDisplacementField(
     log = alias("forward.log", readonly=True)
 
 
-class InverseCoordinatesField(
+class InverseCoordinateField(
     _FieldInverseMixin,
-    Inverse[CoordinatesField],
-    CoordinatesField,
-    on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)},
+    Inverse[CoordinateField],
+    CoordinateField,
+    on={"forward": partial(isinstance, PLACEHOLDER, CoordinateField)},
 ):
-    """Inverse of a [`CoordinatesField`][], resolved on demand.
+    """Inverse of a [`CoordinateField`][], resolved on demand.
 
     The inverse is encoded like an [`InverseDisplacementField`][]. When the
     inverse is placed next to the field it inverts in a
     [`Sequence`][brainhops.datamodel.transformations.Sequence], the two cancel
     without any computation. Otherwise, evaluating the inverse runs a mesh
-    inversion, since a coordinates field has no closed-form inverse.
+    inversion, since a coordinate field has no closed-form inverse.
 
     !!! note "Accuracy"
         As for an [`InverseDisplacementField`][], only the piecewise-affine map
@@ -331,7 +331,7 @@ class InverseCoordinatesField(
         approximate between nodes and worse near the border.
 
     !!! warning "The coordinates must live on the grid they are sampled on"
-        A coordinates field is inverted as an identity grid plus a
+        A coordinate field is inverted as an identity grid plus a
         displacement, which assumes coordinates in voxels of the grid.
         Coordinates in world units give a result that is well defined but
         useless, because it does not lie on the output grid. A world-to-voxel
@@ -339,7 +339,7 @@ class InverseCoordinatesField(
         first.
     """
 
-    _resultof: _TypeReference = CoordinatesField
+    _resultof: _TypeReference = CoordinateField
 
     derived_fields: _FieldNames = "data", "field", "values", "coefficients"
 

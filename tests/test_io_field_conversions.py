@@ -33,12 +33,12 @@ from brainhops.io.transformations.afni import AfniBrikWarp, AfniNiftiWarp
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.freesurfer.m3z import M3zMorph
 from brainhops.io.transformations.itk.nifti import (
-    ItkNiftiCoordinatesField,
+    ItkNiftiCoordinateField,
     ItkNiftiDisplacementField,
 )
 from brainhops.io.transformations.minc import XfmTransform
 from brainhops.io.transformations.mrtrix import (
-    MrtrixCoordinatesField,
+    MrtrixCoordinateField,
     MrtrixDisplacementField,
 )
 from brainhops.io.transformations.nifti import NiftiRASDisplacementField
@@ -47,7 +47,7 @@ from brainhops.io.transformations.niftyreg import (
     NiftyRegDisplacementField,
     NiftyRegVelocityField,
 )
-from brainhops.io.transformations.spm import SpmCoordinatesField
+from brainhops.io.transformations.spm import SpmCoordinateField
 from brainhops.io.transformations.x5 import X5Transform
 from brainhops.io.transformations.zarr import OmeZarrField
 
@@ -68,13 +68,13 @@ VOXEL = VoxelCoordinateSystem()
 
 FORMATS = {
     "nifti": (NiftiRASDisplacementField, "nifti.nii.gz", None),
-    "spm": (SpmCoordinatesField, "y_spm.nii.gz", None),
+    "spm": (SpmCoordinateField, "y_spm.nii.gz", None),
     "mrtrix.disp": (MrtrixDisplacementField, "disp.mif", None),
-    "mrtrix.coord": (MrtrixCoordinatesField, "coord.mif", None),
+    "mrtrix.coord": (MrtrixCoordinateField, "coord.mif", None),
     "afni.brik": (AfniBrikWarp, "afni+orig.HEAD", None),
     "afni.nifti": (AfniNiftiWarp, "afni.nii.gz", None),
     "itk.disp": (ItkNiftiDisplacementField, "itk.nii.gz", "itk"),
-    "itk.coord": (ItkNiftiCoordinatesField, "itkc.nii.gz", "itk.coordinates"),
+    "itk.coord": (ItkNiftiCoordinateField, "itkc.nii.gz", "itk.coordinates"),
     "niftyreg.disp": (NiftyRegDisplacementField, "nrd.nii.gz", None),
     "niftyreg.def": (NiftyRegDeformationField, "nrf.nii.gz", None),
     "niftyreg.vel": (NiftyRegVelocityField, "nrv.nii.gz", None),
@@ -179,9 +179,9 @@ def _in_world(
 
 
 def _apply(t: xforms.Transformation, points: np.ndarray) -> np.ndarray:
-    points = xforms.CoordinatesField(field=points[:, None, None, :])
+    points = xforms.CoordinateField(field=points[:, None, None, :])
     out = xforms.Sequence(transformations=[points, t]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)[:, 0, 0, :]
+    return np.asarray(out.to(xforms.CoordinateField).field)[:, 0, 0, :]
 
 
 def _same_map(
@@ -295,7 +295,7 @@ def _generic(
     field = _field()
     data = field.transformations[1].data
     if kind == "coordinates":
-        middle = xforms.CoordinatesField(
+        middle = xforms.CoordinateField(
             field=data + _grid(), input=VOXEL, output=VOXEL
         )
     else:
@@ -326,7 +326,7 @@ def _grid() -> np.ndarray:
         (LPSmm(), "displacement", ItkNiftiDisplacementField),
         (None, "coordinates", NiftiRASDisplacementField),
         (RASmm(), "coordinates", NiftiRASDisplacementField),
-        (LPSmm(), "coordinates", ItkNiftiCoordinatesField),
+        (LPSmm(), "coordinates", ItkNiftiCoordinateField),
     ],
     ids=["unknown", "ras", "lps", "unknown-coord", "ras-coord", "lps-coord"],
 )
@@ -336,7 +336,7 @@ def test_save_chooses_one_nifti_field(
     t = _generic(world, kind)
     path = str(tmp_path / "warp.nii.gz")
     io.save(t, path)
-    hint = {ItkNiftiCoordinatesField: "itk.coordinates"}.get(cls)
+    hint = {ItkNiftiCoordinateField: "itk.coordinates"}.get(cls)
     if cls is ItkNiftiDisplacementField:
         hint = "itk"
     back = _load(path, hint)
@@ -350,7 +350,7 @@ def test_save_chooses_one_nifti_field(
     "kind, cls",
     [
         ("displacement", MrtrixDisplacementField),
-        ("coordinates", MrtrixCoordinatesField),
+        ("coordinates", MrtrixCoordinateField),
     ],
 )
 def test_save_chooses_the_mrtrix_field_of_the_same_kind(
@@ -366,7 +366,7 @@ def test_save_writes_a_velocity_to_mrtrix_as_coordinates(
 ) -> None:
     path = str(tmp_path / "warp.mif")
     io.save(_field(log=True), path)
-    assert isinstance(_load(path, None), MrtrixCoordinatesField)
+    assert isinstance(_load(path, None), MrtrixCoordinateField)
 
 
 # ----------------------------------------------------------------------
@@ -462,7 +462,7 @@ def test_a_dask_field_stays_lazy(files: dict) -> None:
     with backend("dask"):
         loaded = _load(files["nifti"], None)
         for cls in (
-            MrtrixCoordinatesField,
+            MrtrixCoordinateField,
             ItkNiftiDisplacementField,
             NiftyRegDeformationField,
             OmeZarrField,
@@ -502,7 +502,7 @@ def test_a_dense_field_is_written_as_an_itk_displacement_field(
 
 
 @pytest.mark.parametrize(
-    "kind", ["ItkNiftiDisplacementField", "ItkNiftiCoordinatesField"]
+    "kind", ["ItkNiftiDisplacementField", "ItkNiftiCoordinateField"]
 )
 def test_an_itk_field_written_by_brainhops_reads_back_without_a_hint(
     tmp_path,  # noqa: ANN001

@@ -3,7 +3,7 @@ coefficients.
 
 The conversion used to raise for any field holding data, in both
 directions, so that `DisplacementField.to(store=...)` and
-`CoordinatesField.to(store=...)` failed, and with them the composition of
+`CoordinateField.to(store=...)` failed, and with them the composition of
 coefficient fields.
 """
 
@@ -12,14 +12,14 @@ import pytest
 
 from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel.transformations import (
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
 )
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap"]
 DEGREES = [2, 3]
 NDIMS = [2, 3]
-FIELD_TYPES = [DisplacementField, CoordinatesField]
+FIELD_TYPES = [DisplacementField, CoordinateField]
 
 
 def _random_field(rng, ndim):  # noqa: ANN001, ANN202

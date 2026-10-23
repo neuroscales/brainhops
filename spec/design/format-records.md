@@ -36,7 +36,7 @@ for example `TransformationField._data`
 (`concrete.py:706`). The two meanings of the same attribute collided in
 #342, and three workarounds were added because of it.
 
-1. `NiftiRASCoordinatesField` uses a custom `data` setter,
+1. `NiftiRASCoordinateField` uses a custom `data` setter,
    `_store_through_the_parser`, which writes through the parser
    (`io/transformations/nifti/fields.py:65`).
 2. The NIfTI affines `NiftiRASToVoxel` and `NiftiVoxelToRAS`
@@ -580,7 +580,7 @@ the new package `brainhops.io.metadata`. After the first pass,
 their format classes and also export `NiftiRaw` and `NiftiMetadata`
 again, so that a user finds them next to the classes that use them.
 The modules of the NIfTI transformation package are private, and the
-SPM package exports `SpmCoordinatesField` from its private `_fields`
+SPM package exports `SpmCoordinateField` from its private `_fields`
 module instead of the public module `spm.y`.
 
 ## Relation to #233 and the #306 memo
@@ -985,7 +985,7 @@ its status.
     another class, it reads the decoded `data` of a format that takes
     `data` over. The data model of a transformation copies the decoded
     view of another instance (item 35), so `LtaTransformation` and the
-    NIfTI affines and coordinates field pass their stored `_data` within
+    NIfTI affines and coordinate field pass their stored `_data` within
     the format, in explicit code in each class.
 18. `replace` reads `data` through the property, so a copy made with
     `replace` turns the proxy into an array and is no longer saved byte
@@ -1611,7 +1611,7 @@ its status.
      be a stack, such as a Zarr store or names that follow no single
      numbering, or else that a stack is read only by hint. No base
      mechanism restricts a format to its hint, so each class refuses in
-     its own sniffer, as `ItkNiftiCoordinatesField` does. A hint
+     its own sniffer, as `ItkNiftiCoordinateField` does. A hint
      restricts the formats that dispatch considers, and does not only
      reorder them: `parse` and `sniff` in `io/base/_dispatch.py` keep
      the formats that answer to a hint, and sniff only those. When none
@@ -1997,7 +1997,7 @@ its status.
      Status: open, for the maintainer to decide whether copies within a
      format should carry the cache.
 192. Check 20 cannot tell an old geometry from a new one for some
-     exemplars. The transformation of `NiftiRASCoordinatesField` and of
+     exemplars. The transformation of `NiftiRASCoordinateField` and of
      the FNIRT exemplar, which has no moving image, is its data, which
      does not depend on the header, and the MINC files of the harness
      have one geometry. The part of the check on assigned values still
@@ -2997,12 +2997,12 @@ and transformations (#287).
      `NiftyRegField` a data model, which `relabel` then no longer
      refuses as a family of formats. Status: decided in pass 5a. Each
      of the nine concrete classes (`NiftiRASToVoxel`,
-     `NiftiVoxelToRAS`, `NiftiRASCoordinatesField`,
+     `NiftiVoxelToRAS`, `NiftiRASCoordinateField`,
      `NiftiRASDisplacementField`, `NiftyRegSequence`,
-     `SpmCoordinatesField`, `ItkNiftiField`, `FnirtWarpField` and
+     `SpmCoordinateField`, `ItkNiftiField`, `FnirtWarpField` and
      `AfniNiftiWarp`) takes `metadata` over itself. The MRtrix warps
      share the abstract base `MrtrixWarp`, which does not derive from
-     `Transformation` either, so `MrtrixCoordinatesField`,
+     `Transformation` either, so `MrtrixCoordinateField`,
      `MrtrixDisplacementField` and `MrtrixWarpFull` take `metadata` over
      in the same way.
 401. The metadata of a format decodes its vocabulary at once, in

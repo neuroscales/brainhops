@@ -104,7 +104,7 @@ In Python, the same option is available as
 `image.reslice(reference, bound="nearest", clip=0.5)` and on the spline
 `pull`/`pull_axes` functions. Clipped samples are zero even with a nonzero
 numeric boundary value. Dask clipping remains lazy; separable reslicing builds
-masks per axis group instead of materialising a full coordinates field.
+masks per axis group instead of materialising a full coordinate field.
 
 
 For asymmetric clipping, pass a quoted pair such as `--clip '(0, 0.5)'`.

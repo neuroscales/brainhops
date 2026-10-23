@@ -19,7 +19,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     AffineExponential,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Inverse,
@@ -443,8 +443,8 @@ def test_combined_flags_are_well_defined() -> None:
 def test_a_velocity_converts_to_the_coordinates_of_its_flow() -> None:
     # The result keeps only the spline encoding (#294).
     velocity = _velocity_field().to(store="coefficients")
-    coordinates = velocity.to(CoordinatesField)
-    assert type(coordinates) is CoordinatesField
+    coordinates = velocity.to(CoordinateField)
+    assert type(coordinates) is CoordinateField
     assert (coordinates.store, coordinates.degree) == ("coefficients", DEGREE)
     assert not hasattr(coordinates, "steps")
     np.testing.assert_allclose(

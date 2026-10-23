@@ -11,7 +11,7 @@ an instance of its format that is the map `t` is, raises a
 | Source                             | Format                        |
 | ---------------------------------- | ----------------------------- |
 | any field, `Sequence`              | `ItkNiftiDisplacementField`   |
-| any field, `Sequence`              | `ItkNiftiCoordinatesField`    |
+| any field, `Sequence`              | `ItkNiftiCoordinateField`    |
 
 ITK stores a field in the LPS world, in millimetres, on the grid of its
 file. The endpoints of `t` are bridged exactly to LPS, so a field
@@ -54,7 +54,7 @@ from brainhops.datamodel._transformations.compute.converters import (
 )
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
-    coordinates_parts,
+    coordinate_parts,
     displacement_parts,
     format_options,
     held,
@@ -62,10 +62,10 @@ from brainhops.io.transformations.base._conversions import (
     unrepresentable,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
-from brainhops.io.transformations.base.fields import LPSCoordinatesField
+from brainhops.io.transformations.base.fields import LPSCoordinateField
 
 from ._fields import (
-    ItkNiftiCoordinatesField,
+    ItkNiftiCoordinateField,
     ItkNiftiDisplacementField,
     ItkNiftiField,
 )
@@ -106,25 +106,25 @@ def _(
     return held(cls(transformations=chain), parts)
 
 
-@register_converter(SOURCES, ItkNiftiCoordinatesField)
+@register_converter(SOURCES, ItkNiftiCoordinateField)
 def _(
     t: _xforms.Transformation,
-    cls: tx.Type[ItkNiftiCoordinatesField],
+    cls: tx.Type[ItkNiftiCoordinateField],
     **kwargs,
-) -> ItkNiftiCoordinatesField:
+) -> ItkNiftiCoordinateField:
     # An affine from LPS to a grid, then the LPS position of each node of
     # that grid. Anything else is turned into one, and what loses is
     # reported.
-    cls = ItkNiftiCoordinatesField
+    cls = ItkNiftiCoordinateField
     if isinstance(t, cls):
         return smart_replace(t, cls, **kwargs)
     format_options(t, cls, kwargs)
     _check_known(t, cls)
-    parts = coordinates_parts(t, LPS, LPS, cls)
+    parts = coordinate_parts(t, LPS, LPS, cls)
     world, voxel = cls._spaces(_NDIM)
     chain = (
         LPSToVoxel(matrix=parts.world2grid[:-1], input=world, output=voxel),
-        LPSCoordinatesField(
+        LPSCoordinateField(
             field=parts.field.values, input=voxel, output=world
         ),
     )
