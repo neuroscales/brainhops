@@ -28,7 +28,6 @@ from brainhops.datamodel._frames import (
     FrameSlot,
     _structure,
     component_axes,
-    same_frame,
 )
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -111,7 +110,7 @@ def values_in_format_frames(
                 f"axis {name}, which would be written as they are"
             )
             continue
-        if same_frame(slot, target):
+        if slot is target:
             continue
         note = None if caveat is None else caveat(i, slot)
         if note is not None:

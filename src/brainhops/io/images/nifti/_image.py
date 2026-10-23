@@ -304,10 +304,12 @@ class NiftiImage(
         has no meaning.
 
         The values are never converted when they are read. The frames of
-        the header are decoded at each read rather than stored, so that a
-        consolidated image gets the frames of its new header. Frames that
-        are assigned, or given to the constructor, take precedence over
-        those of the header, as
+        the header are built once and the same objects are returned at
+        every read, because transformations compare by identity. They are
+        built again when the header, the shape or the decoded
+        transformations change, so that a consolidated image gets the
+        frames of its new header. Frames that are assigned, or given to
+        the constructor, take precedence over those of the header, as
         [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
         describes them.
         """
@@ -326,19 +328,55 @@ class NiftiImage(
 
         An image without a header, or whose intent states no frame, gives
         an empty mapping, so that its frames are the array system.
+        Transformations compare by identity, so the frames are built once
+        for a header, a shape and a decoded list of transformations, and
+        the same objects are returned at every read. They are built again
+        when one of these changes, as when other metadata is assigned.
+        """
+        return self._header_state()[0]
+
+    def _header_state(
+        self,
+    ) -> tx.Tuple[tx.Dict[int, FrameSlot], tx.Optional[Transformation]]:
+        """Return the frames of the header and the transformation they use.
+
+        The transformation is the last one that the header decodes to,
+        which is the frame of a DISPVECT file before its restriction to
+        the spatial axes.
         """
         metadata = self.metadata
         if metadata is None or metadata.raw is None:
-            return {}
+            return {}, None
         if _nifti_intent(metadata.raw.header) not in FRAMED_INTENTS:
-            return {}
+            return {}, None
+        shape = tuple(self.shape)
+        # The decoded list is cached by the image, unless a list was
+        # assigned, in which case the header is decoded here once.
+        decoded = None
         if self._transformations is None:
             decoded = self.transformations
-        else:
+        key = decoded[-1] if decoded else None
+        cached = self.__dict__.get("_header_frames_cache")
+        if (
+            cached is not None
+            and cached[0] is metadata
+            and cached[1] == shape
+            and cached[2] is key
+        ):
+            return cached[3], cached[4]
+        if self._transformations is not None:
             decoded = _header_transformations(metadata)
         preferred = decoded[-1] if decoded else None
         system = self.system if preferred is None else preferred.input
-        return header_frames(metadata, preferred, system, tuple(self.shape))
+        frames = header_frames(metadata, preferred, system, shape)
+        self.__dict__["_header_frames_cache"] = (
+            metadata,
+            shape,
+            key,
+            frames,
+            preferred,
+        )
+        return frames, preferred
 
     def __call__(self, transformation: Transformation) -> SingleScaleImage:
         """Apply a transformation lazily, without reslicing.
@@ -601,8 +639,9 @@ class NiftiImage(
         displacement field, are encoded in the frame that the intent of
         the header states (see [`frames`][]). The intent is the one
         given by keyword, or else that of the metadata, or else that of
-        `like`. An image whose frames are those of its own header, whose
-        geometry is kept, and whose intent does not change, is encoded
+        `like`. An image whose frames are the objects that it decoded
+        from its own header, whose geometry is kept, and whose intent
+        does not change, is encoded
         with its values and its intent as they are, including an FSL
         intent, and an FSL field then keeps the 4-D layout of FSL.
         Otherwise, the vectors of a displacement axis or of a vector
@@ -703,9 +742,9 @@ class NiftiImage(
             self.transformations = None
             return self
         # The values of component axes are encoded in the frame that the
-        # header states. An image whose frames are those of its own header,
-        # and whose geometry is kept, already holds its values in that
-        # frame, and the intent of the header is kept with them. The values
+        # header states. An image whose frames are those it decoded from its
+        # own header, and whose geometry is kept, already holds its values
+        # in that frame, and the intent of the header is kept. The values
         # of any other image are re-expressed in the world of the preferred
         # transformation, and written with the DISPVECT intent. An image
         # without data is refused when it is encoded.
@@ -722,11 +761,16 @@ class NiftiImage(
             intent = _inherited_intent(metadata, like)
         image = self
         dispvect = False
+        # Transformations compare by identity, so the values are in the
+        # frames of the header when each slot is the very frame that the
+        # image decoded from its header.
+        header = self._header_frames()
+        slots = self.frames if header else ()
         own = (
-            not self._frames
-            and kept
+            kept
             and intent == own_intent
-            and bool(self._header_frames())
+            and bool(header)
+            and all(slots[i] is frame for i, frame in header.items())
         )
         if not own and (self._data is not None or self.rawdata is not None):
             frame_of = _NiftiFrames(
@@ -939,6 +983,19 @@ class _NiftiFrames:
         if axis.valences != (Valence.vector,):
             return None
         image = self.image
+        header, preferred = image._header_state()
+        if (
+            preferred is not None
+            and image.transformation is preferred
+            and isinstance(header.get(index), Transformation)
+            and _nifti_intent(image.metadata.raw.header)
+            == _NIFTI_INTENT_DISPVECT
+        ):
+            # The preferred transformation is the best affine of the header,
+            # so the frame that the image decoded is the frame of DISPVECT,
+            # and values in it are written as they are.
+            self.used = True
+            return header[index]
         frame = restricted_frame(
             image.transformation,
             image._array_axes(),

@@ -36,8 +36,6 @@ from ._frames import (
     normalize_frames,
     pair_axes,
     resolve_target,
-    same_change,
-    same_frame,
     squeeze_axis,
     with_components,
 )
@@ -695,9 +693,7 @@ class SingleScaleImage(Image):
         axes = self._array_axes()
         slots = self.frames
         targets = _frame_targets(self, frame, axes, slots)
-        targets = {
-            i: t for i, t in targets.items() if not same_frame(t, slots[i])
-        }
+        targets = {i: t for i, t in targets.items() if t is not slots[i]}
         if not targets:
             return self
         for i in targets:
@@ -732,7 +728,6 @@ class SingleScaleImage(Image):
 
         new_slots = list(slots)
         new_axes = list(axes)
-        changed: tx.List[int] = []
         for i, target in targets.items():
             axis = axes[i]
             source = slots[i]
@@ -740,11 +735,6 @@ class SingleScaleImage(Image):
             source_info, target_info, cols = pair_axes(
                 source, target, axes, ncomponents
             )
-            if same_change(source_info, target_info, cols):
-                # The frames differ as objects, as two copies of one
-                # transformation do, but give the same components.
-                continue
-            changed.append(i)
             matrix = change_matrix(
                 jacobian_of(source, source_info, cols),
                 jacobian_of(target, target_info, cols),
@@ -757,8 +747,6 @@ class SingleScaleImage(Image):
                 # A layout with components that are zero by construction is
                 # replaced by a layout that holds the tensor in any frame.
                 new_axes[i] = axis.reframed(ncomponents, shape[i])
-        if not changed:
-            return self
         transformations = self.transformations
         if any(new is not old for new, old in zip(new_axes, axes)):
             transformations = [
@@ -772,7 +760,7 @@ class SingleScaleImage(Image):
             ]
         metadata = self.metadata
         if metadata is not None:
-            types = tuple(axes[i].type for i in changed)
+            types = tuple(axes[i].type for i in targets)
             metadata = metadata.derive(Reframed(types), history="reframe")
         return SingleScaleImage(
             data=data,

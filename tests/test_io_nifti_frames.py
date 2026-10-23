@@ -126,9 +126,14 @@ def test_the_reader_records_the_frame_of_the_file(
     image = NiftiImage.load(path)
 
     assert image.transformation.input.axes[4].type == "displacement"
-    assert image.frames[4] is not None
-    # The values are already in the frame of the preferred transformation.
-    assert image.reframe() is image
+    # The frames of the header are the same objects at every read.
+    frame = image.frames[4]
+    assert image.frames[4] is frame
+    assert image.reframe(frame) is image
+    # The values are already in the frame of the preferred transformation,
+    # which is another object, so they are re-expressed without change.
+    ras = np.asarray(image.reframe().data)[:, :, :, 0, :]
+    assert np.allclose(ras, values @ _L.T, atol=1e-5)
     voxel = np.asarray(image.reframe(None).data)[:, :, :, 0, :]
     assert np.allclose(voxel, values, atol=1e-5)
 
@@ -141,8 +146,10 @@ def test_a_consolidated_image_reads_its_frames_from_the_header(
 
     consolidated = image.consolidate()
 
-    assert consolidated.frames[4] is not None
-    assert consolidated.reframe() is consolidated
+    frame = consolidated.frames[4]
+    assert consolidated.frames[4] is frame
+    ras = np.asarray(consolidated.reframe().data)[:, :, :, 0, :]
+    assert np.allclose(ras, values @ _L.T, atol=1e-5)
 
 
 def test_a_frame_that_nifti_cannot_store_needs_lossy(
@@ -691,3 +698,28 @@ def test_a_template_does_not_lay_out_other_values_as_fsl(
 
     assert nb.load(str(path)).shape == (*_SHAPE, 1, 3)
     assert np.allclose(_stored(path), values, atol=1e-6)
+
+
+def test_the_writer_keeps_the_header_frames_by_identity(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Transformations compare by identity. Frames that are the objects the
+    # image decoded from its header keep the file as it is, and an equal
+    # frame that is another object is another frame, which the writer
+    # re-expresses in RAS.
+    data = np.random.default_rng(11).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(True)
+    path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
+    image = NiftiImage.load(path)
+    frame = image.frames[4]
+    copy = tmp_path / "copy.nii"
+
+    image.frames = {4: frame}
+    save(image, copy)
+    assert _intent(copy) == FNIRT_DISPLACEMENT
+
+    image.frames = {
+        4: Affine(matrix=frame.matrix, input=frame.input, output=frame.output)
+    }
+    with pytest.raises(LossyConversionError, match="FSL scaled"):
+        image.consolidate()

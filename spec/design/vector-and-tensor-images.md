@@ -488,10 +488,13 @@ the header states.
   re-expressed in another frame are then wrong, because positions also
   change with the translation of the frame.
 
-`NiftiImage` decodes the frames of its file from its header each time
-they are read, and does not store them, so that an image that is
-consolidated gets the frames of its new header. Frames that are given to
-the image take precedence over those of the header. The data model knows
+`NiftiImage` builds the frames of its file from its header once, and
+returns the same objects at every read, because transformations compare
+by identity and a frame is the same frame only when it is the same
+object. It builds them again when the header, the shape or the decoded
+transformations change, so that an image that is consolidated gets the
+frames of its new header. Frames that are given to the image take
+precedence over those of the header. The data model knows
 nothing of files: the format overrides the `frames` property in its own
 class, and it gives the frames it reads to the images that it builds,
 such as the result of a lazily applied transformation, as ordinary
@@ -502,10 +505,13 @@ intent of the header is the one given by keyword, or else that of the
 metadata, or else that of `like`, and the values are written in the
 frame that this intent states.
 
-- An image whose frames are those of its own header, whose geometry is
-  kept, and whose intent does not change, is written with its values
-  and its intent as they are, including an FSL intent, because its
-  values are already in the frame that the header states. A field that
+- An image whose frames are the very objects that it decoded from its
+  own header, whose geometry is kept, and whose intent does not change,
+  is written with its values and its intent as they are, including an
+  FSL intent, because its values are already in the frame that the
+  header states. A frame that is equal to one of these but is another
+  object is another frame, as transformations compare by identity, so
+  its values are re-expressed, which leaves them unchanged. A field that
   keeps the FSL intent of its own header is laid out as FSL writes it.
 - Otherwise, the vectors of a displacement axis, or of a vector axis of
   valence `"vector"`, are re-expressed in the world of the preferred

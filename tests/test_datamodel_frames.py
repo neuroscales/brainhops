@@ -813,13 +813,19 @@ def test_an_unknown_method_is_refused(x: SingleScaleImage) -> None:
         x.reframe(None, method="shear")
 
 
-def test_reframe_into_an_equal_frame_returns_the_image(
+def test_an_equal_frame_is_not_the_same_frame(
     x: SingleScaleImage, a: Affine
 ) -> None:
-    # Another object with the same matrix gives the same components.
+    # Transformations compare by identity, so another object with the same
+    # matrix is another frame. The values are re-expressed through the
+    # identity, and do not change.
     copy = Affine(matrix=np.asarray(a.matrix), input=a.input, output=a.output)
 
-    assert x.reframe(copy) is x
+    out = x.reframe(copy)
+
+    assert out is not x
+    assert out.frames[3] is copy
+    assert np.allclose(np.asarray(out.data), np.asarray(x.data))
 
 
 # --- metadata ---------------------------------------------------------
