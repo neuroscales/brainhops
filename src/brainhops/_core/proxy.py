@@ -1001,7 +1001,8 @@ class ScaledProxy(ArrayProxy):
         # Values in another type are converted into a new array, which is
         # then scaled in place. Values that are already in the type may be
         # a read-only memory map, or a view of an array that `base` keeps,
-        # so they are scaled into a new array instead.
+        # so the first step writes them into a new array, and the next
+        # step is done in place in that array.
         owned = stored.dtype != self.dtype
         values = stored.astype(self.dtype) if owned else stored
         # The factors are cast to the type of the values first, so that a
