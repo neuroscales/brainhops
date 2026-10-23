@@ -296,8 +296,13 @@ class NiftiImage(
         [`header_frames`][brainhops.io.common.nifti._frames.header_frames]).
         Because of the first assumption, the vectors of an FSL field
         re-expressed in RAS are the displacements of the map only when
-        the moving image has the orientation of the reference in RAS, so
-        the writer re-expresses them only with `lossy=True`. The sform of
+        the moving image has the same voxel-to-RAS map as the reference,
+        up to the voxel size: the same direction cosines, the same flip
+        of the first axis and the same position in RAS of the origin of
+        the scaled millimetres. Otherwise the displacements in RAS differ
+        by a linear term and by a constant offset that no change of frame
+        produces, so the writer re-expresses them only with
+        `lossy=True`. The sform of
         an FSL coefficient file holds the inverse of the initial affine
         rather than a map to a world, so re-expressing its coefficients
         in the preferred transformation, as `reframe()` does by default,
@@ -652,7 +657,8 @@ class NiftiImage(
         exact when both frames are affine. Vectors in FSL scaled
         millimetres are re-expressed only with `lossy=True`, because the
         result is the displacement of the map in RAS only when the
-        moving image has the orientation of the reference. NIfTI has no
+        moving image has the same voxel-to-RAS map as the reference, up
+        to the voxel size. NIfTI has no
         frame for covectors, tensors and the coordinates of points, it
         cannot re-express the coefficients of an FSL spline field, and
         it cannot re-express any value in the frame of an FSL intent
@@ -1013,9 +1019,13 @@ def _fsl_caveat(index: int, slot: FrameSlot) -> tx.Optional[str]:
 
     FSL adds a vector of a field to a position in the scaled millimetres
     of the reference, and reads the sum in the scaled millimetres of the
-    moving image. The vector re-expressed in RAS is the displacement of
-    the map in RAS only when the scaled millimetres of both images have
-    the same orientation in RAS, which the field does not tell.
+    moving image. If `L` is the linear part of the map from scaled
+    millimetres to RAS and `M` the whole map, the displacement in RAS at
+    `x` is `L_mov d + (M_mov - M_ref)(x)`, while the vector re-expressed
+    in RAS is `L_ref d`. The two agree only when `M_mov` and `M_ref` are
+    the same map, which holds when the moving image has the same
+    voxel-to-RAS map as its reference, up to the voxel size, and which
+    the field does not tell.
     """
     # The FSL formats read NIfTI files through this package, so they are
     # imported when they are needed rather than when it is loaded.
@@ -1028,7 +1038,7 @@ def _fsl_caveat(index: int, slot: FrameSlot) -> tx.Optional[str]:
     return (
         "are in FSL scaled millimetres, which give the displacements of "
         "the map in RAS only if the moving image of the field has the same "
-        "orientation in RAS as its reference"
+        "voxel-to-RAS map as its reference, up to the voxel size"
     )
 
 

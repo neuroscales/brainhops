@@ -473,11 +473,19 @@ the header states.
   coordinate systems. The reader takes the vectors to be in the scaled
   millimetres of the reference, which identifies the axes of the two
   systems as FSL does when it adds them. The frame describes the
-  components as FSL stores them, but the vectors re-expressed in RAS are
-  the displacements of the map in RAS only when the scaled millimetres
-  of both images have the same orientation in RAS. Otherwise the map
-  needs the moving image, which `FnirtWarpField` takes and the image
-  reader does not. The reader also assumes, as `FnirtWarpField` does
+  components as FSL stores them. If `M` is the map from the scaled
+  millimetres of an image to RAS and `L` its linear part, a vector `d`
+  at the position `x` of the reference is the displacement
+  `L_mov d + (M_mov - M_ref)(x)` in RAS, while the vector re-expressed
+  in RAS through the frame is `L_ref d`. The two agree only when the
+  moving image has the same voxel-to-RAS map as the reference, up to
+  the voxel size, which cancels in `M`: the same direction cosines, the
+  same flip of the first axis and the same position in RAS of the
+  origin of the scaled millimetres. A moving image with another field
+  of view adds a constant offset that no change of frame produces.
+  Otherwise the map needs the moving image, which `FnirtWarpField`
+  takes and the image reader does not. The same holds for the
+  coefficient intents. The reader also assumes, as `FnirtWarpField` does
   when it is given no reference image, that a deformation field lies on
   the grid of its reference, as FNIRT and `convertwarp` write it.
 - An FSL deformation field may hold absolute positions rather than
@@ -527,9 +535,9 @@ frame that this intent states.
   unit as it converts the matrices.
 - Re-expressing vectors in FSL scaled millimetres in RAS is exact as a
   computation, but the result is the displacement of the map in RAS only
-  when the moving image of the field has the same orientation in RAS as
-  its reference, which the field does not tell (see the first
-  assumption above). The writer therefore refuses it unless `lossy=True`
+  when the moving image of the field has the same voxel-to-RAS map as
+  its reference, up to the voxel size, which the field does not tell
+  (see the first assumption above). The writer therefore refuses it unless `lossy=True`
   is given. `FnirtWarpField`, which takes the moving image, writes such
   a field exactly.
 - An intent given by keyword that states another frame than DISPVECT,

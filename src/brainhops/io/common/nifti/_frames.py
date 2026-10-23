@@ -77,10 +77,14 @@ def header_frames(
     [`FnirtWarpField`][brainhops.io.transformations.fsl.FnirtWarpField]
     computes it without a reference image, which assumes that a
     deformation field lies on the grid of its reference, as FNIRT and
-    `convertwarp` write it. When the moving image is oriented differently
-    from the reference, the vectors re-expressed in RAS through this
-    frame are not the displacements of the map in RAS, which
-    `FnirtWarpField` computes from the moving image.
+    `convertwarp` write it. The vectors re-expressed in RAS through this
+    frame are the displacements of the map in RAS only when the moving
+    image has the same voxel-to-RAS map as the reference, up to the voxel
+    size: the same direction cosines, the same flip of the first axis
+    and the same position in RAS of the origin of the scaled
+    millimetres. Otherwise they differ by a linear term and by a
+    constant offset, and only `FnirtWarpField`, which takes the moving
+    image, computes the displacements of the map in RAS.
 
     The values of an FSL deformation field may be absolute positions
     rather than displacements. The header does not tell the two apart,

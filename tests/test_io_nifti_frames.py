@@ -473,7 +473,7 @@ def test_a_moved_fsl_field_is_written_in_ras_with_lossy(
     # Once its geometry changes, the field no longer lies on the grid of
     # its reference, so it is written with DISPVECT, in RAS. The vectors in
     # RAS are the displacements of the map only if the moving image has
-    # the orientation of the reference, so the write needs lossy=True.
+    # the voxel-to-RAS map of the reference, so the write needs lossy=True.
     data = np.random.default_rng(6).normal(size=(*_SHAPE, 3))
     affine = _reference_affine(True)
     path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
@@ -481,7 +481,7 @@ def test_a_moved_fsl_field_is_written_in_ras_with_lossy(
     ras = _components(image.reframe(-1))
     copy = tmp_path / "copy.nii"
 
-    with pytest.raises(WriterError, match="same orientation in RAS"):
+    with pytest.raises(WriterError, match="same voxel-to-RAS map"):
         save(_moved(image), copy)
     with pytest.raises(LossyConversionError, match="FSL scaled"):
         NiftiImage.from_instance(_moved(image)).consolidate()
@@ -723,3 +723,33 @@ def test_the_writer_keeps_the_header_frames_by_identity(
     }
     with pytest.raises(LossyConversionError, match="FSL scaled"):
         image.consolidate()
+
+
+def test_a_moving_image_with_another_origin_adds_an_offset(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The moving image has the orientation and the voxel sizes of the
+    # reference, but its origin is shifted, so the displacements of the map
+    # in RAS differ from the vectors re-expressed in RAS by a constant.
+    data = np.random.default_rng(12).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(False)
+    path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
+    image = NiftiImage.load(path)
+    shifted = affine.copy()
+    shifted[:3, 3] += [4.0, -3.0, 2.0]
+    warp = FnirtWarpField.load(path, deformation_type="relative")
+    warp.moving = nb.Nifti1Image(np.zeros(_SHAPE, "f4"), shifted)
+
+    ras = _components(image.reframe(-1))
+
+    grid = np.stack(
+        np.meshgrid(*[np.arange(s) for s in _SHAPE], indexing="ij"), -1
+    ).astype(float)
+    points = grid @ affine[:3, :3].T + affine[:3, 3]
+    chain = _xforms.Sequence(
+        transformations=[_xforms.CoordinatesField(field=points)]
+        + list(warp.transformations)
+    )
+    moved = np.asarray(chain.compute().field)
+    offset = (moved - points) - ras
+    assert np.allclose(offset, [4.0, -3.0, 2.0], atol=1e-4)
