@@ -14,6 +14,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
+from brainhops.datamodel._frames import component_axes
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -36,6 +37,7 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     WriterError,
 )
+from brainhops.io.common._frames import values_in_format_frames
 from brainhops.io.common._geometry import (
     held_transformations,
     same_transformations,
@@ -43,6 +45,7 @@ from brainhops.io.common._geometry import (
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
+    _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
 )
@@ -247,6 +250,28 @@ class NiftiImage(
         ]
         # In F order, the first axis changes fastest.
         return ArrayCoordinateSystem(axes=axes, name="voxel", order="F")
+
+    def _decoded_frames(self) -> tx.Any:
+        """Return the frame of the vectors of a DISPVECT file.
+
+        A DISPVECT file stores RAS vectors in the world of its best affine,
+        which is the last transformation that the header decodes to, so
+        that transformation is the frame of its displacement axis. The
+        transformation also carries the other axes of the file along, so
+        the image restricts it to the spatial axes when it reads its
+        frames.
+        """
+        raw = None if self.metadata is None else self.metadata.raw
+        if raw is None or _nifti_intent(raw.header) != _NIFTI_INTENT_DISPVECT:
+            return ()
+        components = component_axes(self._array_axes())
+        if self._transformations is None:
+            decoded = self.transformations
+        else:
+            decoded = _header_transformations(self.metadata)
+        if not components or not decoded:
+            return ()
+        return {i: decoded[-1] for i in components}
 
     # --- reading ------------------------------------------------------
 
@@ -462,6 +487,7 @@ class NiftiImage(
         inplace: bool = False,
         like: tx.Any = None,
         on_loss: tx.Optional[OnLoss] = None,
+        lossy: bool = False,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -515,6 +541,14 @@ class NiftiImage(
             What to do with the metadata that the header cannot hold. By
             default, the policy in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        lossy : bool, default=False
+            Whether the values of a vector axis may be written although
+            NIfTI loses information about them: a frame that NIfTI cannot
+            store, or a change of frame through a map that is not affine,
+            which is computed by finite differences. A displacement axis
+            is written with the DISPVECT intent, and its values are
+            re-expressed in the world of the preferred transformation,
+            which is exact when both frames are affine.
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set
@@ -536,6 +570,9 @@ class NiftiImage(
         UnrepresentableTransformationError
             If the preferred transformation is not affine, as for a
             displacement field.
+        LossyConversionError
+            If NIfTI loses information about the values of a vector axis
+            and `lossy` is false.
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         """
@@ -553,6 +590,7 @@ class NiftiImage(
         )
         if (
             self._data is None
+            and not self._frames
             and kept
             and like is None
             and not overrides
@@ -565,12 +603,24 @@ class NiftiImage(
                 return replace(self, transformations=None)
             self.transformations = None
             return self
+        # The values of vector axes are encoded in the frame of the file,
+        # which is the world of the preferred transformation. An image
+        # without data is refused when it is encoded.
+        image = self
+        reframed = None
+        if self._data is not None or self.rawdata is not None:
+            reframed = values_in_format_frames(
+                self, lambda i, axis: _nifti_frame(self, i, axis), lossy
+            )
+        if reframed is not None:
+            image = replace(self, data=reframed[0], frames=reframed[1])
         raw, record = _nifti_encoded(
-            self, kept, like, overrides, metadata, fields
+            image, kept, like, overrides, metadata, fields
         )
         metadata = type(metadata or NiftiMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, on_loss, stacklevel=2)
+        # The frames of the values are now those that the header decodes.
         if not inplace:
             return replace(
                 self,
@@ -578,11 +628,13 @@ class NiftiImage(
                 transformations=None,
                 rawdata=raw,
                 metadata=metadata,
+                frames=(),
             )
         self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
+        self.frames = ()
         return self
 
     def to_nibabel(
@@ -701,6 +753,20 @@ class NiftiImage(
             If the image cannot be encoded, as in [`consolidate`][].
         """
         return self.to_nibabel(**kwargs).to_bytes()
+
+
+def _nifti_frame(
+    image: NiftiImage, index: int, axis: tx.Any
+) -> tx.Optional[Transformation]:
+    """Return the frame in which NIfTI stores the values along an axis.
+
+    NIfTI stores displacements as RAS vectors in the world of its best
+    affine, which is the preferred transformation once it is written
+    (DISPVECT). It has no frame for the other component axes.
+    """
+    if axis.type == "displacement":
+        return image.transformation
+    return None
 
 
 def _nifti_to_transformations(

@@ -806,3 +806,13 @@ def test_the_method_is_a_member_or_its_value(
 def test_an_unknown_method_is_refused(x: SingleScaleImage) -> None:
     with pytest.raises(ValueError):
         x.reframe(None, method="shear")
+
+
+def test_reframe_into_an_equal_frame_returns_the_image(
+    x: SingleScaleImage, a: Affine
+) -> None:
+    # Another object with the same matrix, as a frame decoded twice from
+    # a header is, gives the same components.
+    copy = Affine(matrix=np.asarray(a.matrix), input=a.input, output=a.output)
+
+    assert x.reframe(copy) is x

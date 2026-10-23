@@ -36,6 +36,8 @@ from ._frames import (
     normalize_frames,
     pair_axes,
     resolve_target,
+    same_change,
+    same_frame,
     squeeze_axis,
     with_components,
 )
@@ -355,6 +357,12 @@ class SingleScaleImage(Image):
             If a mapping names an axis that does not exist.
         """
         raw = self._frames
+        if not raw:
+            # The frames of a file are decoded from its header at each read,
+            # and are not stored, so that they follow the header.
+            return normalize_frames(
+                self._decoded_frames(), self._array_axes(), tuple(self.shape)
+            )
         slots = normalize_frames(raw, self._array_axes(), tuple(self.shape))
         if isinstance(raw, Mapping) or any(
             new is not old for new, old in zip(slots, raw)
@@ -367,6 +375,19 @@ class SingleScaleImage(Image):
     @frames.setter
     def frames(self, value: tx.Any) -> None:
         self._frames = () if value is None else value
+
+    def _given_frames(self) -> tx.Any:
+        """Return the frames as they were given, or those of the file."""
+        return self._frames or self._decoded_frames()
+
+    def _decoded_frames(self) -> tx.Any:
+        """Return the frames that a file format decodes from its header.
+
+        An image built from data has no file, so this is empty. A format
+        whose header says in which frame its vectors are stored overrides
+        this method, and the frames that were given take precedence.
+        """
+        return ()
 
     def _array_axes(self) -> tx.Optional[AxisSequence]:
         """Return the axes of the array system, or `None` if unknown."""
@@ -682,7 +703,9 @@ class SingleScaleImage(Image):
         axes = self._array_axes()
         slots = self.frames
         targets = _frame_targets(self, frame, axes, slots)
-        targets = {i: t for i, t in targets.items() if t is not slots[i]}
+        targets = {
+            i: t for i, t in targets.items() if not same_frame(t, slots[i])
+        }
         if not targets:
             return self
         for i in targets:
@@ -717,6 +740,7 @@ class SingleScaleImage(Image):
 
         new_slots = list(slots)
         new_axes = list(axes)
+        changed = False
         for i, target in targets.items():
             axis = axes[i]
             source = slots[i]
@@ -724,6 +748,11 @@ class SingleScaleImage(Image):
             source_info, target_info, cols = pair_axes(
                 source, target, axes, ncomponents
             )
+            if same_change(source_info, target_info, cols):
+                # The frames differ as objects, as a frame decoded twice from
+                # a header does, but give the same components.
+                continue
+            changed = True
             matrix = change_matrix(
                 jacobian_of(source, source_info, cols),
                 jacobian_of(target, target_info, cols),
@@ -736,6 +765,8 @@ class SingleScaleImage(Image):
                 # A layout with components that are zero by construction is
                 # replaced by a layout that holds the tensor in any frame.
                 new_axes[i] = axis.reframed(ncomponents, shape[i])
+        if not changed:
+            return self
         transformations = self.transformations
         if any(new is not old for new, old in zip(new_axes, axes)):
             transformations = [
@@ -770,7 +801,7 @@ class SingleScaleImage(Image):
             data=_stored_data(self),
             transformations=transformations,
             metadata=self.metadata,
-            frames=self._frames,
+            frames=self._given_frames(),
         )
 
     def __getitem__(self, index: CartesianIndex) -> "SingleScaleImage":

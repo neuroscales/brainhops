@@ -143,7 +143,11 @@ def save(
         only approximately, such as a field interpolated with cubic
         splines written as the linearly interpolated values of a NIfTI
         file. A format that holds the transformation exactly is still
-        preferred.
+        preferred. An image whose values are vectors or tensors may
+        likewise be written by a format that stores them only
+        approximately, or without the frame that says what they are,
+        only with `lossy=True`; the formats that store such frames take
+        the option, and the other formats are not given it.
     conversion : mapping, optional
         Options of the conversion of a transformation to the chosen
         format, as `obj.to(Format, **conversion)` takes them. A format
@@ -218,7 +222,7 @@ def save(
     # Rebuilding the object would rerun its constructor and lose state that is
     # not a field, such as data already read.
     if any(isinstance(obj, fmt) for fmt, _ in claimed):
-        obj.save(file, **kwargs)
+        obj.save(file, **_with_lossy(type(obj), kwargs, lossy))
         return
 
     reasons: tx.List[str] = []
@@ -236,7 +240,7 @@ def save(
             file, name, obj, claimed, own, options, lossy, reasons, kwargs
         ):
             return
-    elif _write_first(file, name, obj, holders, _copy, reasons, kwargs):
+    elif _write_first(file, name, obj, holders, _copy, reasons, kwargs, lossy):
         return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
@@ -453,6 +457,7 @@ def _write_first(
     build: tx.Callable[[tx.Any, type], tx.Any],
     reasons: tx.List[str],
     options: tx.Dict[str, tx.Any],
+    lossy: bool = False,
 ) -> bool:
     """
     Write `obj` in the most specific candidate format that takes it.
@@ -460,7 +465,8 @@ def _write_first(
     The candidates are tried tier by tier, most specific first, and
     `build(obj, fmt)` makes the object to write. A tier where it
     succeeds for several formats is an ambiguity. In a tier where it
-    succeeds for one, that object is written with `options`, and a
+    succeeds for one, that object is written with `options`, and with
+    `lossy` when its writer takes that option, and a
     `ConversionError` or a `WriterError` from its writer moves on to the
     next tier. Why each format fails is added to `reasons`. Each build
     fills a report of its own with what the conversion of the metadata
@@ -505,12 +511,39 @@ def _write_first(
             continue
         fmt, writer, report = writers[0]
         try:
-            _write_once(obj, writer, file, report, options)
+            _write_once(
+                obj, writer, file, report, _with_lossy(fmt, options, lossy)
+            )
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
         return True
     return False
+
+
+def _with_lossy(
+    fmt: type, options: tx.Mapping[str, tx.Any], lossy: bool
+) -> tx.Dict[str, tx.Any]:
+    """Return the options of a write, with `lossy` if the format takes it.
+
+    An image format takes `lossy` when its `consolidate` names it, as the
+    formats that store the frames of vector values do (#539). The other
+    image formats read unknown options as fields of their header, so they
+    are not given it.
+    """
+    options = dict(options)
+    consolidate = getattr(fmt, "consolidate", None)
+    if consolidate is not None and "lossy" in _parameters(consolidate):
+        options.setdefault("lossy", lossy)
+    return options
+
+
+def _parameters(function: tx.Callable) -> tx.Mapping[str, tx.Any]:
+    """Return the parameters of a function, or none if it hides them."""
+    try:
+        return inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return {}
 
 
 def _write_once(

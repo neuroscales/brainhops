@@ -179,6 +179,32 @@ def normalize_frames(
     return tuple(slots)
 
 
+def same_frame(first: FrameSlot, second: FrameSlot) -> bool:
+    """Return whether two frame slots are known to be the same frame.
+
+    Two slots are the same frame when they are the same object, or when
+    both are affine maps with the same matrix, as a frame decoded twice
+    from a header is. A foreign frame is the same as an equal coordinate
+    system. Any other pair is taken to differ, which is always safe,
+    since re-expressing values in their own frame changes nothing.
+    """
+    if first is second:
+        return True
+    if isinstance(first, CoordinateSystem) or isinstance(
+        second, CoordinateSystem
+    ):
+        return first == second
+    if first is None or second is None:
+        return False
+    affines = [_as_affine(slot) for slot in (first, second)]
+    if any(affine is None for affine in affines):
+        return False
+    matrices = [np.asarray(affine.matrix, dtype=float) for affine in affines]
+    return matrices[0].shape == matrices[1].shape and bool(
+        np.array_equal(*matrices)
+    )
+
+
 def axis_index(
     key: tx.Union[int, str], axes: tx.Optional[tx.Sequence[Axis]], ndim: int
 ) -> int:
@@ -711,6 +737,32 @@ def pair_axes(
         )
     cols = known[0].cols if known else []
     return infos[0], infos[1], cols
+
+
+def same_change(
+    source: tx.Optional[FrameAxes],
+    target: tx.Optional[FrameAxes],
+    cols: tx.Sequence[int],
+) -> bool:
+    """Return whether two frames are known to give the same components.
+
+    The frames are compared through their axes (see [`pair_axes`][]):
+    they give the same components when both are affine, or the array
+    system, and their Jacobians on `cols` are exactly equal. A frame that
+    is not affine is taken to differ, which is always safe.
+    """
+
+    def block(info: tx.Optional[FrameAxes]) -> tx.Optional[np.ndarray]:
+        if info is None:
+            return np.eye(len(cols))
+        if not info.affine:
+            return None
+        return info.linear[np.ix_(info.rows, list(cols))]
+
+    first, second = block(source), block(target)
+    if first is None or second is None:
+        return False
+    return first.shape == second.shape and bool(np.array_equal(first, second))
 
 
 def jacobian(

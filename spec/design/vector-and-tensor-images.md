@@ -396,7 +396,24 @@ Implemented:
   frames that a user gives, and the way lazy transformations, indexing
   and reslicing keep the frames;
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
-  single-scale and multi-scale images.
+  single-scale and multi-scale images;
+- the frames of NIfTI displacement fields. A reader of a file with the
+  DISPVECT intent sets the frame of its displacement axis to the last
+  transformation that the header decodes to, which is the best affine
+  of the file and maps to the world in which the file stores its RAS
+  vectors. A writer re-expresses the values of a displacement axis in
+  the world of the preferred transformation, which it writes as the
+  best affine, and sets the DISPVECT intent.
+
+A writer applies a change of frame through affine maps silently, because
+it is exact and part of the encoding of the format. It refuses, with a
+`LossyConversionError`, a change through a map that is not affine, which
+is computed by finite differences, a foreign frame, and a component
+axis whose type the format cannot store in a frame of its own, such as a
+`vector` axis in NIfTI. The `lossy=True` argument of `save` and of
+`consolidate` allows these cases, as it allows a lossy conversion of a
+transformation, and the values are then written approximately or as
+they are.
 
 The Jacobian of a frame that is not affine is computed with the
 `gradient` function of the array backend, along the axes of section 5
@@ -411,13 +428,13 @@ the derivatives of the splines of the fields, is left for later.
 
 Not implemented:
 
-- readers that set the frames of the component axes they read, and
-  writers that re-express the values in the frame of their format (NIfTI
-  displacement fields, ITK, MRtrix, FSL, NRRD and OME-Zarr), which #539
-  tracks. Until then, the frame of a component axis that a reader
-  creates, such as the `displacement` axis of a NIfTI displacement
-  field, is the array system by default, even when the file stores the
-  vectors in another frame;
+- readers and writers of the frames of the component axes in the other
+  formats (ITK, MRtrix, FSL, NRRD and OME-Zarr), which #539 tracks.
+  Until then, the frame of a component axis that such a reader creates
+  is the array system by default, even when the file stores the vectors
+  in another frame. This is also the case for the displacement axis of
+  a NIfTI file with one of the FSL intents, which store their vectors
+  in a frame that NIfTI does not decode;
 - the update of the metadata by `reframe`, which keeps the metadata as it
   is for now, although `data_unit`, `display_range` and the descriptions
   of the channels can describe the values in their old frame (#540);
