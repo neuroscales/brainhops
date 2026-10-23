@@ -281,6 +281,17 @@ def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
     return meters / stored
 
 
+def _world_unit_scale(system: tx.Optional[CoordinateSystem]) -> float:
+    """Return the factor from the unit of a world to the unit NIfTI stores.
+
+    The writer scales the spatial rows of the matrices of a world by this
+    factor, and scales by it the vectors that it has re-expressed in that
+    world, so that both are in the unit of the header.
+    """
+    space, _ = _xyzt_labels(system)
+    return _unit_scale(system, space)
+
+
 def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     """Scale the spatial rows of a `(4, 4)` matrix by `factor`."""
     if factor == 1.0:

@@ -47,10 +47,23 @@ format, or `None` when the format cannot store these values in a frame.
 """
 
 
+FormatCaveat: tx.TypeAlias = tx.Callable[[int, FrameSlot], tx.Optional[str]]
+"""What a format assumes when it re-expresses the values along an axis.
+
+Some changes of frame are exact computations that rest on an assumption
+about the data, such as an identification of two coordinate systems.
+The callable receives the index of a component axis and the frame of
+its values, and returns a clause that states the assumption, which
+completes "the values along axis ...", or `None` when the change
+assumes nothing.
+"""
+
+
 def values_in_format_frames(
     image: SingleScaleImage,
     frame_of: FormatFrame,
     lossy: bool = False,
+    caveat: tx.Optional[FormatCaveat] = None,
 ) -> tx.Optional[tx.Tuple[tx.Any, tx.Tuple[FrameSlot, ...]]]:
     """Return the values of an image in the frames of a format.
 
@@ -64,6 +77,10 @@ def values_in_format_frames(
     lossy : bool, default=False
         Whether the values may be written approximately, or without the
         frame that says what they are.
+    caveat : callable, optional
+        What a change of frame assumes that the values do not tell, as
+        described by [`FormatCaveat`][]. Such a change is refused as a
+        loss unless `lossy` is true.
 
     Returns
     -------
@@ -96,6 +113,9 @@ def values_in_format_frames(
             continue
         if same_frame(slot, target):
             continue
+        note = None if caveat is None else caveat(i, slot)
+        if note is not None:
+            losses.append(f"the values along axis {name} {note}")
         if not _is_affine(slot, len(axes)) or not _is_affine(
             target, len(axes)
         ):

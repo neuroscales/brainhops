@@ -457,6 +457,13 @@ displacement field, and the tests check that the two agree. A field of
 DCT coefficients is not a grid of positions, and brainhops does not
 decode it, so its frame is foreign.
 
+The sform of a coefficient file holds the inverse of the initial
+affine rather than a map from its voxels to a world, so the preferred
+transformation of such an image is not a world, and re-expressing its
+coefficients in that frame, as `reframe()` does by default, has no
+meaning. Its coefficients are only meaningful in their own frame or in
+the array system.
+
 Two properties of the FSL files are assumptions rather than facts that
 the header states.
 
@@ -490,12 +497,16 @@ class, and it gives the frames it reads to the images that it builds,
 such as the result of a lazily applied transformation, as ordinary
 frames.
 
-The writer of `NiftiImage` follows the same table in reverse.
+The writer of `NiftiImage` follows the same table in reverse. The
+intent of the header is the one given by keyword, or else that of the
+metadata, or else that of `like`, and the values are written in the
+frame that this intent states.
 
-- An image whose frames are those of its own header, and whose geometry
-  is kept, is written with its values and its intent as they are,
-  including an FSL intent, because its values are already in the frame
-  that the header states.
+- An image whose frames are those of its own header, whose geometry is
+  kept, and whose intent does not change, is written with its values
+  and its intent as they are, including an FSL intent, because its
+  values are already in the frame that the header states. A field that
+  keeps the FSL intent of its own header is laid out as FSL writes it.
 - Otherwise, the vectors of a displacement axis, or of a vector axis of
   valence `"vector"`, are re-expressed in the world of the preferred
   transformation, which the writer stores as the best affine, and the
@@ -505,7 +516,20 @@ The writer of `NiftiImage` follows the same table in reverse.
   in this way too. DISPVECT is chosen rather than an FSL intent because
   every reader of NIfTI fields reads it, and because an FSL field is
   written by `FnirtWarpField`, which also stores what the image does not
-  hold, such as the parameters of a spline.
+  hold, such as the parameters of a spline. NIfTI stores its world in
+  millimetres, so the writer converts the vectors of a world in another
+  unit as it converts the matrices.
+- Re-expressing vectors in FSL scaled millimetres in RAS is exact as a
+  computation, but the result is the displacement of the map in RAS only
+  when the moving image of the field has the same orientation in RAS as
+  its reference, which the field does not tell (see the first
+  assumption above). The writer therefore refuses it unless `lossy=True`
+  is given. `FnirtWarpField`, which takes the moving image, writes such
+  a field exactly.
+- An intent given by keyword that states another frame than DISPVECT,
+  such as an FSL intent, cannot be reached by re-expressing the values,
+  so the values are then written as they are, and only with
+  `lossy=True`.
 - NIfTI has no frame for covectors, tensors and the coordinates of
   points. Its `SYMMATRIX` intent stores the lower triangle of a
   symmetric matrix, which is the `"symmetric-lower"` layout, but it says

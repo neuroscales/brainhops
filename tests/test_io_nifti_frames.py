@@ -460,9 +460,13 @@ def _moved(image: NiftiImage) -> SingleScaleImage:
     return image(Affine(matrix=shift, input=world, output=world))
 
 
-def test_a_moved_fsl_field_is_written_in_ras(tmp_path: pathlib.Path) -> None:
+def test_a_moved_fsl_field_is_written_in_ras_with_lossy(
+    tmp_path: pathlib.Path,
+) -> None:
     # Once its geometry changes, the field no longer lies on the grid of
-    # its reference, so it is written with DISPVECT, in RAS.
+    # its reference, so it is written with DISPVECT, in RAS. The vectors in
+    # RAS are the displacements of the map only if the moving image has
+    # the orientation of the reference, so the write needs lossy=True.
     data = np.random.default_rng(6).normal(size=(*_SHAPE, 3))
     affine = _reference_affine(True)
     path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
@@ -470,7 +474,12 @@ def test_a_moved_fsl_field_is_written_in_ras(tmp_path: pathlib.Path) -> None:
     ras = _components(image.reframe(-1))
     copy = tmp_path / "copy.nii"
 
-    save(_moved(image), copy)
+    with pytest.raises(WriterError, match="same orientation in RAS"):
+        save(_moved(image), copy)
+    with pytest.raises(LossyConversionError, match="FSL scaled"):
+        NiftiImage.from_instance(_moved(image)).consolidate()
+
+    save(_moved(image), copy, lossy=True)
 
     assert _intent(copy) == DISPVECT
     assert np.allclose(_stored(copy), ras, atol=1e-4)
@@ -486,8 +495,9 @@ def test_moved_fsl_coefficients_need_lossy(tmp_path: pathlib.Path) -> None:
 
     save(moved, copy, lossy=True)
     assert _intent(copy) == CUBIC
-    stored = np.asarray(nb.load(str(copy)).dataobj)
-    assert np.allclose(stored, coef, atol=1e-6)
+    # The intent comes from the metadata, not from the header of the
+    # image, so the field keeps the layout of the NIfTI standard.
+    assert np.allclose(_stored(copy), coef, atol=1e-6)
 
 
 def test_a_moved_dispvect_field_keeps_its_vectors(
@@ -596,3 +606,88 @@ def test_a_plain_image_keeps_the_frames_of_a_nifti_image(
     ):
         assert type(plain) is SingleScaleImage
         assert isinstance(plain.frames[4].output, FslCoordinateSystem)
+
+
+def test_vectors_in_centimetres_are_written_in_millimetres(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    # NIfTI stores its world in millimetres, so the writer converts the
+    # matrix and the vectors from centimetres.
+    voxel, _ = _systems()
+    world = CoordinateSystem(
+        [Axis(n, "space", unit="cm") for n in "xyz"] + [Axis("c", "channel")],
+        name="RAS",
+    )
+    a = _affine(voxel, world)
+    path = tmp_path / "field.nii"
+
+    save(SingleScaleImage(values, [a], frames={"c": a}), path)
+
+    assert np.allclose(_stored(path), 10.0 * values, atol=1e-5)
+    image = NiftiImage.load(path)
+    voxel_values = np.asarray(image.reframe(None).data)[:, :, :, 0, :]
+    assert np.allclose(voxel_values @ _L.T, values, atol=1e-4)
+
+
+def test_an_intent_given_by_keyword_does_not_relabel_the_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The values of an FSL field are not in the frame of DISPVECT, so the
+    # writer re-expresses them in RAS, which rests on the orientation of
+    # the moving image.
+    data = np.random.default_rng(10).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(True)
+    path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
+    image = NiftiImage.load(path)
+    ras = _components(image.reframe(-1))
+    copy = tmp_path / "copy.nii"
+
+    with pytest.raises(LossyConversionError):
+        image.consolidate(intent_code=DISPVECT)
+    with pytest.raises(LossyConversionError):
+        image.consolidate(intent="displacement vector")
+
+    save(image, copy, lossy=True, intent_code=DISPVECT)
+
+    assert _intent(copy) == DISPVECT
+    assert np.allclose(_stored(copy), ras, atol=1e-4)
+
+
+def test_an_fsl_intent_given_by_keyword_needs_lossy(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    # The writer cannot re-express values in the frame of an FSL intent.
+    image = NiftiImage.from_instance(
+        SingleScaleImage(values, [_affine(*_systems())])
+    )
+
+    with pytest.raises(LossyConversionError):
+        image.consolidate(intent_code=FNIRT_DISPLACEMENT)
+
+    written = image.consolidate(intent_code=FNIRT_DISPLACEMENT, lossy=True)
+    assert int(written.metadata.raw.header["intent_code"]) == 2006
+    assert np.allclose(_components(written), values, atol=1e-6)
+
+
+def test_a_template_does_not_lay_out_other_values_as_fsl(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    # A covector written as it is takes the intent of the template, but
+    # keeps the layout of the NIfTI standard.
+    like = _fsl_file(
+        tmp_path / "warp.nii",
+        np.zeros((*_SHAPE, 3)),
+        _reference_affine(False),
+        FNIRT_DISPLACEMENT,
+    )
+    voxel, world = _systems("vector", valence="covector")
+    image = SingleScaleImage(values, [_affine(voxel, world)])
+    path = tmp_path / "gradient.nii"
+
+    with pytest.raises(WriterError, match="lossy=True"):
+        save(image, path, like=str(like))
+
+    save(image, path, like=str(like), lossy=True)
+
+    assert nb.load(str(path)).shape == (*_SHAPE, 1, 3)
+    assert np.allclose(_stored(path), values, atol=1e-6)
