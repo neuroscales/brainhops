@@ -330,6 +330,22 @@ evaluated at the output voxels. The two arguments are separate because
 `reframe=0` select the first transformation rather than turn reframing
 off.
 
+The metadata of the image follows the change of frame through a
+`Reframed` record, which `reframe` passes to `Metadata.derive` in the same
+way as indexing passes an `Indexed` record and reslicing a `Resampled`
+one. No voxel moves, so the spatial fields are kept, but the numbers in
+the data change. The fields that describe the values (`data_unit`,
+`display_range`, `dtype`, `scale_slope` and `scale_intercept`) form a
+scope of their own, `VALUES`, which a change of frame clears and every
+other operation keeps. A field with one entry per index along an axis
+(the `AXIS` scope) is cleared when the values along an axis of its type
+were re-expressed, because its entries described them in the old frame.
+`"reframe"` is appended to `history`. Clearing a field is always safe,
+whereas keeping it would let a writer store a stale unit, or quantise the
+new values with the old intensity scaling. A change of frame that keeps
+the unit of the values, such as a rotation between two frames with the
+same units, could keep `data_unit`; this refinement is left for later.
+
 ## 6. A worked example
 
 `X = load(f)` reads a NIfTI displacement field whose vectors are in RAS.
@@ -396,7 +412,8 @@ Implemented:
   frames that a user gives, and the way lazy transformations, indexing
   and reslicing keep the frames;
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
-  single-scale and multi-scale images.
+  single-scale and multi-scale images;
+- the `Reframed` record and the `VALUES` scope of the metadata (#540).
 
 The Jacobian of a frame that is not affine is computed with the
 `gradient` function of the array backend, along the axes of section 5
@@ -418,13 +435,11 @@ Not implemented:
   creates, such as the `displacement` axis of a NIfTI displacement
   field, is the array system by default, even when the file stores the
   vectors in another frame;
-- the update of the metadata by `reframe`, which keeps the metadata as it
-  is for now, although `data_unit`, `display_range` and the descriptions
-  of the channels can describe the values in their old frame (#540);
 - the descriptions of the channels in the metadata, which run along the
   axes of type `channel` only (`Along(AxisType.channel)`), and therefore
-  not along component axes. Whether they should also run along
-  component axes is left to #540;
+  not along component axes, so that a change of frame keeps them.
+  Whether they should also run along component axes, and then be cleared
+  with the values, is still open;
 - re-expressing the coordinates of points, which needs the inverse of a
   map rather than its Jacobian;
 - the Jacobian of a spline field computed from the derivatives of its

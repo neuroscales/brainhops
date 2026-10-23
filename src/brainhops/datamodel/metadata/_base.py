@@ -12,6 +12,7 @@ from bagof.magic import Factory, HideIf, HideIfNone, replace
 # internals
 from ._derive import (
     Indexed,
+    Reframed,
     Resampled,
     entries_along,
     mapped_direction,
@@ -202,7 +203,7 @@ class Metadata(
 
     def derive(
         self,
-        operation: tx.Union[Indexed, Resampled, None] = None,
+        operation: tx.Union[Indexed, Resampled, Reframed, None] = None,
         *,
         history: tx.Union[str, tx.Sequence[str], None] = None,
     ) -> tx.Self:
@@ -212,17 +213,22 @@ class Metadata(
 
         Without an operation, the derived image lies on the same axes,
         as a smoothed or a denoised version of it does, and every field
-        is kept. An image operation that changes axes describes what it
-        did with a record: `image[index]` builds an `Indexed`, and
-        `image.reslice(...)` a `Resampled`. Each field then follows the
-        rule of its scope ([`Scope`][brainhops.datamodel.metadata.Scope]):
+        is kept. An image operation that changes axes or values describes
+        what it did with a record: `image[index]` builds an `Indexed`,
+        `image.reslice(...)` a `Resampled`, and `image.reframe(...)` a
+        `Reframed`. Each field then follows the rule of its scope
+        ([`Scope`][brainhops.datamodel.metadata.Scope]):
 
         - a field in the `FILE` or `ACQUISITION` scope is kept;
         - a field in the `SPATIAL` scope is cleared when the spatial
           axes move, except an encoding direction in voxel axes, which
           is mapped through the map of the voxels;
         - a field in the `AXIS` scope keeps, after an index, the entries
-          at the positions that the index keeps along its axis.
+          at the positions that the index keeps along its axis, and it
+          is cleared when the values along its axis are re-expressed in
+          another frame;
+        - a field in the `VALUES` scope is kept, except when the values
+          are re-expressed in another frame, which clears it.
 
         Either way, three fields record the derivation: `creation_time`
         is cleared, the steps of `history` are appended to `history`,
@@ -235,8 +241,9 @@ class Metadata(
 
         Parameters
         ----------
-        operation : Indexed or Resampled, optional
-            What the image operation did to the axes of the image.
+        operation : Indexed or Resampled or Reframed, optional
+            What the image operation did to the axes or the values of the
+            image.
         history : str or sequence of str, optional
             The steps of the derivation, appended to `history`: one
             step, or several.
@@ -266,6 +273,11 @@ class Metadata(
                     values[name] = None
             elif scope is Scope.AXIS and isinstance(operation, Indexed):
                 values[name] = entries_along(value, operation, ALONG[name])
+            elif isinstance(operation, Reframed) and (
+                scope is Scope.VALUES
+                or (scope is Scope.AXIS and ALONG[name] in operation.axes)
+            ):
+                values[name] = None
         values["creation_time"] = None
         values["history"] = with_history(self.history, history)
         values["generated_by"] = with_brainhops(self.generated_by)

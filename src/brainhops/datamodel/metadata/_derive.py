@@ -2,9 +2,10 @@
 What an image operation did to the axes of an image, and how each field
 of the metadata follows it.
 
-An image operation that changes axes describes what it did with one of
-two records: `image[index]` builds an [`Indexed`][], and
-`image.reslice(...)` builds a [`Resampled`][]. The image hands the
+An image operation that changes axes or values describes what it did
+with one of three records: `image[index]` builds an [`Indexed`][],
+`image.reslice(...)` builds a [`Resampled`][], and `image.reframe(...)`
+builds a [`Reframed`][]. The image hands the
 record to
 [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive], which
 applies the rule of the scope of each field, in one loop. The functions
@@ -17,7 +18,7 @@ top, because the transformations import the metadata. The two
 computations that need them import them when they run.
 """
 
-__all__ = ["Indexed", "Resampled"]
+__all__ = ["Indexed", "Reframed", "Resampled"]
 
 # externals
 import numpy as np
@@ -193,6 +194,31 @@ class Resampled(
         if affine is None:
             return None
         return np.asarray(affine.matrix, dtype=float)[:, :-1]
+
+
+class Reframed(
+    DataModelBase, frozen=True, eq=False, repr=False, kw_only=False
+):
+    """
+    The values of an image re-expressed in another frame,
+    `image.reframe(...)`.
+
+    The values along some axes hold the components of vectors or tensors,
+    and the image re-expressed them in another coordinate system. No
+    voxel moves, but the numbers in the data change, so the fields that
+    describe the values (the `VALUES` scope) no longer apply, and neither
+    do the fields with one entry per component along the axes that were
+    re-expressed. The image builds this record and passes it to
+    `Metadata.derive`.
+    """
+
+    axes: tx.Tuple[tx.Optional[tx.Union[AxisType, str]], ...] = ()
+    """The type of each axis whose values were re-expressed."""
+
+    @property
+    def moves_space(self) -> bool:
+        """Always `False`, because no voxel moves."""
+        return False
 
 
 # ----------------------------------------------------------------------
