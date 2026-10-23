@@ -562,3 +562,20 @@ def test_a_changed_4d_fsl_field_is_written_as_fsl_writes_it(
     assert written.shape == (*_SHAPE, 3)
     assert _intent(copy) == FNIRT_DISPLACEMENT
     assert np.allclose(np.asarray(written.dataobj), 2.0 * data, atol=1e-5)
+
+
+@pytest.mark.parametrize("shape", [(*_SHAPE, 2), (*_SHAPE, 1, 2)])
+def test_an_fsl_field_of_two_components_is_read(
+    tmp_path: pathlib.Path, shape: tx.Tuple[int, ...]
+) -> None:
+    # The frame of the FSL scaled millimetres has three axes, and the two
+    # components follow the first two of them.
+    nifti = nb.Nifti1Image(np.ones(shape, "f4"), _reference_affine(False))
+    nifti.header["intent_code"] = FNIRT_DISPLACEMENT
+    path = tmp_path / "warp.nii"
+    nb.save(nifti, str(path))
+
+    image = NiftiImage.load(path)
+
+    voxel = np.asarray(image.reframe(None).data).reshape(-1, 2)
+    assert np.allclose(voxel[0], [0.5, 0.4])
