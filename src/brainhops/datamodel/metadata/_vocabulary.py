@@ -460,7 +460,14 @@ class DisplayVocabulary(Vocabulary):
         tx.Optional[tx.Tuple[Channel, ...]],
         Along(AxisType.channel),
     ] = None
-    """One description per channel."""
+    """
+    One description per channel. The descriptions run along the axes of
+    type `channel` only. The entries of a component axis, such as a
+    `vector` or a `tensor` axis, are described by the type, the valence,
+    the layout and the frame of that axis, so a change of frame, which
+    only re-expresses the values of component axes, keeps these
+    descriptions.
+    """
 
     data_unit: tx.Annotated[
         tx.Optional[tx.Union[Unit, str]],

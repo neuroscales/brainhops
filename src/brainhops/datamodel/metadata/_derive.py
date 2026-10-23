@@ -203,16 +203,20 @@ class Reframed(
     The values of an image re-expressed in another frame,
     `image.reframe(...)`.
 
-    The values along some axes hold the components of vectors or tensors,
-    and the image re-expressed them in another coordinate system. No
-    voxel moves, but the numbers in the data change, so the fields that
-    describe the values (the `VALUES` scope) no longer apply, and neither
-    do the fields with one entry per component along the axes that were
-    re-expressed. The image builds this record and passes it to
+    The entries along a component axis (a `point`, `vector`,
+    `displacement`, `coordinate` or `tensor` axis) are the components of
+    one vector or tensor, and the image re-expressed them in another
+    coordinate system. No voxel moves, but the numbers in the data
+    change, so the fields that describe the values (the `VALUES` scope)
+    no longer apply. Neither do the fields with one entry per index along
+    a re-expressed axis, which described the components in the old frame
+    and which may no longer match the length of the axis, because a
+    tensor stored with only some of its components is stored with all of
+    them afterwards. The image builds this record and passes it to
     `Metadata.derive`.
     """
 
-    axes: tx.Tuple[tx.Optional[tx.Union[AxisType, str]], ...] = ()
+    axes: tx.Tuple[AxisType, ...] = ()
     """The type of each axis whose values were re-expressed."""
 
     @property

@@ -756,7 +756,7 @@ class SingleScaleImage(Image):
             ]
         metadata = self.metadata
         if metadata is not None:
-            types = tuple(getattr(axes[i], "type", None) for i in targets)
+            types = tuple(axes[i].type for i in targets)
             metadata = metadata.derive(Reframed(types), history="reframe")
         return SingleScaleImage(
             data=data,

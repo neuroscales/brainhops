@@ -337,8 +337,9 @@ EncodingDirection('j-')
 
 ## Derived images
 
-An image computed from another one, by an index or a resampling, gets
-metadata derived from the metadata of its source, with
+An image computed from another one, by an index, a resampling or a
+change of the frame of its vectors and tensors, gets metadata derived
+from the metadata of its source, with
 [`derive`][brainhops.datamodel.metadata.Metadata.derive]. What a field
 becomes depends on its [`Scope`][brainhops.datamodel.metadata.Scope]:
 
@@ -351,7 +352,11 @@ becomes depends on its [`Scope`][brainhops.datamodel.metadata.Scope]:
   direction, which follows the map of the voxel axes;
 - a field with one entry per position along a non-spatial axis (`AXIS`),
   such as the b-values along the time axis, keeps the entries of the
-  positions that an index keeps.
+  positions that an index keeps, and is cleared when the values along
+  that axis are re-expressed in another frame;
+- a field that describes the values themselves (`VALUES`), such as the
+  unit or the display range, is kept, except when the values are
+  re-expressed in another frame, which clears it.
 
 The derivation is recorded: `creation_time` is cleared, the step is
 appended to `history`, and `generated_by` gains a brainhops entry. A

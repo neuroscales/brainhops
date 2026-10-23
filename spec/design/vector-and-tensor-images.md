@@ -1,7 +1,7 @@
 # Images of vectors and tensors
 
-Status: the data model and the operations are implemented; the readers,
-the writers and the metadata are not (see section 8).
+Status: the data model, the operations and the metadata are
+implemented; the readers and the writers are not (see section 8).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -337,14 +337,24 @@ one. No voxel moves, so the spatial fields are kept, but the numbers in
 the data change. The fields that describe the values (`data_unit`,
 `display_range`, `dtype`, `scale_slope` and `scale_intercept`) form a
 scope of their own, `VALUES`, which a change of frame clears and every
-other operation keeps. A field with one entry per index along an axis
-(the `AXIS` scope) is cleared when the values along an axis of its type
-were re-expressed, because its entries described them in the old frame.
-`"reframe"` is appended to `history`. Clearing a field is always safe,
-whereas keeping it would let a writer store a stale unit, or quantise the
-new values with the old intensity scaling. A change of frame that keeps
-the unit of the values, such as a rotation between two frames with the
-same units, could keep `data_unit`; this refinement is left for later.
+other operation keeps. Clearing a field is always safe, whereas keeping
+it would let a writer store a stale unit or quantise the new values with
+the old intensity scaling. A change of frame that keeps the unit of the
+values, such as a rotation between two frames with the same units, could
+keep `data_unit`; this refinement is left for later.
+
+The fields with one entry per index along an axis (the `AXIS` scope) are
+cleared when the values along an axis of their type are re-expressed,
+because their entries described the components in the old frame, and
+because the axis of a tensor stored with only some of its components
+becomes longer. No field of the vocabulary runs along a component axis
+today. The descriptions of the channels run along the axes of type
+`channel` only (`Along(AxisType.channel)`): the type, the valence, the
+layout and the frame of a component axis already describe its entries,
+and a channel axis is never re-expressed, so `reframe` keeps these
+descriptions (see section 8). The rule of the `AXIS` scope applies to
+a field that would run along a component axis in the future.
+`"reframe"` is appended to `history`.
 
 ## 6. A worked example
 
