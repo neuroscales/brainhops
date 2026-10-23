@@ -9,6 +9,8 @@ and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe].
 """
 
+# The design is recorded in spec/design/vector-and-tensor-images.md.
+
 from collections.abc import Mapping
 
 import numpy as np

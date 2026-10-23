@@ -891,7 +891,7 @@ class NrrdImage(
         each local file is replaced at once, so an image can be written
         over the files that it was read from. When the lazy array of the
         image reads a file that is written, the image is consolidated in
-        place instead, so that it holds what the files hold (#426), and
+        place instead, so that it holds what the files hold, and
         its lazy array reads the new files.
 
         Parameters

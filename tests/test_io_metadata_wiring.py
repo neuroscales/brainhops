@@ -1,9 +1,11 @@
-"""Tests of the metadata of images and transformations (#233, #287).
+"""Tests of the metadata of images and transformations.
 
 The data model holds metadata on its roots, `Image` and
 `Transformation`, and each file format takes that field over to hold
 the metadata of its own class, which also holds the header of a file.
 """
+
+# The metadata of the data model is issues #233 and #287.
 
 import inspect
 from pathlib import Path

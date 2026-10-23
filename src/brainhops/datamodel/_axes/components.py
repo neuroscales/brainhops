@@ -29,9 +29,9 @@ order, and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe]
 changes the frame. The coordinates of a point change with the map itself
 rather than with its Jacobian, so they are not re-expressed.
-
-The design is recorded in `spec/design/vector-and-tensor-images.md`.
 """
+
+# The design is recorded in spec/design/vector-and-tensor-images.md.
 
 __all__ = [
     "COMPONENT_TYPES",

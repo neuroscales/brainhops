@@ -1,8 +1,10 @@
-"""A missing file raises FileNotFoundError with its path (#121).
+"""A missing file raises FileNotFoundError with its path.
 
 A string given where a file is expected is a path, through every entry
 point and spelling.
 """
+
+# The missing file is issue #121.
 
 import io as _io
 from pathlib import Path

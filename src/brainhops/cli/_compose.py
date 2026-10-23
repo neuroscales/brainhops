@@ -6,9 +6,12 @@ first and then A, as `A @ B` does in the data model, so the last file
 listed is applied first. Operands may also be inverted, squared or
 otherwise transformed before composition, but the command-line spelling
 of these operations is not settled. Writing also requires a writable
-transformation format (issue #41). Until then, the command only parses
-its arguments, so that `--help` documents the intended interface.
+transformation format, which does not exist yet. Until then, the command
+only parses its arguments, so that `--help` documents the intended
+interface.
 """
+
+# The writable transformation format is issue #41.
 
 from __future__ import annotations
 
@@ -54,7 +57,7 @@ def run(args: argparse.Namespace) -> tx.NoReturn:
     """Run the `compose` command, which raises a [`CliError`][]."""
     raise CliError(
         "'brainhops compose' is not implemented yet. It depends on a "
-        "writable transformation format (issue #41) and on the choice of "
-        "operation surface for per-operand operations such as inversion "
-        "and the matrix square root."
+        "writable transformation format, which does not exist yet, and on "
+        "the choice of operation surface for per-operand operations such "
+        "as inversion and the matrix square root."
     )

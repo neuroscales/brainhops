@@ -104,7 +104,7 @@ class MrtrixLinearTransform(
 
     A `.txt` name cannot tell an MRtrix transform from a NiftyReg affine,
     and both hold an affine between RAS spaces exactly. `io.save` writes
-    such an affine as a NiftyReg affine (#343), unless it already is an
+    such an affine as a NiftyReg affine, unless it already is an
     MRtrix transform, which is built with `t.to(MrtrixLinearTransform)`.
     A file is read as an MRtrix transform from its comments, whose score
     decides before the priority.

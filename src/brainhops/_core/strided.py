@@ -17,10 +17,12 @@ axis. A stride may be negative, which reverses the axis. The strides
 describe C order, Fortran order, a permutation of the axes, reversed
 axes and padding between rows or slices, without copying anything.
 
-The design is the third layer of the memo `spec/design/array-proxies.md`,
-in a simpler form: the proxy reads the range of bytes that holds the
-selected box, rather than a merged list of byte ranges.
+The proxy reads the range of bytes that holds the selected box, rather
+than a merged list of byte ranges.
 """
+
+# The design is the third layer of spec/design/array-proxies.md, in a
+# simpler form.
 
 __all__ = ["StridedProxy"]
 

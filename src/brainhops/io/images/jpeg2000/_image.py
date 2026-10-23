@@ -618,7 +618,7 @@ class Jpeg2000Image(
         before the file is written, and a local file is replaced at once,
         so an image can be written over the file that it was read from.
         The image is then consolidated in place, so that it holds what the
-        file holds (#426), and its lazy array reads the new file.
+        file holds, and its lazy array reads the new file.
 
         Parameters
         ----------

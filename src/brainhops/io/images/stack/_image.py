@@ -95,7 +95,7 @@ class StackImage(
     Assigned data and transformations are pending until [`consolidate`][]
     or a write encodes them. A write consolidates a copy, writes it, and
     leaves the image as it is, except when it replaces files that the lazy
-    array reads (#426).
+    array reads.
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("stack",)
@@ -360,7 +360,7 @@ class StackImage(
         replaced. A folder from which the image reads some files is
         replaced only if it holds no other file. When the lazy array of
         the image reads a file that is replaced, the image is consolidated
-        in place instead, so that it holds what the files hold (#426), and
+        in place instead, so that it holds what the files hold, and
         its lazy array reads the new files.
 
         Parameters
