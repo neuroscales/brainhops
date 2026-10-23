@@ -11,7 +11,7 @@ from brainhops.datamodel._transformations.compute.converters import (
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
     FieldParts,
-    coordinates_parts,
+    coordinate_parts,
     format_options,
     held,
     split_field_chain,
@@ -19,46 +19,46 @@ from brainhops.io.transformations.base._conversions import (
     unrepresentable,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
-from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.base.fields import RASCoordinateField
 from brainhops.io.transformations.nifti._converters import RAS
 
-from ._fields import SpmCoordinatesField
+from ._fields import SpmCoordinateField
 
 
 def _(
     t: _xforms.Transformation,
-    cls: tx.Type[SpmCoordinatesField],
+    cls: tx.Type[SpmCoordinateField],
     **kwargs,
-) -> SpmCoordinatesField:
+) -> SpmCoordinateField:
     # An affine from RAS to a grid, then the RAS position of each node of
     # that grid. A field of displacements becomes the position of each
     # node, and a field that is not linear is sampled at its nodes, which
     # loses.
-    cls = SpmCoordinatesField
+    cls = SpmCoordinateField
     options = format_options(t, cls, kwargs, ("metadata",))
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
     if _holds_no_coordinates(t, cls):
-        chain = (RASToVoxel(), RASCoordinatesField())
+        chain = (RASToVoxel(), RASCoordinateField())
         return cls(transformations=chain, **options)
     parts = _spm_coordinates(t, cls)
     chain = (
         RASToVoxel(matrix=parts.world2grid[:-1]),
-        RASCoordinatesField(field=parts.field.values),
+        RASCoordinateField(field=parts.field.values),
     )
     return held(cls(transformations=chain, **options), parts)
 
 
 for _source in FIELD_SOURCES:
-    converter(_source, SpmCoordinatesField)(_)
+    converter(_source, SpmCoordinateField)(_)
 
 
 @converter
 def _(
-    t: SpmCoordinatesField,
-    cls: tx.Type[SpmCoordinatesField],
+    t: SpmCoordinateField,
+    cls: tx.Type[SpmCoordinateField],
     **kwargs,
-) -> SpmCoordinatesField:
+) -> SpmCoordinateField:
     # A transformation that is already in this format is changed by the
     # rules of any chain, and these rules keep its type.
     return smart_replace(t, cls, **kwargs)
@@ -91,11 +91,11 @@ def _spm_coordinates(t: _xforms.Transformation, cls: type) -> FieldParts:
     `t` as an SPM deformation field, or the reason it is not.
 
     Returns the parts that
-    [`coordinates_parts`][brainhops.io.transformations.base._conversions.coordinates_parts]
+    [`coordinate_parts`][brainhops.io.transformations.base._conversions.coordinate_parts]
     gives: the homogeneous affine from RAS to the grid of the field, and
     the RAS position of each node of that grid.
     """
-    parts = coordinates_parts(t, RAS, RAS, cls)
+    parts = coordinate_parts(t, RAS, RAS, cls)
     if np.linalg.cond(parts.world2grid) > _MAX_CONDITION:
         raise unrepresentable(
             t,

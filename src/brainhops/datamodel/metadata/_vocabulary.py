@@ -78,7 +78,18 @@ class Scope(StrEnum):
     | `AXIS`          | `"axis"`          | The field has one entry per     |
     |                 |                   | index along one non-spatial     |
     |                 |                   | axis (see [`Along`][]). It is   |
-    |                 |                   | indexed when that axis changes. |
+    |                 |                   | indexed when that axis changes, |
+    |                 |                   | and cleared when the values     |
+    |                 |                   | along that axis are             |
+    |                 |                   | re-expressed in another frame.  |
+    +-----------------+-------------------+---------------------------------+
+    | `VALUES`        | `"values"`        | The field describes the values  |
+    |                 |                   | of the data, such as their unit |
+    |                 |                   | or their display range. It is   |
+    |                 |                   | kept when the values are moved  |
+    |                 |                   | or resampled, and cleared when  |
+    |                 |                   | they are re-expressed in        |
+    |                 |                   | another frame.                  |
     +-----------------+-------------------+---------------------------------+
     """
 
@@ -86,6 +97,7 @@ class Scope(StrEnum):
     ACQUISITION = "acquisition"
     SPATIAL = "spatial"
     AXIS = "axis"
+    VALUES = "values"
 
 
 class Bids(Field):
@@ -434,13 +446,13 @@ class DisplayVocabulary(Vocabulary):
     """
     Vocabulary group: how the values are shown and what they are. The
     channels run along the channel axis (`AXIS` scope); the display range
-    and the unit apply to every value (`FILE` scope). Not meant to be
+    and the unit apply to every value (`VALUES` scope). Not meant to be
     instantiated; see [`Metadata`][].
     """
 
     display_range: tx.Annotated[
         tx.Optional[tx.Tuple[float, float]],
-        Scoped(Scope.FILE),
+        Scoped(Scope.VALUES),
     ] = None
     """Display window `(min, max)`."""
 
@@ -448,11 +460,18 @@ class DisplayVocabulary(Vocabulary):
         tx.Optional[tx.Tuple[Channel, ...]],
         Along(AxisType.channel),
     ] = None
-    """One description per channel."""
+    """
+    One description per channel. The descriptions run along the axes of
+    type `channel` only. The entries of a component axis, such as a
+    `vector` or a `tensor` axis, are described by the type, the valence,
+    the layout and the frame of that axis, so a change of frame, which
+    only re-expresses the values of component axes, keeps these
+    descriptions.
+    """
 
     data_unit: tx.Annotated[
         tx.Optional[tx.Union[Unit, str]],
-        Scoped(Scope.FILE),
+        Scoped(Scope.VALUES),
         ConvertTo(unit),
     ] = None
     """
@@ -467,7 +486,7 @@ class DisplayVocabulary(Vocabulary):
 class StorageVocabulary(Vocabulary):
     """
     Vocabulary group: how the values of the data are stored in the file
-    (`file` scope). Not meant to be instantiated; see [`Metadata`][].
+    (`values` scope). Not meant to be instantiated; see [`Metadata`][].
 
     The loaded array always holds the values themselves. A file that
     stores integers with an intensity scaling (NIfTI `scl_slope` and
@@ -482,7 +501,7 @@ class StorageVocabulary(Vocabulary):
 
     dtype: tx.Annotated[
         tx.Optional[np.dtype],
-        Scoped(Scope.FILE),
+        Scoped(Scope.VALUES),
         ConvertTo(to_dtype),
     ] = None
     """
@@ -493,7 +512,7 @@ class StorageVocabulary(Vocabulary):
     to `consolidate` takes precedence over it.
     """
 
-    scale_slope: tx.Annotated[tx.Optional[float], Scoped(Scope.FILE)] = None
+    scale_slope: tx.Annotated[tx.Optional[float], Scoped(Scope.VALUES)] = None
     """
     The slope of the intensity scaling:
     a value is `stored * scale_slope + scale_intercept`.
@@ -502,7 +521,7 @@ class StorageVocabulary(Vocabulary):
 
     scale_intercept: tx.Annotated[
         tx.Optional[float],
-        Scoped(Scope.FILE),
+        Scoped(Scope.VALUES),
     ] = None
     """
     The intercept of the intensity scaling (see `scale_slope`).

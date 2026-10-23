@@ -6,7 +6,7 @@ those views always return the map as values, whatever the flags say.
 | Class                | `data` holds                             | Flags                             | Views                             |
 |----------------------|------------------------------------------|-----------------------------------|-----------------------------------|
 | `DisplacementField`  | the values, or their spline coefficients | `store`, `degree`, `bound`, `log` | `field`, `values`, `coefficients` |
-| `CoordinatesField`   | the values, or their spline coefficients | `store`, `degree`, `bound`        | `field`, `values`, `coefficients` |
+| `CoordinateField`   | the values, or their spline coefficients | `store`, `degree`, `bound`        | `field`, `values`, `coefficients` |
 | `Affine`             | the `(No, Ni + 1)` matrix                | `log`                             | `matrix`, `homogeneous_matrix`    |
 | `Linear`, `Rotation` | the `(No, Ni)` matrix                    | `log`                             | `matrix`                          |
 | `Scaling`            | the scaling factors                      | `log`                             | `scale`                           |
@@ -30,7 +30,7 @@ derives its `data` from the transformation it inverts, in that
 transformation's encoding.
 
 !!! note "Inverting a field is approximate"
-    The inverse of a displacement or coordinates field is computed from the
+    The inverse of a displacement or coordinate field is computed from the
     values at the grid nodes only. These values define a piecewise-affine
     map, which is inverted exactly with Ashburner's mesh inversion, and the
     inverse is then interpolated with the field's `degree`. A field of
@@ -119,7 +119,7 @@ matrices are square. `DisplacementField(data=v, log=True)` is a
 `StationaryVelocityField(data=v)`, and `Affine(data=L, log=True)` is an
 `AffineExponential(data=L)`. A tangent is never read as a matrix:
 `LinearExponential(data=I)` is a scaling by `e`, not the identity.
-`Translation`, `Permutation`, `CoordinatesField`, `CartesianField` and
+`Translation`, `Permutation`, `CoordinateField`, `CartesianField` and
 `Identity` take no `log` flag. A convenience keyword still gives the map,
 so `Affine(matrix=M, log=True)` stores the principal logarithm of `M`,
 whereas `DisplacementField(field=u, log=True)` raises

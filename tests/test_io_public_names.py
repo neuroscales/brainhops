@@ -254,7 +254,7 @@ PACKAGES: tx.Dict[str, Package] = {
             {
                 "NiftiBasedTransformation",
                 "NiftiMetadata",
-                "NiftiRASCoordinatesField",
+                "NiftiRASCoordinateField",
                 "NiftiRASDisplacementField",
                 "NiftiRASToVoxel",
                 "NiftiRaw",
@@ -264,7 +264,7 @@ PACKAGES: tx.Dict[str, Package] = {
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.spm": Package(
-        names=frozenset({"SpmCoordinatesField"}),
+        names=frozenset({"SpmCoordinateField"}),
         needs=("nibabel",),
     ),
     "brainhops.io.transformations.fsl.flirt": Package(
@@ -404,7 +404,7 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset(
             {
                 "X5BSplineField",
-                "X5CoordinatesField",
+                "X5CoordinateField",
                 "X5DisplacementField",
                 "X5Domain",
                 "X5Header",
@@ -438,7 +438,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.mrtrix": Package(
         names=frozenset(
             {
-                "MrtrixCoordinatesField",
+                "MrtrixCoordinateField",
                 "MrtrixDisplacementField",
                 "MrtrixLinearMetadata",
                 "MrtrixLinearRaw",
@@ -486,7 +486,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.itk.nifti": Package(
         names=frozenset(
             {
-                "ItkNiftiCoordinatesField",
+                "ItkNiftiCoordinateField",
                 "ItkNiftiDisplacementField",
                 "ItkNiftiField",
             }

@@ -54,7 +54,7 @@ from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
     FieldParts,
     cardinal_parts,
-    coordinates_parts,
+    coordinate_parts,
     displacement_parts,
     displacements_of,
     format_options,
@@ -83,9 +83,9 @@ def _(
     cls = OmeZarrField
     format_options(t, cls, kwargs)
     _, field, _ = split_field_chain(t, RAS, RAS, cls)
-    if isinstance(field, _xforms.CoordinatesField):
+    if isinstance(field, _xforms.CoordinateField):
         kind = "coordinate"
-        parts = coordinates_parts(t, RAS, RAS, cls)
+        parts = coordinate_parts(t, RAS, RAS, cls)
         parts = cardinal_parts(parts, t, RAS, RAS, cls)
         values = parts.field.values
     else:

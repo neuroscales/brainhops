@@ -13,7 +13,7 @@ import pytest
 from brainhops.datamodel.images import _match_resolution, nearest_level
 from brainhops.datamodel.transformations import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     MultiscaleField,
@@ -65,7 +65,7 @@ def _displacement_level(
 def _coordinate_level(raw_world: np.ndarray, affine: Affine) -> Sequence:
     # A world-to-voxel affine and a field of world coordinates.
     return Sequence(
-        transformations=[affine.inverse(), CoordinatesField(field=raw_world)]
+        transformations=[affine.inverse(), CoordinateField(field=raw_world)]
     )
 
 
@@ -142,7 +142,7 @@ def test_composes_like_its_finest_level() -> None:
         np.random.default_rng(6)
     )
     outer = Scaling(scale=[3.0, 4.0])
-    world = CoordinatesField(field=_world_grid((6, 5), lin0, xf0))
+    world = CoordinateField(field=_world_grid((6, 5), lin0, xf0))
     from_field = ((outer @ field) @ world).compute()
     from_finest = ((outer @ field.to_singlescale()) @ world).compute()
     np.testing.assert_allclose(
@@ -222,7 +222,7 @@ def test_displacement_level_moves_world_points_by_the_world_field() -> None:
     raw = rng.normal(size=(6, 5, 2))
     level = _displacement_level(raw, xf0, lin0)
     world = _world_grid((6, 5), lin0, xf0)
-    moved = (level @ CoordinatesField(field=world)).compute()
+    moved = (level @ CoordinateField(field=world)).compute()
     np.testing.assert_allclose(np.asarray(moved.field), world + raw, atol=1e-6)
 
 
@@ -233,7 +233,7 @@ def test_coordinate_level_recovers_the_stored_coordinates() -> None:
     raw = rng.normal(size=(6, 5, 2))
     level = _coordinate_level(raw, xf0)
     world = _world_grid((6, 5), lin0, xf0)
-    resolved = (level @ CoordinatesField(field=world)).compute()
+    resolved = (level @ CoordinateField(field=world)).compute()
     np.testing.assert_allclose(np.asarray(resolved.field), raw, atol=1e-6)
 
 

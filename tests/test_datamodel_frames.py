@@ -16,8 +16,11 @@ from brainhops.datamodel.axes import (
     TensorAxis,
     VectorAxis,
 )
-from brainhops.datamodel.enums import ReframeMethod
+from brainhops.datamodel.enums import AxisType, ReframeMethod
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.metadata import Channel, Metadata
+from brainhops.datamodel.metadata import _vocabulary as vocabulary
+from brainhops.datamodel.metadata._derive import Reframed
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -816,3 +819,99 @@ def test_reframe_into_an_equal_frame_returns_the_image(
     copy = Affine(matrix=np.asarray(a.matrix), input=a.input, output=a.output)
 
     assert x.reframe(copy) is x
+
+
+# --- metadata ---------------------------------------------------------
+
+
+def _with_metadata(image: SingleScaleImage, **fields: tx.Any) -> tx.Any:
+    return SingleScaleImage(
+        np.asarray(image.data),
+        image.transformations,
+        frames=image._frames,
+        metadata=Metadata(**fields),
+    )
+
+
+def test_reframe_clears_the_fields_that_describe_the_values(
+    x: SingleScaleImage, u: Affine
+) -> None:
+    image = _with_metadata(
+        x,
+        description="displacements",
+        repetition_time=2.0,
+        data_unit="mm",
+        display_range=(-1.0, 1.0),
+        dtype="int16",
+        scale_slope=0.01,
+        history=("registered",),
+    )
+
+    out = image(u).reframe().metadata
+
+    assert out.data_unit is None
+    assert out.display_range is None
+    assert out.dtype is None
+    assert out.scale_slope is None
+    assert out.repetition_time == 2.0
+    assert out.description == "displacements"
+    assert out.history == ("registered", "reframe")
+
+
+def test_reframe_keeps_the_entries_along_other_axes(
+    x: SingleScaleImage, u: Affine
+) -> None:
+    # The descriptions of the channels run along channel axes, and the
+    # components run along a vector axis, so they are not about them.
+    image = _with_metadata(x, channels=(Channel(name="a"),), data_unit="mm")
+
+    out = image(u).reframe().metadata
+
+    assert out.channels == (Channel(name="a"),)
+    assert out.data_unit is None
+
+
+def test_a_reframed_axis_clears_the_entries_along_it() -> None:
+    metadata = Metadata(
+        channels=(Channel(name="x"), Channel(name="y")), bvalues=(0.0, 1.0)
+    )
+
+    out = metadata.derive(Reframed(("channel",)))
+
+    assert out.channels is None
+    assert out.bvalues == (0.0, 1.0)
+
+
+def test_reframe_clears_the_entries_along_an_expanded_tensor_axis(
+    a: Affine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No field of the vocabulary runs along a tensor axis yet, so the
+    # descriptions of the channels are made to run along one.
+    monkeypatch.setitem(vocabulary.ALONG, "channels", AxisType.tensor)
+    diagonal = np.random.default_rng(0).random((*_SHAPE, 3))
+    axis = TensorAxis("c", layout="diagonal")
+    voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], axis])
+    channels = tuple(Channel(name=n) for n in ("xx", "yy", "zz"))
+    image = SingleScaleImage(
+        diagonal, [a.to(input=voxel)], metadata=Metadata(channels=channels)
+    )
+
+    # Indexing the tensor axis in full keeps the entries along it.
+    assert image[..., :].metadata.channels == channels
+
+    out = image.reframe()
+
+    # The diagonal layout becomes symmetric, so the axis has six entries
+    # and the three old descriptions no longer match it.
+    assert out.shape == (*_SHAPE, 6)
+    assert out.metadata.channels is None
+
+
+def test_indexing_and_reslicing_keep_the_fields_of_the_values(
+    x: SingleScaleImage,
+) -> None:
+    image = _with_metadata(x, data_unit="mm", display_range=(0.0, 1.0))
+
+    for derived in (image[1:3], image.reslice()):
+        assert derived.metadata.data_unit is not None
+        assert derived.metadata.display_range == (0.0, 1.0)

@@ -97,7 +97,7 @@ def test_loaded_dense_field_uses_its_own_grid(
         points = _world(nb.load(ref_path).affine, _grid(SHAPE))
         sequence = xforms.Sequence(
             transformations=[
-                xforms.CoordinatesField(field=points),
+                xforms.CoordinateField(field=points),
                 *warp.transformations,
             ]
         )

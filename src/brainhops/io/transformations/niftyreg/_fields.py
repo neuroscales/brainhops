@@ -62,6 +62,8 @@ from brainhops.io.transformations.base._converters import (
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
+    COORDINATE_HINTS,
+    DISPLACEMENT_HINTS,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -209,7 +211,7 @@ def _field_index(chain: tx.Sequence[_xforms.Transformation]) -> int:
     """
     for i, element in enumerate(chain):
         if isinstance(
-            element, (_xforms.DisplacementField, _xforms.CoordinatesField)
+            element, (_xforms.DisplacementField, _xforms.CoordinateField)
         ):
             return i
     return 1
@@ -707,7 +709,7 @@ class NiftyRegDisplacementField(NiftyRegSequence):
     field maps `x` to `x + u(x)`. See [`NiftyRegSequence`][].
     """
 
-    HINTS = ("displacement", "disp")
+    HINTS = DISPLACEMENT_HINTS
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DISP_FIELD})
 
     PRIORITY: tx.ClassVar[int] = -1
@@ -757,7 +759,7 @@ class NiftyRegDeformationField(NiftyRegSequence):
     [`NiftyRegDisplacementField`][].
     """
 
-    HINTS = ("deformation", "def")
+    HINTS = ("deformation", "def", *COORDINATE_HINTS)
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DEF_FIELD})
 
     PRIORITY: tx.ClassVar[int] = -1

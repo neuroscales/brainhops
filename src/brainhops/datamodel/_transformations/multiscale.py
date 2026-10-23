@@ -19,7 +19,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     Each scale is a [`Sequence`][] that maps the input space to the output
     space on the grid of that scale. A scale of coordinates is a sequence of
-    two elements, a world-to-voxel affine and a coordinates field. A scale of
+    two elements, a world-to-voxel affine and a coordinate field. A scale of
     displacements has three: a world-to-voxel affine, a displacement field in
     voxel units and a voxel-to-world affine. The container treats a scale as a
     plain sequence, so a single class handles both kinds of field.

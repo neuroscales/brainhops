@@ -15,7 +15,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Inverse,
@@ -192,9 +192,9 @@ def test_computing_an_identity_only_sequence_still_simplifies() -> None:
 def test_cartesian_field_is_not_an_init_field_but_base_is() -> None:
     # CartesianField derives data and field from its shape.
     assert "data" not in fields_dict(CartesianField)
-    assert "data" in fields_dict(CoordinatesField)
+    assert "data" in fields_dict(CoordinateField)
     assert "field" not in inspect.signature(CartesianField).parameters
-    assert "field" in inspect.signature(CoordinatesField).parameters
+    assert "field" in inspect.signature(CoordinateField).parameters
 
 
 def test_replace_cartesian_field_changes_endpoints_and_keeps_shape() -> None:
@@ -242,11 +242,11 @@ def test_to_same_type_cartesian_field_changes_output() -> None:
 
 
 def test_replace_coordinates_field_round_trips_explicit_field() -> None:
-    # The base CoordinatesField carries its array over as is.
+    # The base CoordinateField carries its array over as is.
     values = np.zeros((5, 6, 2))
-    cf = CoordinatesField(data=values.copy(), degree=3, store="coefficients")
+    cf = CoordinateField(data=values.copy(), degree=3, store="coefficients")
     replaced = replace(cf, degree=1)
-    assert isinstance(replaced, CoordinatesField)
+    assert isinstance(replaced, CoordinateField)
     assert not isinstance(replaced, CartesianField)
     assert replaced.degree == 1
     assert replaced.store == "coefficients"
@@ -458,7 +458,7 @@ def test_interpolates_truth_table() -> None:
     translation = Translation(translation=[1.0, 2.0, 3.0])
     grid = CartesianField(shape=(4, 5, 6))
     disp = DisplacementField(field=np.zeros((4, 5, 6, 3)))
-    coords = CoordinatesField(field=np.zeros((4, 5, 6, 3)))
+    coords = CoordinateField(field=np.zeros((4, 5, 6, 3)))
 
     # Neither non-fields nor grids interpolate.
     assert _interpolates(None) is False

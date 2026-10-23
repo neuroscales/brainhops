@@ -30,7 +30,7 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import (
-    RASCoordinatesField,
+    RASCoordinateField,
     homogeneous_matrix,
 )
 
@@ -98,11 +98,11 @@ def _decode(record: M3zRaw) -> tx.Tuple[_xforms.Transformation, ...]:
         bound=BoundaryCondition.nearest,
     )
     if record.coordinates == GCAM_RAS:
-        return (ras2node, RASCoordinatesField(**options))
+        return (ras2node, RASCoordinateField(**options))
     voxel = _systems.VoxelCoordinateSystem()
     return (
         ras2node,
-        _xforms.CoordinatesField(input=voxel, output=voxel, **options),
+        _xforms.CoordinateField(input=voxel, output=voxel, **options),
         VoxelToRAS(matrix=record.image_geometry.vox2ras[:3]),
     )
 
@@ -166,12 +166,12 @@ class M3zMorph(
 
     1. a [`RASToVoxel`][], from atlas RAS to the voxels of the node grid;
     2. a
-       [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
+       [`CoordinateField`][brainhops.datamodel.transformations.CoordinateField]
        that holds the position of each node in source voxels;
     3. a [`VoxelToRAS`][], from source voxels to source RAS.
 
     When the positions are RAS coordinates (`GCAM_RAS`), the first step is
-    followed by a [`RASCoordinatesField`][] instead, and there is no third
+    followed by a [`RASCoordinateField`][] instead, and there is no third
     step.
 
     A morph file is read in one pass, so the whole file is held as an
@@ -577,7 +577,7 @@ def _encode(
     """
     chain = tuple(chain)
     field = chain[1] if len(chain) in (2, 3) else None
-    if not isinstance(field, _xforms.CoordinatesField) or isinstance(
+    if not isinstance(field, _xforms.CoordinateField) or isinstance(
         field, _xforms.CartesianField
     ):
         raise UnrepresentableTransformationError(

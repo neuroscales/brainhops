@@ -76,7 +76,9 @@ from brainhops.io.metadata._base import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
-    RASCoordinatesField,
+    COORDINATE_HINTS,
+    DISPLACEMENT_HINTS,
+    RASCoordinateField,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -116,7 +118,7 @@ commands derive from the file (`Header::create`, in `core/header.cpp`).
 # that it reads, mapped to the kind of warp.
 _FIELD_TYPE_VALUES = {
     _DEFORMATION: "coordinates",
-    _DISPLACEMENT: _DISPLACEMENT,
+    _DISPLACEMENT: "displacements",
 }
 _FIELD_TYPE_KINDS = {
     "coordinates": _DEFORMATION,
@@ -158,7 +160,7 @@ class MrtrixWarp(
     its free-form keys, such as `command_history`, are kept.
 
     This class is abstract and is not registered as a format, so it never
-    takes part in dispatch. [`MrtrixCoordinatesField`][],
+    takes part in dispatch. [`MrtrixCoordinateField`][],
     [`MrtrixDisplacementField`][] and [`MrtrixWarpFull`][] derive from it,
     and answer to `hint="mrtrix.field"`.
     """
@@ -467,7 +469,7 @@ class MrtrixWarp(
 
 
 @register_format
-class MrtrixCoordinatesField(
+class MrtrixCoordinateField(
     MrtrixWarp,
     MrtrixTransformationFormat,
     _xforms.DerivedSequence,
@@ -499,7 +501,7 @@ class MrtrixCoordinatesField(
     written.
     """
 
-    HINTS = ("coordinates", "coord")
+    HINTS = COORDINATE_HINTS
 
     degree: tx.ClassVar[int] = 1
     """The spline degree of the interpolation (MRtrix composes warps with
@@ -701,7 +703,7 @@ class MrtrixCoordinatesField(
             scanner RAS to scanner RAS.
         """
         report = ConversionReport(
-            source="MrtrixCoordinatesField", target="MrtrixCoordinatesField"
+            source="MrtrixCoordinateField", target="MrtrixCoordinateField"
         )
         requested = requested_fields(self.metadata, fields)
         metadata = metadata_to_write(
@@ -735,7 +737,7 @@ class MrtrixCoordinatesField(
             source = _stored(self)
             vox2ras = _vox2ras(self)
         else:
-            vox2ras, source = _coordinates_parts(self.transformations, what)
+            vox2ras, source = _coordinate_parts(self.transformations, what)
         options["keyval"] = _typed_keyval(_record(self), keyval, _DEFORMATION)
         record, raw = _encoded(_record(self), source, vox2ras, options)
         metadata = _consolidated_metadata(metadata, record)
@@ -792,7 +794,7 @@ class MrtrixDisplacementField(
     is read back as a displacement.
     """
 
-    HINTS = ("displacement", "disp", "displacements")
+    HINTS = DISPLACEMENT_HINTS
 
     PRIORITY: tx.ClassVar[int] = -1
     """
@@ -941,7 +943,7 @@ class MrtrixDisplacementField(
     ) -> tx.Self:
         """Encode pending displacements or a chain into `rawdata` and a record.
 
-        The encoding is that of [`MrtrixCoordinatesField.consolidate`][],
+        The encoding is that of [`MrtrixCoordinateField.consolidate`][],
         with RAS displacements in place of RAS coordinates, and with
         `brainhops_field_type: displacement` in the header. A chain that
         was assigned is split into its grid and its displacements, rotated
@@ -1407,7 +1409,7 @@ class MrtrixWarpFull(
         The warps, assigned or read, are stored under the geometry of the
         record, whose linear transforms and other keys are kept, and
         `keyval` is merged into them last. The values are stored as for
-        [`MrtrixCoordinatesField.consolidate`][]. A warpfull object that
+        [`MrtrixCoordinateField.consolidate`][]. A warpfull object that
         has a record storing its warps as they are stored, and nothing
         pending, consolidated without options, is left as it is.
         `from_image` and `midway` select what is decoded, and are not
@@ -1762,7 +1764,7 @@ def _vectors(xform: MrtrixWarp) -> ArrayProtocol:
 
 def _coordinates_chain(
     coordinates: ArrayProtocol, vox2ras: np.ndarray
-) -> tx.Tuple[RASToVoxel, RASCoordinatesField]:
+) -> tx.Tuple[RASToVoxel, RASCoordinateField]:
     """Return the RAS-to-RAS chain through a field of RAS coordinates.
 
     The field is sampled on the grid that `vox2ras` places.
@@ -1770,7 +1772,7 @@ def _coordinates_chain(
     compact = np.asarray(vox2ras, dtype=np.float64)[:_NDIM]
     return (
         RASToVoxel(matrix=_affines.inv(compact)),
-        RASCoordinatesField(field=coordinates),
+        RASCoordinateField(field=coordinates),
     )
 
 
@@ -1893,7 +1895,7 @@ def _stored(xform: MrtrixWarp) -> ArrayProtocol:
     return xform.rawdata
 
 
-def _coordinates_parts(
+def _coordinate_parts(
     chain: tx.Sequence[_xforms.Transformation], what: str
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
     """Return the grid and the (X, Y, Z, 3) coordinates of a chain.
@@ -1907,7 +1909,7 @@ def _coordinates_parts(
         If the chain does not map scanner RAS to scanner RAS.
     """
     chain = tuple(chain or ())
-    if len(chain) != 2 or not isinstance(chain[1], _xforms.CoordinatesField):
+    if len(chain) != 2 or not isinstance(chain[1], _xforms.CoordinateField):
         raise WriterError(
             f"{what} is written from a chain of two transformations: RAS to "
             f"voxel, and a field of RAS coordinates."

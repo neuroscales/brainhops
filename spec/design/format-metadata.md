@@ -212,8 +212,10 @@ Every field is `Optional[T]`, where `None` means that the value is
 unknown or that the format has no slot for it (section 5), and carries
 a `Scope` used by propagation (section 9): `FILE` (about the file or
 the data as a whole), `ACQUISITION` (invariant under resampling),
-`SPATIAL` (tied to the spatial sampling) and `AXIS` (one entry per
-index along a non-spatial axis, which `Along(AxisType...)` names).
+`SPATIAL` (tied to the spatial sampling), `AXIS` (one entry per
+index along a non-spatial axis, which `Along(AxisType...)` names) and
+`VALUES` (a description of the values themselves, which a change of
+frame invalidates).
 
 Groups. Each subsection below is a `Magic` base class that declares its
 fields, and nothing else: `ProvenanceVocabulary` (4.1), `MRIVocabulary`
@@ -343,10 +345,10 @@ image, which is a step of the wiring of the format objects.
 | `dtype` | `numpy.dtype` (native order) | NIfTI `datatype`, MGH `type`, MRtrix/NRRD `datatype`/`type`, Zarr array `dtype`, ITK `precision` |
 | `scale_slope`, `scale_intercept` | float | NIfTI `scl_slope`, `scl_inter` |
 
-`display_range`, `data_unit` and the storage fields are in the `FILE`
-scope, and `channels` in the `AXIS` scope, along the channel axis.
-`Channel.color` is an RGBA hex string, held in upper case without `#`,
-with an opaque alpha added to an RGB string; LUT arrays stay in
+`display_range`, `data_unit` and the storage fields are in the
+`VALUES` scope, and `channels` in the `AXIS` scope, along the channel
+axis. `Channel.color` is an RGBA hex string, held in upper case without
+`#`, with an opaque alpha added to an RGB string; LUT arrays stay in
 `extra`.
 
 `data_unit` is a `Unit` whenever `brainhops.datamodel.units` (backed by
@@ -681,9 +683,13 @@ class Indexed(DataModelBase, frozen=True):  # image[index]
 class Resampled(DataModelBase, frozen=True):  # image.reslice(geometry)
     transformation: Transformation  # new voxels -> old voxels
     geometry: tx.Optional[Geometry] = None
+
+
+class Reframed(DataModelBase, frozen=True):  # image.reframe(frame)
+    axes: tx.Tuple[AxisType, ...] = ()  # types of the re-expressed axes
 ```
 
-`Indexed` and `Resampled` live in the private module
+`Indexed`, `Resampled` and `Reframed` live in the private module
 `brainhops.datamodel.metadata._derive`, which the image operations
 import. `Indexed.positions(axis)` is `np.arange(size)[component]` for
 the first axis of that type (`None` when the axis was dropped or the
@@ -706,7 +712,12 @@ rules are one explicit loop over the vocabulary, in `derive`:
   `Along` names, so a slice, integers or a boolean mask all work. They
   are kept when the image has no such axis, or when the index leaves it
   untouched, and cleared when the index drops it or keeps a position
-  beyond the field.
+  beyond the field. After a change of frame, they are cleared when an
+  axis of the type that their `Along` names was re-expressed.
+- `VALUES` fields (`data_unit`, `display_range`, `dtype`,
+  `scale_slope`, `scale_intercept`) are kept, except after a change of
+  frame, which clears them (see section 5 of
+  `spec/design/vector-and-tensor-images.md`).
 - `extra` is kept, as a new dictionary.
 - Provenance: `creation_time` is cleared, the steps of `history` are
   appended to `history`, and `generated_by` gains a brainhops entry,

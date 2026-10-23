@@ -39,7 +39,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "Affine": ("data",),
         "CartesianField": ("shape",),
         "ConcreteTransformation": (),
-        "CoordinatesField": ("data",),
+        "CoordinateField": ("data",),
         "DisplacementField": ("data",),
         "Identity": (),
         "Linear": ("data",),
@@ -60,7 +60,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "Inverse": ("forward",),
         "InverseAffine": ("forward",),
         "InverseAffineExponential": ("forward",),
-        "InverseCoordinatesField": ("forward",),
+        "InverseCoordinateField": ("forward",),
         "InverseDisplacementField": ("forward",),
         "InverseLinear": ("forward",),
         "InverseLinearExponential": ("forward",),
@@ -120,8 +120,8 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "VoxelToRAS": ("data",),
     },
     "brainhops.io.transformations.base.fields": {
-        "LPSCoordinatesField": ("data",),
-        "RASCoordinatesField": ("data",),
+        "LPSCoordinateField": ("data",),
+        "RASCoordinateField": ("data",),
     },
     "brainhops.io.transformations.c3d._affine": {
         "C3dAffine": ("data",),
@@ -198,7 +198,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MatTransform": ("transformations",),
     },
     "brainhops.io.transformations.itk.nifti._fields": {
-        "ItkNiftiCoordinatesField": ("transformations",),
+        "ItkNiftiCoordinateField": ("transformations",),
         "ItkNiftiDisplacementField": ("transformations",),
         "ItkNiftiField": ("transformations",),
     },
@@ -232,7 +232,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "MrtrixLinearTransform": ("data",),
     },
     "brainhops.io.transformations.mrtrix._warps": {
-        "MrtrixCoordinatesField": ("transformations",),
+        "MrtrixCoordinateField": ("transformations",),
         "MrtrixDisplacementField": ("transformations",),
         "MrtrixWarp": (),
         "MrtrixWarpFull": ("transformations",),
@@ -248,7 +248,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftiBasedTransformation": (),
     },
     "brainhops.io.transformations.nifti._fields": {
-        "NiftiRASCoordinatesField": ("data",),
+        "NiftiRASCoordinateField": ("data",),
         "NiftiRASDisplacementField": ("transformations",),
     },
     "brainhops.io.transformations.niftyreg._affine": {
@@ -266,11 +266,11 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftyRegVelocityGrid": ("transformations",),
     },
     "brainhops.io.transformations.spm._fields": {
-        "SpmCoordinatesField": ("transformations",),
+        "SpmCoordinateField": ("transformations",),
     },
     "brainhops.io.transformations.x5._blocks": {
         "X5BSplineField": ("transformations",),
-        "X5CoordinatesField": ("transformations",),
+        "X5CoordinateField": ("transformations",),
         "X5DisplacementField": ("transformations",),
     },
     "brainhops.io.transformations.x5._xform": {

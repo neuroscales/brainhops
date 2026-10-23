@@ -18,7 +18,7 @@ from .compute.utils import require_endomorphism
 from .modes import ModeLike
 
 if tx.TYPE_CHECKING:
-    from .concrete import CoordinatesField
+    from .concrete import CoordinateField
     from .sequence import Sequence
 
 
@@ -39,7 +39,7 @@ class Transformation(
     borrows `@` from linear and affine maps, which are matrices: `t @ x`
     applies `t`, and `t2 @ t1` is the same composition, with the input space on
     the right and the output space on the left. Applying a transformation to
-    coordinates is also a composition, since a [`CoordinatesField`][] is a
+    coordinates is also a composition, since a [`CoordinateField`][] is a
     transformation. The pipe `t1 | t2` composes in the order of application,
     and `~t` is the inverse of `t`.
 
@@ -608,14 +608,14 @@ class Transformation(
 
     @tx.overload
     def __call__(
-        self, x: "CoordinatesField", compute: tx.Literal[True]
-    ) -> "CoordinatesField":
+        self, x: "CoordinateField", compute: tx.Literal[True]
+    ) -> "CoordinateField":
         """Apply the transformation to coordinates and compute the result."""
         ...
 
     @tx.overload
     def __call__(
-        self, x: "CoordinatesField", compute: tx.Literal[False]
+        self, x: "CoordinateField", compute: tx.Literal[False]
     ) -> "Sequence":
         """Apply the transformation to coordinates lazily.
 
@@ -644,8 +644,8 @@ class Transformation(
 
     @tx.overload
     def __call__(
-        self, x: "CoordinatesField", compute: ModeLike
-    ) -> "CoordinatesField":
+        self, x: "CoordinateField", compute: ModeLike
+    ) -> "CoordinateField":
         """Apply the transformation to coordinates and compute the result.
 
         `compute` is a compose mode, which selects the kinds that are composed.

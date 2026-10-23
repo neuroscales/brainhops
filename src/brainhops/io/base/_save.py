@@ -428,7 +428,7 @@ def _field_kind(t: Transformation) -> tx.Optional[str]:
         current = pending.pop()
         if isinstance(current, xforms.DisplacementField):
             return "velocity" if current.log else "displacements"
-        if isinstance(current, xforms.CoordinatesField):
+        if isinstance(current, xforms.CoordinateField):
             return "coordinates"
         if isinstance(current, xforms.Sequence):
             pending.extend(current.transformations or ())

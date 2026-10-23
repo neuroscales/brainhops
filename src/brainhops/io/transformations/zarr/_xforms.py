@@ -22,7 +22,7 @@ from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     MultiscaleField,
@@ -422,7 +422,7 @@ class OmeZarrField(
             )
             elements = [world2voxel, field, voxel2world]
         else:
-            elements = [world2voxel, CoordinatesField(field=raw, **options)]
+            elements = [world2voxel, CoordinateField(field=raw, **options)]
         return Sequence(
             transformations=elements,
             input=self.input,

@@ -130,8 +130,9 @@ def test_bids_and_scope_annotations() -> None:
     assert by_name["channels"]["scope"] is Scope.AXIS
     assert by_name["channels"]["along"] is AxisType.channel
     assert by_name["bvalues"]["along"] is AxisType.time
-    assert by_name["display_range"]["scope"] is Scope.FILE
-    assert by_name["dtype"]["scope"] is Scope.FILE
+    assert by_name["display_range"]["scope"] is Scope.VALUES
+    assert by_name["dtype"]["scope"] is Scope.VALUES
+    assert by_name["name"]["scope"] is Scope.FILE
     with pytest.raises(ValueError):
         Scoped(Scope.AXIS)
     with pytest.raises(ValueError):

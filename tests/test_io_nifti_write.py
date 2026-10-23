@@ -37,7 +37,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
 )
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiVoxelToRAS,
 )
 
@@ -366,7 +366,7 @@ def test_an_affine_keeps_the_code_of_each_form(
 
 
 def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: ANN001
-    """A coordinates field is written as VECTOR and reads back as such."""
+    """A coordinate field is written as VECTOR and reads back as such."""
     field = np.zeros((4, 5, 6, 1, 3), dtype="float32")
     field[..., 0] = 1.0
     img = nb.Nifti1Image(field, np.eye(4))
@@ -375,13 +375,13 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
     nb.save(img, str(source))
 
     loaded = io.transformations.load(source)
-    assert isinstance(loaded, NiftiRASCoordinatesField)
+    assert isinstance(loaded, NiftiRASCoordinateField)
 
     target = tmp_path / "out.nii"
     loaded.save(target)
 
     reloaded = io.transformations.load(target)
-    assert isinstance(reloaded, NiftiRASCoordinatesField)
+    assert isinstance(reloaded, NiftiRASCoordinateField)
     assert np.array_equal(np.asarray(reloaded.field), field[:, :, :, 0])
     header = nb.load(str(target)).header
     assert int(header["intent_code"]) == 1007
@@ -392,15 +392,13 @@ def test_a_4d_field_is_written_5d(tmp_path) -> None:  # noqa: ANN001
     """(X, Y, Z, C) is written as (X, Y, Z, 1, C), so C is not time."""
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 1.0
-    source = NiftiRASCoordinatesField(field=field)
+    source = NiftiRASCoordinateField(field=field)
 
     target = tmp_path / "field.nii"
     source.save(target)
 
     assert nb.load(str(target)).shape == (4, 5, 6, 1, 3)
-    assert isinstance(
-        io.transformations.load(target), NiftiRASCoordinatesField
-    )
+    assert isinstance(io.transformations.load(target), NiftiRASCoordinateField)
 
 
 # ----------------------------------------------------------------------
@@ -439,7 +437,7 @@ def test_a_dask_field_is_not_coerced_to_numpy() -> None:
     da = pytest.importorskip("dask.array")
     field = da.zeros((4, 5, 6, 3), dtype="float32")
 
-    image = NiftiRASCoordinatesField(field=field)
+    image = NiftiRASCoordinateField(field=field)
     nifti = image.to_nibabel()
 
     assert not isinstance(nifti.dataobj, np.ndarray)

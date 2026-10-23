@@ -1,8 +1,8 @@
 # Images of vectors and tensors
 
-Status: the data model, the operations and the frames of NIfTI files are
-implemented; the readers and the writers of the other formats and the
-metadata are not (see section 9).
+Status: the data model, the operations, the metadata and the frames of
+NIfTI files are implemented; the readers and the writers of the other
+formats are not (see section 9).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -331,6 +331,32 @@ evaluated at the output voxels. The two arguments are separate because
 `reframe=0` select the first transformation rather than turn reframing
 off.
 
+The metadata of the image follows the change of frame through a
+`Reframed` record, which `reframe` passes to `Metadata.derive` in the same
+way as indexing passes an `Indexed` record and reslicing a `Resampled`
+one. No voxel moves, so the spatial fields are kept, but the numbers in
+the data change. The fields that describe the values (`data_unit`,
+`display_range`, `dtype`, `scale_slope` and `scale_intercept`) form a
+scope of their own, `VALUES`, which a change of frame clears and every
+other operation keeps. Clearing a field is always safe, whereas keeping
+it would let a writer store a stale unit or quantise the new values with
+the old intensity scaling. A change of frame that keeps the unit of the
+values, such as a rotation between two frames with the same units, could
+keep `data_unit`; this refinement is left for later.
+
+The fields with one entry per index along an axis (the `AXIS` scope) are
+cleared when the values along an axis of their type are re-expressed,
+because their entries described the components in the old frame, and
+because the axis of a tensor stored with only some of its components
+becomes longer. No field of the vocabulary runs along a component axis
+today. The descriptions of the channels run along the axes of type
+`channel` only (`Along(AxisType.channel)`): the type, the valence, the
+layout and the frame of a component axis already describe its entries,
+and a channel axis is never re-expressed, so `reframe` keeps these
+descriptions (see section 9). The rule of the `AXIS` scope applies to
+a field that would run along a component axis in the future.
+`"reframe"` is appended to `history`.
+
 ## 6. A worked example
 
 `X = load(f)` reads a NIfTI displacement field whose vectors are in RAS.
@@ -500,6 +526,7 @@ Implemented:
   and reslicing keep the frames;
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
   single-scale and multi-scale images;
+- the `Reframed` record and the `VALUES` scope of the metadata (#540);
 - the frames of NIfTI displacement fields, which the reader sets from
   the intent and the writer stores as section 8 describes.
 
@@ -531,13 +558,11 @@ Not implemented:
   OME-Zarr), which #539 tracks. Until then, the frame of a component
   axis that such a reader creates is the array system by default, even
   when the file stores the vectors in another frame;
-- the update of the metadata by `reframe`, which keeps the metadata as it
-  is for now, although `data_unit`, `display_range` and the descriptions
-  of the channels can describe the values in their old frame (#540);
 - the descriptions of the channels in the metadata, which run along the
   axes of type `channel` only (`Along(AxisType.channel)`), and therefore
-  not along component axes. Whether they should also run along
-  component axes is left to #540;
+  not along component axes, so that a change of frame keeps them.
+  Whether they should also run along component axes, and then be cleared
+  with the values, is still open;
 - re-expressing the coordinates of points, which needs the inverse of a
   map rather than its Jacobian;
 - the Jacobian of a spline field computed from the derivatives of its

@@ -1,8 +1,10 @@
 """Format-independent fields of world coordinates and displacements."""
 
 __all__ = [
-    "LPSCoordinatesField",
-    "RASCoordinatesField",
+    "COORDINATE_HINTS",
+    "DISPLACEMENT_HINTS",
+    "LPSCoordinateField",
+    "RASCoordinateField",
     "homogeneous_matrix",
     "ras_displacement_chain",
     "split_ras_displacement_chain",
@@ -30,9 +32,32 @@ from .affines import (
     _check_endpoint,
 )
 
+DISPLACEMENT_HINTS: tx.Tuple[str, ...] = (
+    "displacements",
+    "displacement",
+    "disp",
+)
+"""The format hints that every reader of displacement fields accepts.
 
-class RASCoordinatesField(_xforms.CoordinatesField):
-    """Coordinates field from voxel space to RAS millimetres."""
+A format hint is the word written after the path of a source, as in
+`warp.nii.gz|displacements`, that tells brainhops which reader to use.
+A format may add its own hints after these ones.
+"""
+
+COORDINATE_HINTS: tx.Tuple[str, ...] = (
+    "coordinates",
+    "coordinate",
+    "coord",
+)
+"""The format hints that every reader of coordinate fields accepts.
+
+A format may add its own hints after these ones, as NiftyReg does with
+`deformation`.
+"""
+
+
+class RASCoordinateField(_xforms.CoordinateField):
+    """Coordinate field from voxel space to RAS millimetres."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -45,8 +70,8 @@ class RASCoordinatesField(_xforms.CoordinatesField):
         _check_endpoint(self, "output", _RAS)
 
 
-class LPSCoordinatesField(_xforms.CoordinatesField):
-    """Coordinates field from voxel space to LPS millimetres."""
+class LPSCoordinateField(_xforms.CoordinateField):
+    """Coordinate field from voxel space to LPS millimetres."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -249,7 +274,7 @@ def voxel_grid_coordinates(
     Formats that store world positions, such as FSL absolute warps and
     NiftyReg deformation or control-point grids, are read as displacements
     by subtracting these coordinates and written by adding them. A
-    [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
+    [`CoordinateField`][brainhops.datamodel.transformations.CoordinateField]
     is not used because no boundary condition extends positions beyond the
     grid as these tools do, by keeping the edge displacement, which is what
     `nearest` does on a displacement field.
@@ -346,3 +371,19 @@ def homogeneous_matrix(
             f"{matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
         )
     return matrix
+
+
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "RASCoordinatesField": "RASCoordinateField",
+        "LPSCoordinatesField": "LPSCoordinateField",
+    },
+)

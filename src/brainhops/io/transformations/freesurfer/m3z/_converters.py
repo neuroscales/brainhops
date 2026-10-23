@@ -53,7 +53,7 @@ from brainhops.datamodel._transformations.compute.converters import (
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
     apply_affine,
-    coordinates_parts,
+    coordinate_parts,
     format_options,
     held,
     register_converter,
@@ -84,7 +84,7 @@ def _(t: _xforms.Transformation, cls: tx.Type[M3zMorph], **kwargs) -> M3zMorph:
     if isinstance(t, cls):
         return smart_replace(t, cls, **kwargs)
     options = format_options(t, cls, kwargs, OPTIONS)
-    parts = coordinates_parts(t, RAS, RAS, cls)
+    parts = coordinate_parts(t, RAS, RAS, cls)
     values = parts.field.values
     shape = tuple(int(n) for n in values.shape[:-1])
     if len(shape) != 3 or int(values.shape[-1]) != 3:
@@ -103,7 +103,7 @@ def _(t: _xforms.Transformation, cls: tx.Type[M3zMorph], **kwargs) -> M3zMorph:
     positions = apply_affine(np.linalg.inv(source), values)
     chain = (
         RASToVoxel(matrix=parts.world2grid[:-1]),
-        _xforms.CoordinatesField(field=positions, input=VOXEL, output=VOXEL),
+        _xforms.CoordinateField(field=positions, input=VOXEL, output=VOXEL),
         VoxelToRAS(matrix=source[:-1]),
     )
     if moving is None:

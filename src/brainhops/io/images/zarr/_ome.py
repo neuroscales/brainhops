@@ -24,7 +24,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Projection,
@@ -462,7 +462,7 @@ def _field_array(
     if list(target) != list(range(len(target))):
         data = data[..., list(target)]
     field_cls = (
-        DisplacementField if kind == "displacements" else CoordinatesField
+        DisplacementField if kind == "displacements" else CoordinateField
     )
     return field_cls(field=data, degree=degree)
 

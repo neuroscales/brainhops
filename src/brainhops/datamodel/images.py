@@ -52,7 +52,7 @@ from .base import DataModelBase, _ComparesByIdMixin
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry, _index2transform
 from .metadata import Metadata
-from .metadata._derive import Indexed, Resampled
+from .metadata._derive import Indexed, Reframed, Resampled
 from .multiscale import Multiscale
 from .systems import CoordinateSystem
 from .transformations import (
@@ -683,8 +683,15 @@ class SingleScaleImage(Image):
         -------
         SingleScaleImage
             The image with its values re-expressed, the same
-            transformations and metadata, and its new frames. The image
-            itself is returned when no value changes frame.
+            transformations, and its new frames. The image itself is
+            returned when no value changes frame. Its metadata is derived
+            from the metadata of this image with a [`Reframed`][] record
+            (see
+            [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive]):
+            the fields that describe the values, such as `data_unit` and
+            `display_range`, are cleared, and so are the fields with one
+            entry per index along an axis whose values were re-expressed.
+            `"reframe"` is appended to `history`.
 
         Raises
         ------
@@ -778,10 +785,14 @@ class SingleScaleImage(Image):
                 else slot
                 for slot in new_slots
             ]
+        metadata = self.metadata
+        if metadata is not None:
+            types = tuple(axes[i].type for i in targets)
+            metadata = metadata.derive(Reframed(types), history="reframe")
         return SingleScaleImage(
             data=data,
             transformations=transformations,
-            metadata=self.metadata,
+            metadata=metadata,
             frames=tuple(new_slots),
         )
 

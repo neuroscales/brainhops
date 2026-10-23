@@ -24,18 +24,18 @@ nb = pytest.importorskip("nibabel")
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiBasedTransformation,
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiVoxelToRAS,
 )
 from brainhops.io.transformations.spm import (  # noqa: E402
-    SpmCoordinatesField,
+    SpmCoordinateField,
 )
 
 NIFTI_FORMATS = [
     NiftiImage,
     NiftiVoxelToRAS,
-    NiftiRASCoordinatesField,
-    SpmCoordinatesField,
+    NiftiRASCoordinateField,
+    SpmCoordinateField,
 ]
 
 # Methods that each NIfTI format specializes, in `NiftiImage` or in
@@ -156,11 +156,11 @@ def test_loading_a_nifti_field_keeps_the_array_lazy(tmp_path) -> None:  # noqa: 
     import numpy as np
     from nibabel.arrayproxy import ArrayProxy
 
-    field = NiftiRASCoordinatesField(field=np.zeros((3, 4, 5, 3)))
+    field = NiftiRASCoordinateField(field=np.zeros((3, 4, 5, 3)))
     target = tmp_path / "field.nii"
     field.save(target)
 
-    loaded = NiftiRASCoordinatesField.from_file(target)
+    loaded = NiftiRASCoordinateField.from_file(target)
     assert isinstance(loaded.rawdata, ArrayProxy), "the array was read"
     assert loaded.data.shape == (3, 4, 5, 3)
 
@@ -187,7 +187,7 @@ def test_a_nifti_coordinate_field_defaults_to_ras() -> None:
 
     from brainhops.datamodel.systems import RASmm
 
-    field = NiftiRASCoordinatesField(field=np.zeros((2, 2, 2, 3)))
+    field = NiftiRASCoordinateField(field=np.zeros((2, 2, 2, 3)))
     assert isinstance(field.output, RASmm)
 
 

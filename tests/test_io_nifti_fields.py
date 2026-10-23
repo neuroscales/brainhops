@@ -2,7 +2,7 @@
 
 The standard reserves DISPVECT (1006) for displacements and VECTOR (1007)
 for other vectors. DISPVECT files read as RAS displacements in mm, and
-coordinates fields are written as VECTOR.
+coordinate fields are written as VECTOR.
 """
 
 import numpy as np
@@ -17,16 +17,16 @@ from brainhops.datamodel._transformations import (  # noqa: E402
     tangents as _tangents,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiRASDisplacementField,
 )
 from brainhops.io.transformations.spm import (  # noqa: E402
-    SpmCoordinatesField,
+    SpmCoordinateField,
 )
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
 VECTOR = 1007  # NIFTI_INTENT_VECTOR
-MAPPING = "Mapping"  # intent name of a coordinates field
+MAPPING = "Mapping"  # intent name of a coordinate field
 
 SHAPE = (4, 5, 6)
 """A small grid whose axis lengths all differ."""
@@ -60,24 +60,24 @@ def _grid_points() -> np.ndarray:
 def _write(path, vectors: np.ndarray, intent: int):  # noqa: ANN001, ANN202
     """Write (X, Y, Z, 3) vectors in the NIfTI (X, Y, Z, 1, 3) layout."""
     img = nb.Nifti1Image(vectors[:, :, :, None, :], VOX2RAS)
-    # Coordinates fields are named as SPM and brainhops name them.
+    # Coordinate fields are named as SPM and brainhops name them.
     img.header.set_intent(intent, name=MAPPING if intent == VECTOR else "")
     nb.save(img, str(path))
     return path
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    points = xforms.CoordinatesField(field=np.asarray(points, float))
+    points = xforms.CoordinateField(field=np.asarray(points, float))
     out = xforms.Sequence(transformations=[points, *xform]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _apply_coordinates(field, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
     ras2vox = np.linalg.inv(VOX2RAS)
     voxels = np.asarray(points, float) @ ras2vox[:3, :3].T + ras2vox[:3, 3]
-    voxels = xforms.CoordinatesField(field=voxels)
+    voxels = xforms.CoordinateField(field=voxels)
     out = xforms.Sequence(transformations=[voxels, field]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 @pytest.fixture
@@ -136,7 +136,7 @@ def test_displacements_are_stored_in_voxel_units(standard_warp) -> None:  # noqa
 
 
 def test_a_coordinates_field_and_its_displacements_agree(tmp_path) -> None:  # noqa: ANN001
-    """A VECTOR coordinates field and its DISPVECT displacements agree."""
+    """A VECTOR coordinate field and its DISPVECT displacements agree."""
     coords = _write(
         tmp_path / "coords.nii.gz",
         (_grid_points() + _ramp()).astype("float32"),
@@ -145,7 +145,7 @@ def test_a_coordinates_field_and_its_displacements_agree(tmp_path) -> None:  # n
     disp = _write(tmp_path / "disp.nii.gz", _ramp(), DISPVECT)
     coords = io.transformations.load(coords)
     disp = io.transformations.load(disp)
-    assert type(coords) is NiftiRASCoordinatesField
+    assert type(coords) is NiftiRASCoordinateField
     assert type(disp) is NiftiRASDisplacementField
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
@@ -157,7 +157,7 @@ def test_a_coordinates_field_drops_its_singleton_axis(tmp_path) -> None:  # noqa
     """The singleton axis is dropped, or the field would be sampled as 4-D."""
     values = (_grid_points() + _ramp()).astype("float32")
     field = io.transformations.load(_write(tmp_path / "c.nii", values, VECTOR))
-    assert type(field) is NiftiRASCoordinatesField
+    assert type(field) is NiftiRASCoordinateField
     assert np.asarray(field.field).shape == (*SHAPE, 3)
     np.testing.assert_array_equal(np.asarray(field.field), values)
 
@@ -193,7 +193,7 @@ def test_an_spm_deformation_is_sampled_in_ras(
         reference = _apply(io.transformations.load(path), outside)
     with backend(array_backend):
         field = io.transformations.load(path)
-        assert type(field) is SpmCoordinatesField
+        assert type(field) is SpmCoordinateField
         assert np.asarray(field.rasfield.field).shape == (*SHAPE, 3)
         np.testing.assert_allclose(
             _apply(field, nodes), values.reshape(-1, 3), atol=1e-4
@@ -225,11 +225,11 @@ def test_points_map_through_a_loaded_coordinates_field(tmp_path) -> None:  # noq
     coords = io.transformations.load(
         _write(tmp_path / "coords.nii.gz", values, VECTOR), "coordinates"
     )
-    assert type(coords) is NiftiRASCoordinatesField
+    assert type(coords) is NiftiRASCoordinateField
     spm = io.transformations.load(
         _write(tmp_path / "y_sub01.nii.gz", values, VECTOR)
     )
-    assert type(spm) is SpmCoordinatesField
+    assert type(spm) is SpmCoordinateField
     for field in (coords, spm.rasfield):
         assert np.asarray(field.field).shape == (*SHAPE, 3)
         one = _apply_coordinates(field, points[:1])
@@ -314,7 +314,7 @@ def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: A
     assert name == MAPPING
 
     reloaded = io.transformations.load(target)
-    assert type(reloaded) is NiftiRASCoordinatesField
+    assert type(reloaded) is NiftiRASCoordinateField
     np.testing.assert_array_equal(np.asarray(reloaded.field), values)
 
 
@@ -330,7 +330,7 @@ def test_a_legacy_coordinates_file_is_read_through_a_hint(tmp_path) -> None:  # 
     assert type(io.transformations.load(legacy)) is NiftiRASDisplacementField
 
     field = io.transformations.load(legacy, hint="nifti.coordinates")
-    assert type(field) is NiftiRASCoordinatesField
+    assert type(field) is NiftiRASCoordinateField
     target = tmp_path / "copied.nii.gz"
     field.save(target)
     assert int(nb.load(str(target)).header["intent_code"]) == DISPVECT
@@ -338,7 +338,7 @@ def test_a_legacy_coordinates_file_is_read_through_a_hint(tmp_path) -> None:  # 
     target = tmp_path / "migrated.nii.gz"
     field.save(target)
     assert int(nb.load(str(target)).header["intent_code"]) == VECTOR
-    assert type(io.transformations.load(target)) is NiftiRASCoordinatesField
+    assert type(io.transformations.load(target)) is NiftiRASCoordinateField
 
 
 # ----------------------------------------------------------------------
@@ -397,7 +397,7 @@ def test_a_spline_field_is_written_as_its_values(tmp_path) -> None:  # noqa: ANN
 def test_assigning_data_refreshes_the_field_view() -> None:
     """Assigning the data clears the cached field view."""
     grid = np.stack(np.meshgrid(*[np.arange(4.0)] * 3, indexing="ij"), -1)
-    coords = NiftiRASCoordinatesField(data=grid)
+    coords = NiftiRASCoordinateField(data=grid)
     assert coords.field is coords.field  # cached
     coords.data = grid + 10.0
     np.testing.assert_allclose(np.asarray(coords.field), grid + 10.0)
@@ -409,7 +409,7 @@ def test_a_coefficients_field_consolidates_to_its_values() -> None:
 
     values = np.random.default_rng(0).normal(size=(*SHAPE, 3))
     coefficients = value2coeff_field(values, degree=3, bound="nearest")
-    field = NiftiRASCoordinatesField(
+    field = NiftiRASCoordinateField(
         data=coefficients, degree=3, store="coefficients"
     )
     consolidated = field.consolidate()

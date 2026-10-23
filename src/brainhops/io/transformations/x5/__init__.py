@@ -55,7 +55,7 @@ are dense fields:
 | `Representation`                      | Transformation             |
 | ------------------------------------- | -------------------------- |
 | `"displacements"` (fslpy `relative`)  | [`X5DisplacementField`][]  |
-| `"deformations"` (fslpy `absolute`)   | [`X5CoordinatesField`][]   |
+| `"deformations"` (fslpy `absolute`)   | [`X5CoordinateField`][]   |
 
 `"coordinates"` and `"absolute"` are accepted as aliases of
 `"deformations"`. A displacement field is read as a chain of three
@@ -127,7 +127,7 @@ On write, a transformation is refused when it does not map `RASmm` to
 
 __all__ = [
     "X5BSplineField",
-    "X5CoordinatesField",
+    "X5CoordinateField",
     "X5DisplacementField",
     "X5Domain",
     "X5Header",
@@ -137,9 +137,24 @@ __all__ = [
     "X5Transform",
 ]
 
-from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
+from ._blocks import X5BSplineField, X5CoordinateField, X5DisplacementField
 from ._metadata import X5Metadata
 from ._raw import X5Domain, X5Header, X5Node, X5Raw
 from ._xform import X5Transform
 
 from . import _converters  # noqa: E402, F401  isort: skip
+
+
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "X5CoordinatesField": "X5CoordinateField",
+    },
+)

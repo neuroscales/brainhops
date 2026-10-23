@@ -1,5 +1,5 @@
 """
-ITK displacement and coordinates fields stored as LPS NIfTI vector images.
+ITK displacement and coordinate fields stored as LPS NIfTI vector images.
 
 The encoding and the way these files are told apart from RAS NIfTI fields are
 described in [`brainhops.io.transformations.itk.nifti`][].
@@ -60,7 +60,11 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
-from brainhops.io.transformations.base.fields import LPSCoordinatesField
+from brainhops.io.transformations.base.fields import (
+    COORDINATE_HINTS,
+    DISPLACEMENT_HINTS,
+    LPSCoordinateField,
+)
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
@@ -160,7 +164,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     The vectors are expressed in the LPS physical space of ITK, while the
     header holds the usual voxel-to-RAS affine. Subclasses decide whether the
     vectors are displacements ([`ItkNiftiDisplacementField`][]) or absolute
-    coordinates ([`ItkNiftiCoordinatesField`][]).
+    coordinates ([`ItkNiftiCoordinateField`][]).
 
     The dimension of the field is read from the header, and its endpoints are
     the ITK spaces of that dimension: (L, P) in 2-D and `LPSmm` in 3-D. The
@@ -557,7 +561,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
     reaches a file in the ITK layout with any other intent code.
     """
 
-    HINTS = ("displacements",)
+    HINTS = DISPLACEMENT_HINTS
 
     INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_DISPLACEMENT
 
@@ -701,7 +705,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
 
 @register_format
-class ItkNiftiCoordinatesField(ItkNiftiField):
+class ItkNiftiCoordinateField(ItkNiftiField):
     """
     Field of absolute LPS coordinates stored as an ITK NIfTI vector image.
 
@@ -720,7 +724,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
     using the class directly.
     """
 
-    HINTS = ("coordinates",)
+    HINTS = COORDINATE_HINTS
 
     INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_COORDINATES
 
@@ -767,7 +771,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
             LPSToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
             ),
-            LPSCoordinatesField(
+            LPSCoordinateField(
                 field=self._lps_vectors(ndim), input=voxel, output=world
             ),
         )
@@ -783,7 +787,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Encode the coordinates field.
+        Encode the coordinate field.
 
         The coordinates are encoded unconverted under the `VECTOR` intent, and
         the inverse of the `lps2voxel` affine becomes the voxel-to-RAS sform
@@ -810,11 +814,11 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
             return image
         chain = tuple(self.transformations or ())
         if len(chain) != 2 or not isinstance(
-            chain[1], _xforms.CoordinatesField
+            chain[1], _xforms.CoordinateField
         ):
             raise WriterError(
-                "An ITK coordinates field is written from a chain of two "
-                "transformations: LPS to voxel, and a coordinates field."
+                "An ITK coordinate field is written from a chain of two "
+                "transformations: LPS to voxel, and a coordinate field."
             )
         # ITK stores sampled vectors.
         coordinates = chain[1].to(store="values")
