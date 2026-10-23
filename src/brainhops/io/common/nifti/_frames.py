@@ -1,7 +1,8 @@
 """The frames in which NIfTI files store the components of vectors.
 
 Some NIfTI intents mark a displacement field, whose fifth axis holds the
-components of a vector at each voxel. Each of these intents implies the
+components of a vector at each voxel, or whose fourth axis holds them in
+the 4-D files that FSL writes. Each of these intents implies the
 coordinate system in which the components are expressed, which is
 called the frame of the values (see
 `spec/design/vector-and-tensor-images.md`). The table names each intent

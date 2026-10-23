@@ -448,7 +448,10 @@ def test_an_unchanged_fsl_field_keeps_its_intent_and_values(
     save(image, copy)
 
     assert _intent(copy) == FNIRT_DISPLACEMENT
-    assert np.allclose(_stored(copy), 2.0 * data, atol=1e-5)
+    # The field is written as FSL writes it, with its components along the
+    # fourth axis.
+    stored = np.asarray(nb.load(str(copy)).dataobj)
+    assert np.allclose(stored, 2.0 * data, atol=1e-5)
 
 
 def _moved(image: NiftiImage) -> SingleScaleImage:
@@ -484,7 +487,8 @@ def test_moved_fsl_coefficients_need_lossy(tmp_path: pathlib.Path) -> None:
 
     save(moved, copy, lossy=True)
     assert _intent(copy) == CUBIC
-    assert np.allclose(_stored(copy), coef, atol=1e-6)
+    stored = np.asarray(nb.load(str(copy)).dataobj)
+    assert np.allclose(stored, coef, atol=1e-6)
 
 
 def test_a_moved_dispvect_field_keeps_its_vectors(
@@ -501,3 +505,61 @@ def test_a_moved_dispvect_field_keeps_its_vectors(
 
     assert _intent(copy) == DISPVECT
     assert np.allclose(_stored(copy), values @ _L.T, atol=1e-5)
+
+
+# ----------------------------------------------------------------------
+#   THE 4-D FILES OF FSL
+# ----------------------------------------------------------------------
+
+
+def _fsl_4d_file(
+    path: pathlib.Path, data: np.ndarray, affine: np.ndarray
+) -> pathlib.Path:
+    # FSL writes the components along the fourth axis.
+    nifti = nb.Nifti1Image(data.astype("f4"), affine)
+    nifti.header["intent_code"] = FNIRT_DISPLACEMENT
+    nb.save(nifti, str(path))
+    return path
+
+
+@pytest.mark.parametrize("neurological", [False, True])
+def test_a_4d_fsl_field_holds_its_components_on_the_fourth_axis(
+    tmp_path: pathlib.Path, neurological: bool
+) -> None:
+    data = np.random.default_rng(7).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(neurological)
+    path = _fsl_4d_file(tmp_path / "warp.nii", data, affine)
+    image = NiftiImage.load(path)
+    warp = FnirtWarpField.load(path, deformation_type="relative")
+    warp.moving = nb.load(str(path)).header
+
+    assert image.transformation.input.axes[3].type == "displacement"
+    ras = np.asarray(image.reframe(-1).data)
+
+    grid = np.stack(
+        np.meshgrid(*[np.arange(s) for s in _SHAPE], indexing="ij"), -1
+    ).astype(float)
+    points = grid @ affine[:3, :3].T + affine[:3, 3]
+    chain = _xforms.Sequence(
+        transformations=[_xforms.CoordinatesField(field=points)]
+        + list(warp.transformations)
+    )
+    moved = np.asarray(chain.compute().field)
+    assert np.allclose(ras, moved - points, atol=1e-4)
+
+
+def test_a_changed_4d_fsl_field_is_written_as_fsl_writes_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    data = np.random.default_rng(8).normal(size=(*_SHAPE, 3))
+    path = _fsl_4d_file(tmp_path / "warp.nii", data, _reference_affine(True))
+    image = NiftiImage.load(path)
+    image.data = np.asarray(image.data) * 2.0
+    copy = tmp_path / "copy.nii"
+
+    save(image, copy)
+
+    written = nb.load(str(copy))
+    assert written.shape == (*_SHAPE, 3)
+    assert _intent(copy) == FNIRT_DISPLACEMENT
+    assert np.allclose(np.asarray(written.dataobj), 2.0 * data, atol=1e-5)

@@ -407,6 +407,14 @@ ITK reads it. The restriction by axis types of section 3 cannot choose
 these axes, because all three spatial axes of the world have the same
 type, so the reader composes the projection itself.
 
+FSL writes its fields as 4-D files whose fourth axis holds the
+components, rather than on the fifth axis as the NIfTI standard places
+them. The reader therefore reads the fourth axis of a 4-D file with an
+FSL intent as a displacement axis, and the writer stores the components
+of a field that keeps an FSL intent along the fourth axis, because FSL
+reads only the first volume of a 5-D file whose fourth axis has one
+entry. Before #539, the reader read that axis as a time axis.
+
 The FSL files hold vectors in FSL scaled millimetres, which are the
 voxel indices multiplied by the voxel sizes, with the first axis flipped
 when the best affine has a positive determinant. The frame of a
@@ -523,9 +531,6 @@ Not implemented:
   OME-Zarr), which #539 tracks. Until then, the frame of a component
   axis that such a reader creates is the array system by default, even
   when the file stores the vectors in another frame;
-- the frames of the 4-D files that FSL writes, whose fourth axis holds
-  the components. The NIfTI reader reads that axis as a time axis, so
-  such a file has no component axis;
 - the update of the metadata by `reframe`, which keeps the metadata as it
   is for now, although `data_unit`, `display_range` and the descriptions
   of the channels can describe the values in their old frame (#540);

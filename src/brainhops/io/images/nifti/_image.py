@@ -48,6 +48,7 @@ from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_FSL_COEFFICIENT_INTENTS,
+    _NIFTI_FSL_INTENTS,
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
@@ -1129,10 +1130,31 @@ def _nifti_encoded(
         intent=_NIFTI_INTENT_DISPVECT if dispvect else None,
     )
     _keep_given_fields(nifti, fields)
+    nifti = _in_fsl_layout(nifti)
     stored = None if image.metadata is None else image.metadata.raw
     if kept and header is not None and stored is not None:
         _keep_geometry(nifti.header, stored.header, overrides)
     return _stored_parts(nifti)
+
+
+def _in_fsl_layout(nifti: _NiftiObject) -> _NiftiObject:
+    """Return a NIfTI image with an FSL intent in the layout of FSL.
+
+    FSL writes its fields as 4-D volumes whose fourth axis holds the
+    components, and it reads only the first volume of a 5-D file whose
+    fourth axis has one entry. The encoder places the components of an
+    image on the fifth axis, as the NIfTI standard does, so a field that
+    keeps an FSL intent is laid out again as FSL writes it.
+    """
+    shape = tuple(int(d) for d in nifti.shape)
+    intent = _nifti_intent(nifti.header)
+    if intent not in _NIFTI_FSL_INTENTS or len(shape) != 5 or shape[3] != 1:
+        return nifti
+    header = nifti.header.copy()
+    flat = (*shape[:3], shape[4])
+    header.set_data_shape(flat)
+    dataobj = nifti.dataobj.reshape(flat)
+    return type(nifti)(dataobj, None, header)
 
 
 def _nifti_written(

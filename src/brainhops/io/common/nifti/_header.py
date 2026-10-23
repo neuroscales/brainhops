@@ -26,6 +26,8 @@ from brainhops.io.base.parsers import (
 from ._constants import (
     _NIFTI1_MAX_DIM,
     _NIFTI_AXES,
+    _NIFTI_FSL_4D_AXES,
+    _NIFTI_FSL_INTENTS,
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_VECTOR,
     _NIFTI_SPECIFIC_AXES,
@@ -69,8 +71,11 @@ def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
 def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
     """Return the voxel axes described by a header.
 
-    The intent code can change the names and types of the axes. Every axis
-    counts samples, so its unit is the index unit.
+    The intent code can change the names and types of the axes. A file
+    with an FSL intent holds the components of its vectors along the
+    fifth axis, as the NIfTI standard places them, or along the fourth
+    axis of a 4-D file, as FSL writes them. Every axis counts samples, so
+    its unit is the index unit.
     """
 
     ndim = len(header.get_data_shape())
@@ -83,6 +88,8 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
     if intent in _NIFTI_SPECIFIC_AXES:
         axes_map = _NIFTI_SPECIFIC_AXES[intent]
         axes = [axes_map.get(i, axis) for i, axis in enumerate(axes)]
+    if intent in _NIFTI_FSL_INTENTS and ndim == 4:
+        axes = [_NIFTI_FSL_4D_AXES.get(i, axis) for i, axis in enumerate(axes)]
 
     # Copy the shared templates so that no system can mutate them.
     return [replace(axis) for axis in axes]

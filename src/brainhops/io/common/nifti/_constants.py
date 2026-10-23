@@ -43,6 +43,10 @@ _NIFTI_SPECIFIC_AXES = {
     2009: _AXES_DISP,  # FSL_QUADRATIC_SPLINE_COEFFICIENTS
 }
 
+# FSL writes its fields as 4-D volumes whose fourth axis holds the three
+# components, rather than on the fifth axis as the NIfTI standard does.
+_NIFTI_FSL_4D_AXES = {3: Axis("c", "displacement", unit=_INDEX)}
+
 
 _NIFTI_FIELD_INTENTS = frozenset(
     {
