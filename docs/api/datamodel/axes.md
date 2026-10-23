@@ -13,6 +13,12 @@
       show_category_heading: false
 
 
+## ::: brainhops.datamodel._axes.components
+    options:
+      heading: "Component axes"
+      show_category_heading: false
+
+
 ## ::: brainhops.datamodel._axes.anat
     options:
       heading: "Anatomical axes"

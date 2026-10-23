@@ -10,7 +10,6 @@ of the helpers needs nibabel.
 """
 
 __all__ = [
-    "CHANNEL_TYPES",
     "RAS_FROM_ORIENTATION",
     "STORAGE_GROUPS",
     "Arrangement",
@@ -35,7 +34,7 @@ import typing_extensions as tx
 from brainhops._core.properties import cached_value
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import get_axes
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -283,9 +282,6 @@ Spatial axes come first, then time, then channels or vector components, and
 then any other axis.
 """
 
-CHANNEL_TYPES = ("channel", "displacement", "coordinate")
-"""Axis types that are stored in the channel group, after time."""
-
 _SPACE_NAMES = ("x", "y", "z")
 """Axis names by which [`plan_axes`][] sorts spatial axes."""
 
@@ -293,9 +289,14 @@ _INDEX = "index"
 
 
 def axis_group(axis: tx.Any) -> str:
-    """Return the storage group of an axis, one of [`STORAGE_GROUPS`][]."""
+    """Return the storage group of an axis, one of [`STORAGE_GROUPS`][].
+
+    Channel axes and component axes, which hold the components of points,
+    vectors or tensors, belong to the channel group, which is stored
+    after time.
+    """
     type_ = getattr(axis, "type", None)
-    if type_ in CHANNEL_TYPES:
+    if type_ == "channel" or is_component_type(type_):
         return "channel"
     if type_ in ("space", "time"):
         return str(type_)
