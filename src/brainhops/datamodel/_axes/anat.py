@@ -50,6 +50,9 @@ class AnatomicalAxis(OrientedSpaceAxis, on={"orientation": is_anatomical}):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
 

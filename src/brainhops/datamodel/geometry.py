@@ -6,7 +6,7 @@ import numbers
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, NoRepr, NotKwOnly
+from bagof.magic import Factory, NoRepr, NotKwOnly, replace
 
 from brainhops._core.typing import CartesianIndex, Shape
 
@@ -252,11 +252,23 @@ def _index2transform(
     if input_axes:
         output_axes = []
         axis_walker = list(input_axes)
+        dim = 0
         for idx in index:
             if isinstance(idx, int):
                 axis_walker.pop(0)
+                dim += 1
             elif isinstance(idx, slice):
-                output_axes.append(axis_walker.pop(0))
+                axis = axis_walker.pop(0)
+                # The entries of an axis that holds the components of a
+                # vector or a tensor keep their meaning only when the axis
+                # keeps all of them, in order.
+                kept = range(*idx.indices(shape[dim]))
+                if getattr(axis, "content", None) is not None and kept != (
+                    range(shape[dim])
+                ):
+                    axis = replace(axis, content=None)
+                output_axes.append(axis)
+                dim += 1
             else:
                 # The element is `None`, which inserts a new axis.
                 output_axes.append(Axis())

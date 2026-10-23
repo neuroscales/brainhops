@@ -1,5 +1,7 @@
 """Single-scale and multi-scale images, and reslicing them."""
 
+from collections.abc import Mapping
+
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
@@ -18,18 +20,37 @@ from ._backends import (
     dataobjproperty,
     dataproperty,
 )
+from ._frames import (
+    FrameSlot,
+    FrameTargets,
+    ReframeMethod,
+    array_axes,
+    axis_index,
+    change_matrix,
+    compose_frames,
+    content_axes,
+    frames_as_backend,
+    jacobian,
+    normalize_frames,
+    resolve_target,
+    spatial_axes,
+    squeeze_axis,
+    with_content,
+)
 from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
     _nearest_resolution_index,
     nearest_level,
 )
 from ._transformations.compute.separable import pull_separable
+from .axes import AxisSequence
 from .base import DataModelBase, _ComparesByIdMixin
 from .enums import BoundaryLike, InterpolationLike
-from .geometry import Geometry
+from .geometry import Geometry, _index2transform
 from .metadata import Metadata
 from .metadata._derive import Indexed, Resampled
 from .multiscale import Multiscale
+from .systems import CoordinateSystem
 from .transformations import (
     CartesianField,
     Identity,
@@ -276,6 +297,60 @@ class SingleScaleImage(Image):
     The last transformation in the list is the preferred one.
     """
 
+    _frames: NoRepr[tx.Any] = ()
+    """The frames of the values, as they were given (see `frames`)."""
+
+    @property
+    def frames(self) -> tx.Tuple[FrameSlot, ...]:
+        """The frame of the values along each axis.
+
+        Some axes hold the components of vectors or tensors, which their
+        [`content`][brainhops.datamodel.axes.Axis.content] describes. The
+        components are expressed in a coordinate system, called the frame
+        of the values, and each axis has one slot that records it:
+
+        - `None` is the array system of the image, so that the components
+          are in voxel units along the axes of the data. This is the
+          default.
+        - A transformation maps the array system to the frame. It is
+          often an entry of `transformations`, such as the map to scanner
+          RAS for a file that stores its vectors in RAS.
+        - A coordinate system names a foreign frame, which belongs to
+          another space that no transformation of the image reaches. The
+          values along such an axis are never re-expressed.
+
+        Only an axis with a content can have a frame. The constructor
+        and the setter also accept a mapping from axis names or indices
+        to slots, and an empty tuple, which leaves every slot `None`.
+
+        Lazily applying a transformation keeps the frames, because the
+        values do not change. Indexing and reslicing compose each frame
+        with the map of the voxels, so that the values keep their meaning
+        without being rotated. [`reframe`][] re-expresses the values in
+        another frame. The design is recorded in
+        `spec/design/vector-and-tensor-images.md`.
+
+        Raises
+        ------
+        TypeError
+            If a slot is neither a transformation, a coordinate system nor
+            `None`.
+        ValueError
+            If there is not one slot per axis, or if an axis without a
+            content has a frame.
+        KeyError
+            If a mapping names an axis that does not exist.
+        """
+        return normalize_frames(self._frames, self._array_axes(), self.ndim)
+
+    @frames.setter
+    def frames(self, value: tx.Any) -> None:
+        self._frames = () if value is None else value
+
+    def _array_axes(self) -> tx.Optional[AxisSequence]:
+        """Return the axes of the array system, or `None` if unknown."""
+        return array_axes(self.transformation.input, self.ndim)
+
     # --- conversion to another backend -------------------------------
 
     def as_backend(
@@ -285,14 +360,22 @@ class SingleScaleImage(Image):
         device: tx.Optional[DeviceLike] = None,
         inplace: bool = False,
     ) -> tx.Self:
-        # Overrides _BackendsMixin to convert transformations as well.
+        # Overrides _BackendsMixin to convert transformations and frames as
+        # well.
         opt = dict(backend=backend, device=device, inplace=inplace)
         obj = super().as_backend(**opt)
+        changes = {}
         transformations = obj.transformations
         converted = as_backend(transformations, **opt)
-        if converted is transformations:
+        if converted is not transformations:
+            changes["transformations"] = converted
+        frames = obj._frames
+        converted = frames_as_backend(frames, **opt)
+        if converted is not frames:
+            changes["frames"] = converted
+        if not changes:
             return obj
-        return smart_replace(obj, "inplace", transformations=converted)
+        return smart_replace(obj, "inplace", **changes)
 
     @property
     def geometry(self) -> Geometry:
@@ -325,8 +408,17 @@ class SingleScaleImage(Image):
         *,
         clip: Clip = None,
         dtype: tx.Optional[DTypeLike] = None,
+        reframe: tx.Union[bool, ReframeMethod] = False,
+        frame: FrameTargets = -1,
     ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
+
+        The values along an axis that holds vectors or tensors are
+        sampled without being rotated: each of their
+        [`frames`][brainhops.datamodel.images.SingleScaleImage.frames] is
+        composed with the map of the voxels, so that the values keep
+        their meaning. With `reframe`, the values are then re-expressed
+        in the frame `frame` of the result, as by [`reframe`][].
 
         Parameters
         ----------
@@ -382,6 +474,18 @@ class SingleScaleImage(Image):
             Integer output keeps rounding half away from zero and
             saturation. Dask arrays remain lazy.
 
+        reframe : bool or {"jacobian", "rotation"} or callable, default=False
+            Whether and how the values of vector and tensor axes are
+            re-expressed after they are sampled. `False` keeps them in
+            their frame, `True` is the same as `"jacobian"`, and the other
+            values are the methods of [`reframe`][].
+
+        frame : int or str or Transformation or None or dict, default=-1
+            The frame in which the values are re-expressed when `reframe`
+            is set, as in [`reframe`][]. It is read on the result, whose
+            only transformation is that of `geometry`, so `-1` is the
+            world of `geometry`.
+
         Returns
         -------
         SingleScaleImage
@@ -424,10 +528,147 @@ class SingleScaleImage(Image):
             )
             if dtype is not None:
                 metadata = replace(metadata, dtype=new_data.dtype)
-        return SingleScaleImage(
+
+        # The array system of the target may describe its channels without
+        # their content, so the content of this image is copied onto it, and
+        # each frame is composed with the map of the voxels.
+        target = geometry.transformation
+        frames = ()
+        source_axes = self._array_axes()
+        if content_axes(source_axes):
+            system = with_content(
+                target.input, self.transformation.input, source_axes, self.ndim
+            )
+            if system is not target.input:
+                target = target.to(input=system)
+                vox2vox = vox2vox.to(input=system)
+            frames = compose_frames(
+                self.frames,
+                list(range(self.ndim)),
+                vox2vox,
+                array_axes(system, self.ndim),
+            )
+        resliced = SingleScaleImage(
             data=new_data,
-            transformations=[geometry.transformation],
+            transformations=[target],
             metadata=metadata,
+            frames=frames,
+        )
+        if reframe is False:
+            return resliced
+        method = "jacobian" if reframe is True else reframe
+        return resliced.reframe(frame, method=method)
+
+    def reframe(
+        self, frame: FrameTargets = -1, *, method: ReframeMethod = "jacobian"
+    ) -> "SingleScaleImage":
+        """Re-express the values of vectors and tensors in another frame.
+
+        Some axes hold the components of vectors or tensors, expressed in
+        a frame that
+        [`frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        records. This method changes that frame. With the default
+        arguments, the values are re-expressed in the world of the
+        preferred transformation, which is what a writer or a viewer of
+        the image expects. No voxel moves.
+
+        If the values are in the frame `F` and are re-expressed in the
+        frame `F′`, the components at each voxel `x` are changed by
+
+        ```text
+        J(x) = D F′(x) · (D F(x))⁻¹
+        ```
+
+        where `D` is the Jacobian on the spatial axes, which is the linear
+        part of a map that is affine. A
+        [`Vector`][brainhops.datamodel.content.Vector] becomes `J v`, a
+        [`Covector`][brainhops.datamodel.content.Covector] becomes
+        `J⁻ᵀ g`, and a
+        [`SymmetricMatrix`][brainhops.datamodel.content.SymmetricMatrix]
+        becomes `J T Jᵀ`. The Jacobian of a map that is not affine is
+        computed by finite differences between the voxels.
+
+        Parameters
+        ----------
+        frame : int or str or Transformation or None or dict, default=-1
+            The new frame. An integer selects an entry of
+            `transformations`, without reordering it, so that `-1` is the
+            preferred transformation. A string selects the most preferred
+            transformation whose output system has that name. `None` is
+            the array system, in which the components are in voxel units.
+            A transformation maps the array system to the new frame. A
+            single value applies to every axis with a content, except the
+            axes whose frame is foreign. A dictionary maps axis names or
+            indices to frames, and the axes that it leaves out keep their
+            frame.
+
+        method : {"jacobian", "rotation"} or callable, default="jacobian"
+            What is applied to the values. `"jacobian"` applies `J`, which
+            changes the frame exactly. `"rotation"` applies the rotation
+            `R` of the polar decomposition `J = R P`, which keeps the
+            length of vectors and the eigenvalues of tensors, as the
+            finite-strain reorientation of diffusion tensors does. A
+            callable receives `J`, of shape `(n, n)` or `(*shape, n, n)`,
+            and returns the matrix to apply.
+
+        Returns
+        -------
+        SingleScaleImage
+            The image with its values re-expressed, the same
+            transformations and metadata, and its new frames. The image
+            itself is returned when no value changes frame.
+
+        Raises
+        ------
+        KeyError
+            If a frame names a system that no transformation ends in, or
+            if a dictionary names an axis that does not exist.
+        ValueError
+            If a dictionary names an axis without a content or with a
+            foreign frame, or if a frame does not map the spatial axes of
+            the image to as many spatial axes as a value has components.
+        """
+        axes = self._array_axes()
+        slots = self.frames
+        targets = _frame_targets(self, frame, axes, slots)
+        targets = {i: t for i, t in targets.items() if t is not slots[i]}
+        if not targets:
+            return self
+
+        data = self.data
+        shape = tuple(data.shape)
+        spatial = spatial_axes(axes)
+        contents = content_axes(axes)
+        # The frames do not depend on the position along a content axis, so
+        # their Jacobians are computed with these axes reduced to one entry.
+        reduced = tuple(1 if i in contents else s for i, s in enumerate(shape))
+        cache: tx.Dict[int, tx.Any] = {}
+
+        def jacobian_of(slot: tx.Optional[Transformation]) -> tx.Any:
+            if id(slot) not in cache:
+                cache[id(slot)] = jacobian(slot, axes, reduced, data)
+            return cache[id(slot)]
+
+        new_slots = list(slots)
+        for i, target in targets.items():
+            content = axes[i].content
+            ndim = content.frame_ndim(shape[i])
+            if ndim != len(spatial):
+                raise ValueError(
+                    f"Axis {i} holds {shape[i]} components, which refer to "
+                    f"{ndim} spatial axes, but the image has {len(spatial)} "
+                    f"spatial axes."
+                )
+            matrix = change_matrix(
+                jacobian_of(slots[i]), jacobian_of(target), method, ndim
+            )
+            data = content.apply(data, squeeze_axis(matrix, i, len(shape)), i)
+            new_slots[i] = target
+        return SingleScaleImage(
+            data=data,
+            transformations=self.transformations,
+            metadata=self.metadata,
+            frames=tuple(new_slots),
         )
 
     def __call__(self, transformation: Transformation) -> "SingleScaleImage":
@@ -437,7 +678,7 @@ class SingleScaleImage(Image):
         the preferred transformation. The new preferred transformation,
         `transform.inverse() @ self.transformation`, is appended to the
         existing ones. No voxel moves, so the new image shares the
-        metadata of this image.
+        metadata and the frames of this image.
         """
         transformation = transformation.inverse() @ self.transformation
         transformations = list(self.transformations or [])
@@ -446,6 +687,7 @@ class SingleScaleImage(Image):
             data=_stored_data(self),
             transformations=transformations,
             metadata=self.metadata,
+            frames=self._frames,
         )
 
     def __getitem__(self, index: CartesianIndex) -> "SingleScaleImage":
@@ -460,6 +702,12 @@ class SingleScaleImage(Image):
         clears the fields tied to the spatial sampling and maps an
         encoding direction given in voxel axes. `"getitem"` is appended
         to `history`, and the metadata keeps its class and its record.
+
+        The [`frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        of the values are composed with the map from the indexed voxels
+        to the original ones, so the values are not changed. An axis that
+        holds vectors or tensors keeps its content only when it is indexed
+        with its full range in order.
 
         Parameters
         ----------
@@ -485,8 +733,20 @@ class SingleScaleImage(Image):
             metadata = metadata.derive(
                 Indexed(index, self.shape, grid.input), history="getitem"
             )
+        frames = ()
+        if content_axes(self._array_axes()):
+            sub2full, shape = _index2transform(index, self.shape, grid.input)
+            frames = compose_frames(
+                self.frames,
+                _source_axes(sub2full),
+                sub2full,
+                array_axes(sub2full.input, len(shape)),
+            )
         return SingleScaleImage(
-            data=data, transformations=transformations, metadata=metadata
+            data=data,
+            transformations=transformations,
+            metadata=metadata,
+            frames=frames,
         )
 
 
@@ -589,6 +849,8 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         *,
         clip: Clip = None,
         dtype: tx.Optional[DTypeLike] = None,
+        reframe: tx.Union[bool, ReframeMethod] = False,
+        frame: FrameTargets = -1,
     ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
 
@@ -641,6 +903,14 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             Output dtype, as in [`SingleScaleImage.reslice`][].
             None preserves the selected level's dtype.
 
+        reframe : bool or {"jacobian", "rotation"} or callable, default=False
+            Whether and how the values of vector and tensor axes are
+            re-expressed, as in [`SingleScaleImage.reslice`][].
+
+        frame : int or str or Transformation or None or dict, default=-1
+            The frame in which the values are re-expressed, as in
+            [`SingleScaleImage.reslice`][].
+
         Returns
         -------
         SingleScaleImage
@@ -653,6 +923,8 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             copy=copy,
             clip=clip,
             dtype=dtype,
+            reframe=reframe,
+            frame=frame,
         )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
@@ -720,6 +992,63 @@ def _level_voxel_sizes(
         )
         sizes.append(None if affine is None else axis_scales(affine.matrix))
     return sizes
+
+
+def _frame_targets(
+    image: SingleScaleImage,
+    frame: FrameTargets,
+    axes: tx.Optional[tx.Sequence[tx.Any]],
+    slots: tx.Sequence[FrameSlot],
+) -> tx.Dict[int, tx.Optional[Transformation]]:
+    """Return the new frame of each axis whose values change frame.
+
+    A single frame applies to every axis with a content whose frame is not
+    foreign. A mapping applies to the axes that it names.
+
+    Raises
+    ------
+    ValueError
+        If a mapping names an axis without a content or with a foreign
+        frame.
+    """
+    transformations = list(image.transformations or [])
+    if not isinstance(frame, Mapping):
+        target = resolve_target(frame, transformations)
+        return {
+            i: target
+            for i in content_axes(axes)
+            if not isinstance(slots[i], CoordinateSystem)
+        }
+    targets = {}
+    with_content = set(content_axes(axes))
+    for key, value in frame.items():
+        i = axis_index(key, axes, image.ndim)
+        if i not in with_content:
+            raise ValueError(
+                f"Axis {key!r} has no content, so its values have no frame."
+            )
+        if isinstance(slots[i], CoordinateSystem):
+            raise ValueError(
+                f"The values along axis {key!r} are in a foreign frame, "
+                f"which no transformation of the image reaches."
+            )
+        targets[i] = resolve_target(value, transformations)
+    return targets
+
+
+def _source_axes(sub2full: Transformation) -> tx.List[tx.Optional[int]]:
+    """Return the original axis of each axis of an indexed array.
+
+    `sub2full` is the affine that indexing builds. Each of its columns
+    belongs to an axis of the indexed array, and has one nonzero entry, in
+    the row of the original axis, unless the axis was inserted.
+    """
+    matrix = np.asarray(sub2full.matrix)[:, :-1]
+    sources = []
+    for column in matrix.T:
+        rows = np.flatnonzero(column)
+        sources.append(int(rows[0]) if len(rows) else None)
+    return sources
 
 
 def _single_multi_swap(other: Image, cls: tx.Type[Image]) -> bool:
