@@ -4,6 +4,7 @@ import typing_extensions as tx
 from bagof.magic import HideIfDefault, NotKwOnly, fields
 
 from ..base import DataModelBase
+from ..content import Content
 from ..enums import AxisType
 from ..orientations import Orientation
 from ..units import Unit
@@ -39,6 +40,9 @@ class Axis(DataModelBase, polymorphic=True, eq=True, repr=HideIfDefault):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
     name: NotKwOnly[tx.Optional[str]] = None
@@ -58,6 +62,12 @@ class Axis(DataModelBase, polymorphic=True, eq=True, repr=HideIfDefault):
 
     orientation: tx.Optional[Orientation] = None
     """Meaningful direction of the axis, such as left to right."""
+
+    content: tx.Optional[Content] = None
+    """
+    What the entries along the axis hold, such as the components of a
+    vector. `None` means that the entries are independent values.
+    """
 
     def __pre_init__(self, arguments: tx.Any) -> None:
         # Fixed-size systems such as `CoordinateSystem3D` forbid `...`.

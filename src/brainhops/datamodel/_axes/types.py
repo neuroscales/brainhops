@@ -41,6 +41,9 @@ class SpaceAxis(Axis, on={"type": "space"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
     unit: Inherit[tx.Optional[tx.Union[SpaceUnit, IndexUnit]]]
@@ -66,6 +69,9 @@ class TimeAxis(Axis, on={"type": "time"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
     unit: Inherit[tx.Optional[tx.Union[TimeUnit, IndexUnit]]]
@@ -91,6 +97,9 @@ class ChannelAxis(Axis, on={"type": "channel"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
     type: NoRepr[...]
@@ -117,6 +126,9 @@ class DisplacementAxis(Axis, on={"type": "displacement"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
     type: NoRepr[...]
@@ -143,6 +155,9 @@ class CoordinateAxis(Axis, on={"type": "coordinate"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
     type: NoRepr[...]
@@ -167,6 +182,9 @@ class OrientedAxis(Axis, on={"orientation": is_not_none}):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
 
@@ -194,6 +212,9 @@ class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as left to right.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """
 
 
@@ -216,4 +237,7 @@ class OrientedTimeAxis(TimeAxis, OrientedAxis):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as forward.
+    content : Content, optional
+        What the entries along the axis hold, such as the components
+        of a vector. `None` means independent values.
     """

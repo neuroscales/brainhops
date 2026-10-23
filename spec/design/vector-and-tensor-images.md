@@ -1,6 +1,7 @@
 # Images of vectors and tensors
 
-Status: not implemented (see section 8).
+Status: the data model and the operations are implemented; the readers,
+the writers and the metadata are not (see section 8).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -248,7 +249,39 @@ a writer would store them as custom axis types and report the loss.
 
 ## 8. Status
 
-Nothing in this memo is implemented yet. The work is tracked in #536 and
-lands in separate pull requests: the data model and the operations
-(#538), the readers and the writers (#539), and the metadata under a
-change of frame (#540).
+Implemented:
+
+- the `content` field of axes, with the classes `Vector`, `Covector`
+  and `SymmetricMatrix` (`brainhops.datamodel.content`);
+- the `frames` field of single-scale images, and the way lazy
+  transformations, indexing and reslicing keep it;
+- `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
+  single-scale and multi-scale images.
+
+The Jacobian of a frame that is not affine is computed with the
+`gradient` function of the array backend, along the axes of section 5
+only: the differences are central inside the grid and one-sided at its
+edges, which is exact for a linear field. Along such an axis of one
+voxel, the displacements of the fields are taken to be constant, so that
+the column of the Jacobian is that of the frame with every field taken as
+the identity. Along the other axes, such as time, the frame is evaluated
+at every position but not differentiated, so a frame that changes with
+time gives one Jacobian per time point. An exact Jacobian, computed from
+the derivatives of the splines of the fields, is left for later.
+
+Not implemented:
+
+- readers that set the content and the frames of the axes they read, and
+  writers that re-express the values in the frame of their format (NIfTI
+  displacement fields, ITK, MRtrix, FSL, NRRD and OME-Zarr), which #539
+  tracks;
+- the update of the metadata by `reframe`, which keeps the metadata as it
+  is for now, although `data_unit`, `display_range` and the descriptions
+  of the channels can describe the values in their old frame (#540);
+- a content for the points held by a coordinates field, whose frame is
+  changed by the map itself rather than by its Jacobian;
+- the Jacobian of a spline field computed from the derivatives of its
+  spline, which a port of `pull_grad` from torch-interpol would provide;
+- a `reframe` method on multi-scale images;
+- the use of frames by the directions held in the metadata, such as
+  `bvectors`.
