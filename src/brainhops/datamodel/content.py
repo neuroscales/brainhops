@@ -2,11 +2,10 @@
 
 Most axes of an image enumerate independent values, such as the colours
 of an RGB image, and their `content` is `None`. Some axes hold instead
-the components of a geometric object whose components are spatial, such
-as a displacement, the gradient of an image or a diffusion tensor. When
-the image is moved or resampled, these components must be re-expressed
-with the Jacobian of the transformation, and the content of the axis says
-how:
+the components of a geometric object, such as a displacement, the
+gradient of an image or a diffusion tensor. When the image is moved or
+resampled, these components must be re-expressed with the Jacobian of
+the transformation, and the content of the axis says how:
 
 | Class               | `type`               | Action of a linear map `J` |
 | ------------------- | -------------------- | -------------------------- |
@@ -17,9 +16,11 @@ how:
 The components are expressed in a coordinate system, called the frame
 of the values, which the image records in
 [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames].
-The entries of a vector axis follow the spatial axes of that frame, in
-order. A full matrix is stored as two vector axes, whose actions combine
-into `J T Jᵀ`.
+The entries of a vector axis follow axes of the system of that frame, in
+order (see
+[`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe]
+for how these axes are found). A full matrix is stored as two vector
+axes, whose actions combine into `J T Jᵀ`.
 
 The design is recorded in `spec/design/vector-and-tensor-images.md`.
 """
@@ -56,7 +57,7 @@ class Content(DataModelBase, polymorphic=True, eq=True, repr=HideIfDefault):
     """The name of the content, such as `"vector"`."""
 
     def frame_ndim(self, size: int) -> int:
-        """Return the number of spatial axes of the frame of the entries.
+        """Return the number of axes of the frame that the entries follow.
 
         Parameters
         ----------
@@ -66,7 +67,7 @@ class Content(DataModelBase, polymorphic=True, eq=True, repr=HideIfDefault):
         Returns
         -------
         int
-            The number of spatial axes that the entries refer to.
+            The number of axes of the frame that the entries follow.
 
         Raises
         ------
@@ -124,7 +125,7 @@ class Vector(Content, on={"type": "vector"}):
     type: NoRepr[...]
 
     def frame_ndim(self, size: int) -> int:
-        """Return the number of spatial axes, which is the number of entries.
+        """Return the number of axes of the frame, one per entry.
 
         Parameters
         ----------
@@ -134,7 +135,7 @@ class Vector(Content, on={"type": "vector"}):
         Returns
         -------
         int
-            The number of spatial axes that the entries refer to.
+            The number of axes of the frame that the entries follow.
         """
         return size
 
@@ -177,7 +178,7 @@ class Covector(Content, on={"type": "covector"}):
     type: NoRepr[...]
 
     def frame_ndim(self, size: int) -> int:
-        """Return the number of spatial axes, which is the number of entries.
+        """Return the number of axes of the frame, one per entry.
 
         Parameters
         ----------
@@ -187,7 +188,7 @@ class Covector(Content, on={"type": "covector"}):
         Returns
         -------
         int
-            The number of spatial axes that the entries refer to.
+            The number of axes of the frame that the entries follow.
         """
         return size
 
@@ -222,7 +223,7 @@ class SymmetricMatrix(Content, on={"type": "symmetric-matrix"}):
     software packs the triangle in different orders. When the frame
     changes by a linear map `J`, the matrix becomes `J T Jᵀ`.
 
-    | Software | `order` (for three spatial axes)                       |
+    | Software | `order` (for a frame of three axes)                    |
     | -------- | ------------------------------------------------------ |
     | FSL      | `((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))`     |
     | MRtrix   | `((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))`     |
@@ -287,7 +288,7 @@ class SymmetricMatrix(Content, on={"type": "symmetric-matrix"}):
         Returns
         -------
         int
-            The number of spatial axes that the entries refer to.
+            The number of axes of the frame that the entries follow.
 
         Raises
         ------

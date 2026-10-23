@@ -32,8 +32,8 @@ from ._frames import (
     frames_as_backend,
     jacobian,
     normalize_frames,
+    pair_axes,
     resolve_target,
-    spatial_axes,
     squeeze_axis,
     with_content,
 )
@@ -579,14 +579,29 @@ class SingleScaleImage(Image):
         J(x) = D F′(x) · (D F(x))⁻¹
         ```
 
-        where `D` is the Jacobian on the spatial axes, which is the linear
-        part of a map that is affine. A
-        [`Vector`][brainhops.datamodel.content.Vector] becomes `J v`, a
+        where `D` is the Jacobian, which is the linear part of a map that
+        is affine. A [`Vector`][brainhops.datamodel.content.Vector]
+        becomes `J v`, a
         [`Covector`][brainhops.datamodel.content.Covector] becomes
         `J⁻ᵀ g`, and a
         [`SymmetricMatrix`][brainhops.datamodel.content.SymmetricMatrix]
-        becomes `J T Jᵀ`. The Jacobian of a map that is not affine is
-        computed by finite differences between the voxels.
+        becomes `J T Jᵀ`.
+
+        The components follow some axes of the system of their frame, in
+        order, and these axes are read from the structure of the frame,
+        not from the types of the axes. They are the outputs of the frame
+        that do not depend on a content axis. When there are more of them
+        than components, as when the frame carries a time axis along, they
+        are the outputs that share one axis type, if exactly one type has
+        as many axes as there are components. The Jacobian is taken along
+        the axes of the array that the frame maps onto these outputs, and
+        the two frames of a change must map the same axes of the array.
+        The array system takes the axes of the other frame.
+
+        The Jacobian of a map that is not affine is computed by finite
+        differences between the voxels: central inside the image and
+        one-sided at its edges. Along an axis of one voxel, the fields of
+        the map are taken to be constant.
 
         Parameters
         ----------
@@ -625,8 +640,9 @@ class SingleScaleImage(Image):
             if a dictionary names an axis that does not exist.
         ValueError
             If a dictionary names an axis without a content or with a
-            foreign frame, or if a frame does not map the spatial axes of
-            the image to as many spatial axes as a value has components.
+            foreign frame, or if the frames do not tell which of their
+            axes the components follow, or if they map different axes of
+            the array onto them.
         """
         axes = self._array_axes()
         slots = self.frames
@@ -637,30 +653,35 @@ class SingleScaleImage(Image):
 
         data = self.data
         shape = tuple(data.shape)
-        spatial = spatial_axes(axes)
         contents = content_axes(axes)
         # The frames do not depend on the position along a content axis, so
         # their Jacobians are computed with these axes reduced to one entry.
         reduced = tuple(1 if i in contents else s for i, s in enumerate(shape))
-        cache: tx.Dict[int, tx.Any] = {}
+        cache: tx.Dict[tx.Any, tx.Any] = {}
 
-        def jacobian_of(slot: tx.Optional[Transformation]) -> tx.Any:
-            if id(slot) not in cache:
-                cache[id(slot)] = jacobian(slot, axes, reduced, data)
-            return cache[id(slot)]
+        def jacobian_of(
+            slot: tx.Optional[Transformation],
+            info: tx.Any,
+            cols: tx.List[int],
+        ) -> tx.Any:
+            key = (id(slot), tuple(cols))
+            if key not in cache:
+                cache[key] = jacobian(slot, info, cols, reduced, data)
+            return cache[key]
 
         new_slots = list(slots)
         for i, target in targets.items():
             content = axes[i].content
-            ndim = content.frame_ndim(shape[i])
-            if ndim != len(spatial):
-                raise ValueError(
-                    f"Axis {i} holds {shape[i]} components, which refer to "
-                    f"{ndim} spatial axes, but the image has {len(spatial)} "
-                    f"spatial axes."
-                )
+            ncomponents = content.frame_ndim(shape[i])
+            source = slots[i]
+            source_info, target_info, cols = pair_axes(
+                source, target, axes, ncomponents
+            )
             matrix = change_matrix(
-                jacobian_of(slots[i]), jacobian_of(target), method, ndim
+                jacobian_of(source, source_info, cols),
+                jacobian_of(target, target_info, cols),
+                method,
+                ncomponents,
             )
             data = content.apply(data, squeeze_axis(matrix, i, len(shape)), i)
             new_slots[i] = target

@@ -386,3 +386,145 @@ def test_a_field_is_constant_along_an_axis_of_one_voxel() -> None:
     assert np.allclose(
         out[:, 1], _apply(np.linalg.inv(jacobian), values[:, 1])
     )
+
+
+# --- axes of the components, read from the structure of the frames ----
+
+
+def _system_of(axes: tx.List[Axis], name: str) -> CoordinateSystem:
+    return CoordinateSystem(axes, name=name)
+
+
+def _matrix(linear: np.ndarray) -> np.ndarray:
+    # A homogeneous matrix without its last row.
+    size = linear.shape[0]
+    matrix = np.zeros((size, size + 1))
+    matrix[:, :size] = linear
+    return matrix
+
+
+def test_untyped_axes_are_read_from_the_frame() -> None:
+    values = np.random.default_rng(0).random((*_SHAPE, 3))
+    voxel = _system_of(
+        [Axis("i"), Axis("j"), Axis("k"), Axis("c", content=Vector())], "voxel"
+    )
+    world = _system_of([Axis("x"), Axis("y"), Axis("z"), Axis("c")], "world")
+    linear = np.eye(4)
+    linear[:3, :3] = _LA
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    out = image.reframe(None)
+
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values)
+    )
+
+
+def _series(time: tx.Optional[str]) -> tx.Tuple[CoordinateSystem, ...]:
+    # The axes of a series of vector fields, with a time axis of type `time`.
+    def axes(names: str) -> tx.List[Axis]:
+        out = [Axis(n, "space" if time else None) for n in names]
+        out.append(Axis("t", time))
+        return out
+
+    voxel = _system_of([*axes("ijk"), Axis("c", content=Vector())], "voxel")
+    world = _system_of([*axes("xyz"), Axis("c")], "world")
+    return voxel, world
+
+
+def test_a_time_axis_carried_along_is_left_out() -> None:
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    voxel, world = _series("time")
+    linear = np.eye(5)
+    linear[:3, :3] = _LA
+    linear[3, 3] = 2.5  # the repetition time
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    out = image.reframe(None)
+
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values)
+    )
+
+
+def test_a_motion_that_changes_with_time_is_not_differentiated_in_time() -> (
+    None
+):
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    voxel, world = _series("time")
+    linear = np.eye(5)
+    linear[:3, :3] = _LA
+    linear[:3, 3] = [0.5, 0.0, 0.0]  # the image drifts along x over time
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    out = image.reframe(None)
+
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values)
+    )
+
+
+def test_an_ambiguous_frame_is_refused() -> None:
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    # Without types, nothing tells the time axis from the others.
+    voxel, world = _series(None)
+    linear = np.eye(5)
+    linear[:3, :3] = _LA
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    with pytest.raises(ValueError):
+        image.reframe(None)
+
+
+def test_vectors_in_a_subspace_follow_the_frame() -> None:
+    # Four axes of the same type, and vectors of three components, whose
+    # frame maps the first three axes onto its three axes.
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    voxel = _system_of(
+        [Axis(n, "space") for n in "ijkl"] + [Axis("c", content=Vector())],
+        "voxel",
+    )
+    frame_system = _system_of(
+        [Axis(n, "space") for n in "xyz"] + [Axis("c")], "frame"
+    )
+    linear = np.zeros((4, 5))
+    linear[:3, :3] = _LA
+    linear[3, 4] = 1.0
+    matrix = np.zeros((4, 6))
+    matrix[:, :5] = linear
+    frame = Affine(matrix=matrix, input=voxel, output=frame_system)
+    identity = Affine(matrix=np.eye(6)[:-1], input=voxel, output=voxel)
+    image = SingleScaleImage(values, [identity], frames={"c": frame})
+
+    out = image.reframe(None)
+
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values)
+    )
+
+
+def test_frames_on_different_axes_cannot_be_compared() -> None:
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    voxel = _system_of(
+        [Axis(n, "space") for n in "ijkl"] + [Axis("c", content=Vector())],
+        "voxel",
+    )
+    frame_system = _system_of(
+        [Axis(n, "space") for n in "xyz"] + [Axis("c")], "frame"
+    )
+
+    def frame(first: int) -> Affine:
+        matrix = np.zeros((4, 6))
+        matrix[:3, first : first + 3] = np.eye(3)
+        matrix[3, 4] = 1.0
+        return Affine(matrix=matrix, input=voxel, output=frame_system)
+
+    identity = Affine(matrix=np.eye(6)[:-1], input=voxel, output=voxel)
+    image = SingleScaleImage(values, [identity], frames={"c": frame(0)})
+
+    with pytest.raises(ValueError):
+        image.reframe(frame(1))

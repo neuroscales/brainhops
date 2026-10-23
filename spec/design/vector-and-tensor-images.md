@@ -3,9 +3,9 @@
 Status: the data model and the operations are implemented; the readers
 and the writers are not (see section 8).
 
-Some images hold, at each voxel, a vector or a tensor whose components
-are spatial. Displacement fields, fibre directions, diffusion tensors and
-image gradients are common examples. When such an image is moved or
+Some images hold, at each voxel, a vector or a tensor, whose components
+change when the coordinate system changes. Displacement fields, fibre
+directions, diffusion tensors and image gradients are common examples. When such an image is moved or
 resampled, its values must also be re-expressed, using the Jacobian of
 the transformation or a rotation derived from it. This memo records how
 brainhops describes these values and how it re-expresses them. It keeps
@@ -42,9 +42,9 @@ Otherwise it holds an instance of a small, open hierarchy:
 | `Covector`        | `g ↦ J⁻ᵀ g`                                  |
 | `SymmetricMatrix` | `T ↦ J T Jᵀ`, on the packed components       |
 
-The entries of a `Vector` or `Covector` axis follow the spatial axes of
-the frame, in order. This is also the rule that OME-NGFF RFC-3 states
-for vector axes. A `SymmetricMatrix` axis stores the packed upper
+The entries of a `Vector` or `Covector` axis follow axes of the system
+of the frame, in order. This is also the rule that OME-NGFF RFC-3 states
+for vector axes. Section 5 explains how these axes are found. A `SymmetricMatrix` axis stores the packed upper
 triangle, and its `order` field gives the pair of indices of each entry,
 because the packing differs between software (FSL, MRtrix and NRRD each
 use a different order). A full matrix is stored as two `Vector` or
@@ -98,8 +98,9 @@ of the array system.
 Here `sub2full` maps the indexed array to the original array, and `ψ`
 maps the voxels of the resliced image to the voxels of `X`. Both are
 already computed by these operations. A `None` slot stays `None` when the
-linear part of `sub2full` or `ψ` is the identity on the spatial axes,
-because the voxel components of a vector do not change then. A foreign
+linear part of `sub2full` or `ψ` is the identity on the axes that are not
+content axes, because the voxel components of a vector do not change
+then. A foreign
 slot is never changed.
 
 Indexing a content axis with anything else than its full range in order
@@ -122,10 +123,38 @@ J(x) = D(F′ ∘ F⁻¹)(F(x)) = D F′(x) · (D F(x))⁻¹
 
 is applied to the values according to their content, and the slot
 becomes `F′`. `D M (x)` is the Jacobian matrix of a map `M` at `x`,
-restricted to the spatial axes, and it is the linear part of `M` when `M`
-is affine. `F` must be a diffeomorphism, so that `D F(x)` is invertible.
-`J` is computed from two Jacobians at the voxels and never needs the
-inverse of a map.
+restricted to the axes described below, and it is the linear part of `M`
+when `M` is affine. `F` must be a diffeomorphism, so that `D F(x)` is
+invertible. `J` is computed from two Jacobians at the voxels and never
+needs the inverse of a map.
+
+The axes that the Jacobian is restricted to are read from the structure
+of the frames, and not from the types of the axes, so that the rules do
+not assume that the vectors are spatial. The structure of a frame is its
+linear part, or the linear part of its affine part, in which every field
+is taken as the identity. An output of the frame is coupled to an input
+when the entry between them is not negligible.
+
+- The components follow the outputs of the frame that are not coupled to
+  a content axis of the array, in order.
+- When there are more of these outputs than components, as when the
+  frame carries a time axis along, the components follow the outputs
+  that share one axis type, provided that exactly one type has as many
+  outputs as there are components. Otherwise the frame is ambiguous and
+  is refused. A frame whose system has exactly as many axes as there are
+  components, besides the content axes, is never ambiguous.
+- The Jacobian is taken along the axes of the array, other than content
+  axes, that are coupled to these outputs and to no other output. A time
+  axis that the frame carries along is left out, even when a motion
+  changes with time.
+- The two frames of a change must take the components from the same axes
+  of the array, since their Jacobians are only comparable in the same
+  basis. The array system has no structure of its own, so it takes the
+  axes of the other frame.
+
+These rules let the components live in a subspace: a frame that maps the
+first three of four axes onto its three axes describes vectors of three
+components in a four-dimensional image.
 
 The `frame` argument accepts:
 
@@ -230,12 +259,12 @@ Implemented:
   single-scale and multi-scale images.
 
 The Jacobian of a frame that is not affine is computed with the
-`gradient` function of the array backend, along the spatial axes only:
-the differences are central inside the grid and one-sided at its edges,
-which is exact for a linear field. Along a spatial axis of one voxel, the
-displacements of the fields are taken to be constant, so that the column
-of the Jacobian is that of the frame with every field taken as the
-identity. Along a non-spatial axis, such as time, the frame is evaluated
+`gradient` function of the array backend, along the axes of section 5
+only: the differences are central inside the grid and one-sided at its
+edges, which is exact for a linear field. Along such an axis of one
+voxel, the displacements of the fields are taken to be constant, so that
+the column of the Jacobian is that of the frame with every field taken as
+the identity. Along the other axes, such as time, the frame is evaluated
 at every position but not differentiated, so a frame that changes with
 time gives one Jacobian per time point. An exact Jacobian, computed from
 the derivatives of the splines of the fields, is left for later.
