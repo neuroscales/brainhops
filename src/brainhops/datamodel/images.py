@@ -163,9 +163,14 @@ class Image(
 
         Assigning a transformation makes it the preferred one:
 
-        * if the assigned value is an integer or a string, the corresponding
-          transformation (by index of by output system name) is selected
-          and moved to the end of the list;
+        * if the assigned value is an integer, the transformation at that
+          index is selected and moved to the end of the list;
+        * if the assigned value is a string, the transformation whose
+          output system has that name is selected and moved to the end of
+          the list. When several output systems have that name, the
+          transformation closest to the end of the list is selected, so
+          that the preferred transformation stays preferred if it
+          matches;
         * if the assigned value is a transformation that is already in
           the list, it is moved to the end of the list;
         * if it is a new transformation, it is appended to the list.
@@ -216,7 +221,11 @@ class Image(
         if isinstance(value, int):
             value = transformations.pop(value)
         elif isinstance(value, str):
-            for i, x in enumerate(transformations):
+            # Several transformations may end in systems of the same name,
+            # so the search starts from the preferred one and keeps it when
+            # it matches.
+            for i in reversed(range(len(transformations))):
+                x = transformations[i]
                 if getattr(x.output, "name", None) == value:
                     value = transformations.pop(i)
                     break
