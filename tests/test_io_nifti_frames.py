@@ -5,8 +5,7 @@ its vectors are expressed. A DISPVECT file stores RAS vectors in the
 world of its best affine, and an FSL file stores them in the FSL scaled
 millimetres of its reference. The reader records that frame without
 converting the values, and the writer re-expresses the values in the
-world of the preferred transformation (see
-`spec/design/vector-and-tensor-images.md`).
+world of the preferred transformation.
 """
 
 import pathlib

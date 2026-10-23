@@ -2,9 +2,8 @@
 
 An image whose axes hold the components of points, vectors or tensors
 records, for each data axis, the frame in which these components are
-expressed (see `spec/design/vector-and-tensor-images.md`). This module
-holds the helpers that read, validate, compose and change these frames.
-The public interface is
+expressed. This module holds the helpers that read, validate, compose
+and change these frames. The public interface is
 [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
 and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe].
@@ -183,8 +182,8 @@ def same_frame(first: FrameSlot, second: FrameSlot) -> bool:
     """Return whether two frame slots are known to be the same frame.
 
     Two slots are the same frame when they are the same object, or when
-    both are affine maps with the same matrix, as a frame decoded twice
-    from a header is. A foreign frame is the same as an equal coordinate
+    both are affine maps with the same matrix, as two copies of one
+    transformation are. A foreign frame is the same as an equal coordinate
     system. Any other pair is taken to differ, which is always safe,
     since re-expressing values in their own frame changes nothing.
     """

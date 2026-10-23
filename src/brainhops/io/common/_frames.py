@@ -5,8 +5,7 @@ frame of these components (see
 [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]).
 A file format stores the components in a frame of its own, such as the
 world of the affine that a NIfTI file writes, so a writer re-expresses
-the values in that frame before it encodes them. The rules are those of
-`spec/design/vector-and-tensor-images.md`:
+the values in that frame before it encodes them. The rules are these:
 
 - a change of frame through affine maps is exact, and it is part of the
   encoding of the format, so it is applied silently;

@@ -116,7 +116,7 @@ def save(
         reason.
 
     !!! note "One pass for a transformation"
-        Some formats have no exact converter yet (#312), and hold a
+        Some formats have no exact converter yet, and hold a
         transformation only by relabelling it, that is, by being
         rebuilt from its parameters, when the coordinate systems allow
         it. Step 4 relabels a transformation only into a format that is
@@ -272,7 +272,7 @@ def _convert(
     `obj.to(fmt, lossy=True)` returns. The options of the conversion are
     given to every format, so a format that does not take some of them is
     converted without them. A format without an exact converter for
-    `obj` may relabel it (#312). Such a format is chosen only when `own`
+    `obj` may relabel it. Such a format is chosen only when `own`
     says that it is a file-backed version of the data model of `obj`, so
     that a format that converts `obj` is not made ambiguous by the formats
     that would only relabel it.
@@ -291,7 +291,7 @@ def _convert(
     if not own and relabels(obj, fmt):
         raise ConversionError(
             f"{fmt.__name__} has no exact converter for a "
-            f"{type(obj).__name__} (#312), and a transformation is saved "
+            f"{type(obj).__name__}, and a transformation is saved "
             f"by relabelling it only in a format of its own data model."
         )
     unused = 0
@@ -527,7 +527,7 @@ def _with_lossy(
     """Return the options of a write, with `lossy` if the format takes it.
 
     An image format takes `lossy` when its `consolidate` names it, as the
-    formats that store the frames of vector values do (#539). The other
+    formats that store the frames of vector values do. The other
     image formats read unknown options as fields of their header, so they
     are not given it.
     """

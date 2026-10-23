@@ -439,7 +439,7 @@ them. The reader therefore reads the fourth axis of a 4-D file with an
 FSL intent as a displacement axis, and the writer stores the components
 of a field that keeps an FSL intent along the fourth axis, because FSL
 reads only the first volume of a 5-D file whose fourth axis has one
-entry. Before #539, the reader read that axis as a time axis.
+entry.
 
 The FSL files hold vectors in FSL scaled millimetres, which are the
 voxel indices multiplied by the voxel sizes, with the first axis flipped
@@ -481,10 +481,14 @@ the header states.
   re-expressed in another frame are then wrong, because positions also
   change with the translation of the frame.
 
-The frames of a file are decoded from its header each time they are
-read, and they are not stored in the image, so that an image that is
+`NiftiImage` decodes the frames of its file from its header each time
+they are read, and does not store them, so that an image that is
 consolidated gets the frames of its new header. Frames that are given to
-the image take precedence over those of the header.
+the image take precedence over those of the header. The data model knows
+nothing of files: the format overrides the `frames` property in its own
+class, and it gives the frames it reads to the images that it builds,
+such as the result of a lazily applied transformation, as ordinary
+frames.
 
 The writer of `NiftiImage` follows the same table in reverse.
 

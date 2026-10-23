@@ -14,7 +14,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
-from brainhops.datamodel._frames import FrameSlot
+from brainhops.datamodel._frames import FrameSlot, normalize_frames
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import IntentEnum, Valence
 from brainhops.datamodel.images import SingleScaleImage
@@ -260,15 +260,60 @@ class NiftiImage(
         # In F order, the first axis changes fastest.
         return ArrayCoordinateSystem(axes=axes, name="voxel", order="F")
 
-    def _decoded_frames(self) -> tx.Dict[int, FrameSlot]:
-        """Return the frames of the vectors, as the header states them.
+    @property
+    def frames(self) -> tx.Tuple[FrameSlot, ...]:
+        """The frame of the values along each axis, as the header states it.
 
-        The intent of a displacement field states in which coordinate
-        system its vectors are expressed, and
-        [`header_frames`][brainhops.io.common.nifti._frames.header_frames]
-        builds the frame of each intent. The frame of a DISPVECT file is
-        its best affine, which is the last transformation that the header
-        decodes to, restricted to its spatial axes.
+        A displacement field stores at each voxel the components of a
+        vector, and the intent of its header states in which coordinate
+        system, called the frame, these components are expressed:
+
+        | Code | Intent                  | Frame of the vectors               |
+        | ---- | ----------------------- | ---------------------------------- |
+        | 1006 | displacement vector     | the best affine, in RAS            |
+        | 2006 | fnirt disp field        | FSL scaled millimetres             |
+        | 2007 | fnirt cubic spline coef | the same, after the initial affine |
+        | 2009 | fnirt quad spline coef  | the same, after the initial affine |
+        | 2008 | fnirt dct coef          | a foreign `FslCoordinateSystem`    |
+
+        The frame of a DISPVECT file is its best affine, which is the
+        last transformation that the header decodes to, restricted to
+        its spatial axes. FSL scaled millimetres are the voxel indices
+        multiplied by the voxel sizes, with the first axis flipped when
+        the best affine has a positive determinant. The frame of an FSL
+        file is the map from its voxels to these coordinates, as
+        [`FnirtWarpField`][brainhops.io.transformations.fsl.FnirtWarpField]
+        computes it without a reference image. That reader takes the
+        scaled millimetres of the reference and of the moving image to
+        share their axes, and the values of a deformation field to be
+        displacements rather than absolute positions, which its header
+        does not tell apart; the image reader makes the same assumptions
+        (see
+        [`header_frames`][brainhops.io.common.nifti._frames.header_frames]).
+
+        The values are never converted when they are read. The frames of
+        the header are decoded at each read rather than stored, so that a
+        consolidated image gets the frames of its new header. Frames that
+        are assigned, or given to the constructor, take precedence over
+        those of the header, as
+        [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        describes them.
+        """
+        if self._frames:
+            return SingleScaleImage.frames.fget(self)
+        return normalize_frames(
+            self._header_frames(), self._array_axes(), tuple(self.shape)
+        )
+
+    @frames.setter
+    def frames(self, value: tx.Any) -> None:
+        SingleScaleImage.frames.fset(self, value)
+
+    def _header_frames(self) -> tx.Dict[int, FrameSlot]:
+        """Return the frame of each component axis, as the header states it.
+
+        An image without a header, or whose intent states no frame, gives
+        an empty mapping, so that its frames are the array system.
         """
         metadata = self.metadata
         if metadata is None or metadata.raw is None:
@@ -282,6 +327,17 @@ class NiftiImage(
         preferred = decoded[-1] if decoded else None
         system = self.system if preferred is None else preferred.input
         return header_frames(metadata, preferred, system, tuple(self.shape))
+
+    def __call__(self, transformation: Transformation) -> SingleScaleImage:
+        """Apply a transformation lazily, without reslicing.
+
+        The result is a [`SingleScaleImage`][], which has no header, so
+        it is given the frames that this image reads from its header.
+        """
+        image = super().__call__(transformation)
+        if not self._frames:
+            image.frames = self.frames
+        return image
 
     # --- reading ------------------------------------------------------
 
@@ -531,12 +587,11 @@ class NiftiImage(
 
         The values of a component axis, such as the vectors of a
         displacement field, are encoded in the frame that the intent of
-        the header states (see
-        `spec/design/vector-and-tensor-images.md`). An image whose
-        frames are those of its own header, and whose geometry is kept,
-        is encoded with its values and its intent as they are, including
-        an FSL intent. Otherwise, the vectors of a displacement axis or of
-        a vector axis of valence `"vector"` are re-expressed in the world
+        the header states (see [`frames`][]). An image whose frames are
+        those of its own header, and whose geometry is kept, is encoded
+        with its values and its intent as they are, including an FSL
+        intent. Otherwise, the vectors of a displacement axis or of a
+        vector axis of valence `"vector"` are re-expressed in the world
         of the preferred transformation, which becomes the best affine,
         and the header gets the DISPVECT intent. The change of frame is
         exact when both frames are affine. NIfTI has no frame for
@@ -635,7 +690,7 @@ class NiftiImage(
         # without data is refused when it is encoded.
         image = self
         dispvect = False
-        own = not self._frames and kept and bool(self._decoded_frames())
+        own = not self._frames and kept and bool(self._header_frames())
         if not own and (self._data is not None or self.rawdata is not None):
             frame_of = _NiftiFrames(self)
             reframed = values_in_format_frames(self, frame_of, lossy)
@@ -706,7 +761,7 @@ class NiftiImage(
         image itself is not changed. A local file is replaced at once, so
         an image can be written over the file that it was read from. The
         image is then consolidated in place, so that it holds what the
-        file holds (#426): its lazy array reads the new file, and its
+        file holds: its lazy array reads the new file, and its
         record is the header of that file.
 
         Parameters

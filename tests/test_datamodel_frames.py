@@ -1,8 +1,8 @@
 """Tests for the frames of the values of images, and `reframe`.
 
-The cases follow the worked example of
-`spec/design/vector-and-tensor-images.md`: a field of vectors in RAS
-(`X`), a transformation applied lazily (`U`) and a target geometry (`G`).
+The cases follow the worked example of the design of vector images: a
+field of vectors in RAS (`X`), a transformation applied lazily (`U`) and
+a target geometry (`G`).
 """
 
 import numpy as np
@@ -814,8 +814,7 @@ def test_an_unknown_method_is_refused(x: SingleScaleImage) -> None:
 def test_reframe_into_an_equal_frame_returns_the_image(
     x: SingleScaleImage, a: Affine
 ) -> None:
-    # Another object with the same matrix, as a frame decoded twice from
-    # a header is, gives the same components.
+    # Another object with the same matrix gives the same components.
     copy = Affine(matrix=np.asarray(a.matrix), input=a.input, output=a.output)
 
     assert x.reframe(copy) is x

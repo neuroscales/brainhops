@@ -341,8 +341,7 @@ class SingleScaleImage(Image):
         values do not change. Indexing and reslicing compose each frame
         with the map of the voxels, so that the values keep their meaning
         without being rotated. [`reframe`][] re-expresses the values in
-        another frame. The design is recorded in
-        `spec/design/vector-and-tensor-images.md`.
+        another frame.
 
         Raises
         ------
@@ -357,12 +356,6 @@ class SingleScaleImage(Image):
             If a mapping names an axis that does not exist.
         """
         raw = self._frames
-        if not raw:
-            # The frames of a file are decoded from its header at each read,
-            # and are not stored, so that they follow the header.
-            return normalize_frames(
-                self._decoded_frames(), self._array_axes(), tuple(self.shape)
-            )
         slots = normalize_frames(raw, self._array_axes(), tuple(self.shape))
         if isinstance(raw, Mapping) or any(
             new is not old for new, old in zip(slots, raw)
@@ -375,19 +368,6 @@ class SingleScaleImage(Image):
     @frames.setter
     def frames(self, value: tx.Any) -> None:
         self._frames = () if value is None else value
-
-    def _given_frames(self) -> tx.Any:
-        """Return the frames as they were given, or those of the file."""
-        return self._frames or self._decoded_frames()
-
-    def _decoded_frames(self) -> tx.Any:
-        """Return the frames that a file format decodes from its header.
-
-        An image built from data has no file, so this is empty. A format
-        whose header says in which frame its vectors are stored overrides
-        this method, and the frames that were given take precedence.
-        """
-        return ()
 
     def _array_axes(self) -> tx.Optional[AxisSequence]:
         """Return the axes of the array system, or `None` if unknown."""
@@ -747,7 +727,7 @@ class SingleScaleImage(Image):
 
         new_slots = list(slots)
         new_axes = list(axes)
-        changed = False
+        changed: tx.List[int] = []
         for i, target in targets.items():
             axis = axes[i]
             source = slots[i]
@@ -756,10 +736,10 @@ class SingleScaleImage(Image):
                 source, target, axes, ncomponents
             )
             if same_change(source_info, target_info, cols):
-                # The frames differ as objects, as a frame decoded twice from
-                # a header does, but give the same components.
+                # The frames differ as objects, as two copies of one
+                # transformation do, but give the same components.
                 continue
-            changed = True
+            changed.append(i)
             matrix = change_matrix(
                 jacobian_of(source, source_info, cols),
                 jacobian_of(target, target_info, cols),
@@ -787,7 +767,7 @@ class SingleScaleImage(Image):
             ]
         metadata = self.metadata
         if metadata is not None:
-            types = tuple(axes[i].type for i in targets)
+            types = tuple(axes[i].type for i in changed)
             metadata = metadata.derive(Reframed(types), history="reframe")
         return SingleScaleImage(
             data=data,
@@ -812,7 +792,7 @@ class SingleScaleImage(Image):
             data=_stored_data(self),
             transformations=transformations,
             metadata=self.metadata,
-            frames=self._given_frames(),
+            frames=self._frames,
         )
 
     def __getitem__(self, index: CartesianIndex) -> "SingleScaleImage":
