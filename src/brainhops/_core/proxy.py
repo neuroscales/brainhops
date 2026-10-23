@@ -876,8 +876,15 @@ class ScaledProxy(ArrayProxy):
     Indexing or transposing the proxy does the same to `base` and to
     the factors, so that only the selected values are read and scaled.
     An axis of length one of a factor stays of length one, so the
-    factors never grow to the shape of the values. The values are
-    floating-point numbers of at least single precision.
+    factors never grow to the shape of the values.
+
+    The type of the scaled values depends on the stored type only: it is
+    the floating-point type that NumPy gives for the stored type and a
+    float32, so that integers of 8 or 16 bits and float32 values give
+    float32, and other integers and float64 values give float64. The
+    factors are cast to that type before they are applied, so a factor
+    of a wider type neither widens the result nor makes a wider copy of
+    the values.
     """
 
     base: tx.Any
@@ -922,10 +929,10 @@ class ScaledProxy(ArrayProxy):
 
     @property
     def dtype(self) -> np.dtype:
-        """The type of the scaled values.
+        """The type of the scaled values, which the stored type decides.
 
-        An integer becomes a float32, and a float32 stays one, whatever
-        the type of the factors.
+        It is the floating-point type that NumPy gives for the stored
+        type and a float32, whatever the type of the factors.
         """
         return np.result_type(self.base.dtype, np.float32)
 
@@ -991,12 +998,14 @@ class ScaledProxy(ArrayProxy):
         """
         _refuse_no_copy(copy)
         values = np.asarray(self.base, dtype=self.dtype)
+        # The factors are cast to the type of the values first, so that a
+        # float64 factor does not make a float64 copy of float32 values.
         if self.slope is not None:
-            values = values * self.slope
+            values = values * self.slope.astype(self.dtype, copy=False)
         if self.inter is not None:
-            values = values + self.inter
+            values = values + self.inter.astype(self.dtype, copy=False)
         # The product of arrays of no dimension is a NumPy scalar.
-        values = np.asarray(values).astype(self.dtype, copy=False)
+        values = np.asarray(values, dtype=self.dtype)
         return _convert(values, dtype, copy)
 
 

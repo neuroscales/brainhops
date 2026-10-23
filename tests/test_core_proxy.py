@@ -332,6 +332,30 @@ def test_scaled_proxies_scale_what_they_read() -> None:
     assert proxy.reads == [(1, slice(2, 4, 1), slice(0, 7, 1), slice(0, 4, 1))]
 
 
+def test_the_stored_type_decides_the_scaled_type() -> None:
+    # The factors are cast to the type of the values, so a float64
+    # factor keeps float32 values in float32, and integers of 16 bits
+    # become float32 while integers of 32 bits become float64.
+    values = _array((3, 4))
+    for stored, expected in [
+        (np.float32, np.float32),
+        (np.int16, np.float32),
+        (np.uint8, np.float32),
+        (np.int32, np.float64),
+        (np.float64, np.float64),
+    ]:
+        proxy = _Recording(values.astype(stored))
+        slope = np.array([[1.5, 2.0, 2.5, 3.0]], dtype=np.float64)
+        scaled = ScaledProxy(proxy, slope, np.float64(0.25))
+        assert scaled.dtype == expected
+        read = np.asarray(scaled)
+        assert read.dtype == expected
+        reference = values.astype(stored).astype(expected)
+        reference = reference * slope.astype(expected)
+        reference = reference + np.asarray(0.25, dtype=expected)
+        np.testing.assert_array_equal(read, reference)
+
+
 def test_scaled_proxies_refuse_large_factors() -> None:
     # A factor with more dimensions than the values cannot broadcast.
     with pytest.raises(ValueError):

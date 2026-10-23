@@ -187,7 +187,13 @@ subclasses fall in three kinds, and each kind does one thing.
 - A `ScaledProxy` presents the values of another proxy multiplied by a
   factor and shifted by an offset, which broadcast against the shape,
   as in `slope * stored + inter`. It covers the single factor of
-  MRtrix and NIfTI, and the factor of each AFNI sub-brick.
+  MRtrix and NIfTI, and the factor of each AFNI sub-brick. The stored
+  type alone decides the type of the scaled values, which is the
+  floating-point type that NumPy gives for the stored type and a
+  float32. The factors are cast to that type before they are applied,
+  because the type of a factor says how the header writes it, not how
+  precise the values are, and a float64 factor would otherwise make a
+  float64 copy of float32 values.
 
 A fourth class, `PermutedProxy`, is a stored proxy that presents the
 axes of another stored proxy in another order. Transposing a stored
