@@ -30,7 +30,6 @@ from brainhops.io.common._geometry import (
 # this format
 from ._constants import (
     _NIFTI_DEFAULT_XFORM_CODE,
-    _NIFTI_INTENT_DISPVECT,
     _NIFTI_XFORM_CODE_BY_NAME,
     _QFORM_NAME,
 )
@@ -157,18 +156,6 @@ def _voxel_axes(
     """
     ndim = len(getattr(data, "shape", ()) or ())
     return _declared_axes(getattr(transformation, "input", None), ndim)
-
-
-def _holds_displacements(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
-    """Return whether an axis holds the components of displacements.
-
-    Such an image is written with the DISPVECT intent, whose vectors are in
-    the world of the best affine, so the writer has re-expressed them in
-    that frame beforehand.
-    """
-    return any(
-        getattr(axis, "type", None) == "displacement" for axis in axes or ()
-    )
 
 
 def _is_frame_index(system: tx.Optional[CoordinateSystem], k: int) -> bool:
@@ -310,6 +297,7 @@ def _image_with_geometry(
     header: tx.Optional[nb.Nifti1Header] = None,
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
+    intent: tx.Optional[int] = None,
 ) -> _NiftiObject:
     """Build a NIfTI image from data and their voxel-to-world geometry.
 
@@ -319,7 +307,11 @@ def _image_with_geometry(
     extensions are kept. The header is changed in place, so the caller
     passes a copy. Without a header, the header starts empty. The geometry
     is then encoded over the header, header fields are copied from `like`,
-    and the `overrides` are applied last.
+    the `intent` is set when it is given, and the `overrides` are applied
+    last. A writer gives the intent that its values require, such as
+    DISPVECT for vectors that it has re-expressed in the world of the
+    preferred transformation, so that the intent of `like` or of the
+    header does not describe them wrongly.
 
     The preferred transformation provides the sform, the spacing of the
     later axes and the units, and the qform comes from
@@ -373,8 +365,8 @@ def _image_with_geometry(
     image = _new_nifti(data, sform, header)
     _set_other_axes(image, others, timed)
     _apply_like(image, like)
-    if _holds_displacements(voxel_axes):
-        image.header.set_intent(_NIFTI_INTENT_DISPVECT)
+    if intent is not None:
+        image.header.set_intent(intent)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)

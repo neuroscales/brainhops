@@ -350,3 +350,154 @@ def test_a_dct_field_has_a_foreign_frame(tmp_path: pathlib.Path) -> None:
     image = NiftiImage.load(path)
 
     assert image.frames[4] == FslCoordinateSystem()
+
+
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+DISPVECT = 1006
+
+
+def _intent(path: pathlib.Path) -> int:
+    return int(nb.load(str(path)).header["intent_code"])
+
+
+def test_a_vector_axis_is_written_as_displacements(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    a = _affine(*_systems("vector"))
+    path = tmp_path / "field.nii"
+
+    save(SingleScaleImage(values, [a]), path)
+
+    assert _intent(path) == DISPVECT
+    assert np.allclose(_stored(path), values @ _L.T, atol=1e-5)
+    image = NiftiImage.load(path)
+    assert image.transformation.input.axes[4].type == "displacement"
+
+
+@pytest.mark.parametrize(
+    "kind, size",
+    [("tensor", 6), ("point", 3), ("coordinate", 3)],
+)
+def test_values_without_a_nifti_frame_need_lossy(
+    tmp_path: pathlib.Path, kind: str, size: int
+) -> None:
+    values = np.random.default_rng(1).random((*_SHAPE, size))
+    image = SingleScaleImage(values, [_affine(*_systems(kind))])
+    path = tmp_path / "values.nii"
+
+    with pytest.raises(WriterError, match="lossy=True"):
+        save(image, path)
+
+    save(image, path, lossy=True)
+    assert _intent(path) != DISPVECT
+    assert np.allclose(_stored(path), values, atol=1e-6)
+
+
+def test_a_foreign_frame_needs_lossy(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    voxel, world = _systems()
+    image = SingleScaleImage(
+        values, [_affine(voxel, world)], frames={"c": FslCoordinateSystem()}
+    )
+
+    with pytest.raises(WriterError, match="lossy=True"):
+        save(image, tmp_path / "field.nii")
+
+
+def test_a_two_dimensional_field_is_written_in_ras(
+    tmp_path: pathlib.Path,
+) -> None:
+    voxel = CoordinateSystem(
+        [Axis(n, "space") for n in "ij"] + [Axis("c", "displacement")],
+        name="voxel",
+    )
+    world = CoordinateSystem(
+        [Axis(n, "space") for n in "xy"] + [Axis("c", "displacement")],
+        name="RAS",
+    )
+    matrix = np.eye(4)[:-1]
+    matrix[:2, :2] = np.diag([2.0, 3.0])
+    a = Affine(matrix=matrix, input=voxel, output=world)
+    path = tmp_path / "field.nii"
+
+    save(SingleScaleImage(np.ones((4, 5, 2)), [a]), path)
+
+    assert _intent(path) == DISPVECT
+    stored = np.asarray(nb.load(str(path)).dataobj)
+    assert np.allclose(stored[0, 0, 0, 0], [2.0, 3.0])
+
+
+def test_an_unchanged_fsl_field_keeps_its_intent_and_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    data = np.random.default_rng(5).normal(size=(*_SHAPE, 3))
+    path = _fsl_file(
+        tmp_path / "warp.nii",
+        data,
+        _reference_affine(True),
+        FNIRT_DISPLACEMENT,
+    )
+    image = NiftiImage.load(path)
+    image.data = np.asarray(image.data) * 2.0
+    copy = tmp_path / "copy.nii"
+
+    save(image, copy)
+
+    assert _intent(copy) == FNIRT_DISPLACEMENT
+    assert np.allclose(_stored(copy), 2.0 * data, atol=1e-5)
+
+
+def _moved(image: NiftiImage) -> SingleScaleImage:
+    world = image.transformation.output
+    shift = np.eye(6)[:-1]
+    shift[0, -1] = 7.0
+    return image(Affine(matrix=shift, input=world, output=world))
+
+
+def test_a_moved_fsl_field_is_written_in_ras(tmp_path: pathlib.Path) -> None:
+    # Once its geometry changes, the field no longer lies on the grid of
+    # its reference, so it is written with DISPVECT, in RAS.
+    data = np.random.default_rng(6).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(True)
+    path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
+    image = NiftiImage.load(path)
+    ras = _components(image.reframe(-1))
+    copy = tmp_path / "copy.nii"
+
+    save(_moved(image), copy)
+
+    assert _intent(copy) == DISPVECT
+    assert np.allclose(_stored(copy), ras, atol=1e-4)
+
+
+def test_moved_fsl_coefficients_need_lossy(tmp_path: pathlib.Path) -> None:
+    path, coef = _coefficient_file(tmp_path / "coef.nii", CUBIC, np.eye(4))
+    moved = _moved(NiftiImage.load(path))
+    copy = tmp_path / "copy.nii"
+
+    with pytest.raises(WriterError, match="lossy=True"):
+        save(moved, copy)
+
+    save(moved, copy, lossy=True)
+    assert _intent(copy) == CUBIC
+    assert np.allclose(_stored(copy), coef, atol=1e-6)
+
+
+def test_a_moved_dispvect_field_keeps_its_vectors(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    # The frame read from the file ends with a projection that removes the
+    # time axis of its world, and a translation of the world does not
+    # change the vectors.
+    path = tmp_path / "field.nii"
+    save(SingleScaleImage(values, [_affine(*_systems())]), path)
+    copy = tmp_path / "copy.nii"
+
+    save(_moved(NiftiImage.load(path)), copy)
+
+    assert _intent(copy) == DISPVECT
+    assert np.allclose(_stored(copy), values @ _L.T, atol=1e-5)

@@ -452,6 +452,30 @@ read, and they are not stored in the image, so that an image that is
 consolidated gets the frames of its new header. Frames that are given to
 the image take precedence over those of the header.
 
+The writer of `NiftiImage` follows the same table in reverse.
+
+- An image whose frames are those of its own header, and whose geometry
+  is kept, is written with its values and its intent as they are,
+  including an FSL intent, because its values are already in the frame
+  that the header states.
+- Otherwise, the vectors of a displacement axis, or of a vector axis of
+  valence `"vector"`, are re-expressed in the world of the preferred
+  transformation, which the writer stores as the best affine, and the
+  header gets the DISPVECT intent. A vector axis therefore reads back as
+  a displacement axis. A field read from an FSL file whose geometry has
+  changed no longer lies on the grid of its reference, so it is written
+  in this way too. DISPVECT is chosen rather than an FSL intent because
+  every reader of NIfTI fields reads it, and because an FSL field is
+  written by `FnirtWarpField`, which also stores what the image does not
+  hold, such as the parameters of a spline.
+- NIfTI has no frame for covectors, tensors and the coordinates of
+  points. Its `SYMMATRIX` intent stores the lower triangle of a
+  symmetric matrix, which is the `"symmetric-lower"` layout, but it says
+  nothing of the frame, so tensors are left for later. The coefficients
+  of an FSL spline field cannot be re-expressed without the header that
+  holds the parameters of the spline. These values are written as they
+  are, and only with `lossy=True`, as the next section describes.
+
 ## 9. Status
 
 Implemented:
@@ -469,16 +493,14 @@ Implemented:
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
   single-scale and multi-scale images;
 - the frames of NIfTI displacement fields, which the reader sets from
-  the intent as section 8 describes. A writer re-expresses the values
-  of a displacement axis in the world of the preferred transformation,
-  which it writes as the best affine, and sets the DISPVECT intent.
+  the intent and the writer stores as section 8 describes.
 
 A writer applies a change of frame through affine maps silently, because
 it is exact and part of the encoding of the format. It refuses, with a
 `LossyConversionError`, a change through a map that is not affine, which
 is computed by finite differences, a foreign frame, and a component
-axis whose type the format cannot store in a frame of its own, such as a
-`vector` axis in NIfTI. The `lossy=True` argument of `save` and of
+axis that the format cannot store in a frame of its own, such as a
+covector axis in NIfTI. The `lossy=True` argument of `save` and of
 `consolidate` allows these cases, as it allows a lossy conversion of a
 transformation, and the values are then written approximately or as
 they are.

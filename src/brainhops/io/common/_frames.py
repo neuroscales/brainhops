@@ -27,11 +27,9 @@ import typing_extensions as tx
 
 from brainhops.datamodel._frames import (
     FrameSlot,
+    _structure,
     component_axes,
     same_frame,
-)
-from brainhops.datamodel._transformations.compute.multiscale import (
-    _as_affine,
 )
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -99,7 +97,9 @@ def values_in_format_frames(
             continue
         if same_frame(slot, target):
             continue
-        if not _is_affine(slot) or not _is_affine(target):
+        if not _is_affine(slot, len(axes)) or not _is_affine(
+            target, len(axes)
+        ):
             losses.append(
                 f"the values along axis {name} would be re-expressed "
                 f"through a map that is not affine, by finite differences"
@@ -116,6 +116,14 @@ def values_in_format_frames(
     return reframed.data, reframed.frames
 
 
-def _is_affine(slot: tx.Optional[Transformation]) -> bool:
-    """Return whether a frame is the array system or an affine map."""
-    return slot is None or _as_affine(slot) is not None
+def _is_affine(slot: tx.Optional[Transformation], ndim: int) -> bool:
+    """Return whether a frame is the array system or an affine map.
+
+    A frame may end with projections and permutations, which select its
+    outputs, so the frame is read through its structure, as `reframe`
+    reads it, rather than converted to a single affine.
+    """
+    if slot is None:
+        return True
+    structure = _structure(slot, ndim)
+    return structure is not None and structure.affine

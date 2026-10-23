@@ -66,6 +66,14 @@ _NIFTI_FSL_INTENTS = frozenset({2006, 2007, 2008, 2009})
 reader does not decode FSL storage conventions.
 """
 
+_NIFTI_FSL_COEFFICIENT_INTENTS = frozenset({2007, 2008, 2009})
+"""FSL intent codes of the spline and DCT coefficient fields.
+
+The array of such a file holds coefficients on a grid of knots, which only
+a header with the parameters of the spline describes, so a NIfTI image
+cannot write them in the frame of another intent.
+"""
+
 _NIFTI_INTENT_NONE = 0
 """Intent code of a plain image."""
 
