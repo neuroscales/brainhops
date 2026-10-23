@@ -28,6 +28,7 @@ from ._frames import (
     axis_index,
     change_matrix,
     component_axes,
+    component_count,
     compose_frames,
     explicit_frame,
     frames_as_backend,
@@ -715,8 +716,8 @@ class SingleScaleImage(Image):
         new_axes = list(axes)
         for i, target in targets.items():
             axis = axes[i]
-            ncomponents = axis.frame_ndim(shape[i])
             source = slots[i]
+            ncomponents = component_count(axes, i, shape[i], [source, target])
             source_info, target_info, cols = pair_axes(
                 source, target, axes, ncomponents
             )
@@ -1129,7 +1130,8 @@ def _frame_targets(
         if target is None:
             targets[i] = None
             continue
-        ncomponents = axes[i].frame_ndim(shape[i])
+        known = [target, slots[i]]
+        ncomponents = component_count(axes, i, shape[i], known)
         key = (id(target), ncomponents)
         if key not in restricted:
             restricted[key] = explicit_frame(target, axes, ncomponents)

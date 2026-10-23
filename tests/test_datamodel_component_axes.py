@@ -341,7 +341,8 @@ def test_a_diagonal_layout_is_never_inferred() -> None:
         {"layout": "symmetric", "valence": ("vector", "covector")},
         {"layout": "symmetric-lower", "valence": ("vector", "covector")},
         {"layout": ((0, 0), (1, 1), (0, 0))},
-        {"layout": ((0, 1), (1, 0))},
+        {"layout": ((0, 1), (0, 1))},
+        {"layout": ((0, 1, 1), (1, 0, 1)), "valence": ("vector",) * 3},
         {"layout": ((0,), (1,))},
         {"layout": ((0, 1),), "valence": ("vector", "covector")},
     ],
@@ -388,3 +389,31 @@ def test_the_gradient_of_a_moving_image_pairs_with_its_displacement() -> None:
 
     expected = np.sum(_random(4, 3) * _random(4, 3)[::-1], axis=1)
     assert np.allclose(np.sum(gradient * vectors, axis=1), expected)
+
+
+def test_a_full_tensor_may_be_listed_in_any_order() -> None:
+    full = _random(4, 3, 3)
+    order = ((2, 1), (0, 0), (1, 2), (0, 2), (1, 1), (2, 0), (1, 0))
+    order += ((0, 1), (2, 2))
+    axis = TensorAxis(valence=("vector", "covector"), layout=order)
+    c = TensorAxis(valence=("vector", "covector"), layout="C")
+
+    out = axis.apply(_pack(full, order), _J, 1)
+
+    expected = c.apply(full.reshape(4, 9), _J, 1).reshape(4, 3, 3)
+    assert axis.closed(3)
+    assert np.allclose(out, _pack(expected, order))
+
+
+def test_listed_permutations_are_independent_components() -> None:
+    # The two off-diagonal components differ, and the third axis is zero.
+    layout = ((0, 0), (0, 1), (1, 0), (1, 1))
+    full = _random(4, 3, 3)
+    full[:, 2, :] = full[:, :, 2] = 0
+    axis = TensorAxis(layout=layout)
+
+    out = axis.apply(_pack(full, layout), _J, 1)
+
+    reframed = axis.reframed(3)
+    assert reframed.layout == "C"
+    assert np.allclose(out.reshape(4, 3, 3), _J @ full @ _J.T)

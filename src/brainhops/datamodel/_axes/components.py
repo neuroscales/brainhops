@@ -141,7 +141,7 @@ class ComponentAxis(Axis):
         """
         return _INDEX_KINDS.get(self.type)
 
-    def frame_ndim(self, size: int) -> int:
+    def frame_ndim(self, size: int, ndim: tx.Optional[int] = None) -> int:
         """Return the number of axes of the frame that the entries follow.
 
         Each entry of a point or a vector follows one axis of the frame,
@@ -151,12 +151,25 @@ class ComponentAxis(Axis):
         ----------
         size : int
             The number of entries along the axis.
+        ndim : int, optional
+            The number of axes of the frame, when it is known from
+            elsewhere. It is checked against `size`.
 
         Returns
         -------
         int
             The number of axes of the frame that the entries follow.
+
+        Raises
+        ------
+        ValueError
+            If `ndim` is given and differs from `size`.
         """
+        if ndim is not None and ndim != size:
+            raise ValueError(
+                f"{size} entries are not the components of a point or a "
+                f"vector in a frame of {ndim} axes."
+            )
         return size
 
     def apply(
@@ -389,14 +402,18 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     | MRtrix                 | `"symmetric-diagonal-first"` |
     | DIPY                   | `"symmetric-lower"`          |
 
-    An explicit tuple lists each stored component once, and no two of
-    its entries may be permutations of each other. A component that it
-    does not list takes the value of the listed component whose indices
-    are a permutation of its own, if there is one, so that the tensor is
-    symmetric, and it is zero otherwise. A symmetric tensor needs all
-    its indices to be of the same kind, because the symmetry of a tensor
-    whose indices change differently depends on the frame. The symmetric
-    layouts are therefore refused for a mixed valence.
+    An explicit tuple lists each stored component once, and each listed
+    component is stored independently, so that a full tensor can be
+    listed in any order. A component that the tuple does not list takes
+    the value of the listed component whose indices are a permutation of
+    its own, if there is one, and it is zero otherwise. A tuple that
+    leaves out a component with several listed permutations is refused,
+    because their values may differ. Taking a value from a permutation
+    makes the tensor symmetric, which needs all its indices to be of the
+    same kind, because the symmetry of a tensor whose indices change
+    differently depends on the frame. The symmetric layouts, and the
+    tuples that take a value from a permutation, are therefore refused
+    for a mixed valence.
 
     `None`, the default, reads the layout from the number of entries
     once the size `n` of the frame is known: `n**k` entries are `"C"`
@@ -408,9 +425,10 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     `"diagonal"` or an explicit tuple that leaves components out without
     a permutation to take their value from, cannot hold the tensor after
     a general change of frame. [`apply`][] then returns the tensor in the
-    smallest layout that can, which is `"symmetric"` when all the indices
-    are of the same kind and `"C"` otherwise, and [`reframed`][] gives
-    the axis that describes it. The length of the axis changes.
+    smallest layout that can, which is `"symmetric"` when the stored
+    tensor is symmetric with indices of a single kind and `"C"`
+    otherwise, and [`reframed`][] gives the axis that describes it. The
+    length of the axis changes.
 
     Parameters
     ----------
@@ -436,11 +454,11 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     ------
     ValueError
         If the tensor has fewer than two indices, if the layout is an
-        unknown name or
-        a name that is not defined for the rank of the tensor, if a
-        symmetric layout has indices of different kinds, or if an
-        explicit layout lists a component twice or has entries of the
-        wrong length.
+        unknown name or a name that is not defined for the rank of the
+        tensor, if a symmetric layout has indices of different kinds, or
+        if an explicit layout lists a component twice, has entries of
+        the wrong length, or fills a component from several listed
+        permutations or from a permutation with a mixed valence.
     """
 
     type: NoRepr[...]
@@ -480,7 +498,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
             return
         if layout is None:
             return
-        seen: tx.Set[tx.Tuple[int, ...]] = set()
+        listed: tx.Set[tx.Tuple[int, ...]] = set()
         for entry in layout:
             if len(entry) != rank:
                 raise ValueError(
@@ -488,18 +506,28 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
                     f"gives {rank} frame axes, but {entry} gives "
                     f"{len(entry)}."
                 )
-            key = tuple(sorted(entry))
-            if key in seen:
+            if entry in listed:
                 raise ValueError(
-                    f"The layout lists the component {entry} twice, or "
-                    f"together with a permutation of its indices."
+                    f"The layout lists the component {entry} twice."
                 )
-            seen.add(key)
-            if mixed and len(set(entry)) > 1:
+            listed.add(entry)
+        # The components that the layout leaves out take the value of a
+        # listed permutation of their indices, which must be unique and
+        # needs indices of a single kind.
+        for key, group in _permutation_groups(layout).items():
+            missing = set(itertools.permutations(key)) - listed
+            if not missing:
+                continue
+            if len(group) > 1:
                 raise ValueError(
-                    f"The layout takes the components that it leaves out "
-                    f"from a permutation of {entry}, which needs indices "
-                    f"of a single kind, but the valence is {self.valence}."
+                    f"The layout leaves out {sorted(missing)[0]}, whose "
+                    f"value could be taken from any of {group}."
+                )
+            if mixed:
+                raise ValueError(
+                    f"The layout takes the value of {sorted(missing)[0]} "
+                    f"from {group[0]}, which needs indices of a single "
+                    f"kind, but the valence is {self.valence}."
                 )
 
     @property
@@ -744,8 +772,21 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         return xp.moveaxis(flat[..., pack], -1, axis)
 
     def _closure(self) -> str:
-        """Return the smallest closed layout for the valence."""
-        return "symmetric" if len(set(self.valence)) == 1 else "C"
+        """Return the smallest closed layout for the stored tensor.
+
+        The tensor is symmetric when its indices are of a single kind and
+        its layout does not store two components whose indices are
+        permutations of each other, so that it stays symmetric in any
+        frame.
+        """
+        if len(set(self.valence)) > 1:
+            return "C"
+        if isinstance(self.layout, tuple) and any(
+            len(group) > 1
+            for group in _permutation_groups(self.layout).values()
+        ):
+            return "C"
+        return "symmetric"
 
     def _unpack(self, ndim: int, size: tx.Optional[int]) -> np.ndarray:
         """Return the entry of each component, in row-major order.
@@ -779,6 +820,16 @@ _LAYOUTS = frozenset(
     }
 )
 """The names of the layouts of a tensor axis."""
+
+
+def _permutation_groups(
+    layout: Entries,
+) -> tx.Dict[tx.Tuple[int, ...], tx.List[tx.Tuple[int, ...]]]:
+    """Group the entries of an explicit layout by their sorted indices."""
+    groups: tx.Dict[tx.Tuple[int, ...], tx.List[tx.Tuple[int, ...]]] = {}
+    for entry in layout:
+        groups.setdefault(tuple(sorted(entry)), []).append(tuple(entry))
+    return groups
 
 
 def _layout_size(name: str, ndim: int, rank: int) -> int:

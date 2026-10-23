@@ -742,3 +742,46 @@ def test_reframe_expands_a_diagonal_tensor(a: Affine) -> None:
         back,
         np.stack([diagonal[..., i] * (i == j) for i, j in pairs], -1),
     )
+
+
+def test_reframe_reads_an_ambiguous_size_from_the_frame() -> None:
+    # 36 entries are a full matrix in six axes or a symmetric matrix in
+    # eight, and the frame tells that there are six.
+    names = "abcdef"
+    scale = np.arange(1.0, 7.0)
+    voxel = CoordinateSystem(
+        [Axis(n, "space") for n in names] + [TensorAxis("c")]
+    )
+    world = CoordinateSystem(
+        [Axis(n.upper(), "space") for n in names] + [Axis("c")]
+    )
+    matrix = np.eye(8)[:-1]
+    matrix[:6, :6] = np.diag(scale)
+    a = Affine(matrix=matrix, input=voxel, output=world)
+    full = np.random.default_rng(0).random((2, 1, 1, 1, 1, 1, 6, 6))
+    image = SingleScaleImage(full.reshape(2, 1, 1, 1, 1, 1, 36), [a])
+
+    out = np.asarray(image.reframe().data).reshape(full.shape)
+
+    assert np.allclose(out, scale[:, None] * full * scale[None, :])
+
+
+def test_reframe_expands_a_layout_that_leaves_the_last_axis_out(
+    a: Affine,
+) -> None:
+    # The layout names the first two axes of a frame of three.
+    values = np.random.default_rng(0).random((*_SHAPE, 2))
+    axis = TensorAxis("c", layout=((0, 0), (1, 1)))
+    voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], axis])
+    image = SingleScaleImage(values, [a.to(input=voxel)])
+
+    out = image.reframe()
+
+    diagonal = np.concatenate([values, np.zeros((*_SHAPE, 1))], -1)
+    expected = _LA @ (diagonal[..., None] * np.eye(3)) @ _LA.T
+    pairs = out.transformation.input.axes[3].entries(3)
+    assert out.shape == (*_SHAPE, 6)
+    assert np.allclose(
+        np.asarray(out.data),
+        np.stack([expected[..., i, j] for i, j in pairs], -1),
+    )

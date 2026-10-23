@@ -168,7 +168,7 @@ def normalize_frames(
                 f"setting its frame."
             )
         if isinstance(slot, Transformation):
-            ncomponents = axes[i].frame_ndim(shape[i])
+            ncomponents = component_count(axes, i, shape[i], [slot])
             slots[i] = explicit_frame(slot, axes, ncomponents)
     return tuple(slots)
 
@@ -344,8 +344,10 @@ def compose_frames(
             # The components of the array system follow the axes that the
             # other frame of a change selects, so the map is restricted
             # only when the types of its axes tell these axes.
-            ncomponents = new_axes[i].frame_ndim(shape[i])
             try:
+                ncomponents = component_count(
+                    new_axes, i, shape[i], [voxel_map]
+                )
                 out.append(explicit_frame(voxel_map, new_axes, ncomponents))
             except ValueError:
                 out.append(voxel_map)
@@ -487,6 +489,44 @@ def _free_rows(linear: np.ndarray, components: tx.List[int]) -> tx.List[int]:
     return [
         r for r in range(linear.shape[0]) if not coupled[r, components].any()
     ]
+
+
+def component_count(
+    axes: tx.Sequence[Axis],
+    index: int,
+    size: int,
+    frames: tx.Sequence[FrameSlot],
+) -> int:
+    """Return the number of axes of the frame that a component axis follows.
+
+    The number of entries alone may not tell the size of the frame of a
+    tensor, as when 36 entries are a full matrix of six axes or a
+    symmetric matrix of eight axes, or when an explicit layout leaves
+    the last axes of the frame out. The frames that are given are tried
+    in order: the number of their outputs that no component axis feeds
+    is the size of the frame when it agrees with the number of entries.
+    The number of entries alone decides when no frame agrees.
+
+    Raises
+    ------
+    ValueError
+        If no frame agrees with the number of entries, and the number of
+        entries alone does not tell the size of the frame.
+    """
+    axis = axes[index]
+    components = component_axes(axes)
+    for frame in frames:
+        if not isinstance(frame, Transformation):
+            continue
+        structure = _structure(frame, len(axes))
+        if structure is None:
+            continue
+        ndim = len(_free_rows(structure.outputs, components))
+        try:
+            return axis.frame_ndim(size, ndim)
+        except ValueError:
+            continue
+    return axis.frame_ndim(size)
 
 
 def explicit_frame(

@@ -112,30 +112,37 @@ not increase, in lexicographic order, which is defined for every rank.
 is refused for other ranks. `"diagonal"` stores the `n` components whose
 indices are all equal, and the other components are zero.
 
-An explicit tuple lists each stored component once, and no two of its
-entries may be permutations of each other. A component that it does
-not list takes the value of the listed component whose indices are a
-permutation of its own, if there is one, and is zero otherwise. Taking
-a value from a permutation makes the tensor symmetric, which needs all
-its indices to be of the same kind, because the symmetry of a tensor
-whose indices change differently depends on the frame. The symmetric
-layouts, and explicit tuples that rely on a permutation, are therefore
-refused for a mixed valence.
+An explicit tuple lists each stored component once. The listed
+components are independent, so a full tensor can be stored in any
+order. A component that the tuple does not list takes the value of the
+listed component whose indices are a permutation of its own, if there
+is one, and is zero otherwise. A tuple that leaves out a component with
+several listed permutations is refused, because their values may
+differ. Taking a value from a permutation makes the tensor symmetric,
+which needs all its indices to be of the same kind, because the
+symmetry of a tensor whose indices change differently depends on the
+frame. The symmetric layouts, and the tuples that take a value from a
+permutation, are therefore refused for a mixed valence.
 
 `None`, the default, reads the layout from the number of entries once
 `n` is known: `n**k` entries are `"C"` and `C(n + k - 1, k)` entries are
 `"symmetric"`. These numbers differ when `n` and `k` are both at least
 2, and any other number of entries is refused. `"diagonal"` is never
-inferred. When `n` is not known, as before a change of frame, it is read
-from the number of entries, and a number that two frames could give,
-such as 36 for a matrix, is refused until the layout is given.
+inferred. The operations take `n` from the frames of the axis: it is
+the number of outputs of a frame that no component axis feeds, when
+that number agrees with the number of entries. A number of entries that
+two frames could give, such as 36 for a matrix, and an explicit tuple
+that leaves the last axes of the frame out, are therefore read
+correctly. Only when no frame is known is `n` read from the number of
+entries alone, and an ambiguous number is then refused.
 
 A layout with components that are zero by construction, such as
 `"diagonal"` or an explicit tuple that leaves components out without a
 permutation to take them from, cannot hold the tensor after a general
 change of frame. `reframe` then stores the result in the smallest layout
 that can hold it, `"symmetric"` when all the indices are of the same
-kind and `"C"` otherwise. The axis changes its layout and its length,
+kind and the layout stores no two components whose indices are
+permutations of each other, and `"C"` otherwise. The axis changes its layout and its length,
 and the transformations and the frames of the image get the new axis in
 their input system.
 
