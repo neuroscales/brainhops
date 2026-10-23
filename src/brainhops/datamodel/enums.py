@@ -215,13 +215,23 @@ InterpolationLike: tx.TypeAlias = tx.Union[
 class AxisType(StrEnum):
     """Types of the axes of coordinate systems and transformations.
 
-    | Name          | Value           | Description             |
-    |---------------|-----------------|-------------------------|
-    | `space`       | `"space"`       | Spatial axis.           |
-    | `time`        | `"time"`        | Temporal axis.          |
-    | `channel`     | `"channel"`     | Channel axis.           |
-    | `displacement`| `"displacement"`| Displacement axis.     |
-    | `coordinate`  | `"coordinate"`  | Coordinate axis.       |
+    The last six types describe axes whose entries are the components of
+    a geometric object, such as a vector or a tensor, rather than
+    independent values. `displacement` behaves as `vector` and
+    `coordinate` behaves as `point`, and both are kept for the
+    transformation fields of OME-NGFF.
+
+    | Name           | Value            | Description                       |
+    |----------------|------------------|-----------------------------------|
+    | `space`        | `"space"`        | Spatial axis.                     |
+    | `time`         | `"time"`         | Temporal axis.                    |
+    | `channel`      | `"channel"`      | Channel axis.                     |
+    | `displacement` | `"displacement"` | Components of displacements.      |
+    | `coordinate`   | `"coordinate"`   | Coordinates of points of a field. |
+    | `point`        | `"point"`        | Coordinates of points.            |
+    | `vector`       | `"vector"`       | Components of vectors.            |
+    | `covector`     | `"covector"`     | Components of covectors.          |
+    | `tensor`       | `"tensor"`       | Components of tensors.            |
     """
 
     space = "space"
@@ -229,10 +239,22 @@ class AxisType(StrEnum):
     channel = "channel"
     displacement = "displacement"
     coordinate = "coordinate"
+    point = "point"
+    vector = "vector"
+    covector = "covector"
+    tensor = "tensor"
 
 
 AxisTypeName: tx.TypeAlias = tx.Literal[
-    "space", "time", "channel", "displacement", "coordinate"
+    "space",
+    "time",
+    "channel",
+    "displacement",
+    "coordinate",
+    "point",
+    "vector",
+    "covector",
+    "tensor",
 ]
 """Axis type names."""
 

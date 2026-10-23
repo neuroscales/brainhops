@@ -6,12 +6,12 @@ import numbers
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, NoRepr, NotKwOnly, replace
+from bagof.magic import Factory, NoRepr, NotKwOnly
 
 from brainhops._core.typing import CartesianIndex, Shape
 
 from ._sugar import get_axes
-from .axes import Axis
+from .axes import Axis, ChannelAxis, is_component_type
 from .base import DataModelBase
 from .systems import (
     AxisSequence,
@@ -259,14 +259,19 @@ def _index2transform(
                 dim += 1
             elif isinstance(idx, slice):
                 axis = axis_walker.pop(0)
-                # The entries of an axis that holds the components of a
-                # vector or a tensor keep their meaning only when the axis
-                # keeps all of them, in order.
+                # The entries of a component axis are the components of one
+                # object only when the axis keeps all of them, in order.
+                # Otherwise they are independent values, as on a channel
+                # axis.
                 kept = range(*idx.indices(shape[dim]))
-                if getattr(axis, "content", None) is not None and kept != (
-                    range(shape[dim])
+                if is_component_type(getattr(axis, "type", None)) and (
+                    kept != range(shape[dim])
                 ):
-                    axis = replace(axis, content=None)
+                    axis = ChannelAxis(
+                        name=axis.name,
+                        unit=axis.unit,
+                        discrete=axis.discrete,
+                    )
                 output_axes.append(axis)
                 dim += 1
             else:

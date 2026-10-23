@@ -8,9 +8,13 @@ from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
     CoordinateAxis,
+    CovectorAxis,
     DisplacementAxis,
+    PointAxis,
     SpaceAxis,
+    TensorAxis,
     TimeAxis,
+    VectorAxis,
 )
 
 _AXIS_TYPES = {
@@ -19,6 +23,10 @@ _AXIS_TYPES = {
     "channel": ChannelAxis,
     "displacement": DisplacementAxis,
     "coordinate": CoordinateAxis,
+    "point": PointAxis,
+    "vector": VectorAxis,
+    "covector": CovectorAxis,
+    "tensor": TensorAxis,
 }
 
 

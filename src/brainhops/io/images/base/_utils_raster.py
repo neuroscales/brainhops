@@ -76,7 +76,7 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -138,10 +138,6 @@ _GROUPS = ("space", "time", "channel", "other")
 
 _SPACE_RANK = {"x": 0, "y": 1, "z": 2}
 
-# Axis types whose components are colours or vector components.
-_CHANNEL_TYPES = ("channel", "displacement", "coordinate")
-
-
 # ----------------------------------------------------------------------
 #   AXES
 # ----------------------------------------------------------------------
@@ -189,10 +185,11 @@ def storage_axes(codes: _AxesLike) -> tx.List[Axis]:
 def axis_group(axis: Axis) -> str:
     """Return the group of an axis: space, time, channel or other.
 
-    Displacement and coordinate axes belong to the channel group.
+    Component axes, which hold the components of points, vectors or
+    tensors, belong to the channel group.
     """
     type_ = getattr(axis, "type", None)
-    if type_ in _CHANNEL_TYPES:
+    if type_ == "channel" or is_component_type(type_):
         return "channel"
     if type_ in ("space", "time"):
         return type_

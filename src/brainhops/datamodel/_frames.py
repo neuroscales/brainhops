@@ -1,10 +1,10 @@
 """Frames of the values of images, and the changes of frame.
 
-An image whose axes hold the components of vectors or tensors records,
-for each data axis, the frame in which these components are expressed
-(see `spec/design/vector-and-tensor-images.md`). This module holds the
-helpers that read, validate, compose and change these frames. The public
-interface is
+An image whose axes hold the components of points, vectors or tensors
+records, for each data axis, the frame in which these components are
+expressed (see `spec/design/vector-and-tensor-images.md`). This module
+holds the helpers that read, validate, compose and change these frames.
+The public interface is
 [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
 and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe].
@@ -19,15 +19,21 @@ from bagof.magic import replace
 from brainhops._core.typing import ArrayProtocol, Shape
 from brainhops.backends import backend, get_array_backend, resolve_backend
 
+from ._axes.components import _batched, _inv, is_component_type
 from ._sugar import get_axes
 from ._transformations.compute.multiscale import (
     _as_affine,
     _as_affine_ignoring_fields,
 )
 from .axes import Axis, AxisSequence
-from .content import _batched, _inv
 from .systems import CoordinateSystem
-from .transformations import CartesianField, Sequence, Transformation
+from .transformations import (
+    CartesianField,
+    Permutation,
+    Projection,
+    Sequence,
+    Transformation,
+)
 
 FrameSlot: tx.TypeAlias = tx.Union[Transformation, CoordinateSystem, None]
 """The frame of the values along one axis.
@@ -47,7 +53,7 @@ array system, and a transformation maps the array system to the frame.
 FrameTargets: tx.TypeAlias = tx.Union[
     FrameTarget, tx.Mapping[tx.Union[int, str], FrameTarget]
 ]
-"""One frame for every content axis, or a frame for each named axis."""
+"""One frame for every component axis, or a frame for each named axis."""
 
 ReframeMethod: tx.TypeAlias = tx.Union[
     tx.Literal["jacobian", "rotation"],
@@ -75,13 +81,18 @@ def array_axes(
     return axes
 
 
-def content_axes(axes: tx.Optional[tx.Sequence[Axis]]) -> tx.List[int]:
-    """Return the indices of the axes that have a content."""
+def component_axes(axes: tx.Optional[tx.Sequence[Axis]]) -> tx.List[int]:
+    """Return the indices of the component axes among `axes`."""
     return [
         i
         for i, axis in enumerate(axes or ())
-        if getattr(axis, "content", None) is not None
+        if is_component_type(getattr(axis, "type", None))
     ]
+
+
+def is_point_axis(axis: Axis) -> bool:
+    """Return whether the entries of an axis are coordinates of points."""
+    return getattr(axis, "index_kinds", None) is None
 
 
 # ----------------------------------------------------------------------
@@ -90,9 +101,14 @@ def content_axes(axes: tx.Optional[tx.Sequence[Axis]]) -> tx.List[int]:
 
 
 def normalize_frames(
-    raw: tx.Any, axes: tx.Optional[tx.Sequence[Axis]], ndim: int
+    raw: tx.Any, axes: tx.Optional[tx.Sequence[Axis]], shape: Shape
 ) -> tx.Tuple[FrameSlot, ...]:
     """Return one frame slot per data axis.
+
+    A transformation that has more axes than the components of the
+    values is restricted to the axes that the components follow, as
+    [`explicit_frame`][] does, so that every slot that is returned
+    corresponds exactly to its components.
 
     Parameters
     ----------
@@ -101,8 +117,8 @@ def normalize_frames(
         per data axis, or a mapping from axis names or indices to slots.
     axes : sequence of Axis, optional
         The axes of the array system, or `None` if they are unknown.
-    ndim : int
-        The number of data axes.
+    shape : tuple of int
+        The shape of the data.
 
     Returns
     -------
@@ -115,11 +131,14 @@ def normalize_frames(
         If a slot is neither a transformation, a coordinate system nor
         `None`.
     ValueError
-        If the tuple does not have one slot per data axis, or if a slot
-        is set on an axis that has no content.
+        If the tuple does not have one slot per data axis, if a slot is
+        set on an axis that is not a component axis, or if a
+        transformation does not tell which of its axes the components
+        follow.
     KeyError
         If a mapping names an axis that does not exist.
     """
+    ndim = len(shape)
     if raw is None or (not isinstance(raw, Mapping) and len(raw) == 0):
         return (None,) * ndim
     if isinstance(raw, Mapping):
@@ -133,7 +152,7 @@ def normalize_frames(
                 f"The image has {ndim} axes, so its frames must have one "
                 f"slot per axis, not {len(slots)}."
             )
-    with_content = set(content_axes(axes))
+    components = set(component_axes(axes))
     for i, slot in enumerate(slots):
         if slot is None:
             continue
@@ -142,11 +161,15 @@ def normalize_frames(
                 f"The frame of axis {i} must be a transformation, a "
                 f"coordinate system or None, not a {type(slot).__name__}."
             )
-        if i not in with_content:
+        if i not in components:
             raise ValueError(
-                f"Axis {i} has no content, so its values have no frame. "
-                f"Set the content of the axis before setting its frame."
+                f"Axis {i} is not a component axis, so its values have no "
+                f"frame. Give the axis a type such as 'vector' before "
+                f"setting its frame."
             )
+        if isinstance(slot, Transformation):
+            ncomponents = axes[i].frame_ndim(shape[i])
+            slots[i] = explicit_frame(slot, axes, ncomponents)
     return tuple(slots)
 
 
@@ -233,29 +256,32 @@ def frames_as_backend(raw: tx.Any, **options: tx.Any) -> tx.Any:
     return tuple(slot for _, slot in converted)
 
 
-def with_content(
+def with_components(
     system: tx.Optional[CoordinateSystem],
     source: tx.Optional[CoordinateSystem],
     source_axes: tx.Sequence[Axis],
     ndim: int,
 ) -> tx.Optional[CoordinateSystem]:
-    """Return an array system whose axes have the content of other axes.
+    """Return an array system that has the component axes of another.
 
     When an image is resliced, the array system of the result is that of
-    the target geometry, which may describe its channels without their
-    content. The content of each axis of `source_axes` is copied onto the
-    axis at the same position in `system`. When `system` is unknown,
-    `source` is used instead. The system is returned as it is when no
-    axis changes.
+    the target geometry, which may describe its components as channels.
+    Each component axis of `source_axes` replaces the axis at the same
+    position in `system`, and keeps the name of that axis when it has
+    one. When `system` is unknown, `source` is used instead. The system
+    is returned as it is when no axis changes.
     """
     axes = array_axes(system, ndim)
     if axes is None:
         return source
     new_axes = list(axes)
-    for i in content_axes(source_axes):
-        content = source_axes[i].content
-        if getattr(new_axes[i], "content", None) != content:
-            new_axes[i] = replace(new_axes[i], content=content)
+    for i in component_axes(source_axes):
+        axis = source_axes[i]
+        name = getattr(new_axes[i], "name", None)
+        if name is not None and name != axis.name:
+            axis = replace(axis, name=name)
+        if new_axes[i] != axis:
+            new_axes[i] = axis
     if all(new is old for new, old in zip(new_axes, axes)):
         return system
     return replace(system, axes=new_axes)
@@ -271,6 +297,7 @@ def compose_frames(
     keep: tx.Sequence[tx.Optional[int]],
     voxel_map: Transformation,
     new_axes: tx.Optional[tx.Sequence[Axis]],
+    shape: Shape,
 ) -> tx.Tuple[FrameSlot, ...]:
     """Return the frames after the voxels are mapped by `voxel_map`.
 
@@ -285,142 +312,162 @@ def compose_frames(
         The map from the voxels of the new image to those of the original.
     new_axes : sequence of Axis, optional
         The axes of the array system of the new image.
+    shape : tuple of int
+        The shape of the new image.
 
     Returns
     -------
     tuple of slots
         One slot per axis of the new image. A transformation is composed
-        with `voxel_map`, a foreign frame is kept, and the array system
+        with `voxel_map`, and a foreign frame is kept. The array system
         stays the array system when `voxel_map` does not change the
-        components of a vector.
+        components, and becomes `voxel_map` otherwise, restricted to the
+        axes that the components follow when the types of its axes tell
+        them.
     """
-    with_content = set(content_axes(new_axes))
-    unchanged: tx.Optional[bool] = None
+    components = set(component_axes(new_axes))
+    unchanged: tx.Dict[bool, bool] = {}
     out: tx.List[FrameSlot] = []
     for i, old in enumerate(keep):
         slot = None if old is None else slots[old]
-        if i not in with_content:
+        if i not in components:
             out.append(None)
         elif isinstance(slot, Transformation):
             out.append(slot @ voxel_map)
         elif slot is None:
-            if unchanged is None:
-                unchanged = _keeps_components(voxel_map)
-            out.append(None if unchanged else voxel_map)
+            points = is_point_axis(new_axes[i])
+            if points not in unchanged:
+                unchanged[points] = _keeps_values(voxel_map, points)
+            if unchanged[points]:
+                out.append(None)
+                continue
+            # The components of the array system follow the axes that the
+            # other frame of a change selects, so the map is restricted
+            # only when the types of its axes tell these axes.
+            ncomponents = new_axes[i].frame_ndim(shape[i])
+            try:
+                out.append(explicit_frame(voxel_map, new_axes, ncomponents))
+            except ValueError:
+                out.append(voxel_map)
         else:
             out.append(slot)
     return tuple(out)
 
 
-def _keeps_components(voxel_map: Transformation) -> bool:
-    """Return whether a map leaves the voxel components of vectors alone.
+def _keeps_values(voxel_map: Transformation, points: bool) -> bool:
+    """Return whether a map leaves the values in the array system alone.
 
-    This is the case when the map is affine and its linear part is the
-    identity on the axes that are not content axes, as for a crop or a
-    translation. Composing the array system with the map would also be
-    correct, so a map that this function cannot read returns `False`.
+    The voxel components of a vector do not change when the map is affine
+    and its linear part is the identity on the axes that are not
+    component axes, as for a crop or a translation. The voxel
+    coordinates of a point also need the map to have no translation.
+    Composing the array system with the map would also be correct, so a
+    map that this function cannot read returns `False`.
     """
     affine = _as_affine(voxel_map)
     if affine is None:
         return False
-    linear = np.asarray(affine.matrix, dtype=float)[:, :-1]
+    matrix = np.asarray(affine.matrix, dtype=float)
+    linear = matrix[:, :-1]
     inputs = array_axes(voxel_map.input, linear.shape[1])
     outputs = array_axes(voxel_map.output, linear.shape[0])
     if inputs is None or outputs is None:
         return False
-    cols = [c for c in range(linear.shape[1]) if c not in content_axes(inputs)]
+    cols = [
+        c for c in range(linear.shape[1]) if c not in component_axes(inputs)
+    ]
     rows = [
-        r for r in range(linear.shape[0]) if r not in content_axes(outputs)
+        r for r in range(linear.shape[0]) if r not in component_axes(outputs)
     ]
     if len(rows) != len(cols):
         return False
     block = linear[np.ix_(rows, cols)]
-    return bool(np.array_equal(block, np.eye(len(rows))))
+    if not np.array_equal(block, np.eye(len(rows))):
+        return False
+    return not points or not np.any(matrix[rows, -1])
 
 
 # ----------------------------------------------------------------------
-#   CHANGING THE FRAMES
+#   THE STRUCTURE OF A FRAME
 # ----------------------------------------------------------------------
 # The components of a vector follow some axes of the system of its frame,
 # in order. These axes, and the axes of the array along which the frame is
 # differentiated, are read from the structure of the frame rather than from
 # the types of the axes, so that the rules do not assume that the vectors
-# are spatial.
+# are spatial. A frame may end with projections and permutations, which
+# select and reorder the axes of the map before them.
 
 
-class FrameAxes(tx.NamedTuple):
-    """The axes that relate the components of a vector to a frame."""
+class _Structure(tx.NamedTuple):
+    """The linear structure of a frame."""
 
-    rows: tx.List[int]
-    """The axes of the system of the frame that the components follow."""
-
-    cols: tx.List[int]
-    """The axes of the array that the frame maps onto `rows`."""
+    head: tx.Optional[Transformation]
+    """The frame without its final projections and permutations."""
 
     linear: np.ndarray
-    """The linear part of the frame, or of its affine part."""
+    """The linear part of `head`, or of its affine part."""
 
     affine: bool
-    """Whether the frame is affine, so that `linear` is its Jacobian."""
+    """Whether `head` is affine, so that `linear` is its Jacobian."""
+
+    select: np.ndarray
+    """The matrix of the final projections and permutations."""
+
+    @property
+    def outputs(self) -> np.ndarray:
+        """The linear part of the whole frame."""
+        return self.select @ self.linear
 
 
-def frame_axes(
-    frame: Transformation, axes: tx.Sequence[Axis], ncomponents: int
-) -> FrameAxes:
-    """Return the axes that relate `ncomponents` components to a frame.
+def _structure(frame: Transformation, ndim: int) -> tx.Optional[_Structure]:
+    """Return the linear structure of a frame from an array of `ndim` axes.
 
-    The structure of the frame is read from its linear part, or from the
-    linear part of its affine part, in which every field is taken as the
-    identity. An output of the frame is coupled to an input when the
-    entry between them is not zero.
-
-    - The axes of the system of the frame that the components follow are
-      the outputs that are not coupled to a content axis of the array. If
-      there are more of them than components, as when the frame carries a
-      time axis along, only the outputs that share one axis type are kept,
-      when exactly one type has as many axes as there are components.
-    - The axes of the array that the frame maps onto them are the inputs,
-      other than content axes, that are coupled to these outputs and to no
-      other output that is not coupled to a content axis.
-
-    Raises
-    ------
-    ValueError
-        If the frame is not affine even when its fields are ignored, or if
-        it does not tell which of its axes the components follow.
+    Every field of the frame is taken as the identity. `None` is
+    returned when the frame is not affine even then.
     """
-    exact = _as_affine(frame)
-    affine = exact if exact is not None else _as_affine_ignoring_fields(frame)
-    if affine is None:
-        raise ValueError(
-            "The frame is not affine even when its fields are ignored, so "
-            "the axes that the components of the values follow cannot be "
-            "read from it."
-        )
-    linear = np.asarray(affine.matrix, dtype=float)[:, :-1]
-    coupled = _coupled(linear)
-    contents = content_axes(axes)
-    candidates = [
-        r for r in range(linear.shape[0]) if not coupled[r, contents].any()
-    ]
-    rows = _component_rows(
-        candidates, frame.output, linear.shape[0], ncomponents
+    parts = (
+        list(frame.transformations or [])
+        if isinstance(frame, Sequence)
+        else [frame]
     )
-    others = [r for r in candidates if r not in rows]
-    cols = [
-        c
-        for c in range(linear.shape[1])
-        if c not in contents
-        and coupled[rows, c].any()
-        and not coupled[others, c].any()
-    ]
-    if len(cols) != ncomponents:
-        raise ValueError(
-            f"The frame maps {len(cols)} axes of the array onto the "
-            f"{ncomponents} axes that the components follow, so it does not "
-            f"define a change of frame for them."
-        )
-    return FrameAxes(rows, cols, linear, exact is not None)
+    tail: tx.List[Transformation] = []
+    while parts and isinstance(parts[-1], (Projection, Permutation)):
+        tail.insert(0, parts.pop())
+    if not parts:
+        head = None
+        linear = np.eye(ndim)
+        exact = True
+    else:
+        head = parts[0] if len(parts) == 1 else Sequence(transformations=parts)
+        affine = _as_affine(head)
+        exact = affine is not None
+        if affine is None:
+            affine = _as_affine_ignoring_fields(head)
+        if affine is None:
+            return None
+        linear = np.asarray(affine.matrix, dtype=float)[:, :-1]
+    select = np.eye(linear.shape[0])
+    for part in tail:
+        select = _selection(part, select.shape[0]) @ select
+    return _Structure(head, linear, exact, select)
+
+
+def _selection(part: Transformation, ninputs: int) -> np.ndarray:
+    """Return the matrix of a projection or a permutation."""
+    if isinstance(part, Permutation):
+        permutation = part.permutation
+        if permutation is None:
+            return np.eye(ninputs)
+        return np.eye(ninputs)[np.asarray(permutation, dtype=int)]
+    dropped = {int(i) for i in np.asarray(part.dropped).ravel()}
+    created = {int(i) for i in np.asarray(part.created).ravel()}
+    kept = iter(i for i in range(ninputs) if i not in dropped)
+    noutputs = ninputs - len(dropped) + len(created)
+    matrix = np.zeros((noutputs, ninputs))
+    for row in range(noutputs):
+        if row not in created:
+            matrix[row, next(kept)] = 1.0
+    return matrix
 
 
 def _coupled(linear: np.ndarray) -> np.ndarray:
@@ -434,39 +481,157 @@ def _coupled(linear: np.ndarray) -> np.ndarray:
     return magnitude > 1e-12 * (scale or 1.0)
 
 
-def _component_rows(
-    candidates: tx.List[int],
-    system: tx.Optional[CoordinateSystem],
-    noutputs: int,
-    ncomponents: int,
-) -> tx.List[int]:
-    """Return the outputs of a frame that the components follow.
+def _free_rows(linear: np.ndarray, components: tx.List[int]) -> tx.List[int]:
+    """Return the outputs of a map that no component axis feeds."""
+    coupled = _coupled(linear)
+    return [
+        r for r in range(linear.shape[0]) if not coupled[r, components].any()
+    ]
+
+
+def explicit_frame(
+    frame: Transformation, axes: tx.Sequence[Axis], ncomponents: int
+) -> Transformation:
+    """Restrict a frame to the axes that the components follow.
+
+    A frame that is given by a user, such as the preferred transformation
+    of an image whose system also has a time axis, may have more outputs
+    than the components of the values, besides the outputs that the
+    component axes of the array feed. The components then follow the
+    outputs that share one axis type, provided that exactly one type has
+    as many outputs as there are components. A projection that removes
+    the other outputs is composed onto the frame, so that the slot that
+    is stored corresponds exactly to the components. A frame that already
+    corresponds, or whose structure cannot be read, is returned as it is.
 
     Raises
     ------
     ValueError
-        If the candidates are not as many as the components, and no single
-        axis type groups as many of them.
+        If the frame has fewer outputs than components, or if the types
+        of its outputs do not tell which of them the components follow.
     """
+    structure = _structure(frame, len(axes))
+    if structure is None:
+        return frame
+    final = structure.outputs
+    candidates = _free_rows(final, component_axes(axes))
     if len(candidates) == ncomponents:
-        return candidates
-    outputs = array_axes(system, noutputs)
-    if outputs is not None:
+        return frame
+    if len(candidates) > ncomponents:
+        outputs = array_axes(frame.output, final.shape[0])
         groups: tx.Dict[tx.Any, tx.List[int]] = {}
         for r in candidates:
-            kind = getattr(outputs[r], "type", None)
+            kind = getattr(outputs[r], "type", None) if outputs else None
             if kind is not None:
                 groups.setdefault(kind, []).append(r)
         matching = [g for g in groups.values() if len(g) == ncomponents]
         if len(matching) == 1:
-            return matching[0]
+            dropped = [r for r in candidates if r not in matching[0]]
+            system = CoordinateSystem(
+                [a for r, a in enumerate(outputs) if r not in dropped],
+                name=getattr(frame.output, "name", None),
+            )
+            projection = Projection(
+                dropped=dropped, input=frame.output, output=system
+            )
+            return projection @ frame
     raise ValueError(
-        f"The frame has {len(candidates)} axes besides the content axes, "
-        f"and nothing tells which {ncomponents} of them the components of "
-        f"the values follow. A frame whose system has exactly "
-        f"{ncomponents} axes besides the content axes, for example one that "
-        f"ends with a projection, removes the ambiguity."
+        f"The frame has {len(candidates)} axes that no component axis of "
+        f"the array feeds, and nothing tells which {ncomponents} of them "
+        f"the components of the values follow. A frame whose system has "
+        f"exactly {ncomponents} such axes, for example one that ends with "
+        f"a projection, removes the ambiguity."
     )
+
+
+class FrameAxes(tx.NamedTuple):
+    """The axes that relate the components of a vector to a frame."""
+
+    rows: tx.List[int]
+    """The outputs of `head` that the components follow, in order."""
+
+    cols: tx.List[int]
+    """The axes of the array that the frame maps onto `rows`."""
+
+    linear: np.ndarray
+    """The linear part of `head`, or of its affine part."""
+
+    affine: bool
+    """Whether `head` is affine, so that `linear` is its Jacobian."""
+
+    head: tx.Optional[Transformation]
+    """The frame without its final projections and permutations."""
+
+
+def frame_axes(
+    frame: Transformation, axes: tx.Sequence[Axis], ncomponents: int
+) -> FrameAxes:
+    """Return the axes that relate `ncomponents` components to a frame.
+
+    The structure of the frame is read from its linear part, or from the
+    linear part of its affine part, in which every field is taken as the
+    identity. An output of the frame is coupled to an input when the
+    entry between them is not zero.
+
+    - The outputs of the frame that no component axis of the array feeds
+      must be exactly as many as the components, which follow them in
+      order. No axis type is consulted.
+    - The axes of the array that the frame maps onto them are the inputs,
+      other than component axes, that are coupled to these outputs and to
+      no other output that no component axis feeds. When the frame ends
+      with projections and permutations, the outputs that the projections
+      remove count among these other outputs, so that a time axis that
+      the frame carries along is left out.
+
+    Raises
+    ------
+    ValueError
+        If the frame is not affine even when its fields are ignored, or if
+        it does not correspond exactly to the components.
+    """
+    structure = _structure(frame, len(axes))
+    if structure is None:
+        raise ValueError(
+            "The frame is not affine even when its fields are ignored, so "
+            "the axes that the components of the values follow cannot be "
+            "read from it."
+        )
+    components = component_axes(axes)
+    final = _free_rows(structure.outputs, components)
+    if len(final) != ncomponents:
+        raise ValueError(
+            f"The frame has {len(final)} axes that no component axis of the "
+            f"array feeds, but the values have {ncomponents} components. "
+            f"The frame of the values must have exactly one such axis per "
+            f"component."
+        )
+    rows = []
+    for r in final:
+        source = np.flatnonzero(structure.select[r])
+        if len(source) != 1:
+            raise ValueError(
+                "The frame ends with an embedding that creates an axis "
+                "that the components follow, so the frame cannot be "
+                "inverted."
+            )
+        rows.append(int(source[0]))
+    linear = structure.linear
+    coupled = _coupled(linear)
+    others = [r for r in _free_rows(linear, components) if r not in rows]
+    cols = [
+        c
+        for c in range(linear.shape[1])
+        if c not in components
+        and coupled[rows, c].any()
+        and not coupled[others, c].any()
+    ]
+    if len(cols) != ncomponents:
+        raise ValueError(
+            f"The frame maps {len(cols)} axes of the array onto the "
+            f"{ncomponents} axes that the components follow, so it does not "
+            f"define a change of frame for them."
+        )
+    return FrameAxes(rows, cols, linear, structure.affine, structure.head)
 
 
 def pair_axes(
@@ -520,7 +685,7 @@ def jacobian(
     cols : sequence of int
         The axes of the array along which the frame is differentiated.
     shape : tuple of int
-        The shape of the data, with the content axes reduced to 1.
+        The shape of the data, with the component axes reduced to 1.
     like : ArrayProtocol
         An array in the backend of the values.
 
@@ -541,12 +706,14 @@ def jacobian(
     # and one-sided differences at the edges. A field cannot be
     # differentiated along an axis of one voxel, so it is taken to be
     # constant along such an axis, and the column of the Jacobian is that of
-    # the affine part of the frame.
+    # the affine part of the frame. The final projections and permutations
+    # of the frame only select its outputs, which `rows` already does.
+    head = info.head
     grid = CartesianField(
-        shape=tuple(shape), input=frame.input, output=frame.input
+        shape=tuple(shape), input=head.input, output=head.input
     )
     with backend(resolve_backend(like, "native")):
-        coords = Sequence(transformations=[grid, frame]).compute().field
+        coords = Sequence(transformations=[grid, head]).compute().field
     xp = get_array_backend(coords)
     columns = []
     for c in cols:

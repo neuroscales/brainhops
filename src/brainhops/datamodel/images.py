@@ -27,15 +27,16 @@ from ._frames import (
     array_axes,
     axis_index,
     change_matrix,
+    component_axes,
     compose_frames,
-    content_axes,
+    explicit_frame,
     frames_as_backend,
     jacobian,
     normalize_frames,
     pair_axes,
     resolve_target,
     squeeze_axis,
-    with_content,
+    with_components,
 )
 from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
@@ -304,8 +305,9 @@ class SingleScaleImage(Image):
     def frames(self) -> tx.Tuple[FrameSlot, ...]:
         """The frame of the values along each axis.
 
-        Some axes hold the components of vectors or tensors, which their
-        [`content`][brainhops.datamodel.axes.Axis.content] describes. The
+        Some axes hold the components of points, vectors or tensors, and
+        the type of such an axis says which (see
+        [`ComponentAxis`][brainhops.datamodel.axes.ComponentAxis]). The
         components are expressed in a coordinate system, called the frame
         of the values, and each axis has one slot that records it:
 
@@ -319,9 +321,18 @@ class SingleScaleImage(Image):
           another space that no transformation of the image reaches. The
           values along such an axis are never re-expressed.
 
-        Only an axis with a content can have a frame. The constructor
-        and the setter also accept a mapping from axis names or indices
-        to slots, and an empty tuple, which leaves every slot `None`.
+        Only a component axis can have a frame. The constructor and the
+        setter also accept a mapping from axis names or indices to slots,
+        and an empty tuple, which leaves every slot `None`.
+
+        A stored transformation corresponds exactly to the components:
+        the outputs that no component axis of the array feeds are as
+        many as the components, which follow them in order. A
+        transformation that is given with more such outputs, such as a
+        map that also carries a time axis along, is restricted to the
+        outputs that share one axis type, when exactly one type has as
+        many outputs as there are components. A projection that removes
+        the other outputs is then composed onto the transformation.
 
         Lazily applying a transformation keeps the frames, because the
         values do not change. Indexing and reslicing compose each frame
@@ -336,12 +347,21 @@ class SingleScaleImage(Image):
             If a slot is neither a transformation, a coordinate system nor
             `None`.
         ValueError
-            If there is not one slot per axis, or if an axis without a
-            content has a frame.
+            If there is not one slot per axis, if an axis that is not a
+            component axis has a frame, or if a transformation does not
+            tell which of its axes the components follow.
         KeyError
             If a mapping names an axis that does not exist.
         """
-        return normalize_frames(self._frames, self._array_axes(), self.ndim)
+        raw = self._frames
+        slots = normalize_frames(raw, self._array_axes(), tuple(self.shape))
+        if isinstance(raw, Mapping) or any(
+            new is not old for new, old in zip(slots, raw)
+        ):
+            # The slots are stored once they are explicit, so that a frame
+            # restricted by a projection is the same object at every read.
+            self._frames = slots
+        return slots
 
     @frames.setter
     def frames(self, value: tx.Any) -> None:
@@ -529,14 +549,14 @@ class SingleScaleImage(Image):
             if dtype is not None:
                 metadata = replace(metadata, dtype=new_data.dtype)
 
-        # The array system of the target may describe its channels without
-        # their content, so the content of this image is copied onto it, and
-        # each frame is composed with the map of the voxels.
+        # The array system of the target may describe the components of this
+        # image as channels, so the component axes of this image are copied
+        # onto it, and each frame is composed with the map of the voxels.
         target = geometry.transformation
         frames = ()
         source_axes = self._array_axes()
-        if content_axes(source_axes):
-            system = with_content(
+        if component_axes(source_axes):
+            system = with_components(
                 target.input, self.transformation.input, source_axes, self.ndim
             )
             if system is not target.input:
@@ -547,6 +567,7 @@ class SingleScaleImage(Image):
                 list(range(self.ndim)),
                 vox2vox,
                 array_axes(system, self.ndim),
+                tuple(new_data.shape),
             )
         resliced = SingleScaleImage(
             data=new_data,
@@ -580,23 +601,25 @@ class SingleScaleImage(Image):
         ```
 
         where `D` is the Jacobian, which is the linear part of a map that
-        is affine. A [`Vector`][brainhops.datamodel.content.Vector]
-        becomes `J v`, a
-        [`Covector`][brainhops.datamodel.content.Covector] becomes
-        `J⁻ᵀ g`, and a
-        [`SymmetricMatrix`][brainhops.datamodel.content.SymmetricMatrix]
-        becomes `J T Jᵀ`.
+        is affine. The type of the axis says how the components change
+        (see [`ComponentAxis`][brainhops.datamodel.axes.ComponentAxis]):
+        a vector becomes `J v`, a covector becomes `J⁻ᵀ g`, and each index
+        of a tensor is multiplied by `J` or by `J⁻ᵀ` according to its
+        kind, so that a diffusion tensor becomes `J T Jᵀ`. The
+        coordinates of points cannot be re-expressed this way.
 
         The components follow some axes of the system of their frame, in
         order, and these axes are read from the structure of the frame,
         not from the types of the axes. They are the outputs of the frame
-        that do not depend on a content axis. When there are more of them
-        than components, as when the frame carries a time axis along, they
-        are the outputs that share one axis type, if exactly one type has
-        as many axes as there are components. The Jacobian is taken along
-        the axes of the array that the frame maps onto these outputs, and
-        the two frames of a change must map the same axes of the array.
-        The array system takes the axes of the other frame.
+        that no component axis of the array feeds, and a stored frame has
+        exactly one such output per component. A frame given as `frame`
+        that has more of them is first restricted to the outputs that
+        share one axis type, as the setter of
+        [`frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        does. The Jacobian is taken along the axes of the array that the
+        frame maps onto these outputs, and the two frames of a change
+        must map the same axes of the array. The array system takes the
+        axes of the other frame.
 
         The Jacobian of a map that is not affine is computed by finite
         differences between the voxels: central inside the image and
@@ -612,8 +635,8 @@ class SingleScaleImage(Image):
             transformation whose output system has that name. `None` is
             the array system, in which the components are in voxel units.
             A transformation maps the array system to the new frame. A
-            single value applies to every axis with a content, except the
-            axes whose frame is foreign. A dictionary maps axis names or
+            single value applies to every component axis, except the axes
+            whose frame is foreign. A dictionary maps axis names or
             indices to frames, and the axes that it leaves out keep their
             frame.
 
@@ -639,10 +662,13 @@ class SingleScaleImage(Image):
             If a frame names a system that no transformation ends in, or
             if a dictionary names an axis that does not exist.
         ValueError
-            If a dictionary names an axis without a content or with a
-            foreign frame, or if the frames do not tell which of their
-            axes the components follow, or if they map different axes of
-            the array onto them.
+            If a dictionary names an axis that is not a component axis or
+            that has a foreign frame, if the frames do not tell which of
+            their axes the components follow, or if they map different
+            axes of the array onto them.
+        NotImplementedError
+            If the values of an axis whose frame changes are the
+            coordinates of points.
         """
         axes = self._array_axes()
         slots = self.frames
@@ -650,13 +676,24 @@ class SingleScaleImage(Image):
         targets = {i: t for i, t in targets.items() if t is not slots[i]}
         if not targets:
             return self
+        for i in targets:
+            if axes[i].index_kinds is None:
+                raise NotImplementedError(
+                    f"The values along axis {i} are the coordinates of "
+                    f"points, which change with the map itself rather than "
+                    f"with its Jacobian, so they cannot be re-expressed in "
+                    f"another frame."
+                )
 
         data = self.data
         shape = tuple(data.shape)
-        contents = content_axes(axes)
-        # The frames do not depend on the position along a content axis, so
-        # their Jacobians are computed with these axes reduced to one entry.
-        reduced = tuple(1 if i in contents else s for i, s in enumerate(shape))
+        components = component_axes(axes)
+        # The frames do not depend on the position along a component axis,
+        # so their Jacobians are computed with these axes reduced to one
+        # entry.
+        reduced = tuple(
+            1 if i in components else s for i, s in enumerate(shape)
+        )
         cache: tx.Dict[tx.Any, tx.Any] = {}
 
         def jacobian_of(
@@ -671,8 +708,8 @@ class SingleScaleImage(Image):
 
         new_slots = list(slots)
         for i, target in targets.items():
-            content = axes[i].content
-            ncomponents = content.frame_ndim(shape[i])
+            axis = axes[i]
+            ncomponents = axis.frame_ndim(shape[i])
             source = slots[i]
             source_info, target_info, cols = pair_axes(
                 source, target, axes, ncomponents
@@ -683,7 +720,7 @@ class SingleScaleImage(Image):
                 method,
                 ncomponents,
             )
-            data = content.apply(data, squeeze_axis(matrix, i, len(shape)), i)
+            data = axis.apply(data, squeeze_axis(matrix, i, len(shape)), i)
             new_slots[i] = target
         return SingleScaleImage(
             data=data,
@@ -726,9 +763,11 @@ class SingleScaleImage(Image):
 
         The [`frames`][brainhops.datamodel.images.SingleScaleImage.frames]
         of the values are composed with the map from the indexed voxels
-        to the original ones, so the values are not changed. An axis that
-        holds vectors or tensors keeps its content only when it is indexed
-        with its full range in order.
+        to the original ones, so the values are not changed. A component
+        axis stays a component axis only when it is indexed with its full
+        range in order. Otherwise its remaining entries are no longer the
+        components of one object, so it becomes a channel axis and loses
+        its frame.
 
         Parameters
         ----------
@@ -755,13 +794,14 @@ class SingleScaleImage(Image):
                 Indexed(index, self.shape, grid.input), history="getitem"
             )
         frames = ()
-        if content_axes(self._array_axes()):
+        if component_axes(self._array_axes()):
             sub2full, shape = _index2transform(index, self.shape, grid.input)
             frames = compose_frames(
                 self.frames,
                 _source_axes(sub2full),
                 sub2full,
                 array_axes(sub2full.input, len(shape)),
+                tuple(shape),
             )
         return SingleScaleImage(
             data=data,
@@ -1023,37 +1063,56 @@ def _frame_targets(
 ) -> tx.Dict[int, tx.Optional[Transformation]]:
     """Return the new frame of each axis whose values change frame.
 
-    A single frame applies to every axis with a content whose frame is not
-    foreign. A mapping applies to the axes that it names.
+    A single frame applies to every component axis whose frame is not
+    foreign. A mapping applies to the axes that it names. Each frame is
+    restricted to the axes that the components follow, as
+    `explicit_frame` does.
 
     Raises
     ------
     ValueError
-        If a mapping names an axis without a content or with a foreign
-        frame.
+        If a mapping names an axis that is not a component axis or that
+        has a foreign frame, or if a frame does not tell which of its
+        axes the components follow.
     """
     transformations = list(image.transformations or [])
+    shape = tuple(image.shape)
+    components = component_axes(axes)
     if not isinstance(frame, Mapping):
         target = resolve_target(frame, transformations)
-        return {
+        chosen = {
             i: target
-            for i in content_axes(axes)
+            for i in components
             if not isinstance(slots[i], CoordinateSystem)
         }
+    else:
+        chosen = {}
+        for key, value in frame.items():
+            i = axis_index(key, axes, image.ndim)
+            if i not in components:
+                raise ValueError(
+                    f"Axis {key!r} is not a component axis, so its values "
+                    f"have no frame."
+                )
+            if isinstance(slots[i], CoordinateSystem):
+                raise ValueError(
+                    f"The values along axis {key!r} are in a foreign frame, "
+                    f"which no transformation of the image reaches."
+                )
+            chosen[i] = resolve_target(value, transformations)
+    # A frame that is restricted to the same number of components is the
+    # same projection, so it is built once for all the axes that share it.
+    restricted: tx.Dict[tx.Any, tx.Optional[Transformation]] = {}
     targets = {}
-    with_content = set(content_axes(axes))
-    for key, value in frame.items():
-        i = axis_index(key, axes, image.ndim)
-        if i not in with_content:
-            raise ValueError(
-                f"Axis {key!r} has no content, so its values have no frame."
-            )
-        if isinstance(slots[i], CoordinateSystem):
-            raise ValueError(
-                f"The values along axis {key!r} are in a foreign frame, "
-                f"which no transformation of the image reaches."
-            )
-        targets[i] = resolve_target(value, transformations)
+    for i, target in chosen.items():
+        if target is None:
+            targets[i] = None
+            continue
+        ncomponents = axes[i].frame_ndim(shape[i])
+        key = (id(target), ncomponents)
+        if key not in restricted:
+            restricted[key] = explicit_frame(target, axes, ncomponents)
+        targets[i] = restricted[key]
     return targets
 
 

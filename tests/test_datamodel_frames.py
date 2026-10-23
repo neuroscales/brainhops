@@ -9,11 +9,22 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.content import Content, Covector, Vector
+from brainhops.datamodel._frames import explicit_frame, frame_axes
+from brainhops.datamodel.axes import (
+    Axis,
+    ChannelAxis,
+    TensorAxis,
+    VectorAxis,
+)
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import Affine, DisplacementField
+from brainhops.datamodel.transformations import (
+    Affine,
+    DisplacementField,
+    Permutation,
+    Projection,
+    Sequence,
+)
 
 _LA = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 3.0]])
 _THETA = 0.3
@@ -28,11 +39,9 @@ _LB = np.diag([1.5, 1.5, 2.0])
 _SHAPE = (4, 5, 6)
 
 
-def _system(
-    names: str, name: str, content: tx.Optional[Content] = None
-) -> CoordinateSystem:
+def _system(names: str, name: str, kind: str = "channel") -> CoordinateSystem:
     axes = [Axis(n, "space") for n in names]
-    axes.append(Axis("c", "channel", content=content))
+    axes.append(Axis("c", kind))
     return CoordinateSystem(axes, name=name)
 
 
@@ -59,7 +68,7 @@ def values() -> np.ndarray:
 
 @pytest.fixture
 def a() -> Affine:
-    voxel = _system("ijk", "voxel", Vector())
+    voxel = _system("ijk", "voxel", "vector")
     return _affine(_LA, [1.0, 2.0, 3.0], voxel, _system("xyz", "RAS"))
 
 
@@ -77,7 +86,7 @@ def u() -> Affine:
 
 @pytest.fixture
 def g() -> SingleScaleImage:
-    # The array system of the target describes its channels without content.
+    # The array system of the target describes the components as channels.
     b = _affine(
         _LB, [-1.0, -1.0, 0.0], _system("ijk", "voxel"), _system("xyz", "RAS")
     )
@@ -99,7 +108,7 @@ def test_frames_default_to_the_array_system(
     assert image.frames == (None,) * 4
 
 
-def test_an_axis_without_content_has_no_frame(
+def test_an_axis_without_components_has_no_frame(
     values: np.ndarray, a: Affine
 ) -> None:
     image = SingleScaleImage(values, [a], frames={0: a})
@@ -146,12 +155,12 @@ def test_reslicing_onto_the_own_geometry_keeps_the_values(
     )
 
 
-def test_reslicing_copies_the_content_onto_the_target_axes(
+def test_reslicing_copies_the_component_axes_onto_the_target_axes(
     x: SingleScaleImage, u: Affine, g: SingleScaleImage
 ) -> None:
     resliced = x(u).reslice(g)
 
-    assert resliced.transformation.input.axes[3].content == Vector()
+    assert isinstance(resliced.transformation.input.axes[3], VectorAxis)
     assert resliced.frames[3] is not None
 
 
@@ -186,13 +195,22 @@ def test_flipping_composes_the_array_frame(
     )
 
 
-def test_indexing_part_of_a_content_axis_clears_its_content(
+def test_indexing_part_of_a_component_axis_makes_it_a_channel_axis(
     x: SingleScaleImage,
 ) -> None:
     part = x[..., :2]
 
-    assert part.transformation.input.axes[3].content is None
+    assert isinstance(part.transformation.input.axes[3], ChannelAxis)
     assert part.frames[3] is None
+
+
+def test_indexing_a_component_axis_in_full_keeps_its_type(
+    x: SingleScaleImage,
+) -> None:
+    full = x[..., 0:3]
+
+    assert isinstance(full.transformation.input.axes[3], VectorAxis)
+    assert full.frames[3] is not None
 
 
 # --- reframe ----------------------------------------------------------
@@ -293,7 +311,7 @@ def test_reframe_skips_a_foreign_frame(values: np.ndarray, a: Affine) -> None:
 
 
 def test_reframe_a_covector(values: np.ndarray, a: Affine) -> None:
-    voxel = _system("ijk", "voxel", Covector())
+    voxel = _system("ijk", "voxel", "covector")
     image = SingleScaleImage(values, [a.to(input=voxel)])
 
     out = image.reframe()
@@ -302,7 +320,7 @@ def test_reframe_a_covector(values: np.ndarray, a: Affine) -> None:
 
 
 def test_reframe_from_a_field_uses_its_jacobian(values: np.ndarray) -> None:
-    voxel = _system("ijk", "voxel", Vector())
+    voxel = _system("ijk", "voxel", "vector")
     grid = np.stack(
         np.meshgrid(
             *[np.arange(s, dtype=float) for s in _SHAPE], indexing="ij"
@@ -353,7 +371,7 @@ def _sine_field(shape: tx.Tuple[int, ...], voxel: CoordinateSystem) -> tx.Any:
 def test_reframe_uses_one_sided_differences_at_the_edges(
     values: np.ndarray,
 ) -> None:
-    voxel = _system("ijk", "voxel", Vector())
+    voxel = _system("ijk", "voxel", "vector")
     identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
     field = _sine_field(_SHAPE, voxel)
     image = SingleScaleImage(values, [identity], frames={"c": field})
@@ -370,7 +388,7 @@ def test_reframe_uses_one_sided_differences_at_the_edges(
 def test_a_field_is_constant_along_an_axis_of_one_voxel() -> None:
     shape = (4, 5, 1)
     values = np.random.default_rng(0).random((*shape, 3))
-    voxel = _system("ijk", "voxel", Vector())
+    voxel = _system("ijk", "voxel", "vector")
     identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
     scaling = _affine(np.diag([1.0, 1.0, 2.0]), [0.0, 0.0, 0.0], voxel, voxel)
     frame = scaling @ _sine_field(shape, voxel)
@@ -406,7 +424,7 @@ def _matrix(linear: np.ndarray) -> np.ndarray:
 def test_untyped_axes_are_read_from_the_frame() -> None:
     values = np.random.default_rng(0).random((*_SHAPE, 3))
     voxel = _system_of(
-        [Axis("i"), Axis("j"), Axis("k"), Axis("c", content=Vector())], "voxel"
+        [Axis("i"), Axis("j"), Axis("k"), Axis("c", "vector")], "voxel"
     )
     world = _system_of([Axis("x"), Axis("y"), Axis("z"), Axis("c")], "world")
     linear = np.eye(4)
@@ -428,7 +446,7 @@ def _series(time: tx.Optional[str]) -> tx.Tuple[CoordinateSystem, ...]:
         out.append(Axis("t", time))
         return out
 
-    voxel = _system_of([*axes("ijk"), Axis("c", content=Vector())], "voxel")
+    voxel = _system_of([*axes("ijk"), Axis("c", "vector")], "voxel")
     world = _system_of([*axes("xyz"), Axis("c")], "world")
     return voxel, world
 
@@ -485,7 +503,7 @@ def test_vectors_in_a_subspace_follow_the_frame() -> None:
     # frame maps the first three axes onto its three axes.
     values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
     voxel = _system_of(
-        [Axis(n, "space") for n in "ijkl"] + [Axis("c", content=Vector())],
+        [Axis(n, "space") for n in "ijkl"] + [Axis("c", "vector")],
         "voxel",
     )
     frame_system = _system_of(
@@ -510,7 +528,7 @@ def test_vectors_in_a_subspace_follow_the_frame() -> None:
 def test_frames_on_different_axes_cannot_be_compared() -> None:
     values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
     voxel = _system_of(
-        [Axis(n, "space") for n in "ijkl"] + [Axis("c", content=Vector())],
+        [Axis(n, "space") for n in "ijkl"] + [Axis("c", "vector")],
         "voxel",
     )
     frame_system = _system_of(
@@ -528,3 +546,171 @@ def test_frames_on_different_axes_cannot_be_compared() -> None:
 
     with pytest.raises(ValueError):
         image.reframe(frame(1))
+
+
+# --- frames that correspond exactly to the components -----------------
+
+
+def test_a_given_frame_is_restricted_by_a_projection() -> None:
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    voxel, world = _series("time")
+    linear = np.eye(5)
+    linear[:3, :3] = _LA
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    slot = image.frames[4]
+
+    assert isinstance(slot, Sequence)
+    assert isinstance(slot.transformations[-1], Projection)
+    assert [axis.name for axis in slot.output.axes] == ["x", "y", "z", "c"]
+    # The restricted frame is stored, so that every read returns it.
+    assert image.frames[4] is slot
+
+
+def test_a_stored_frame_must_correspond_exactly() -> None:
+    _, world = _series("time")
+    voxel = _system_of(
+        [*[Axis(n, "space") for n in "ijk"], Axis("t", "time")]
+        + [Axis("c", "vector")],
+        "voxel",
+    )
+    linear = np.eye(5)
+    linear[:3, :3] = _LA
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+
+    # The type of the outputs is not consulted for a stored frame.
+    with pytest.raises(ValueError):
+        frame_axes(a, voxel.axes, 3)
+    assert frame_axes(
+        explicit_frame(a, voxel.axes, 3), voxel.axes, 3
+    ).cols == [
+        0,
+        1,
+        2,
+    ]
+
+
+def test_a_given_frame_with_too_few_axes_is_refused(
+    values: np.ndarray,
+) -> None:
+    voxel = _system("ijk", "voxel", "vector")
+    plane = CoordinateSystem([Axis("x", "space"), Axis("y", "space")])
+    matrix = np.zeros((2, 5))
+    matrix[0, 0] = matrix[1, 1] = 1.0
+    frame = Affine(matrix=matrix, input=voxel, output=plane)
+    identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
+    image = SingleScaleImage(values, [identity], frames={"c": frame})
+
+    with pytest.raises(ValueError):
+        _ = image.frames
+
+
+def test_a_frame_may_end_with_a_projection(
+    values: np.ndarray, a: Affine
+) -> None:
+    ras = _system("xyz", "RAS")
+    projection = Projection(
+        dropped=[3], input=ras, output=CoordinateSystem(ras.axes[:3])
+    )
+    frame = projection @ a
+    image = SingleScaleImage(values, [a], frames={"c": frame})
+
+    out = image.reframe(None)
+
+    assert image.frames[3] is frame
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values)
+    )
+
+
+def test_a_frame_may_end_with_a_permutation(
+    values: np.ndarray, a: Affine
+) -> None:
+    ras = _system("xyz", "RAS")
+    zxy = CoordinateSystem([ras.axes[i] for i in (2, 0, 1, 3)])
+    permutation = Permutation(permutation=[2, 0, 1, 3], input=ras, output=zxy)
+    frame = permutation @ a
+    image = SingleScaleImage(values, [a], frames={"c": frame})
+
+    out = image.reframe()
+
+    # The components follow z, x and y, and are re-expressed along x, y
+    # and z.
+    swap = np.eye(3)[[2, 0, 1]]
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(swap), values)
+    )
+
+
+def test_a_field_followed_by_a_projection_uses_its_jacobian(
+    values: np.ndarray,
+) -> None:
+    voxel = _system("ijk", "voxel", "vector")
+    grid = np.stack(
+        np.meshgrid(
+            *[np.arange(s, dtype=float) for s in _SHAPE], indexing="ij"
+        ),
+        -1,
+    )
+    linear = np.array([[1.2, 0.1, 0.0], [0.0, 0.9, 0.2], [0.1, 0.0, 1.1]])
+    displacements = np.zeros((*_SHAPE, 1, 4))
+    displacements[..., 0, :3] = grid @ (linear - np.eye(3)).T
+    field = DisplacementField(data=displacements, input=voxel, output=voxel)
+    projection = Projection(
+        dropped=[3], input=voxel, output=CoordinateSystem(voxel.axes[:3])
+    )
+    identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
+    image = SingleScaleImage(
+        values, [identity], frames={"c": projection @ field}
+    )
+
+    out = image.reframe(None)
+
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(linear), values)
+    )
+
+
+# --- tensors and points -----------------------------------------------
+
+
+def test_reframe_a_diffusion_tensor(a: Affine) -> None:
+    full = np.random.default_rng(0).random((*_SHAPE, 3, 3))
+    full = full + np.swapaxes(full, -1, -2)
+    axis = TensorAxis("c", layout="symmetric")
+    pairs = axis.entries(3)
+    packed = np.stack([full[..., i, j] for i, j in pairs], -1)
+    voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], axis])
+    image = SingleScaleImage(packed, [a.to(input=voxel)])
+
+    out = np.asarray(image.reframe().data)
+
+    expected = _LA @ full @ _LA.T
+    assert np.allclose(
+        out, np.stack([expected[..., i, j] for i, j in pairs], -1)
+    )
+
+
+@pytest.mark.parametrize("kind", ["point", "coordinate"])
+def test_points_have_a_frame_but_are_not_reframed(
+    values: np.ndarray, a: Affine, kind: str
+) -> None:
+    voxel = _system("ijk", "voxel", kind)
+    a = a.to(input=voxel)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    assert image.frames[3] is a
+    assert image.reframe() is image
+    with pytest.raises(NotImplementedError):
+        image.reframe(None)
+
+
+def test_cropping_moves_the_voxel_frame_of_points(
+    values: np.ndarray, a: Affine
+) -> None:
+    voxel = _system("ijk", "voxel", "point")
+    image = SingleScaleImage(values, [a.to(input=voxel)])
+
+    assert image[1:3].frames[3] is not None
+    assert image[:, :, :].frames[3] is None

@@ -18,7 +18,6 @@ metadata of its fixed and moving images, which it does not store.
 __all__ = [
     "axes",
     "base",
-    "content",
     "enums",
     "kinds",
     "images",
@@ -33,7 +32,6 @@ __all__ = [
 from . import (
     axes,
     base,
-    content,
     enums,
     images,
     kinds,

@@ -21,7 +21,6 @@ nav = [
       "api/datamodel/enums.md",
       "api/datamodel/units.md",
       "api/datamodel/orientation.md",
-      "api/datamodel/content.md",
       "api/datamodel/axes.md",
       "api/datamodel/systems.md",
       "api/datamodel/geometry.md",

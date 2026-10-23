@@ -2,8 +2,6 @@ __all__ = [
     "SpaceAxis",
     "TimeAxis",
     "ChannelAxis",
-    "DisplacementAxis",
-    "CoordinateAxis",
     "OrientedAxis",
     "OrientedTimeAxis",
     "OrientedSpaceAxis",
@@ -41,9 +39,6 @@ class SpaceAxis(Axis, on={"type": "space"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
     """
 
     unit: Inherit[tx.Optional[tx.Union[SpaceUnit, IndexUnit]]]
@@ -69,9 +64,6 @@ class TimeAxis(Axis, on={"type": "time"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
     """
 
     unit: Inherit[tx.Optional[tx.Union[TimeUnit, IndexUnit]]]
@@ -97,67 +89,6 @@ class ChannelAxis(Axis, on={"type": "channel"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
-    """
-
-    type: NoRepr[...]
-
-
-class DisplacementAxis(Axis, on={"type": "displacement"}):
-    """Axis that enumerates the components of displacement vectors.
-
-    A displacement field has its spatial axes and one displacement axis.
-
-    Parameters
-    ----------
-    name : str, optional
-        Name of the axis, such as `"c"`.
-    type : {"displacement"}, default="displacement"
-        Pinned axis type.
-    unit : Unit | str, optional
-        Unit of the coordinates along the axis.
-
-    Other Parameters
-    ----------------
-    discrete : bool, optional
-        Whether the axis is discrete, meaning that its elements have
-        no specific order and should not be interpolated.
-    orientation : Orientation | str, optional
-        Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
-    """
-
-    type: NoRepr[...]
-
-
-class CoordinateAxis(Axis, on={"type": "coordinate"}):
-    """Axis that enumerates the components of coordinate vectors.
-
-    A coordinate field has its spatial axes and one coordinate axis.
-
-    Parameters
-    ----------
-    name : str, optional
-        Name of the axis, such as `"c"`.
-    type : {"coordinate"}, default="coordinate"
-        Pinned axis type.
-    unit : Unit | str, optional
-        Unit of the coordinates along the axis.
-
-    Other Parameters
-    ----------------
-    discrete : bool, optional
-        Whether the axis is discrete, meaning that its elements have
-        no specific order and should not be interpolated.
-    orientation : Orientation | str, optional
-        Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
     """
 
     type: NoRepr[...]
@@ -182,9 +113,6 @@ class OrientedAxis(Axis, on={"orientation": is_not_none}):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
     """
 
 
@@ -212,9 +140,6 @@ class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as left to right.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
     """
 
 
@@ -237,7 +162,4 @@ class OrientedTimeAxis(TimeAxis, OrientedAxis):
         no specific order and should not be interpolated.
     orientation : Orientation, required
         Meaningful direction of the axis, such as forward.
-    content : Content, optional
-        What the entries along the axis hold, such as the components
-        of a vector. `None` means independent values.
     """
