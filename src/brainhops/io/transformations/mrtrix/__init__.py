@@ -7,7 +7,7 @@ as small text files. Each kind of file has a format class here.
 
 | Class                         | File                         |
 | ----------------------------- | ---------------------------- |
-| [`MrtrixCoordinatesField`][]  | 4-D warp of positions        |
+| [`MrtrixCoordinateField`][]  | 4-D warp of positions        |
 | [`MrtrixDisplacementField`][] | 4-D warp of displacements    |
 | [`MrtrixWarpFull`][]          | 5-D `-nl_warp_full` file     |
 | [`MrtrixLinearTransform`][]   | 3x4 or 4x4 matrix (`.txt`)   |
@@ -18,7 +18,7 @@ fields.
 
 | Class                         | Hints                                  |
 | ----------------------------- | -------------------------------------- |
-| [`MrtrixCoordinatesField`][]  | `mrtrix.coordinates`, `mrtrix.coord`   |
+| [`MrtrixCoordinateField`][]  | `mrtrix.coordinates`, `mrtrix.coord`   |
 | [`MrtrixDisplacementField`][] | `mrtrix.displacement`, `mrtrix.disp`   |
 | [`MrtrixWarpFull`][]          | `mrtrix.warpfull`, `mrtrix.warp_full`  |
 | [`MrtrixLinearTransform`][]   | `mrtrix.linear`, `mrtrix.affine`       |
@@ -46,7 +46,7 @@ changed.
 ```python
 import brainhops.io as io
 
-warp = io.load("warp.mif")                    # MrtrixCoordinatesField
+warp = io.load("warp.mif")                    # MrtrixCoordinateField
 disp = io.load("disp.mif", hint="mrtrix.disp")
 full = io.load("warps.mif")                   # MrtrixWarpFull (5-D)
 lin = io.load("affine.txt", hint="mrtrix.linear")
@@ -214,7 +214,7 @@ written from `t.to(MrtrixLinearTransform)`.
 MRtrix also writes its 4-D warps as NIfTI files, without an intent
 code. Such a file is read by the NIfTI readers as a field of RAS
 coordinates
-([`NiftiRASCoordinatesField`][brainhops.io.transformations.nifti.NiftiRASCoordinatesField]),
+([`NiftiRASCoordinateField`][brainhops.io.transformations.nifti.NiftiRASCoordinateField]),
 which is the reading of a deformation.
 
 ## Header without a transform
@@ -225,7 +225,7 @@ field of view on the origin (`-0.5 * (size - 1) * vox`, in
 """
 
 __all__ = [
-    "MrtrixCoordinatesField",
+    "MrtrixCoordinateField",
     "MrtrixDisplacementField",
     "MrtrixLinearMetadata",
     "MrtrixLinearRaw",
@@ -242,7 +242,7 @@ from ._linear import MrtrixLinearTransform
 from ._metadata import MrtrixLinearMetadata
 from ._raw import MrtrixLinearRaw
 from ._warps import (
-    MrtrixCoordinatesField,
+    MrtrixCoordinateField,
     MrtrixDisplacementField,
     MrtrixWarp,
     MrtrixWarpFull,
@@ -252,3 +252,18 @@ from ._warps import (
 # that a conversion into one of these formats, such as `t.to(Format)`,
 # holds the very map or fails with a reason.
 from . import _converters  # noqa: E402, F401  isort: skip
+
+
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "MrtrixCoordinatesField": "MrtrixCoordinateField",
+    },
+)

@@ -12,7 +12,7 @@ returns an instance of its format that is the map `t` is, raises a
 | any affine, `Sequence` of affines  | `NiftiVoxelToRAS`             |
 | any affine, `Sequence` of affines  | `NiftiRASToVoxel`             |
 | any field, `Sequence`              | `NiftiRASDisplacementField`   |
-| any field, `Sequence`              | `NiftiRASCoordinatesField`    |
+| any field, `Sequence`              | `NiftiRASCoordinateField`    |
 
 In this table, "any affine" means every family that has an affine
 form, which is `Identity`, `Translation`, `Scaling`, `Permutation`,
@@ -74,7 +74,7 @@ from brainhops.errors import ConversionError
 from brainhops.io.transformations.base._conversions import (
     FieldParts,
     affine_between,
-    coordinates_parts,
+    coordinate_parts,
     displacement_parts,
     format_options,
     held,
@@ -85,7 +85,7 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 from ._affines import NiftiRASToVoxel, NiftiVoxelToRAS
-from ._fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
+from ._fields import NiftiRASCoordinateField, NiftiRASDisplacementField
 
 VOXEL = _systems.VoxelCoordinateSystem()
 """The voxels of the grid a NIfTI file describes."""
@@ -174,7 +174,7 @@ def _(
 # ----------------------------------------------------------------------
 
 
-@converter(_xforms.CoordinatesField, NiftiRASDisplacementField)
+@converter(_xforms.CoordinateField, NiftiRASDisplacementField)
 @converter(_xforms.CartesianField, NiftiRASDisplacementField)
 @converter(_xforms.Sequence, NiftiRASDisplacementField)
 @converter
@@ -200,27 +200,27 @@ def _(
     return held(cls(transformations=chain, **options), parts)
 
 
-@converter(_xforms.StationaryVelocityField, NiftiRASCoordinatesField)
-@converter(_xforms.CartesianField, NiftiRASCoordinatesField)
-@converter(_xforms.DisplacementField, NiftiRASCoordinatesField)
-@converter(_xforms.Sequence, NiftiRASCoordinatesField)
+@converter(_xforms.StationaryVelocityField, NiftiRASCoordinateField)
+@converter(_xforms.CartesianField, NiftiRASCoordinateField)
+@converter(_xforms.DisplacementField, NiftiRASCoordinateField)
+@converter(_xforms.Sequence, NiftiRASCoordinateField)
 @converter
 def _(
-    t: _xforms.CoordinatesField,
-    cls: tx.Type[NiftiRASCoordinatesField],
+    t: _xforms.CoordinateField,
+    cls: tx.Type[NiftiRASCoordinateField],
     **kwargs,
-) -> NiftiRASCoordinatesField:
+) -> NiftiRASCoordinateField:
     # One field of coordinates on the file's voxels, sampled as NIfTI
     # stores it, carried into RAS. A field of displacements becomes the
     # position of each node, and a field that is not linear is sampled at
     # its nodes, which loses.
-    cls = NiftiRASCoordinatesField
+    cls = NiftiRASCoordinateField
     options = format_options(t, cls, kwargs, COORDINATES_OPTIONS)
     # The metadata of `t` rides along, converted by the field.
     options.setdefault("metadata", t.metadata)
     if _empty_coordinates(t, cls) is not None:
         return cls(field=None, **options)
-    parts = coordinates_parts(t, VOXEL, RAS, cls)
+    parts = coordinate_parts(t, VOXEL, RAS, cls)
     # The voxels of the file are the grid of the field: nothing (but
     # rounding) may come between them.
     if not undoes(parts.world2grid, np.eye(len(parts.world2grid))):
@@ -248,10 +248,10 @@ def _(
 
 @converter
 def _(
-    t: NiftiRASCoordinatesField,
-    cls: tx.Type[NiftiRASCoordinatesField],
+    t: NiftiRASCoordinateField,
+    cls: tx.Type[NiftiRASCoordinateField],
     **kwargs,
-) -> NiftiRASCoordinatesField:
+) -> NiftiRASCoordinateField:
     # Within its own format, a field is changed by the rules of any field
     # of coordinates (a new `field=`, say), which keep its type.
     return _convert_withsplines(t, cls, **kwargs)
@@ -297,7 +297,7 @@ def _ras_displacement(t: _xforms.Transformation, options: dict) -> FieldParts:
 
 def _empty_coordinates(
     t: _xforms.Transformation, cls: type
-) -> tx.Optional[_xforms.CoordinatesField]:
+) -> tx.Optional[_xforms.CoordinateField]:
     """
     The field of `t` when it holds no coordinates, or `None`.
 

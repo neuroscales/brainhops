@@ -68,7 +68,7 @@ things.
   most cases it is the same object as an entry of `transformations`.
 - A coordinate system names a foreign frame, which belongs to another
   space and which no transformation of the image reaches. The
-  coordinates held by a coordinates field and the moving index of a
+  coordinates held by a coordinate field and the moving index of a
   two-point tensor are in a foreign frame. Such a slot is a label, and
   no operation changes it.
 

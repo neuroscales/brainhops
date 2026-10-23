@@ -416,7 +416,7 @@ def _world_field(warp, reference):  # noqa: ANN001, ANN202
     ).astype(float)
     ras = _apply(ref.vox2ras, grid)
     sequence = _xforms.Sequence(
-        transformations=[_xforms.CoordinatesField(field=ras)]
+        transformations=[_xforms.CoordinateField(field=ras)]
         + list(warp.transformations)
     )
     return np.asarray(sequence.compute().field)
@@ -552,12 +552,12 @@ def test_both_fnirt_fixtures_dispatch_to_one_reader() -> None:
 def test_generic_reader_does_not_claim_fsl_intents() -> None:
     """The generic RAS coordinates reader does not claim FSL intents."""
     from brainhops.io.transformations.nifti import (
-        NiftiRASCoordinatesField,
+        NiftiRASCoordinateField,
     )
 
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
     # A score of 1.0 would mean that the generic reader claims the file.
-    assert NiftiRASCoordinatesField._score_nibabel(img.header) < 1.0
+    assert NiftiRASCoordinateField._score_nibabel(img.header) < 1.0
 
 
 def test_coefficient_field_exposes_degree_and_coeff() -> None:

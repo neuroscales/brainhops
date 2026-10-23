@@ -14,9 +14,9 @@ from brainhops.io.transformations.itk._common import (
 
 
 def _apply(transform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
-    field = xforms.CoordinatesField(field=points)
+    field = xforms.CoordinateField(field=points)
     result = xforms.Sequence(transformations=[field, *transform]).compute()
-    return np.asarray(result.to(xforms.CoordinatesField).field)
+    return np.asarray(result.to(xforms.CoordinateField).field)
 
 
 @pytest.mark.parametrize("ndim", [2, 3])

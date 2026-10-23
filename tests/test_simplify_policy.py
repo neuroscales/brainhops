@@ -13,7 +13,7 @@ from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.kinds import TransformationFamily
 from brainhops.datamodel.transformations import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -333,7 +333,7 @@ def test_displacement_pair_cancels_zero_inversions(policy: object) -> None:
 
 
 def test_analytic_never_materializes_a_coordinate_inverse() -> None:
-    cf = CoordinatesField(field=_small())
+    cf = CoordinateField(field=_small())
     result = Sequence(transformations=[cf, cf.inverse()]).compute(
         simplify="analytic"
     )

@@ -39,7 +39,7 @@ from ..base import Transformation
 from ..concrete import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Linear,
     Permutation,
@@ -159,7 +159,7 @@ def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
 
 @checker
 @identity_from("data")
-def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
+def _(query: CoordinateField, kind: IdentityType, compute: bool) -> bool:
     return False
 
 
@@ -1033,4 +1033,4 @@ register_kind_alias("projection", Projection)
 register_kind_alias("meta", MetaTransformation)
 register_kind_alias("field", TransformationField)
 register_kind_alias("displacements", DisplacementField)
-register_kind_alias("coordinates", CoordinatesField)
+register_kind_alias("coordinates", CoordinateField)

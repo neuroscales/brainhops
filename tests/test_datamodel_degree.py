@@ -9,20 +9,20 @@ import pytest
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.transformations import (
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
 )
 from brainhops.io.transformations.base.fields import (
-    LPSCoordinatesField,
-    RASCoordinatesField,
+    LPSCoordinateField,
+    RASCoordinateField,
 )
 
 FIELDS = [
     DisplacementField,
-    CoordinatesField,
+    CoordinateField,
     CartesianField,
-    RASCoordinatesField,
-    LPSCoordinatesField,
+    RASCoordinateField,
+    LPSCoordinateField,
 ]
 
 

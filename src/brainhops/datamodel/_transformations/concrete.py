@@ -1,6 +1,6 @@
 __all__ = [
     "ConcreteTransformation",
-    "CoordinatesField",
+    "CoordinateField",
     "CartesianField",
     "DisplacementField",
     "Affine",
@@ -403,7 +403,7 @@ class DisplacementField(TransformationField, polymorphic=True):
     Other Parameters
     ----------------
     field : ArrayLike, optional
-        The displacements field, always encoded as values.
+        The displacement field, always encoded as values.
         It is decoded into `data` according to `store`, `degree` and `log`.
     values : ArrayLike, optional
         The displacements or velocity field, always encoded as values.
@@ -485,8 +485,8 @@ class DisplacementField(TransformationField, polymorphic=True):
         return super().sqrt(compute, **kwargs)
 
 
-class CoordinatesField(TransformationField):
-    """Coordinates field on a regular grid, whose input space is the grid.
+class CoordinateField(TransformationField):
+    """Coordinate field on a regular grid, whose input space is the grid.
 
     !!! note "Mutually exclusive arguments"
         Only one of `data=`, `field=`, `values=` or `coefficients=` may
@@ -502,13 +502,13 @@ class CoordinatesField(TransformationField):
     Other Parameters
     ----------------
     field : ArrayLike, optional
-        The coordinates field, always encoded as values.
+        The coordinate field, always encoded as values.
         It is decoded into `data` according to `store`, `degree`.
     values : ArrayLike, optional
-        The coordinates field, always encoded as values.
+        The coordinate field, always encoded as values.
         It is encoded into `data` according to `store` and `degree`.
     coefficients : ArrayLike, optional
-        The coordinates field, always encoded as spline coefficients.
+        The coordinate field, always encoded as spline coefficients.
         It is encoded into `data` according to `store` and `degree`.
     store : StoreEnum | str | None, optional
         Whether `data` holds the values or the spline coefficients.
@@ -539,13 +539,13 @@ class CoordinatesField(TransformationField):
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         raise NotImplementedError(
-            "The square root of a coordinates field is not implemented. "
+            "The square root of a coordinate field is not implemented. "
             "A map to take the square root of is stored as a "
             "StationaryVelocityField."
         )
 
 
-class CartesianField(_FrozenBackendMixin, CoordinatesField):
+class CartesianField(_FrozenBackendMixin, CoordinateField):
     """Identity over a regular grid of coordinates.
 
     A grid stores only its `shape`. The coordinates of its points (`field`) and
@@ -575,7 +575,7 @@ class CartesianField(_FrozenBackendMixin, CoordinatesField):
     # re-encode.
     map_field: tx.ClassVar[tx.Optional[str]] = None
 
-    _base_derivied_fields: _FieldNames = CoordinatesField.derived_fields
+    _base_derivied_fields: _FieldNames = CoordinateField.derived_fields
     derived_fields: _FieldNames = (*_base_derivied_fields, "data")
     data_fields: _FieldNames = ("shape",)
 

@@ -22,7 +22,7 @@ from brainhops.datamodel.transformations import (
     AffineExponential,
     Bijection,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -406,8 +406,8 @@ def test_operators_refuse_what_they_do_not_compute() -> None:
     field = DisplacementField(field=np.zeros((4, 4, 2)) + 0.1)
     with pytest.raises(NotImplementedError, match="velocity"):
         field.sqrt()
-    coords = CoordinatesField(field=_grid((4, 4)))
-    with pytest.raises(NotImplementedError, match="coordinates field"):
+    coords = CoordinateField(field=_grid((4, 4)))
+    with pytest.raises(NotImplementedError, match="coordinate field"):
         coords.sqrt()
     reindex = SubspaceTransformation(
         transformation=Scaling(scale=np.array([2.0, 3.0])),

@@ -22,7 +22,7 @@ from brainhops.errors import CompositionError
 from ..base import Transformation
 from ..concrete import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -143,11 +143,11 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 
 
 @composer
-def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Translation, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field, translation = to_promoted_backend(Ti.field, To.translation)
     field = field + translation
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -158,11 +158,11 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Scaling, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     data, scale = to_promoted_backend(Ti.data, To.scale)
     data = data * scale
-    return CoordinatesField(
+    return CoordinateField(
         data=data,
         input=Ti.input,
         output=To.output,
@@ -173,10 +173,10 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Permutation, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     data = Ti.data[..., To.permutation]
-    return CoordinatesField(
+    return CoordinateField(
         data=data,
         input=Ti.input,
         output=To.output,
@@ -187,11 +187,11 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Linear, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field, matrix = to_promoted_backend(Ti.field, To.matrix)
     field = field @ matrix.T
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -202,11 +202,11 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Affine, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field, matrix = to_promoted_backend(Ti.field, To.matrix)
     field = field @ matrix[:, :-1].T + matrix[:, -1]
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -333,7 +333,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     # anything is computed from them.
     coeffs, coords, field = to_promoted_backend(
         To.to(log=False, store="coefficients").data,
-        Ti.to(CoordinatesField).field,
+        Ti.to(CoordinateField).field,
         Ti.field,
     )
     moved = pull_field(
@@ -355,11 +355,11 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 
 
 @composer
-def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: DisplacementField, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     coeffs, coords = to_promoted_backend(
         To.to(log=False, store="coefficients").data,
-        Ti.to(CoordinatesField).field,
+        Ti.to(CoordinateField).field,
     )
     moved = pull_field(
         coeffs,
@@ -369,7 +369,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
         coeff=True,
     )
     field = moved + coords
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -380,7 +380,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: CoordinateField, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field = pull_field(
         To.to(store="coefficients").data,
@@ -389,7 +389,7 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
         bound=To.bound,
         coeff=True,
     )
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -405,7 +405,7 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: SubspaceTransformation, Ti: CoordinateField) -> CoordinateField:
     # The components that the subspace acts on go through the inner
     # transformation, and the other components pass through unchanged. The
     # inner transformation is evaluated only at the coordinates of the axes
@@ -444,7 +444,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
                             or getattr(axis, "type", None)
                         )
                     )
-        domain = CoordinatesField(
+        domain = CoordinateField(
             field=x[..., in_axes],
             degree=Ti.degree,
             bound=Ti.bound,
@@ -452,8 +452,8 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         )
         result = Sequence([domain, To.transformation]).compute()
         if isinstance(result, DisplacementField):
-            result = result.to(CoordinatesField)
-        if not isinstance(result, CoordinatesField):
+            result = result.to(CoordinateField)
+        if not isinstance(result, CoordinateField):
             raise CompositionError(
                 "The inner transform of a subspace transform did not reduce "
                 "to a field of coordinates, so it cannot be applied to a "
@@ -476,7 +476,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         columns[o] = x[..., i]
     y = xp.stack(columns, axis=-1)
 
-    return CoordinatesField(
+    return CoordinateField(
         field=y,
         input=Ti.input,
         output=To.output,
@@ -561,7 +561,7 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
     # Read the displacements as coordinates, apply the subspace, and subtract
     # the grid again.
     Ti = Ti.compute()
-    y = compose(To, Ti.to(CoordinatesField))
+    y = compose(To, Ti.to(CoordinateField))
     field = y.field - _grid_like(y.field)
     return DisplacementField(
         field=field,

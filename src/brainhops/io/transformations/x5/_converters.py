@@ -23,7 +23,7 @@ cuts it, and each piece becomes one transform of the file:
 | affines                                      | `linear`, an `Affine`      |
 | a field of displacements                     | [`X5DisplacementField`][]  |
 | a field of displacements of cubic B-splines  | [`X5BSplineField`][]       |
-| a field of coordinates                       | [`X5CoordinatesField`][]   |
+| a field of coordinates                       | [`X5CoordinateField`][]   |
 
 A field is converted as every field format converts it (see
 [`displacement_parts`][brainhops.io.transformations.base._conversions.displacement_parts]):
@@ -56,7 +56,7 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
-    coordinates_parts,
+    coordinate_parts,
     displacement_parts,
     format_options,
     held,
@@ -65,9 +65,9 @@ from brainhops.io.transformations.base._conversions import (
     world_pieces,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.base.fields import RASCoordinateField
 
-from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
+from ._blocks import X5BSplineField, X5CoordinateField, X5DisplacementField
 from ._xform import X5Transform
 
 RAS = _systems.RASmm()
@@ -118,12 +118,12 @@ def _element(piece: _xforms.Transformation, cls: type) -> tx.Tuple:
         affine = _xforms.Affine(matrix=piece.matrix, input=RAS, output=RAS)
         return affine, None
     before, field, _ = split_field_chain(piece, RAS, RAS, cls)
-    if isinstance(field, _xforms.CoordinatesField):
-        parts = coordinates_parts(piece, RAS, RAS, cls)
-        element = X5CoordinatesField(
+    if isinstance(field, _xforms.CoordinateField):
+        parts = coordinate_parts(piece, RAS, RAS, cls)
+        element = X5CoordinateField(
             (
                 RASToVoxel(matrix=parts.world2grid[:-1]),
-                RASCoordinatesField(field=parts.field.values),
+                RASCoordinateField(field=parts.field.values),
             )
         )
         return element, parts

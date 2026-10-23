@@ -61,8 +61,8 @@ from brainhops.io.transformations.base.affines import (  # noqa: E402
     VoxelToRAS,
 )
 from brainhops.io.transformations.base.fields import (  # noqa: E402
-    LPSCoordinatesField,
-    RASCoordinatesField,
+    LPSCoordinateField,
+    RASCoordinateField,
 )
 from brainhops.io.transformations.elastix import (  # noqa: E402
     ElastixTransform,
@@ -93,7 +93,7 @@ from brainhops.io.transformations.matrix import (  # noqa: E402
     TxtMatrixAffine,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftiRASDisplacementField,
     NiftiRASToVoxel,
     NiftiVoxelToRAS,
@@ -148,14 +148,14 @@ def _families(input: tx.Any, output: tx.Any) -> tx.Dict[str, tx.Any]:
             transformations=[xforms.Scaling([2.0, 3.0, 4.0], **ends)]
         ),
         "displacement": xforms.DisplacementField(field=field, **ends),
-        "coordinates": xforms.CoordinatesField(field=field, **ends),
+        "coordinates": xforms.CoordinateField(field=field, **ends),
     }
 
 
 FORMATS = [
     NiftiVoxelToRAS,
     NiftiRASToVoxel,
-    NiftiRASCoordinatesField,
+    NiftiRASCoordinateField,
     NiftyRegAffine,
     NiftyRegDisplacementField,
     FlirtTransform,
@@ -238,7 +238,7 @@ def test_a_bound_class_refuses_an_incompatible_endpoint(
 
 @pytest.mark.parametrize(
     "cls, output",
-    [(RASCoordinatesField, LPSmm()), (LPSCoordinatesField, RASmm())],
+    [(RASCoordinateField, LPSmm()), (LPSCoordinateField, RASmm())],
 )
 def test_a_bound_field_refuses_an_incompatible_endpoint(
     cls: type, output: CoordinateSystem
@@ -487,7 +487,7 @@ def test_a_field_between_lps_spaces_is_bridged_into_niftyreg() -> None:
         (xforms.Affine(MATRIX[:-1]), NiftiVoxelToRAS),
         (xforms.Scaling([2.0, 3.0, 4.0]), NiftiRASToVoxel),
         (_families(RASmm(), RASmm())["affine"], NiftyRegAffine),
-        (_families(None, None)["displacement"], NiftiRASCoordinatesField),
+        (_families(None, None)["displacement"], NiftiRASCoordinateField),
     ],
     ids=["nifti", "nifti-scaling", "niftyreg", "nifti-field"],
 )
@@ -642,8 +642,8 @@ def test_a_family_member_round_trips_through_nifti(
 
 def test_a_cartesian_grid_is_a_nifti_field_of_coordinates() -> None:
     grid = xforms.CartesianField(shape=(2, 3, 4))
-    nifti = grid.to(NiftiRASCoordinatesField)
-    assert type(nifti) is NiftiRASCoordinatesField
+    nifti = grid.to(NiftiRASCoordinateField)
+    assert type(nifti) is NiftiRASCoordinateField
     np.testing.assert_array_equal(nifti.field, grid.field)
 
 
@@ -651,7 +651,7 @@ def test_a_velocity_is_integrated_into_a_nifti_field_of_coordinates() -> None:
     # A zero velocity integrates into the identity, whose coordinates are
     # those of the nodes.
     velocity = xforms.StationaryVelocityField(data=np.zeros((2, 3, 4, 3)))
-    nifti = velocity.to(NiftiRASCoordinatesField)
+    nifti = velocity.to(NiftiRASCoordinateField)
     grid = np.stack(np.meshgrid(*map(np.arange, (2, 3, 4)), indexing="ij"), -1)
     np.testing.assert_allclose(np.asarray(nifti.field), grid)
 
@@ -759,9 +759,9 @@ def test_a_flirt_transform_is_converted_to_itself() -> None:
 
 
 def test_a_nifti_field_of_coordinates_takes_a_new_field() -> None:
-    nifti = NiftiRASCoordinatesField(field=np.zeros((2, 3, 4, 3)))
+    nifti = NiftiRASCoordinateField(field=np.zeros((2, 3, 4, 3)))
     changed = nifti.to(field=np.ones((2, 3, 4, 3)))
-    assert type(changed) is NiftiRASCoordinatesField
+    assert type(changed) is NiftiRASCoordinateField
     np.testing.assert_array_equal(changed.field, np.ones((2, 3, 4, 3)))
 
 

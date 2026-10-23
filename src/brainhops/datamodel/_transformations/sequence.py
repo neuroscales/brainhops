@@ -25,7 +25,7 @@ from .compute.simplify import simplify as _simplify
 from .compute.utils import require_endomorphism
 from .concrete import (
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
 )
@@ -883,7 +883,7 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 def _interpolates(xform: Transformation) -> bool:
     # Whether applying a transformation resamples through a spline, that is,
-    # whether it reaches a displacement or coordinates field. A
+    # whether it reaches a displacement or coordinate field. A
     # `CartesianField` is the identity over its grid, so it does not
     # interpolate.
     if xform is None:
@@ -896,7 +896,7 @@ def _interpolates(xform: Transformation) -> bool:
         return _interpolates(xform.transformation)
     if isinstance(xform, CartesianField):
         return False
-    if isinstance(xform, (DisplacementField, CoordinatesField)):
+    if isinstance(xform, (DisplacementField, CoordinateField)):
         return True
     return False
 

@@ -32,7 +32,7 @@ from brainhops.io.images.mrtrix import MrtrixImage
 from brainhops.io.transformations import TransformationFormat
 from brainhops.io.transformations.matrix import TxtMatrixAffine
 from brainhops.io.transformations.mrtrix import (
-    MrtrixCoordinatesField,
+    MrtrixCoordinateField,
     MrtrixDisplacementField,
     MrtrixLinearTransform,
     MrtrixWarp,
@@ -103,9 +103,9 @@ def _write(  # noqa: ANN202
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
     """Map scanner RAS points through a RAS-to-RAS transformation."""
-    points = xforms.CoordinatesField(field=np.asarray(points, float))
+    points = xforms.CoordinateField(field=np.asarray(points, float))
     out = xforms.Sequence(transformations=[points, *xform]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _affine(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
@@ -139,7 +139,7 @@ def displacement(tmp_path):  # noqa: ANN001, ANN201
 def test_the_formats_are_registered() -> None:
     registry = TransformationFormat._REGISTRY
     for cls in (
-        MrtrixCoordinatesField,
+        MrtrixCoordinateField,
         MrtrixDisplacementField,
         MrtrixWarpFull,
         MrtrixLinearTransform,
@@ -152,7 +152,7 @@ def test_the_formats_are_registered() -> None:
     "cls, hints",
     [
         (
-            MrtrixCoordinatesField,
+            MrtrixCoordinateField,
             {
                 "mrtrix.field",
                 "mrtrix.coord",
@@ -191,7 +191,7 @@ def test_hints(cls, hints) -> None:  # noqa: ANN001
 def test_a_4d_warp_is_read_as_a_deformation(deformation) -> None:  # noqa: ANN001
     for load in (io.load, io.transformations.load):
         warp = load(deformation)
-        assert type(warp) is MrtrixCoordinatesField
+        assert type(warp) is MrtrixCoordinateField
         assert isinstance(warp.input, systems.RASmm)
         assert isinstance(warp.output, systems.RASmm)
         assert len(warp) == 2
@@ -266,15 +266,15 @@ def test_commands_that_write_deformations(tmp_path, history) -> None:  # noqa: A
     path = _write(
         tmp_path / "w.mif", _grid_points(), keyval={"command_history": history}
     )
-    assert MrtrixCoordinatesField.sniff(path) == Confidence.LIKELY
+    assert MrtrixCoordinateField.sniff(path) == Confidence.LIKELY
     assert MrtrixDisplacementField.sniff(path) == Confidence.WEAK
-    assert type(io.load(path)) is MrtrixCoordinatesField
+    assert type(io.load(path)) is MrtrixCoordinateField
 
 
 def test_other_mrtrix_images_are_not_warps(tmp_path) -> None:  # noqa: ANN001
     for shape in [(4, 5, 6), (4, 5, 6, 4), (4, 5, 6, 3, 2)]:
         path = _write(tmp_path / "x.mif", np.zeros(shape))
-        assert MrtrixCoordinatesField.sniff(path) == 0
+        assert MrtrixCoordinateField.sniff(path) == 0
         assert MrtrixDisplacementField.sniff(path) == 0
         assert MrtrixWarpFull.sniff(path) == 0
         assert type(io.load(path)) is MrtrixImage
@@ -287,7 +287,7 @@ def test_other_mrtrix_images_are_not_warps(tmp_path) -> None:  # noqa: ANN001
 
 def test_a_warpconvert_displacement_is_read_as_one(displacement) -> None:  # noqa: ANN001
     assert MrtrixDisplacementField.sniff(displacement) == Confidence.LIKELY
-    assert MrtrixCoordinatesField.sniff(displacement) == Confidence.WEAK
+    assert MrtrixCoordinateField.sniff(displacement) == Confidence.WEAK
     warp = io.load(displacement)
     assert type(warp) is MrtrixDisplacementField
     assert isinstance(warp.input, systems.RASmm)
@@ -324,12 +324,12 @@ def test_a_displacement_without_history_is_sniffed_from_its_values(
     """Displacements stay near zero, and coordinates follow the grid."""
     path = _write(tmp_path / "d.mif", _ramp())
     assert MrtrixDisplacementField.sniff(path) == Confidence.MAYBE
-    assert MrtrixCoordinatesField.sniff(path) == Confidence.WEAK
+    assert MrtrixCoordinateField.sniff(path) == Confidence.WEAK
     assert type(io.load(path)) is MrtrixDisplacementField
     path = _write(tmp_path / "c.mif", _grid_points() + _ramp())
-    assert MrtrixCoordinatesField.sniff(path) == Confidence.MAYBE
+    assert MrtrixCoordinateField.sniff(path) == Confidence.MAYBE
     assert MrtrixDisplacementField.sniff(path) == Confidence.WEAK
-    assert type(io.load(path)) is MrtrixCoordinatesField
+    assert type(io.load(path)) is MrtrixCoordinateField
 
 
 def test_the_values_are_sniffed_through_a_mih_header(tmp_path) -> None:  # noqa: ANN001
@@ -342,13 +342,13 @@ def test_the_values_are_sniffed_through_a_mih_header(tmp_path) -> None:  # noqa:
 def test_a_displacement_is_read_by_hint_when_nothing_decides(tmp_path) -> None:  # noqa: ANN001
     """A single voxel does not say whether it holds a position."""
     path = _write(tmp_path / "d.mif", _ramp()[:1, :1, :1])
-    assert type(io.load(path)) is MrtrixCoordinatesField
+    assert type(io.load(path)) is MrtrixCoordinateField
     for hint in ("mrtrix.disp", "mrtrix.field.displacement", "displacements"):
         warp = io.load(path, hint=hint)
         assert type(warp) is MrtrixDisplacementField
     path = _write(tmp_path / "c.mif", _ramp())
     for hint in ("mrtrix.coord", "mrtrix.field.coordinates"):
-        assert type(io.load(path, hint=hint)) is MrtrixCoordinatesField
+        assert type(io.load(path, hint=hint)) is MrtrixCoordinateField
     warp = MrtrixDisplacementField.from_file(path)
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
@@ -359,14 +359,14 @@ def test_a_displacement_is_read_by_hint_when_nothing_decides(tmp_path) -> None: 
 @pytest.mark.parametrize(
     "cls, kind",
     [
-        (MrtrixCoordinatesField, "coordinates"),
-        (MrtrixDisplacementField, "displacement"),
+        (MrtrixCoordinateField, "coordinates"),
+        (MrtrixDisplacementField, "displacements"),
     ],
 )
 def test_brainhops_records_the_kind_of_warp(tmp_path, cls, kind) -> None:  # noqa: ANN001
     """The values are made to look like the other kind, so that only the
     key can decide."""
-    values = _ramp() if cls is MrtrixCoordinatesField else _grid_points()
+    values = _ramp() if cls is MrtrixCoordinateField else _grid_points()
     path = tmp_path / "w.mif"
     cls(data=values).save(path)
     record = MrtrixRaw.from_file(path)
@@ -378,6 +378,22 @@ def test_brainhops_records_the_kind_of_warp(tmp_path, cls, kind) -> None:  # noq
     io.load(path).consolidate(inplace=True, datatype="float64").save(path)
     lines = MrtrixRaw.from_file(path).keyval["command_history"].split("\n")
     assert len(lines) == 1
+
+
+@pytest.mark.parametrize("value", ["displacement", "displacements"])
+def test_the_singular_displacement_key_still_reads(tmp_path, value) -> None:  # noqa: ANN001
+    """Older versions of brainhops recorded `displacement`, in the
+    singular, and such a file still reads as a displacement field."""
+    path = _write(
+        tmp_path / "d.mif",
+        _grid_points(),
+        keyval={
+            "brainhops_field_type": value,
+            "command_history": "brainhops  (version=1.0)",
+        },
+    )
+    assert MrtrixDisplacementField.sniff(path) == Confidence.CERTAIN
+    assert type(io.load(path)) is MrtrixDisplacementField
 
 
 def test_a_brainhops_key_under_a_later_command(tmp_path) -> None:  # noqa: ANN001
@@ -396,8 +412,8 @@ def test_a_brainhops_key_under_a_later_command(tmp_path) -> None:  # noqa: ANN00
             + "  (version=3.0.4)",
         },
     )
-    assert MrtrixCoordinatesField.sniff(path) == Confidence.LIKELY
-    assert type(io.load(path)) is MrtrixCoordinatesField
+    assert MrtrixCoordinateField.sniff(path) == Confidence.LIKELY
+    assert type(io.load(path)) is MrtrixCoordinateField
     path = _write(
         tmp_path / "d.mif",
         _grid_points(),
@@ -444,7 +460,7 @@ def test_a_deformation_round_trips(deformation, tmp_path, name) -> None:  # noqa
     warp = io.load(deformation)
     io.save(warp, tmp_path / name)
     back = io.load(tmp_path / name)
-    assert type(back) is MrtrixCoordinatesField
+    assert type(back) is MrtrixCoordinateField
     np.testing.assert_allclose(
         np.asarray(back.coordinates.field), np.asarray(warp.coordinates.field)
     )
@@ -493,15 +509,15 @@ def test_a_field_built_from_a_chain_is_written(tmp_path) -> None:  # noqa: ANN00
     coordinates = (_grid_points() + _ramp()).astype("float32")
     chain = (
         xforms.Affine(matrix=np.linalg.inv(VOX2RAS)[:3]),
-        xforms.CoordinatesField(field=coordinates),
+        xforms.CoordinateField(field=coordinates),
     )
     from brainhops.io.transformations.base.affines import RASToVoxel
-    from brainhops.io.transformations.base.fields import RASCoordinatesField
+    from brainhops.io.transformations.base.fields import RASCoordinateField
 
-    warp = MrtrixCoordinatesField(
+    warp = MrtrixCoordinateField(
         transformations=(
             RASToVoxel(matrix=chain[0].matrix),
-            RASCoordinatesField(field=coordinates),
+            RASCoordinateField(field=coordinates),
         )
     )
     warp.save(tmp_path / "w.mif")
@@ -512,12 +528,12 @@ def test_a_field_built_from_a_chain_is_written(tmp_path) -> None:  # noqa: ANN00
     )
     # An unnamed chain says nothing of scanner RAS, and is refused.
     with pytest.raises(UnrepresentableTransformationError):
-        MrtrixCoordinatesField(transformations=chain).save(tmp_path / "x.mif")
+        MrtrixCoordinateField(transformations=chain).save(tmp_path / "x.mif")
 
 
 def test_a_field_without_data_cannot_be_written(tmp_path) -> None:  # noqa: ANN001
     with pytest.raises((WriterError, ParserContentError)):
-        MrtrixCoordinatesField().save(tmp_path / "x.mif")
+        MrtrixCoordinateField().save(tmp_path / "x.mif")
 
 
 def _nifti_field(path, intent, name=""):  # noqa: ANN001, ANN202
@@ -545,7 +561,7 @@ def test_spm_coordinates_are_written_as_mrtrix_warps(tmp_path) -> None:  # noqa:
     path = _nifti_field(tmp_path / "y_c.nii.gz", 1007, "Mapping")
     source = io.load(path)
     io.save(source, tmp_path / "y_c.mif")
-    back = MrtrixCoordinatesField.from_file(tmp_path / "y_c.mif")
+    back = MrtrixCoordinateField.from_file(tmp_path / "y_c.mif")
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
         _apply(back, points), _apply(source, points), atol=1e-4
@@ -556,8 +572,8 @@ def test_a_displacement_is_written_as_a_deformation(displacement) -> None:  # no
     # The two are the same map inside the grid, so a field of
     # displacements is held as the position of each voxel.
     field = io.load(displacement)
-    deformation = MrtrixCoordinatesField.from_instance(field)
-    assert isinstance(deformation, MrtrixCoordinatesField)
+    deformation = MrtrixCoordinateField.from_instance(field)
+    assert isinstance(deformation, MrtrixCoordinateField)
     points = _grid_points()
     np.testing.assert_allclose(
         _apply(deformation, points), _apply(field, points), atol=1e-5
@@ -619,7 +635,7 @@ def warpfull(tmp_path):  # noqa: ANN001, ANN201
 
 def test_a_5d_warp_is_read_as_a_warpfull(warpfull) -> None:  # noqa: ANN001
     assert MrtrixWarpFull.sniff(warpfull) == Confidence.CERTAIN
-    assert MrtrixCoordinatesField.sniff(warpfull) == 0
+    assert MrtrixCoordinateField.sniff(warpfull) == 0
     warp = io.load(warpfull)
     assert type(warp) is MrtrixWarpFull
     assert isinstance(warp.input, systems.RASmm)
@@ -892,7 +908,7 @@ def test_a_warp_refuses_other_endpoints(deformation) -> None:  # noqa: ANN001
     with pytest.raises(UnrepresentableTransformationError):
         warp.consolidate()
     with pytest.raises(TypeError):
-        MrtrixCoordinatesField.from_file(deformation, bogus=1)
+        MrtrixCoordinateField.from_file(deformation, bogus=1)
 
 
 def test_a_warpfull_refuses_an_assigned_chain(warpfull, tmp_path) -> None:  # noqa: ANN001

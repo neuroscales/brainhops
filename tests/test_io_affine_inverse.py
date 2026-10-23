@@ -22,7 +22,7 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiVoxelToRAS,
 )
 from brainhops.io.transformations.spm import (  # noqa: E402
-    SpmCoordinatesField,
+    SpmCoordinateField,
 )
 
 SHAPE = (4, 5, 6)
@@ -91,7 +91,7 @@ def test_a_sequence_holding_a_nifti_affine_inverts() -> None:
 
 def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
     field = _spm(tmp_path)
-    assert type(field) is SpmCoordinatesField
+    assert type(field) is SpmCoordinateField
     inverse = field.inverse()
     assert len(inverse) == len(field)
     assert inverse.input == field.output

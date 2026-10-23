@@ -164,13 +164,13 @@ def _write(tmp_path: Path, content: bytes, name: str = "t.m3z") -> Path:
 
 def _apply(xform: tx.Any, points: np.ndarray) -> np.ndarray:
     """Map points through a transformation."""
-    points = xforms.CoordinatesField(field=np.asarray(points, float))
+    points = xforms.CoordinateField(field=np.asarray(points, float))
     if isinstance(xform, (xforms.Sequence, list)):
         chain = list(xform)
     else:
         chain = [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _affine_apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
@@ -386,7 +386,7 @@ def test_writing_a_chain_leaves_the_record_alone(tmp_path: Path) -> None:
     ras2node, field, vox2ras = morph
     morph.transformations = [
         ras2node,
-        xforms.CoordinatesField(field=_positions(SHAPE[::-1])),
+        xforms.CoordinateField(field=_positions(SHAPE[::-1])),
         vox2ras,
     ]
     encoded = morph.consolidate().metadata.raw
@@ -450,7 +450,7 @@ def test_chain_shape(tmp_path: Path) -> None:
     morph = io.load(_write(tmp_path, _encode(_positions())))
     ras2node, field, vox2ras = morph
     assert isinstance(ras2node, RASToVoxel)
-    assert isinstance(field, xforms.CoordinatesField)
+    assert isinstance(field, xforms.CoordinateField)
     assert isinstance(vox2ras, VoxelToRAS)
     assert int(field.degree) == 1
 
@@ -535,7 +535,7 @@ def test_write_edited_field(tmp_path: Path) -> None:
     moved = np.asarray(field.field) + 1.0
     morph.transformations = [
         ras2node,
-        xforms.CoordinatesField(field=moved),
+        xforms.CoordinateField(field=moved),
         vox2ras,
     ]
     morph.save(tmp_path / "out.m3z")
@@ -560,7 +560,7 @@ def test_write_coefficients_as_positions(tmp_path: Path) -> None:
     morph = io.load(_write(tmp_path, _encode(_positions())))
     ras2node, field, vox2ras = morph
     moved = np.asarray(field.field) + 1.0
-    coefficients = xforms.CoordinatesField(field=moved, degree=3)
+    coefficients = xforms.CoordinateField(field=moved, degree=3)
     coefficients = coefficients.to(store="coefficients")
     morph.transformations = [ras2node, coefficients, vox2ras]
     morph.save(tmp_path / "out.m3z")
@@ -571,7 +571,7 @@ def test_write_coefficients_as_positions(tmp_path: Path) -> None:
 def test_write_from_scratch(tmp_path: Path) -> None:
     positions = _positions()
     node2ras = _vox2ras(ATLAS) @ np.diag([SPACING] * 3 + [1])
-    voxel = xforms.CoordinatesField(field=positions)
+    voxel = xforms.CoordinateField(field=positions)
     chain = [
         RASToVoxel(matrix=np.linalg.inv(node2ras)[:3]),
         voxel,

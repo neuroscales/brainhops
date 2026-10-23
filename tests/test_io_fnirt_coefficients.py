@@ -177,7 +177,7 @@ def _world(warp, reference):  # noqa: ANN001, ANN202
     ref = _ImageGeometry(reference)
     ras = _apply(ref.vox2ras, _grid(ref.shape)).reshape(ref.shape + (3,))
     sequence = _xforms.Sequence(
-        transformations=[_xforms.CoordinatesField(field=ras)]
+        transformations=[_xforms.CoordinateField(field=ras)]
         + list(warp.transformations)
     )
     return np.asarray(sequence.compute().field).reshape(-1, 3)
