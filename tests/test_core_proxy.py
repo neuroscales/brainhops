@@ -356,6 +356,35 @@ def test_the_stored_type_decides_the_scaled_type() -> None:
         np.testing.assert_array_equal(read, reference)
 
 
+def test_scaling_leaves_what_it_reads_unchanged(tmp_path) -> None:  # noqa: ANN001
+    # Values that are already in the scaled type may be a view of an
+    # array that the proxy keeps, or a read-only memory map, so they are
+    # scaled into a new array. Values of another type are converted into
+    # a new array, which is scaled in place.
+    from brainhops._core.strided import StridedProxy
+
+    values = _array((3, 4))
+    kept = values.copy()
+    scaled = ScaledProxy(_Recording(values), 2.0, 1.0)
+    np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
+    np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
+    np.testing.assert_array_equal(values, kept)
+    path = tmp_path / "values.bin"
+    path.write_bytes(values.astype("=f4").tobytes())
+    mapped = StridedProxy.contiguous(path, "=f4", (3, 4))
+    assert not np.asarray(mapped).flags.writeable
+    scaled = ScaledProxy(mapped, 2.0, 1.0)
+    np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
+    np.testing.assert_array_equal(np.asarray(mapped), kept)
+    integers = _Recording(values.astype(np.int16))
+    scaled = ScaledProxy(integers, 2.0, 1.0)
+    np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
+    np.testing.assert_array_equal(integers.array, kept)
+    zero = ScaledProxy(_Recording(np.array(3.0, np.float32)), 2.0, 1.0)
+    assert np.asarray(zero).shape == ()
+    assert float(np.asarray(zero)) == 7.0
+
+
 def test_scaled_proxies_refuse_large_factors() -> None:
     # A factor with more dimensions than the values cannot broadcast.
     with pytest.raises(ValueError):

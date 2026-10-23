@@ -997,15 +997,26 @@ class ScaledProxy(ArrayProxy):
             without making them.
         """
         _refuse_no_copy(copy)
-        values = np.asarray(self.base, dtype=self.dtype)
+        stored = np.asarray(self.base)
+        # Values in another type are converted into a new array, which is
+        # then scaled in place. Values that are already in the type may be
+        # a read-only memory map, or a view of an array that `base` keeps,
+        # so they are scaled into a new array instead.
+        owned = stored.dtype != self.dtype
+        values = stored.astype(self.dtype) if owned else stored
         # The factors are cast to the type of the values first, so that a
         # float64 factor does not make a float64 copy of float32 values.
-        if self.slope is not None:
-            values = values * self.slope.astype(self.dtype, copy=False)
-        if self.inter is not None:
-            values = values + self.inter.astype(self.dtype, copy=False)
-        # The product of arrays of no dimension is a NumPy scalar.
-        values = np.asarray(values, dtype=self.dtype)
+        for factor, apply in ((self.slope, np.multiply), (self.inter, np.add)):
+            if factor is None:
+                continue
+            factor = factor.astype(self.dtype, copy=False)
+            if owned:
+                apply(values, factor, out=values)
+            else:
+                # The product of arrays of no dimension is a NumPy scalar,
+                # which a later step could not write into.
+                values = np.asarray(apply(values, factor))
+                owned = True
         return _convert(values, dtype, copy)
 
 
