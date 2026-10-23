@@ -76,6 +76,13 @@ and this is wanted:
   is defined or imported in the module, and the long form
   (`` [`Name`][package.module.Name] ``) otherwise. The text in the left
   brackets is always in backticks.
+- A docstring, a `tx.Doc(...)` string, or a message that a user sees
+  (an exception message, a warning or a log message) never refers to an
+  issue, a pull request or a file under `spec/`. It states the behaviour
+  or the limitation itself: write that an operation is not implemented
+  yet, not that an issue tracks it. When a reader of the code needs the
+  reference, put it in a comment next to the code, where references are
+  allowed.
 - Examples in `pycon` blocks must run on Python 3.8: no `Annotated`, no
   `list[int]`, no `X | Y`.
 - Every enum class has, in its docstring, a table of all its members with
@@ -100,8 +107,13 @@ Keep:
   `# -- title ---`, framed blocks made of `-` or `=` rules). Restore them
   if an edit removes them;
 - ASCII art and diagrams, byte for byte;
-- links, DOIs, and issue and pull request references (`#123`) with the
-  sentence that cites them;
+- links and DOIs, in every kind of documentation, with the sentence that
+  cites them;
+- issue and pull request references (`#123`) and references to files
+  under `spec/`, with the sentence that cites them, in comments and in
+  the files under `spec/`. These references never appear in docstrings,
+  in `tx.Doc(...)` strings or in messages, as the docstring format above
+  states;
 - tables, code examples and command lines, which are data and are copied
   exactly;
 - directive comments (`# noqa`, `# type:`, `# pragma`, `# fmt:`,

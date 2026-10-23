@@ -1,4 +1,6 @@
-"""Regression tests for the review fixes F1 to F6 of #89."""
+"""Regression tests for the review fixes F1 to F6."""
+
+# The review fixes are those of issue #89.
 
 import inspect
 import types

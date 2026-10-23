@@ -1,9 +1,11 @@
 """Tests for the frames of the values of images, and `reframe`.
 
-The cases follow the worked example of
-`spec/design/vector-and-tensor-images.md`: a field of vectors in RAS
-(`X`), a transformation applied lazily (`U`) and a target geometry (`G`).
+The cases follow the worked example of the design of vector and tensor
+images, which has a field of vectors in RAS (`X`), a transformation
+applied lazily (`U`) and a target geometry (`G`).
 """
+
+# The design is recorded in spec/design/vector-and-tensor-images.md.
 
 import numpy as np
 import pytest

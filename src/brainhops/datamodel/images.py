@@ -339,8 +339,7 @@ class SingleScaleImage(Image):
         values do not change. Indexing and reslicing compose each frame
         with the map of the voxels, so that the values keep their meaning
         without being rotated. [`reframe`][] re-expresses the values in
-        another frame. The design is recorded in
-        `spec/design/vector-and-tensor-images.md`.
+        another frame.
 
         Raises
         ------

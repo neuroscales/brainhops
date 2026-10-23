@@ -510,7 +510,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         that did not change is written byte for byte. When the lazy array
         of the image reads the local directory that is written, the image
         is consolidated in place instead, so that it holds what the store
-        holds (#426), and its lazy array and its record are read again
+        holds, and its lazy array and its record are read again
         from the new store. A remote location is written in place.
 
         Parameters

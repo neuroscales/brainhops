@@ -96,18 +96,17 @@ The draft type `inverseOf` was removed before version 0.6 and is
 refused. A `byDimension` is read only when its parts are affine, or when
 each part writes the axes that it reads. A transformation of the
 multiscale that refers to a system of another group, such as a labels
-image, is skipped, since labels and scenes are not read yet (items 132
-and 133 of the tensions in `spec/design/format-records.md`), and only the
-first multiscale of a group is read. A `scale` or a `translation` whose
-values are stored in an array named by `path` is refused, since the
-schema of version 0.6 requires them inline, as those of versions 0.4 and
-0.5 do. Only the drafts 0.6.dev1 and 0.6.dev2 allowed it, and they are
-still read. An `affine` or a `rotation` may name an array of parameters
-(item 134).
+image, is skipped, since labels and scenes are not read yet, and only
+the first multiscale of a group is read. A `scale` or a `translation`
+whose values are stored in an array named by `path` is refused, since
+the schema of version 0.6 requires them inline, as those of versions
+0.4 and 0.5 do. Only the drafts 0.6.dev1 and 0.6.dev2 allowed it, and
+they are still read. An `affine` or a `rotation` may name an array of
+parameters.
 
 The writer encodes the geometry from the levels and the placements, and
 does not keep the metadata as it was read, so a pyramid that is saved
-unchanged does not keep the bytes of its metadata (item 130). It writes
+unchanged does not keep the bytes of its metadata. It writes
 every placement that reduces to an affine as a `scale`, a
 `translation`, a `rotation`, an `affine` or a `sequence` of them, so
 that a placement read as an inverse is written in the forward direction.
@@ -122,12 +121,16 @@ the level then keeps a unit scale. Any other level that rotates or
 shears is refused with a
 [`WriterError`][brainhops.io.base.parsers.WriterError]. Splitting its
 geometry into a diagonal part per level and a placement shared by all
-levels is tracked in issue #447 (item 131). A flip is never written as
+levels is not implemented. A flip is never written as
 a negative `scale`, which the schema of version 0.6 refuses, but as an
 `affine`. The flip that every level shares goes before the placements of
 the pyramid, so that each level keeps a positive scale, while levels that
-flip different axes are refused (item 135).
+flip different axes are refused.
 """
+
+# The tensions of spec/design/format-records.md number the limitations
+# above as items 130 to 135. The split of the geometry of a level is
+# issue #447.
 
 __all__ = [
     "OmeImageError",

@@ -318,7 +318,7 @@ class NiftiBasedTransformation(
         the transformation itself is not changed. A local file is replaced
         at once, so a transformation can be written over the file that it
         was read from. The transformation is then consolidated in place,
-        so that it holds what the file holds (#426): its lazy array reads
+        so that it holds what the file holds: its lazy array reads
         the new file, and its record is the header of that file.
 
         Parameters

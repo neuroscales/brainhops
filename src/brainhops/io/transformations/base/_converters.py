@@ -1,7 +1,7 @@
 """
 Private helpers that relabel a transformation as a file format.
 
-Most file formats have no exact converter yet (#312). Such a format holds
+Most file formats have no exact converter yet. Such a format holds
 another transformation only by being rebuilt from it with the same
 parameters, which is called relabelling. This module holds the converter
 that relabels, [`relabelling`][], and the helper it calls,
@@ -33,6 +33,8 @@ that has no system of its own on a side accepts any endpoint there, and
 keeps it.
 """
 
+# The exact converters of the formats are issue #312.
+
 __all__ = ["relabel", "relabelling", "relabels"]
 
 import typing_extensions as tx
@@ -62,7 +64,7 @@ def relabelling(
     Convert a transformation to a format without an exact converter.
 
     This is the converter that a format registers, for each family that
-    it holds, until an exact converter is written for it (#312). It
+    it holds, until an exact converter is written for it. It
     relabels `t` as the format (see [`relabel`][]).
 
     Parameters
@@ -120,7 +122,7 @@ def relabel(
     Rebuild a transformation as a format, keeping its parameters.
 
     This is what a format without an exact converter for `t` does with
-    it (#312), through [`relabelling`][], and what `cls.from_any(t)`,
+    it, through [`relabelling`][], and what `cls.from_any(t)`,
     `cls.from_instance(t)` and `t.to(cls)` then return. The converters
     of a format also call it for another variant of the format. The
     format is rebuilt from the data model that it stores: a format built
@@ -287,7 +289,7 @@ def _rebuild(
         raise unrepresentable(
             t,
             cls,
-            f"the format, which has no exact converter yet (#312), cannot "
+            f"the format, which has no exact converter yet, cannot "
             f"be built from its parameters. {error}",
         ) from error
 
@@ -308,7 +310,7 @@ def _check_endpoints(
             raise unrepresentable(
                 t,
                 cls,
-                f"the format, which has no exact converter yet (#312), "
+                f"the format, which has no exact converter yet, "
                 f"cannot read its {side} from the parameters of a "
                 f"{type(t).__name__}. {error}",
             ) from error
@@ -322,7 +324,7 @@ def _check_endpoints(
                 cls,
                 f"its {side} is not compatible with the {system.name} "
                 f"system of the format. A transformation is relabelled as "
-                f"a format without an exact converter (#312) only when "
+                f"a format without an exact converter only when "
                 f"its systems are not known, or are compatible with those "
                 f"of the format.",
             ) from error

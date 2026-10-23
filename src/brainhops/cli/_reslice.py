@@ -38,13 +38,13 @@ from ._io import (
 )
 
 
+# The missing operators are tracked in issue #47.
 class _UnimplementedOperation(OperationSpec, frozen=True):
-    """Operation that is recognised but not implemented yet (issue #47)."""
+    """Operation that is recognised but not implemented yet."""
 
     def apply(self, value: Transformation) -> tx.NoReturn:  # noqa: ARG002
         raise CliError(
-            f"Transform operator '{self.name}' is not implemented yet; "
-            "tracked in issue #47."
+            f"Transform operator '{self.name}' is not implemented yet."
         )
 
 
@@ -213,7 +213,7 @@ def reslice_image(
     result. Each entry of `transform_paths` is a source specification of a
     forward (push) transformation, as described in the module
     documentation, and the entries are applied in order. The operators
-    `sqrt` and `square` are recognised but not implemented yet (issue #47).
+    `sqrt` and `square` are recognised but not implemented yet.
     `degree` is the spline degree (0 for nearest neighbour, 1 for linear and
     3 for cubic), and `bound` is the boundary condition outside the field of
     view. `clip` optionally zeros samples outside the closed voxel margin

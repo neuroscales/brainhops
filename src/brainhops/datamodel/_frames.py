@@ -2,13 +2,15 @@
 
 An image whose axes hold the components of points, vectors or tensors
 records, for each data axis, the frame in which these components are
-expressed (see `spec/design/vector-and-tensor-images.md`). This module
+expressed. This module
 holds the helpers that read, validate, compose and change these frames.
 The public interface is
 [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
 and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe].
 """
+
+# The design is recorded in spec/design/vector-and-tensor-images.md.
 
 from collections.abc import Mapping
 

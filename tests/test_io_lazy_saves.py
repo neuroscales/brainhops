@@ -4,10 +4,12 @@ An image read from a file holds a lazy array that reads the file by name
 whenever the data are needed. Writing the image over that file must not
 lose the data: the writer reads the old file while it writes the new
 one, and the lazy array then reads the new file, which holds the same
-values, even when the new file stores them in another way (#426). The
+values, even when the new file stores them in another way. The
 same images refuse reader options that they do not know, instead of
 ignoring them.
 """
+
+# Writing over a file that a lazy array reads is issue #426.
 
 import numpy as np
 import pytest

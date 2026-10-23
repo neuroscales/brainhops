@@ -627,7 +627,7 @@ class TiffImage(
         written leaves no file behind. A local file is written next to its
         target and then moved over it, and a remote file is first encoded
         in memory. When the lazy array of the image reads the file that is
-        written, the image then holds what the file holds (#426): its
+        written, the image then holds what the file holds: its
         `rawdata` reads the new file, and its record is read from it.
 
         Parameters

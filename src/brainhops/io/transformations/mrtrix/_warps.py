@@ -419,7 +419,7 @@ class MrtrixWarp(
         once, so a warp can be written over the files that it was read
         from. When the lazy array of the warp reads a file that is
         written, the warp is consolidated in place instead, so that it
-        holds what the files hold (#426), and its lazy array reads the new
+        holds what the files hold, and its lazy array reads the new
         files.
 
         Parameters

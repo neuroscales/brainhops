@@ -341,6 +341,8 @@ def _encoded(
     )
 
 
+# This function is to be replaced with replace_directory, as issue #451
+# plans.
 def _replace_folder(
     folder: str, fill: tx.Callable[[str], None], read: tx.Collection[str]
 ) -> None:
@@ -354,9 +356,9 @@ def _replace_folder(
     image files and folders of them, or, when the image reads some of the
     files in `read` from it, nothing but those, so that a write never
     removes another file, such as the files of another channel that a
-    pattern left out. This follows `replace_directory` of the pyramid core
-    (#451), which is not on the main branch yet, and which this function
-    is to be replaced with.
+    pattern left out. This follows
+    [`replace_directory`][brainhops.io.base._utils_files.replace_directory],
+    and this function is to be replaced with that one.
 
     Raises
     ------

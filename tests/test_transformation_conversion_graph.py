@@ -7,8 +7,10 @@ succeeds, reports a loss with a result of the requested class, or is
 refused on purpose. The pairs that are refused on purpose are listed
 below with their reason, so that a missing converter shows up as a
 failure instead of going unnoticed. The rules are those of
-`spec/design/conversions.md`.
+the design of conversions.
 """
+
+# The design of conversions is spec/design/conversions.md.
 
 import warnings
 

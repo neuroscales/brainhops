@@ -563,7 +563,9 @@ def test_writer_refuses_a_rotated_level_it_cannot_move(
             transformations=[Translation(translation=[1.0, 2.0, 3.0])],
         )
 
-    with pytest.raises(WriterError, match="#447"):
+    with pytest.raises(
+        WriterError, match="Splitting it when writing is not implemented"
+    ):
         pyramid.save(str(tmp_path / "refused.zarr"))
 
 
@@ -706,7 +708,7 @@ def test_writer_refuses_levels_that_flip_different_axes(
     )
     pyramid = OmeZarrImage(images=[fine, coarse], axes=_spatial_axes())
 
-    with pytest.raises(WriterError, match="#447"):
+    with pytest.raises(WriterError, match="when writing is not implemented"):
         pyramid.save(str(tmp_path / "refused.zarr"))
 
 
