@@ -1,7 +1,8 @@
 # Images of vectors and tensors
 
-Status: the data model and the operations are implemented; the readers,
-the writers and the metadata are not (see section 8).
+Status: the data model, the operations and the frames of NIfTI files are
+implemented; the readers and the writers of the other formats and the
+metadata are not (see section 9).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -381,7 +382,77 @@ valence and the layout of a tensor, a two-point tensor or a foreign
 frame, so a writer would store them as custom axis types and report the
 loss.
 
-## 8. Status
+## 8. The frames of NIfTI files
+
+A NIfTI file states the frame of its vectors only through its intent,
+and only for displacement fields. `NiftiImage` reads the frame of the
+displacement axis from the intent and keeps the values as the file
+stores them:
+
+| Intent                         | Code | Frame of the displacement axis      |
+| ------------------------------ | ---- | ----------------------------------- |
+| `DISPVECT`                     | 1006 | the best affine (RAS millimetres)   |
+| FNIRT deformation field        | 2006 | the FSL scaled millimetres          |
+| FNIRT cubic coefficients       | 2007 | the same, after the initial affine  |
+| FNIRT quadratic coefficients   | 2009 | the same, after the initial affine  |
+| FNIRT DCT coefficients         | 2008 | a foreign `FslCoordinateSystem`     |
+
+A `DISPVECT` file holds RAS vectors in millimetres, in the world of its
+best affine, as ITK 5.4 and later read it and as the NIfTI displacement
+fields of brainhops do. Its frame is the last transformation that the
+header decodes to, which is the best affine, restricted to its spatial
+axes. A field with fewer components than spatial axes, such as a
+two-dimensional field, has components along the first spatial axes, as
+ITK reads it. The restriction by axis types of section 3 cannot choose
+these axes, because all three spatial axes of the world have the same
+type, so the reader composes the projection itself.
+
+The FSL files hold vectors in FSL scaled millimetres, which are the
+voxel indices multiplied by the voxel sizes, with the first axis flipped
+when the best affine has a positive determinant. The frame of a
+deformation field is the affine map from its voxels to an
+`FslCoordinateSystem`. A coefficient field stores the coefficients of a
+spline on a grid of knots, and its frame maps that grid to the scaled
+millimetres of the reference, moved by the initial affine that the sform
+stores as its inverse. The header gives this map without the reference
+image, because FSL places the knots from the scaled millimetres of the
+reference, so the geometry of the reference cancels out. Re-expressing
+the coefficients in the array system gives the coefficients in units of
+the grid, which is what the FNIRT reader of brainhops stores in its
+displacement field, and the tests check that the two agree. A field of
+DCT coefficients is not a grid of positions, and brainhops does not
+decode it, so its frame is foreign.
+
+Two properties of the FSL files are assumptions rather than facts that
+the header states.
+
+- FSL adds a vector to a position in the scaled millimetres of the
+  reference and reads the sum as a position in the scaled millimetres of
+  the moving image, so a vector is a difference between positions in two
+  coordinate systems. The reader takes the vectors to be in the scaled
+  millimetres of the reference, which identifies the axes of the two
+  systems as FSL does when it adds them. The frame describes the
+  components as FSL stores them, but the vectors re-expressed in RAS are
+  the displacements of the map in RAS only when the scaled millimetres
+  of both images have the same orientation in RAS. Otherwise the map
+  needs the moving image, which `FnirtWarpField` takes and the image
+  reader does not. The reader also assumes, as `FnirtWarpField` does
+  when it is given no reference image, that a deformation field lies on
+  the grid of its reference, as FNIRT and `convertwarp` write it.
+- An FSL deformation field may hold absolute positions rather than
+  displacements, and the header does not tell which. `FnirtWarpField`
+  guesses from the values, but the image reader would have to read the
+  values every time it builds its array system, so it reads every such
+  field as displacements in the frame above. Absolute positions
+  re-expressed in another frame are then wrong, because positions also
+  change with the translation of the frame.
+
+The frames of a file are decoded from its header each time they are
+read, and they are not stored in the image, so that an image that is
+consolidated gets the frames of its new header. Frames that are given to
+the image take precedence over those of the header.
+
+## 9. Status
 
 Implemented:
 
@@ -397,13 +468,10 @@ Implemented:
   and reslicing keep the frames;
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
   single-scale and multi-scale images;
-- the frames of NIfTI displacement fields. A reader of a file with the
-  DISPVECT intent sets the frame of its displacement axis to the last
-  transformation that the header decodes to, which is the best affine
-  of the file and maps to the world in which the file stores its RAS
-  vectors. A writer re-expresses the values of a displacement axis in
-  the world of the preferred transformation, which it writes as the
-  best affine, and sets the DISPVECT intent.
+- the frames of NIfTI displacement fields, which the reader sets from
+  the intent as section 8 describes. A writer re-expresses the values
+  of a displacement axis in the world of the preferred transformation,
+  which it writes as the best affine, and sets the DISPVECT intent.
 
 A writer applies a change of frame through affine maps silently, because
 it is exact and part of the encoding of the format. It refuses, with a
@@ -429,12 +497,13 @@ the derivatives of the splines of the fields, is left for later.
 Not implemented:
 
 - readers and writers of the frames of the component axes in the other
-  formats (ITK, MRtrix, FSL, NRRD and OME-Zarr), which #539 tracks.
-  Until then, the frame of a component axis that such a reader creates
-  is the array system by default, even when the file stores the vectors
-  in another frame. This is also the case for the displacement axis of
-  a NIfTI file with one of the FSL intents, which store their vectors
-  in a frame that NIfTI does not decode;
+  formats (ITK, MRtrix, the FSL transformation formats, NRRD and
+  OME-Zarr), which #539 tracks. Until then, the frame of a component
+  axis that such a reader creates is the array system by default, even
+  when the file stores the vectors in another frame;
+- the frames of the 4-D files that FSL writes, whose fourth axis holds
+  the components. The NIfTI reader reads that axis as a time axis, so
+  such a file has no component axis;
 - the update of the metadata by `reframe`, which keeps the metadata as it
   is for now, although `data_unit`, `display_range` and the descriptions
   of the channels can describe the values in their old frame (#540);

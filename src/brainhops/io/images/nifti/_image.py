@@ -14,7 +14,7 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
-from brainhops.datamodel._frames import component_axes
+from brainhops.datamodel._frames import FrameSlot
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -45,9 +45,12 @@ from brainhops.io.common._geometry import (
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
-    _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
+)
+from brainhops.io.common.nifti._frames import (
+    FRAMED_INTENTS,
+    header_frames,
 )
 from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
@@ -251,27 +254,28 @@ class NiftiImage(
         # In F order, the first axis changes fastest.
         return ArrayCoordinateSystem(axes=axes, name="voxel", order="F")
 
-    def _decoded_frames(self) -> tx.Any:
-        """Return the frame of the vectors of a DISPVECT file.
+    def _decoded_frames(self) -> tx.Dict[int, FrameSlot]:
+        """Return the frames of the vectors, as the header states them.
 
-        A DISPVECT file stores RAS vectors in the world of its best affine,
-        which is the last transformation that the header decodes to, so
-        that transformation is the frame of its displacement axis. The
-        transformation also carries the other axes of the file along, so
-        the image restricts it to the spatial axes when it reads its
-        frames.
+        The intent of a displacement field states in which coordinate
+        system its vectors are expressed, and
+        [`header_frames`][brainhops.io.common.nifti._frames.header_frames]
+        builds the frame of each intent. The frame of a DISPVECT file is
+        its best affine, which is the last transformation that the header
+        decodes to, restricted to its spatial axes.
         """
-        raw = None if self.metadata is None else self.metadata.raw
-        if raw is None or _nifti_intent(raw.header) != _NIFTI_INTENT_DISPVECT:
-            return ()
-        components = component_axes(self._array_axes())
+        metadata = self.metadata
+        if metadata is None or metadata.raw is None:
+            return {}
+        if _nifti_intent(metadata.raw.header) not in FRAMED_INTENTS:
+            return {}
         if self._transformations is None:
             decoded = self.transformations
         else:
-            decoded = _header_transformations(self.metadata)
-        if not components or not decoded:
-            return ()
-        return {i: decoded[-1] for i in components}
+            decoded = _header_transformations(metadata)
+        preferred = decoded[-1] if decoded else None
+        system = self.system if preferred is None else preferred.input
+        return header_frames(metadata, preferred, system, tuple(self.shape))
 
     # --- reading ------------------------------------------------------
 

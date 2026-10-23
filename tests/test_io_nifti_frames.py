@@ -1,8 +1,11 @@
 """Tests for the frames of the vectors of NIfTI displacement images.
 
-A DISPVECT file stores RAS vectors in the world of its best affine. The
-reader records that frame without converting the values, and the writer
-re-expresses the values in it (see
+Each intent of a displacement field states in which coordinate system
+its vectors are expressed. A DISPVECT file stores RAS vectors in the
+world of its best affine, and an FSL file stores them in the FSL scaled
+millimetres of its reference. The reader records that frame without
+converting the values, and the writer re-expresses the values in the
+world of the preferred transformation (see
 `spec/design/vector-and-tensor-images.md`).
 """
 
@@ -14,6 +17,10 @@ import typing_extensions as tx
 
 nb = pytest.importorskip("nibabel")
 
+from brainhops.datamodel import transformations as _xforms  # noqa: E402
+from brainhops.datamodel._transformations.compute.multiscale import (  # noqa: E402
+    _as_affine,
+)
 from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem  # noqa: E402
@@ -24,6 +31,10 @@ from brainhops.datamodel.transformations import (  # noqa: E402
 from brainhops.errors import LossyConversionError, WriterError  # noqa: E402
 from brainhops.io import save  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
+from brainhops.io.transformations.fsl import (  # noqa: E402
+    FnirtWarpField,
+    FslCoordinateSystem,
+)
 
 _L = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 3.0]])
 _SHAPE = (4, 5, 6)
@@ -53,6 +64,10 @@ def _affine(voxel: CoordinateSystem, world: CoordinateSystem) -> Affine:
 def _stored(path: pathlib.Path) -> np.ndarray:
     # The vectors of a 3-D field are stored along the fifth NIfTI axis.
     return np.asarray(nb.load(str(path)).dataobj)[:, :, :, 0, :]
+
+
+def _matrix(frame: tx.Any) -> np.ndarray:
+    return np.asarray(_as_affine(frame).matrix)
 
 
 @pytest.fixture
@@ -169,3 +184,169 @@ def test_a_frame_that_is_not_affine_needs_lossy(
     shear[0, 1] = 0.1
     expected = values @ (_L @ np.linalg.inv(shear)).T
     assert np.allclose(_stored(path), expected, atol=1e-5)
+
+
+def test_a_two_dimensional_field_follows_the_first_axes(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The world of the file has three spatial axes, and the two components
+    # follow the first two of them.
+    nifti = nb.Nifti1Image(
+        np.ones((4, 5, 1, 1, 2), "f4"), np.diag([2.0, 3.0, 4.0, 1.0])
+    )
+    nifti.header.set_intent("displacement vector")
+    path = tmp_path / "field.nii"
+    nb.save(nifti, str(path))
+
+    image = NiftiImage.load(path)
+
+    assert image.frames[4] is not None
+    voxel = np.asarray(image.reframe(None).data)
+    assert np.allclose(voxel[0, 0, 0, 0], [0.5, 1.0 / 3.0])
+
+
+# ----------------------------------------------------------------------
+#   FSL INTENTS
+# ----------------------------------------------------------------------
+
+FNIRT_DISPLACEMENT = 2006
+CUBIC = 2007
+DCT = 2008
+QUADRATIC = 2009
+
+
+def _fsl_file(
+    path: pathlib.Path, data: np.ndarray, affine: np.ndarray, intent: int
+) -> pathlib.Path:
+    # The components are stored along the fifth axis, as the NIfTI standard
+    # places them.
+    nifti = nb.Nifti1Image(data[:, :, :, None, :].astype("f4"), affine)
+    nifti.header["intent_code"] = intent
+    nb.save(nifti, str(path))
+    return path
+
+
+def _reference_affine(neurological: bool) -> np.ndarray:
+    affine = np.diag([2.0, 2.5, 3.0, 1.0])
+    affine[:3, 3] = [-10.0, -12.0, -9.0]
+    if not neurological:
+        affine[0, 0] = -affine[0, 0]
+    return affine
+
+
+def _components(image: NiftiImage) -> np.ndarray:
+    return np.asarray(image.data)[:, :, :, 0, :]
+
+
+@pytest.mark.parametrize("neurological", [False, True])
+def test_an_fnirt_displacement_field_is_in_scaled_millimetres(
+    tmp_path: pathlib.Path, neurological: bool
+) -> None:
+    # FSL multiplies the voxel indices by the voxel sizes, and flips the
+    # first axis when the best affine has a positive determinant.
+    data = np.random.default_rng(2).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(neurological)
+    path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
+
+    image = NiftiImage.load(path)
+
+    frame = image.frames[4]
+    assert isinstance(frame.output, FslCoordinateSystem)
+    sign = -1.0 if neurological else 1.0
+    linear = np.diag([sign * 2.0, 2.5, 3.0])
+    assert np.allclose(_matrix(frame)[:, :3], linear)
+    voxel = _components(image.reframe(None))
+    assert np.allclose(voxel, data / np.diag(linear), atol=1e-5)
+
+
+@pytest.mark.parametrize("neurological", [False, True])
+def test_an_fnirt_field_in_ras_matches_the_fnirt_reader(
+    tmp_path: pathlib.Path, neurological: bool
+) -> None:
+    # With the reference as moving image, FSL maps the position of a voxel
+    # to that position plus the displacement, so the displacement
+    # re-expressed in RAS is the difference of the positions that the FNIRT
+    # reader gives.
+    data = np.random.default_rng(3).normal(size=(*_SHAPE, 3))
+    affine = _reference_affine(neurological)
+    path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
+    image = NiftiImage.load(path)
+    warp = FnirtWarpField.load(path, deformation_type="relative")
+    warp.moving = nb.load(str(path)).header
+
+    ras = _components(image.reframe(-1))
+
+    grid = np.stack(
+        np.meshgrid(*[np.arange(s) for s in _SHAPE], indexing="ij"), -1
+    ).astype(float)
+    points = grid @ affine[:3, :3].T + affine[:3, 3]
+    chain = _xforms.Sequence(
+        transformations=[_xforms.CoordinatesField(field=points)]
+        + list(warp.transformations)
+    )
+    moved = np.asarray(chain.compute().field)
+    assert np.allclose(ras, moved - points, atol=1e-4)
+
+
+_PREMAT = np.array(
+    [
+        [1.05, 0.02, 0.0, 1.5],
+        [-0.03, 0.97, 0.05, -2.0],
+        [0.0, 0.01, 1.02, 0.7],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+
+def _coefficient_file(
+    path: pathlib.Path, intent: int, premat: np.ndarray
+) -> tx.Tuple[pathlib.Path, np.ndarray]:
+    # The header of a coefficient file, as FNIRT writes it: the knot
+    # spacing in the pixdims, the voxel sizes of the reference in the
+    # intent parameters, the shape of the reference in the offsets of the
+    # qform and the initial affine in the sform.
+    coef = np.random.default_rng(4).normal(size=(6, 5, 7, 1, 3))
+    nifti = nb.Nifti1Image(coef.astype("f4"), None)
+    header = nifti.header
+    header["intent_code"] = intent
+    header["intent_p1"] = 2.0
+    header["intent_p2"] = 2.5
+    header["intent_p3"] = 3.0
+    header.set_zooms((3.0, 4.0, 2.0, 1.0, 1.0))
+    qform = np.diag([3.0, 4.0, 2.0, 1.0])
+    qform[:3, 3] = (11, 9, 8)
+    nifti.set_qform(qform, 1)
+    nifti.set_sform(premat, 1)
+    nb.save(nifti, str(path))
+    return path, coef[:, :, :, 0, :]
+
+
+@pytest.mark.parametrize("intent", [CUBIC, QUADRATIC])
+@pytest.mark.parametrize("premat", [np.eye(4), _PREMAT])
+def test_fnirt_coefficients_are_in_the_frame_of_the_fnirt_reader(
+    tmp_path: pathlib.Path, intent: int, premat: np.ndarray
+) -> None:
+    # The FNIRT reader stores the coefficients in units of the grid of
+    # knots, moved by the initial affine, which is the array system of the
+    # image.
+    path, _ = _coefficient_file(tmp_path / "coef.nii", intent, premat)
+    image = NiftiImage.load(path)
+    warp = FnirtWarpField.load(path)
+    warp.reference = nb.Nifti1Image(
+        np.zeros((11, 9, 8), "f4"), _reference_affine(False)
+    )
+    warp.moving = warp.reference
+
+    voxel = _components(image.reframe(None))
+
+    assert isinstance(image.frames[4].output, FslCoordinateSystem)
+    field = np.asarray(warp.transformations[1].data)
+    assert np.allclose(voxel, field, atol=1e-5)
+
+
+def test_a_dct_field_has_a_foreign_frame(tmp_path: pathlib.Path) -> None:
+    path, _ = _coefficient_file(tmp_path / "dct.nii", DCT, np.eye(4))
+
+    image = NiftiImage.load(path)
+
+    assert image.frames[4] == FslCoordinateSystem()
