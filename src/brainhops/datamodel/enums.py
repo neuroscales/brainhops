@@ -18,6 +18,15 @@ __all__ = [
     "AxisType",
     "AxisTypeName",
     "AxisTypeLike",
+    "Valence",
+    "ValenceName",
+    "ValenceLike",
+    "TensorLayout",
+    "TensorLayoutName",
+    "TensorLayoutLike",
+    "ReframeMethod",
+    "ReframeMethodName",
+    "ReframeMethodLike",
     "OrientationType",
     "OrientationTypeName",
     "OrientationTypeLike",
@@ -258,6 +267,100 @@ AxisTypeName: tx.TypeAlias = tx.Literal[
 
 AxisTypeLike: tx.TypeAlias = tx.Union[AxisType, AxisTypeName]
 """Values that can be interpreted as axis types."""
+
+
+class Valence(StrEnum):
+    """How one index of a vector or a tensor changes with the frame.
+
+    When the frame changes by a linear map `J`, an index of valence
+    `vector` is multiplied by `J` and an index of valence `covector` by
+    `J⁻ᵀ`. The gradient of an image is a vector of valence `covector`.
+
+    | Name       | Value        | Description                       |
+    |------------|--------------|-----------------------------------|
+    | `vector`   | `"vector"`   | The index is multiplied by `J`.   |
+    | `covector` | `"covector"` | The index is multiplied by `J⁻ᵀ`. |
+    """
+
+    vector = "vector"
+    covector = "covector"
+
+
+ValenceName: tx.TypeAlias = tx.Literal["vector", "covector"]
+"""Valence names."""
+
+ValenceLike: tx.TypeAlias = tx.Union[Valence, ValenceName]
+"""Values that can be interpreted as valences."""
+
+
+# ruff: disable[E501]
+# fmt: off
+class TensorLayout(StrEnum):
+    """Named layouts of the components of a tensor along an axis.
+
+    The order is given for a tensor of rank 2 in a frame of three axes,
+    where `ij` stands for the component `(i, j)` (see
+    [`TensorAxis`][brainhops.datamodel.axes.TensorAxis]).
+
+    | Name                       | Value                        | Order for `k = 2`, `n = 3`   | Used by                |
+    |----------------------------|------------------------------|------------------------------|------------------------|
+    | `C`                        | `"C"`                        | `00 01 02 10 11 12 20 21 22` |                        |
+    | `F`                        | `"F"`                        | `00 10 20 01 11 21 02 12 22` |                        |
+    | `symmetric`                | `"symmetric"`                | `00 01 02 11 12 22`          | FSL, ITK, NRRD, Camino |
+    | `symmetric_lower`          | `"symmetric-lower"`          | `00 10 11 20 21 22`          | DIPY                   |
+    | `symmetric_diagonal_first` | `"symmetric-diagonal-first"` | `00 11 22 01 02 12`          | MRtrix                 |
+    | `diagonal`                 | `"diagonal"`                 | `00 11 22`                   |                        |
+    """
+
+    C = "C"
+    F = "F"
+    symmetric = "symmetric"
+    symmetric_lower = "symmetric-lower"
+    symmetric_diagonal_first = "symmetric-diagonal-first"
+    diagonal = "diagonal"
+# fmt: on
+# ruff: enable[E501]
+
+
+TensorLayoutName: tx.TypeAlias = tx.Literal[
+    "C",
+    "F",
+    "symmetric",
+    "symmetric-lower",
+    "symmetric-diagonal-first",
+    "diagonal",
+]
+"""Tensor layout names."""
+
+TensorLayoutLike: tx.TypeAlias = tx.Union[TensorLayout, TensorLayoutName]
+"""Values that can be interpreted as tensor layouts."""
+
+
+class ReframeMethod(StrEnum):
+    """What is applied to the values of vectors and tensors in a new frame.
+
+    `J` is the Jacobian of the change of frame (see
+    [`reframe`][brainhops.datamodel.images.SingleScaleImage.reframe]),
+    and `J = R P` is its polar decomposition, in which `R` is a rotation
+    and `P` is symmetric positive definite. Applying `J` changes the
+    frame exactly, and applying `R` keeps the length of vectors and the
+    eigenvalues of tensors.
+
+    | Name       | Value        | Description |
+    |------------|--------------|-------------|
+    | `jacobian` | `"jacobian"` | Apply `J`.  |
+    | `rotation` | `"rotation"` | Apply `R`.  |
+    """
+
+    jacobian = "jacobian"
+    rotation = "rotation"
+
+
+ReframeMethodName: tx.TypeAlias = tx.Literal["jacobian", "rotation"]
+"""Reframe method names."""
+
+ReframeMethodLike: tx.TypeAlias = tx.Union[ReframeMethod, ReframeMethodName]
+"""Values that can be interpreted as reframe methods."""
 
 
 class OrientationType(StrEnum):

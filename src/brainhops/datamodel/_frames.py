@@ -26,6 +26,7 @@ from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
 )
 from .axes import Axis, AxisSequence
+from .enums import ReframeMethod, ReframeMethodLike
 from .systems import CoordinateSystem
 from .transformations import (
     CartesianField,
@@ -55,11 +56,16 @@ FrameTargets: tx.TypeAlias = tx.Union[
 ]
 """One frame for every component axis, or a frame for each named axis."""
 
-ReframeMethod: tx.TypeAlias = tx.Union[
-    tx.Literal["jacobian", "rotation"],
+ReframeMethodOrCallable: tx.TypeAlias = tx.Union[
+    ReframeMethodLike,
     tx.Callable[[ArrayProtocol], ArrayProtocol],
 ]
-"""What is applied to the values when their frame changes."""
+"""What is applied to the values when their frame changes.
+
+A [`ReframeMethod`][brainhops.datamodel.enums.ReframeMethod] or its
+name, or a callable that receives the Jacobian of the change of frame
+and returns the matrix to apply.
+"""
 
 
 # ----------------------------------------------------------------------
@@ -92,7 +98,7 @@ def component_axes(axes: tx.Optional[tx.Sequence[Axis]]) -> tx.List[int]:
 
 def is_point_axis(axis: Axis) -> bool:
     """Return whether the entries of an axis are coordinates of points."""
-    return getattr(axis, "index_kinds", None) is None
+    return getattr(axis, "valences", None) is None
 
 
 # ----------------------------------------------------------------------
@@ -770,7 +776,7 @@ def jacobian(
 def change_matrix(
     source: tx.Optional[ArrayProtocol],
     target: tx.Optional[ArrayProtocol],
-    method: ReframeMethod,
+    method: ReframeMethodOrCallable,
     ndim: int,
 ) -> ArrayProtocol:
     """Return the matrix that re-expresses values from one frame in another.
@@ -787,9 +793,9 @@ def change_matrix(
         inverse = _batched(_inv, source)
         xp = get_array_backend(inverse)
         matrix = xp.matmul(_backend_of(target, inverse), inverse)
-    if method == "jacobian":
+    if method == ReframeMethod.jacobian:
         return matrix
-    if method == "rotation":
+    if method == ReframeMethod.rotation:
         return _batched(_rotation, matrix)
     if callable(method):
         return method(matrix)

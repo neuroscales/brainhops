@@ -55,8 +55,8 @@ whether the index changes with `J` (a `"vector"` index) or with `J⁻ᵀ` (a
 `"vector"` by default and `"covector"` for an object such as the
 gradient of an image, whose pairing with a vector does not depend on the
 frame. A covector is therefore a vector axis rather than a type of its
-own, so that vectors and tensors describe the kinds of their indices in
-the same way, and one rule applies the map to both: each vector index is
+own, so that vectors and tensors describe the valences of their indices
+in the same way, and one rule applies the map to both: each vector index is
 multiplied by `J` and each covector index by `J⁻ᵀ`. A displacement axis
 has no `valence` field, because a displacement is always of valence
 `"vector"`, and a point has no valence.
@@ -79,10 +79,12 @@ The entries of a vector axis follow axes of the system of the frame, in
 order. This is also the rule that OME-NGFF RFC-3 states
 for vector axes, and section 5 explains how these axes are found.
 
-A tensor axis has two fields of its own.
+The valences are the members of the enumeration `Valence`, and a field
+also accepts their names as strings. A tensor axis has two fields of its
+own.
 
-- `valence` lists the kind of each index of the tensor, `"vector"` or
-  `"covector"`, so that its length is the rank `k` of the tensor. The
+- `valence` lists the valence of each index of the tensor, `"vector"`
+  or `"covector"`, so that its length is the rank `k` of the tensor. The
   default is `("vector", "vector")`.
 - `layout` says which components the axis stores, and in which order,
   for a frame of `n` axes. It is a name or an explicit tuple that gives,
@@ -91,9 +93,11 @@ A tensor axis has two fields of its own.
   tuple, and because software stores a symmetric matrix in different
   orders.
 
-The names are generic rather than the names of software, so that they
-also describe tensors of other ranks. Their orders for `k = 2` and
-`n = 3` are given below, where `ij` stands for the entry `(i, j)`:
+The names are the values of the enumeration `TensorLayout`, which a
+field also accepts as strings. They are generic rather than the names of
+software, so that they also describe tensors of other ranks. Their
+orders for `k = 2` and `n = 3` are given below, where `ij` stands for
+the entry `(i, j)`:
 
 | `layout`                     | Order for `k = 2`, `n = 3`   | Used by                |
 | ---------------------------- | ---------------------------- | ---------------------- |
@@ -119,8 +123,8 @@ listed component whose indices are a permutation of its own, if there
 is one, and is zero otherwise. A tuple that leaves out a component with
 several listed permutations is refused, because their values may
 differ. Taking a value from a permutation makes the tensor symmetric,
-which needs all its indices to be of the same kind, because the
-symmetry of a tensor whose indices change differently depends on the
+which needs all its indices to be of the same valence, because the
+symmetry of a tensor whose indices have different valences depends on the
 frame. The symmetric layouts, and the tuples that take a value from a
 permutation, are therefore refused for a mixed valence.
 
@@ -140,16 +144,16 @@ A layout with components that are zero by construction, such as
 `"diagonal"` or an explicit tuple that leaves components out without a
 permutation to take them from, cannot hold the tensor after a general
 change of frame. `reframe` then stores the result in the smallest layout
-that can hold it, `"symmetric"` when all the indices are of the same
-kind and the layout stores no two components whose indices are
-permutations of each other, and `"C"` otherwise. The axis changes its layout and its length,
-and the transformations and the frames of the image get the new axis in
-their input system.
+that can hold it, `"symmetric"` when all the indices have the same
+valence and the layout stores no two components whose indices are
+permutations of each other, and `"C"` otherwise. The axis changes its
+layout and its length, and the transformations and the frames of the
+image get the new axis in their input system.
 
 When the frame changes by `J`, each vector index is multiplied by `J`
 and each covector index by `J⁻ᵀ`. A diffusion tensor, with two vector
 indices, becomes `J T Jᵀ`, a Hessian, with two covector indices, becomes
-`J⁻ᵀ H J⁻¹`, and a linear map, with one index of each kind, becomes
+`J⁻ᵀ H J⁻¹`, and a linear map, with one index of each valence, becomes
 `J A J⁻¹`. A two-point tensor, such as the Jacobian of a warp between
 two spaces, has indices in two different frames, so it is stored as two
 vector axes, one of valence `"vector"` and one of valence `"covector"`,
@@ -300,7 +304,8 @@ is not accepted, because it would be unclear whether it follows all the
 data axes or only the component axes, and because a string and a
 `Sequence` transformation are both Python sequences.
 
-The `method` argument chooses what is applied.
+The `method` argument chooses what is applied. It is a member of the
+enumeration `ReframeMethod`, its name, or a callable.
 
 - `"jacobian"` applies `J`. It changes the frame exactly, so the values
   describe the same objects as before.

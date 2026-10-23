@@ -16,6 +16,7 @@ from brainhops.datamodel.axes import (
     TensorAxis,
     VectorAxis,
 )
+from brainhops.datamodel.enums import ReframeMethod
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -785,3 +786,23 @@ def test_reframe_expands_a_layout_that_leaves_the_last_axis_out(
         np.asarray(out.data),
         np.stack([expected[..., i, j] for i, j in pairs], -1),
     )
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["rotation", ReframeMethod.rotation, "jacobian", ReframeMethod.jacobian],
+)
+def test_the_method_is_a_member_or_its_value(
+    x: SingleScaleImage, u: Affine, g: SingleScaleImage, method: tx.Any
+) -> None:
+    resliced = x(u).reslice(g)
+
+    out = resliced.reframe(None, method=method)
+    expected = resliced.reframe(None, method=str(ReframeMethod(method).value))
+
+    assert np.allclose(np.asarray(out.data), np.asarray(expected.data))
+
+
+def test_an_unknown_method_is_refused(x: SingleScaleImage) -> None:
+    with pytest.raises(ValueError):
+        x.reframe(None, method="shear")

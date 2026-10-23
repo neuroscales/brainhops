@@ -54,11 +54,8 @@ from bagof.magic import NoRepr, replace
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import _is_dask, get_array_backend
 
-from ..enums import AxisType
+from ..enums import AxisType, TensorLayout, Valence
 from .base import Axis
-
-IndexKind: tx.TypeAlias = tx.Literal["vector", "covector"]
-"""How one index of a tensor changes with the frame."""
 
 Entries: tx.TypeAlias = tx.Tuple[tx.Tuple[int, ...], ...]
 """For each entry of a tensor axis, the frame axis of each index."""
@@ -74,12 +71,12 @@ COMPONENT_TYPES: tx.FrozenSet[str] = frozenset(
 )
 """The types of the axes whose entries are the components of an object."""
 
-# The valence of the object that an axis of this type holds, for the types
-# whose valence is fixed. A point has no valence, because its coordinates
+# The valences of the object that an axis of this type holds, for the types
+# whose valences are fixed. A point has no valence, because its coordinates
 # are not changed by the Jacobian of a map. A vector and a tensor read their
-# valence from their `valence` field.
-_INDEX_KINDS: tx.Dict[str, tx.Tuple[IndexKind, ...]] = {
-    AxisType.displacement: ("vector",),
+# valences from their `valence` field.
+_VALENCES: tx.Dict[str, tx.Tuple[Valence, ...]] = {
+    AxisType.displacement: (Valence.vector,),
 }
 
 
@@ -131,15 +128,15 @@ class ComponentAxis(Axis):
     """
 
     @property
-    def index_kinds(self) -> tx.Optional[tx.Tuple[IndexKind, ...]]:
-        """The kind of each index of the object, or `None` for a point.
+    def valences(self) -> tx.Optional[tx.Tuple[Valence, ...]]:
+        """The valence of each index of the object, or `None` for a point.
 
-        A vector has one index, whose kind is its `valence`, a
-        displacement has one index of kind `"vector"`, and a tensor has
-        one per entry of its `valence`. A point has none, because its
-        coordinates do not change with the Jacobian of a map.
+        A vector has one index, whose valence is its `valence`, a
+        displacement has one index of valence `"vector"`, and a tensor has
+        one per entry of its `valence`. A point has no valence, because
+        its coordinates do not change with the Jacobian of a map.
         """
-        return _INDEX_KINDS.get(self.type)
+        return _VALENCES.get(self.type)
 
     def frame_ndim(self, size: int, ndim: tx.Optional[int] = None) -> int:
         """Return the number of axes of the frame that the entries follow.
@@ -203,8 +200,8 @@ class ComponentAxis(Axis):
             If the entries are the coordinates of points, which the
             Jacobian of a map does not re-express.
         """
-        kinds = self.index_kinds
-        if kinds is None:
+        valences = self.valences
+        if valences is None:
             raise NotImplementedError(
                 f"The entries of a {self.type!r} axis are the coordinates "
                 f"of points, which change with the map itself rather than "
@@ -213,7 +210,7 @@ class ComponentAxis(Axis):
             )
         xp = get_array_backend(values)
         moved = xp.moveaxis(values, axis, -1)
-        out = _multilinear(moved, matrix, kinds, values)
+        out = _multilinear(moved, matrix, valences, values)
         return xp.moveaxis(out, -1, axis)
 
 
@@ -301,19 +298,19 @@ class VectorAxis(ComponentAxis, on={"type": "vector"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
-    valence : {"vector", "covector"}, default="vector"
+    valence : Valence | str, default="vector"
         Whether the components are multiplied by `J` or by `J⁻ᵀ` when
         the frame changes by `J`.
     """
 
     type: NoRepr[...]
 
-    valence: IndexKind = "vector"
+    valence: Valence = Valence.vector
     """Whether the components change with `J` or with `J⁻ᵀ`."""
 
     @property
-    def index_kinds(self) -> tx.Tuple[IndexKind, ...]:
-        """The kind of the single index of the vector, its `valence`."""
+    def valences(self) -> tx.Tuple[Valence, ...]:
+        """The valence of the single index of the vector, its `valence`."""
         return (self.valence,)
 
 
@@ -350,9 +347,9 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     """Axis whose entries are the components of tensors.
 
     A diffusion tensor, the Hessian of an image and the Jacobian of a
-    map are tensors with two indices. Each index is either a vector
-    index or a covector index, and `valence` lists their kinds, so that
-    the number of indices is the rank `k` of the tensor. When the frame
+    map are tensors with two indices. Each index has a valence, either
+    `"vector"` or `"covector"`, and `valence` lists them, so that the
+    number of indices is the rank `k` of the tensor. When the frame
     changes by a linear map `J`, each vector index is multiplied by `J`
     and each covector index by `J⁻ᵀ`:
 
@@ -368,10 +365,12 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     that each axis has its own frame.
 
     `layout` says which components the axis stores, and in which order,
-    for a frame of `n` axes. It is either a name or an explicit tuple
-    that gives, for each entry, the frame axis of each index. The names
-    are listed below with their order for a tensor of rank 2 in a frame
-    of three axes, where `ij` stands for the entry `(i, j)`:
+    for a frame of `n` axes. It is either a name, a member of
+    [`TensorLayout`][brainhops.datamodel.enums.TensorLayout] or its value,
+    or an explicit tuple that gives, for each entry, the frame axis of
+    each index. The names are listed below with their order for a tensor
+    of rank 2 in a frame of three axes, where `ij` stands for the entry
+    `(i, j)`:
 
     | `layout`                     | Order for `k = 2` and `n = 3` |
     | ---------------------------- | ----------------------------- |
@@ -409,9 +408,9 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     its own, if there is one, and it is zero otherwise. A tuple that
     leaves out a component with several listed permutations is refused,
     because their values may differ. Taking a value from a permutation
-    makes the tensor symmetric, which needs all its indices to be of the
-    same kind, because the symmetry of a tensor whose indices change
-    differently depends on the frame. The symmetric layouts, and the
+    makes the tensor symmetric, which needs all its indices to have the
+    same valence, because the symmetry of a tensor whose indices have
+    different valences depends on the frame. The symmetric layouts, and the
     tuples that take a value from a permutation, are therefore refused
     for a mixed valence.
 
@@ -426,7 +425,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     a permutation to take their value from, cannot hold the tensor after
     a general change of frame. [`apply`][] then returns the tensor in the
     smallest layout that can, which is `"symmetric"` when the stored
-    tensor is symmetric with indices of a single kind and `"C"`
+    tensor is symmetric with indices of the same valence and `"C"`
     otherwise, and [`reframed`][] gives the axis that describes it. The
     length of the axis changes.
 
@@ -443,9 +442,9 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
-    valence : tuple of {"vector", "covector"}, default=("vector", "vector")
-        The kind of each index of the tensor, one per index.
-    layout : str or tuple of tuple of int, optional
+    valence : tuple of (Valence | str), default=("vector", "vector")
+        The valence of each index of the tensor, one per index.
+    layout : TensorLayout | str | tuple of tuple of int, optional
         Which components the axis stores and in which order, as a name
         of the table above or as an explicit tuple. By default, the
         layout is read from the number of entries.
@@ -455,7 +454,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     ValueError
         If the tensor has fewer than two indices, if the layout is an
         unknown name or a name that is not defined for the rank of the
-        tensor, if a symmetric layout has indices of different kinds, or
+        tensor, if a symmetric layout has indices of different valences, or
         if an explicit layout lists a component twice, has entries of
         the wrong length, or fills a component from several listed
         permutations or from a permutation with a mixed valence.
@@ -463,10 +462,10 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
 
     type: NoRepr[...]
 
-    valence: tx.Tuple[IndexKind, ...] = ("vector", "vector")
-    """The kind of each index of the tensor, one per index."""
+    valence: tx.Tuple[Valence, ...] = (Valence.vector, Valence.vector)
+    """The valence of each index of the tensor, one per index."""
 
-    layout: tx.Optional[tx.Union[str, Entries]] = None
+    layout: tx.Optional[tx.Union[TensorLayout, Entries]] = None
     """Which components the axis stores, and in which order."""
 
     def __post_init__(self) -> None:
@@ -479,11 +478,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         mixed = len(set(self.valence)) > 1
         layout = self.layout
         if isinstance(layout, str):
-            if layout not in _LAYOUTS:
-                raise ValueError(
-                    f"The layout of a tensor is one of {sorted(_LAYOUTS)} "
-                    f"or a tuple of entries, not {layout!r}."
-                )
+            # The converter of the field has already refused other names.
             if layout == "symmetric-diagonal-first" and rank != 2:
                 raise ValueError(
                     f"The layout 'symmetric-diagonal-first' is defined for "
@@ -491,7 +486,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
                 )
             if layout.startswith("symmetric") and mixed:
                 raise ValueError(
-                    f"A symmetric tensor has indices of a single kind, but "
+                    f"A symmetric tensor has indices of the same valence, but "
                     f"its valence is {self.valence}. Use the layout 'C' "
                     f"instead."
                 )
@@ -513,7 +508,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
             listed.add(entry)
         # The components that the layout leaves out take the value of a
         # listed permutation of their indices, which must be unique and
-        # needs indices of a single kind.
+        # needs indices of the same valence.
         for key, group in _permutation_groups(layout).items():
             missing = set(itertools.permutations(key)) - listed
             if not missing:
@@ -526,13 +521,13 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
             if mixed:
                 raise ValueError(
                     f"The layout takes the value of {sorted(missing)[0]} "
-                    f"from {group[0]}, which needs indices of a single "
-                    f"kind, but the valence is {self.valence}."
+                    f"from {group[0]}, which needs indices of the same "
+                    f"valence, but the valence is {self.valence}."
                 )
 
     @property
-    def index_kinds(self) -> tx.Tuple[IndexKind, ...]:
-        """The kind of each index of the tensor, as in `valence`."""
+    def valences(self) -> tx.Tuple[Valence, ...]:
+        """The valence of each index of the tensor, as in `valence`."""
         return tuple(self.valence)
 
     def frame_ndim(self, size: int, ndim: tx.Optional[int] = None) -> int:
@@ -707,8 +702,8 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         -------
         TensorAxis
             This axis when its layout is closed, and otherwise a copy in
-            the layout `"symmetric"` when all the indices are of the same
-            kind, and `"C"` otherwise.
+            the layout `"symmetric"` when all the indices have the same
+            valence, and `"C"` otherwise.
         """
         if self.closed(ndim, size):
             return self
@@ -720,7 +715,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         """Return the components of the tensor in the new frame.
 
         The entries are unpacked into a full tensor, each of its indices
-        is multiplied by `J` or by `J⁻ᵀ` according to its kind, and the
+        is multiplied by `J` or by `J⁻ᵀ` according to its valence, and the
         result is packed again in the same layout, or in the layout of
         [`reframed`][] when this layout is not closed.
 
@@ -774,7 +769,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     def _closure(self) -> str:
         """Return the smallest closed layout for the stored tensor.
 
-        The tensor is symmetric when its indices are of a single kind and
+        The tensor is symmetric when its indices are of the same valence and
         its layout does not store two components whose indices are
         permutations of each other, so that it stays symmetric in any
         frame.
@@ -807,19 +802,6 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
             else:
                 unpack.append(-1)
         return np.array(unpack, dtype=int)
-
-
-_LAYOUTS = frozenset(
-    {
-        "C",
-        "F",
-        "symmetric",
-        "symmetric-lower",
-        "symmetric-diagonal-first",
-        "diagonal",
-    }
-)
-"""The names of the layouts of a tensor axis."""
 
 
 def _permutation_groups(
@@ -877,7 +859,7 @@ def _like(matrix: ArrayProtocol, values: ArrayProtocol) -> ArrayProtocol:
 def _multilinear(
     full: ArrayProtocol,
     matrix: ArrayProtocol,
-    valence: tx.Tuple[IndexKind, ...],
+    valence: tx.Tuple[Valence, ...],
     like: ArrayProtocol,
 ) -> ArrayProtocol:
     """Multiply each index of a stack of tensors by `J` or by `J⁻ᵀ`.
@@ -891,8 +873,8 @@ def _multilinear(
     backward = None
     if "covector" in valence:
         backward = _swap_last(_batched(_inv, forward))
-    for index, kind in enumerate(valence):
-        factor = forward if kind == "vector" else backward
+    for index, each in enumerate(valence):
+        factor = forward if each == "vector" else backward
         full = _contract(full, factor, index, rank)
     return full
 

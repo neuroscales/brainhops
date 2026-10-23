@@ -16,7 +16,7 @@ from brainhops.datamodel.axes import (
     VectorAxis,
     is_component_type,
 )
-from brainhops.datamodel.enums import AxisType
+from brainhops.datamodel.enums import AxisType, TensorLayout, Valence
 from brainhops.io.transformations.zarr._axes import _to_axis
 
 _J = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.5, 3.0]])
@@ -336,7 +336,6 @@ def test_a_diagonal_layout_is_never_inferred() -> None:
     [
         {"valence": ()},
         {"valence": ("vector",)},
-        {"layout": "upper"},
         {"layout": "symmetric-diagonal-first", "valence": ("vector",) * 3},
         {"layout": "symmetric", "valence": ("vector", "covector")},
         {"layout": "symmetric-lower", "valence": ("vector", "covector")},
@@ -376,7 +375,7 @@ def test_a_vector_with_an_unknown_valence_is_refused() -> None:
 
 
 def test_a_displacement_has_no_valence_to_change() -> None:
-    assert DisplacementAxis().index_kinds == ("vector",)
+    assert DisplacementAxis().valences == ("vector",)
     with pytest.raises(TypeError):
         DisplacementAxis(valence="covector")
 
@@ -417,3 +416,34 @@ def test_listed_permutations_are_independent_components() -> None:
     reframed = axis.reframed(3)
     assert reframed.layout == "C"
     assert np.allclose(out.reshape(4, 3, 3), _J @ full @ _J.T)
+
+
+def test_an_unknown_layout_name_is_refused() -> None:
+    with pytest.raises(TypeError):
+        TensorAxis(layout="upper")
+
+
+@pytest.mark.parametrize("valence", ["covector", Valence.covector])
+def test_a_valence_is_a_member_or_its_value(valence: tx.Any) -> None:
+    axis = VectorAxis(valence=valence)
+
+    assert axis.valence is Valence.covector
+    assert axis == VectorAxis(valence="covector")
+    assert axis.valences == (Valence.covector,)
+
+
+@pytest.mark.parametrize(
+    "layout", [member.value for member in TensorLayout] + list(TensorLayout)
+)
+def test_a_layout_is_a_member_or_its_value(layout: tx.Any) -> None:
+    axis = TensorAxis(layout=layout)
+
+    assert axis.layout is TensorLayout(layout)
+    assert axis == TensorAxis(layout=str(TensorLayout(layout).value))
+
+
+def test_tensor_valences_are_members_or_values() -> None:
+    axis = TensorAxis(valence=["vector", Valence.covector])
+
+    assert axis.valence == (Valence.vector, Valence.covector)
+    assert all(isinstance(v, Valence) for v in axis.valence)

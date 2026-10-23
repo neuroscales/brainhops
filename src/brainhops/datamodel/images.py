@@ -23,7 +23,7 @@ from ._backends import (
 from ._frames import (
     FrameSlot,
     FrameTargets,
-    ReframeMethod,
+    ReframeMethodOrCallable,
     array_axes,
     axis_index,
     change_matrix,
@@ -429,7 +429,7 @@ class SingleScaleImage(Image):
         *,
         clip: Clip = None,
         dtype: tx.Optional[DTypeLike] = None,
-        reframe: tx.Union[bool, ReframeMethod] = False,
+        reframe: tx.Union[bool, ReframeMethodOrCallable] = False,
         frame: FrameTargets = -1,
     ) -> "SingleScaleImage":
         """Resample the data onto another geometry.
@@ -495,7 +495,7 @@ class SingleScaleImage(Image):
             Integer output keeps rounding half away from zero and
             saturation. Dask arrays remain lazy.
 
-        reframe : bool or {"jacobian", "rotation"} or callable, default=False
+        reframe : bool | ReframeMethod | str | callable, default=False
             Whether and how the values of vector and tensor axes are
             re-expressed after they are sampled. `False` keeps them in
             their frame, `True` is the same as `"jacobian"`, and the other
@@ -582,7 +582,10 @@ class SingleScaleImage(Image):
         return resliced.reframe(frame, method=method)
 
     def reframe(
-        self, frame: FrameTargets = -1, *, method: ReframeMethod = "jacobian"
+        self,
+        frame: FrameTargets = -1,
+        *,
+        method: ReframeMethodOrCallable = "jacobian",
     ) -> "SingleScaleImage":
         """Re-express the values of vectors and tensors in another frame.
 
@@ -646,7 +649,7 @@ class SingleScaleImage(Image):
             indices to frames, and the axes that it leaves out keep their
             frame.
 
-        method : {"jacobian", "rotation"} or callable, default="jacobian"
+        method : ReframeMethod | str | callable, default="jacobian"
             What is applied to the values. `"jacobian"` applies `J`, which
             changes the frame exactly. `"rotation"` applies the rotation
             `R` of the polar decomposition `J = R P`, which keeps the
@@ -683,7 +686,7 @@ class SingleScaleImage(Image):
         if not targets:
             return self
         for i in targets:
-            if axes[i].index_kinds is None:
+            if axes[i].valences is None:
                 raise NotImplementedError(
                     f"The values along axis {i} are the coordinates of "
                     f"points, which change with the map itself rather than "
@@ -932,7 +935,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         *,
         clip: Clip = None,
         dtype: tx.Optional[DTypeLike] = None,
-        reframe: tx.Union[bool, ReframeMethod] = False,
+        reframe: tx.Union[bool, ReframeMethodOrCallable] = False,
         frame: FrameTargets = -1,
     ) -> "SingleScaleImage":
         """Reslice the level whose voxel size best matches the target grid.
@@ -986,7 +989,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             Output dtype, as in [`SingleScaleImage.reslice`][].
             None preserves the selected level's dtype.
 
-        reframe : bool or {"jacobian", "rotation"} or callable, default=False
+        reframe : bool | ReframeMethod | str | callable, default=False
             Whether and how the values of vector and tensor axes are
             re-expressed, as in [`SingleScaleImage.reslice`][].
 
