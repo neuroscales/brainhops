@@ -16,7 +16,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -182,11 +182,15 @@ def _axes(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[Axis]:
 
 
 def _role(axis: tx.Any) -> str:
-    """Return the role of a data model axis."""
+    """Return the role of a data model axis.
+
+    Component axes, which hold the components of points, vectors or
+    tensors, have the role of a channel.
+    """
     type_ = getattr(axis, "type", None)
     if type_ in ("space", "time"):
         return type_
-    if type_ in ("channel", "displacement", "coordinate"):
+    if type_ == "channel" or is_component_type(type_):
         return "channel"
     return "other"
 
