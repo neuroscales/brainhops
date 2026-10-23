@@ -137,6 +137,41 @@ def test_selecting_transformation_by_index_reorders() -> None:
     assert img.transformation is first
 
 
+def test_selecting_transformation_by_shared_name_keeps_the_preferred() -> None:
+    def to_world(scale: float) -> Affine:
+        return Affine(
+            matrix=np.diag([scale, scale, scale, 1.0])[:-1],
+            input=VoxelCoordinateSystem(),
+            output=CoordinateSystem(["x", "y", "z"], name="world"),
+        )
+
+    first = to_world(2.0)
+    second = to_world(3.0)
+    other = _voxel_to_ras(scale=4.0)
+    img = SingleScaleImage(
+        data=np.ones((2, 3, 4)), transformations=[first, second, other]
+    )
+
+    # Both `first` and `second` end in "world", and `second` is the more
+    # preferred of the two.
+    img.transformation = "world"
+
+    assert [id(x) for x in img.transformations] == [
+        id(first),
+        id(other),
+        id(second),
+    ]
+
+    # The preferred transformation matches, so it stays preferred.
+    img.transformation = "world"
+
+    assert [id(x) for x in img.transformations] == [
+        id(first),
+        id(other),
+        id(second),
+    ]
+
+
 def test_selecting_transformation_by_unknown_name_raises() -> None:
     img = _image()
 
