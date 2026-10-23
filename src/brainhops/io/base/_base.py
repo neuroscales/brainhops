@@ -643,9 +643,7 @@ class _FileBasedModelMixin:
         need be, because its `rawdata` and its record mean nothing to this
         format. A format that takes `metadata` over receives the metadata
         of `other`, which its field converts into the metadata of the
-        format, without the record of `other`. The frames of the values that
-        `other` reports are copied too, because a format such as NIfTI
-        reads them from its header rather than storing them.
+        format, without the record of `other`.
 
         Parameters
         ----------
@@ -699,15 +697,6 @@ class _FileBasedModelMixin:
             transformations = getattr(other, "transformations", None)
             if transformations is not None:
                 kwargs.setdefault("transformations", transformations)
-        # A format may read the frames of the values from its file rather
-        # than store them, so the frames that `other` reports are given,
-        # unless they are all the array system, which is the default.
-        if not isinstance(other, cls) and any(
-            field.name == "_frames" for field in fields(cls)
-        ):
-            frames = getattr(other, "frames", None)
-            if frames is not None and any(slot is not None for slot in frames):
-                kwargs.setdefault("frames", frames)
         return super().from_instance(other, *args, **kwargs)
 
 

@@ -579,3 +579,20 @@ def test_an_fsl_field_of_two_components_is_read(
 
     voxel = np.asarray(image.reframe(None).data).reshape(-1, 2)
     assert np.allclose(voxel[0], [0.5, 0.4])
+
+
+def test_a_plain_image_keeps_the_frames_of_a_nifti_image(
+    tmp_path: pathlib.Path,
+) -> None:
+    data = np.random.default_rng(9).normal(size=(*_SHAPE, 3))
+    path = _fsl_file(
+        tmp_path / "warp.nii", data, _reference_affine(True), 2006
+    )
+    image = NiftiImage.load(path)
+
+    for plain in (
+        SingleScaleImage.from_instance(image),
+        image.to(SingleScaleImage),
+    ):
+        assert type(plain) is SingleScaleImage
+        assert isinstance(plain.frames[4].output, FslCoordinateSystem)

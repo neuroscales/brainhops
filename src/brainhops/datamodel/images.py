@@ -99,7 +99,9 @@ class Image(
             return other.to(cls, **kwargs)
         # The data of a single-scale image are stored as `_data`, which a
         # format leaves empty when it decodes its data from its file, so
-        # an image of another class gives its data as it holds them.
+        # an image of another class gives its data as it holds them. Its
+        # frames are read through the public property for the same
+        # reason, unless they are all the array system, the default.
         if (
             not args
             and type(other) is not cls
@@ -108,6 +110,9 @@ class Image(
             data = _stored_data(other)
             if data is not None:
                 kwargs.setdefault("data", data)
+            frames = other.frames
+            if any(slot is not None for slot in frames):
+                kwargs.setdefault("frames", frames)
         return super().from_instance(other, *args, **kwargs)
 
     def to(
