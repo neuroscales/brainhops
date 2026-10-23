@@ -12,6 +12,12 @@ on:
       - pyproject.toml
       - .github/workflows/coverage*.yaml
   pull_request:
+    paths:
+      - src/**
+      - tests/**
+      - setup.py
+      - pyproject.toml
+      - .github/workflows/coverage*.yaml
 
 permissions:
   contents: read

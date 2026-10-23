@@ -8,9 +8,17 @@ on:
       - main
     paths:
       - src/**
+      - tests/**
       - setup.py
       - pyproject.toml
+      - .github/workflows/test*.yaml
   pull_request:
+    paths:
+      - src/**
+      - tests/**
+      - setup.py
+      - pyproject.toml
+      - .github/workflows/test*.yaml
 
 jobs:
   tests:
