@@ -400,7 +400,7 @@ def jacobian(
         coords = Sequence(transformations=[grid, frame]).compute().field
     xp = get_array_backend(coords)
     rows = _frame_rows(frame, coords.shape[-1], cols)
-    derivatives = [xp.gradient(coords, axis=i) for i in cols]
+    derivatives = [_difference(coords, i) for i in cols]
     block = xp.stack(derivatives, axis=-1)[..., rows, :]
     if extended:
         index = tuple(
@@ -409,6 +409,28 @@ def jacobian(
         )
         block = block[index]
     return block
+
+
+def _difference(values: ArrayProtocol, axis: int) -> ArrayProtocol:
+    """Return the finite difference of an array along an axis.
+
+    The difference is centred inside the array, and it is a forward
+    difference at the first index and a backward difference at the last
+    one, as in `numpy.gradient`. It is built by slicing, which works with
+    every backend, whereas `dask.array.gradient` refuses chunks of one
+    element. The axis must have at least two elements.
+    """
+    xp = get_array_backend(values)
+
+    def part(start: tx.Optional[int], stop: tx.Optional[int]) -> tx.Any:
+        index = [slice(None)] * values.ndim
+        index[axis] = slice(start, stop)
+        return values[tuple(index)]
+
+    first = part(1, 2) - part(0, 1)
+    last = part(-1, None) - part(-2, -1)
+    inner = (part(2, None) - part(None, -2)) / 2
+    return xp.concatenate([first, inner, last], axis=axis)
 
 
 def _frame_rows(

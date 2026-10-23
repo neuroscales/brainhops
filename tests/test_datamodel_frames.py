@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops.datamodel._frames import _difference
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.content import Content, Covector, Vector
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
@@ -335,3 +336,37 @@ def test_multiscale_reslice_can_reframe(
     assert np.allclose(
         np.asarray(out.data), _apply(np.linalg.inv(_LU), sampled)
     )
+
+
+def test_reframe_uses_one_sided_differences_at_the_edges(
+    values: np.ndarray,
+) -> None:
+    voxel = _system("ijk", "voxel", Vector())
+    grid = np.stack(
+        np.meshgrid(
+            *[np.arange(s, dtype=float) for s in _SHAPE], indexing="ij"
+        ),
+        -1,
+    )
+    displacements = np.zeros((*_SHAPE, 1, 4))
+    displacements[..., 0, 0] = 0.3 * np.sin(grid[..., 1] / 2)
+    field = DisplacementField(data=displacements, input=voxel, output=voxel)
+    identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
+    image = SingleScaleImage(values, [identity], frames={"c": field})
+
+    out = np.asarray(image.reframe(None).data)
+
+    jacobian = np.eye(3)
+    jacobian[0, 1] = 0.3 * (np.sin(1 / 2) - np.sin(0))
+    assert np.allclose(
+        out[:, 0], _apply(np.linalg.inv(jacobian), values[:, 0])
+    )
+
+
+def test_finite_differences_accept_chunks_of_one_element() -> None:
+    da = pytest.importorskip("dask.array")
+    values = np.random.default_rng(0).random((5, 4))
+
+    lazy = _difference(da.from_array(values, chunks=1), 0)
+
+    assert np.allclose(np.asarray(lazy), np.gradient(values, axis=0))
