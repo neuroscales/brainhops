@@ -20,7 +20,10 @@ from brainhops._core.typing import ArrayProtocol, Shape
 from brainhops.backends import backend, get_array_backend, resolve_backend
 
 from ._sugar import get_axes
-from ._transformations.compute.multiscale import _as_affine
+from ._transformations.compute.multiscale import (
+    _as_affine,
+    _as_affine_ignoring_fields,
+)
 from .axes import Axis, AxisSequence
 from .content import _batched, _inv
 from .enums import AxisType
@@ -387,50 +390,47 @@ def jacobian(
         rows = _frame_rows(frame, matrix.shape[0], cols)
         return matrix[np.ix_(rows, cols)]
     # The frame is not affine, so it is evaluated at the voxels and
-    # differentiated. A spatial axis of size 1 is extended by one voxel, so
-    # that a finite difference exists along it.
-    sizes = list(shape)
-    extended = [i for i in cols if sizes[i] == 1]
-    for i in extended:
-        sizes[i] = 2
+    # differentiated along each spatial axis, with central differences
+    # inside and one-sided differences at the edges. A field cannot be
+    # differentiated along an axis of one voxel, so it is taken to be
+    # constant along such an axis, and the column of the Jacobian is that of
+    # the affine part of the frame.
     grid = CartesianField(
-        shape=tuple(sizes), input=frame.input, output=frame.input
+        shape=tuple(shape), input=frame.input, output=frame.input
     )
     with backend(resolve_backend(like, "native")):
         coords = Sequence(transformations=[grid, frame]).compute().field
     xp = get_array_backend(coords)
     rows = _frame_rows(frame, coords.shape[-1], cols)
-    derivatives = [_difference(coords, i) for i in cols]
-    block = xp.stack(derivatives, axis=-1)[..., rows, :]
-    if extended:
-        index = tuple(
-            slice(0, 1) if i in extended else slice(None)
-            for i in range(len(sizes))
-        )
-        block = block[index]
-    return block
+    flat = _affine_part(frame) if any(shape[i] == 1 for i in cols) else None
+    columns = []
+    for i in cols:
+        if shape[i] > 1:
+            columns.append(xp.gradient(coords, axis=i)[..., rows])
+        else:
+            column = xp.asarray(flat[rows, i].astype(coords.dtype))
+            columns.append(
+                xp.broadcast_to(column, coords.shape[:-1] + (len(rows),))
+            )
+    return xp.stack(columns, axis=-1)
 
 
-def _difference(values: ArrayProtocol, axis: int) -> ArrayProtocol:
-    """Return the finite difference of an array along an axis.
+def _affine_part(frame: Transformation) -> np.ndarray:
+    """Return the matrix of a frame with every field taken as the identity.
 
-    The difference is centred inside the array, and it is a forward
-    difference at the first index and a backward difference at the last
-    one, as in `numpy.gradient`. It is built by slicing, which works with
-    every backend, whereas `dask.array.gradient` refuses chunks of one
-    element. The axis must have at least two elements.
+    Raises
+    ------
+    ValueError
+        If the frame is not affine even when its fields are ignored.
     """
-    xp = get_array_backend(values)
-
-    def part(start: tx.Optional[int], stop: tx.Optional[int]) -> tx.Any:
-        index = [slice(None)] * values.ndim
-        index[axis] = slice(start, stop)
-        return values[tuple(index)]
-
-    first = part(1, 2) - part(0, 1)
-    last = part(-1, None) - part(-2, -1)
-    inner = (part(2, None) - part(None, -2)) / 2
-    return xp.concatenate([first, inner, last], axis=axis)
+    affine = _as_affine_ignoring_fields(frame)
+    if affine is None:
+        raise ValueError(
+            "The frame has an axis of one voxel, along which it cannot be "
+            "differentiated, and it is not affine when its fields are "
+            "ignored, so its Jacobian along that axis is unknown."
+        )
+    return np.asarray(affine.matrix, dtype=float)
 
 
 def _frame_rows(

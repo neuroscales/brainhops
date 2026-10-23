@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel._frames import _difference
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.content import Content, Covector, Vector
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
@@ -338,20 +337,25 @@ def test_multiscale_reslice_can_reframe(
     )
 
 
+def _sine_field(shape: tx.Tuple[int, ...], voxel: CoordinateSystem) -> tx.Any:
+    # A displacement along the first axis that varies along the second.
+    grid = np.stack(
+        np.meshgrid(
+            *[np.arange(s, dtype=float) for s in shape], indexing="ij"
+        ),
+        -1,
+    )
+    displacements = np.zeros((*shape, 1, 4))
+    displacements[..., 0, 0] = 0.3 * np.sin(grid[..., 1] / 2)
+    return DisplacementField(data=displacements, input=voxel, output=voxel)
+
+
 def test_reframe_uses_one_sided_differences_at_the_edges(
     values: np.ndarray,
 ) -> None:
     voxel = _system("ijk", "voxel", Vector())
-    grid = np.stack(
-        np.meshgrid(
-            *[np.arange(s, dtype=float) for s in _SHAPE], indexing="ij"
-        ),
-        -1,
-    )
-    displacements = np.zeros((*_SHAPE, 1, 4))
-    displacements[..., 0, 0] = 0.3 * np.sin(grid[..., 1] / 2)
-    field = DisplacementField(data=displacements, input=voxel, output=voxel)
     identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
+    field = _sine_field(_SHAPE, voxel)
     image = SingleScaleImage(values, [identity], frames={"c": field})
 
     out = np.asarray(image.reframe(None).data)
@@ -363,10 +367,22 @@ def test_reframe_uses_one_sided_differences_at_the_edges(
     )
 
 
-def test_finite_differences_accept_chunks_of_one_element() -> None:
-    da = pytest.importorskip("dask.array")
-    values = np.random.default_rng(0).random((5, 4))
+def test_a_field_is_constant_along_an_axis_of_one_voxel() -> None:
+    shape = (4, 5, 1)
+    values = np.random.default_rng(0).random((*shape, 3))
+    voxel = _system("ijk", "voxel", Vector())
+    identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
+    scaling = _affine(np.diag([1.0, 1.0, 2.0]), [0.0, 0.0, 0.0], voxel, voxel)
+    frame = scaling @ _sine_field(shape, voxel)
+    image = SingleScaleImage(values, [identity], frames={"c": frame})
 
-    lazy = _difference(da.from_array(values, chunks=1), 0)
+    out = np.asarray(image.reframe(None).data)
 
-    assert np.allclose(np.asarray(lazy), np.gradient(values, axis=0))
+    # Inside the grid, the field contributes a shear along the second
+    # axis, and along the third axis only the scaling remains.
+    jacobian = np.eye(3)
+    jacobian[0, 1] = 0.3 * (np.sin(2 / 2) - np.sin(0 / 2)) / 2
+    jacobian = np.diag([1.0, 1.0, 2.0]) @ jacobian
+    assert np.allclose(
+        out[:, 1], _apply(np.linalg.inv(jacobian), values[:, 1])
+    )

@@ -229,9 +229,16 @@ Implemented:
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
   single-scale and multi-scale images.
 
-The Jacobian of a frame that is not affine is computed by central finite
-differences between the voxels, which is exact for a linear field and has
-a second-order error otherwise.
+The Jacobian of a frame that is not affine is computed with the
+`gradient` function of the array backend, along the spatial axes only:
+the differences are central inside the grid and one-sided at its edges,
+which is exact for a linear field. Along a spatial axis of one voxel, the
+displacements of the fields are taken to be constant, so that the column
+of the Jacobian is that of the frame with every field taken as the
+identity. Along a non-spatial axis, such as time, the frame is evaluated
+at every position but not differentiated, so a frame that changes with
+time gives one Jacobian per time point. An exact Jacobian, computed from
+the derivatives of the splines of the fields, is left for later.
 
 Not implemented:
 
@@ -241,7 +248,7 @@ Not implemented:
 - a content for the points held by a coordinates field, whose frame is
   changed by the map itself rather than by its Jacobian;
 - the Jacobian of a spline field computed from the derivatives of its
-  spline;
+  spline, which a port of `pull_grad` from torch-interpol would provide;
 - a `reframe` method on multi-scale images;
 - the use of frames by the directions held in the metadata, such as
   `bvectors`.
