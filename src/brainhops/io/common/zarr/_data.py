@@ -15,7 +15,7 @@ from brainhops import backends
 from brainhops._core import path
 from brainhops._core.dependencies import da
 from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy, StoredProxy, stored_proxy
+from brainhops._core.proxy import ArrayProxy, StoredProxy
 
 # internals
 from brainhops.io.base._utils_files import is_local, same_file
@@ -128,7 +128,7 @@ def reads_store(raw: tx.Any, location: tx.Any) -> bool:
     A local location is compared once its symbolic links are resolved,
     and a remote location is compared by its URL.
     """
-    raw = stored_proxy(raw)
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _ZarrProxy) or raw.location is None:
         return False
     source = raw.location
@@ -149,7 +149,7 @@ def reads_inside(raw: tx.Any, location: tx.Any) -> bool:
     once its symbolic links are resolved, and a remote location is
     compared by its URL.
     """
-    raw = stored_proxy(raw)
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _ZarrProxy) or raw.location is None:
         return False
     source = raw.location

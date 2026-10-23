@@ -10,7 +10,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
@@ -545,8 +545,9 @@ class TiffMultiScaleImage(
         reading = [
             raw
             for raw in raws
-            if isinstance(stored_proxy(raw), _TiffProxy)
-            and same_file(stored_proxy(raw).source.filename, filename)
+            if isinstance(raw, ArrayProxy)
+            and isinstance(raw.root, _TiffProxy)
+            and same_file(raw.root.source.filename, filename)
         ]
         if not encoding and self._copies_source(**options):
             if not reading:

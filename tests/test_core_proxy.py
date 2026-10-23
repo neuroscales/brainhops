@@ -12,8 +12,7 @@ from brainhops._core.proxy import (
     PermutedProxy,
     ScaledProxy,
     StoredProxy,
-    normalize_index,
-    stored_proxy,
+    _normalize_index,
 )
 
 
@@ -253,7 +252,7 @@ def test_layers_stay_flat() -> None:
     assert view.base is proxy
     transposed = view.T.T.transpose(3, 1, 2, 0)
     assert isinstance(transposed.base, PermutedProxy)
-    assert transposed.base.inner is proxy
+    assert transposed.base.base is proxy
     assert proxy.T.T is proxy
     assert isinstance(proxy.T, PermutedProxy)
     assert proxy.transpose(2, 0, 1).transpose(1, 2, 0) is proxy
@@ -298,8 +297,8 @@ def test_numpy_moves_the_axis_of_an_array() -> None:
         assert proxy[index].shape == expected.shape, index
         np.testing.assert_array_equal(np.asarray(proxy[index]), expected)
     # The axis of the array would be the second one of the result.
-    assert normalize_index((0, slice(None), [1]), (3, 4, 2))[1] == 1
-    assert normalize_index((0, [1], slice(None)), (3, 4, 2))[1] is None
+    assert _normalize_index((0, slice(None), [1]), (3, 4, 2))[1] == 1
+    assert _normalize_index((0, [1], slice(None)), (3, 4, 2))[1] is None
 
 
 def test_scaled_proxies_scale_what_they_read() -> None:
@@ -339,14 +338,17 @@ def test_scaled_proxies_refuse_large_factors() -> None:
         ScaledProxy(_Recording(_array((2, 3))), np.ones((1, 2, 3)))
 
 
-def test_stored_proxy_looks_through_the_layers() -> None:
-    # The stored proxy that a reader built is found below any index,
-    # permutation or scaling, and an array that is not a proxy has none.
+def test_the_root_is_below_every_layer() -> None:
+    # Each layer keeps the proxy below it as its base, and the root of
+    # every layer is the stored proxy that a reader built.
     proxy = _Recording(_array())
-    assert stored_proxy(proxy) is proxy
-    assert stored_proxy(proxy[1:].T) is proxy
-    assert stored_proxy(ScaledProxy(proxy, 2.0)[0].T) is proxy
-    assert stored_proxy(np.zeros(3)) is None
+    assert proxy.root is proxy
+    assert proxy[1:].T.root is proxy
+    assert proxy.T.root is proxy
+    assert ScaledProxy(proxy, 2.0)[0].T.root is proxy
+    scaled = ScaledProxy(proxy, 2.0)
+    assert scaled.base is proxy
+    assert scaled[1:].base.base is proxy
 
 
 def test_views_read_through_the_original_proxy() -> None:

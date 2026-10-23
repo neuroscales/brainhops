@@ -13,7 +13,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
@@ -1095,7 +1095,7 @@ def _associated(
     if record is None or name not in record.associated_images:
         raise KeyError(name)
     for array in arrays:
-        stored = stored_proxy(array)
+        stored = array.root if isinstance(array, ArrayProxy) else array
         if isinstance(stored, _SlideArray):
             return read_associated(stored.slide, name)
     raise KeyError(name)

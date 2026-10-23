@@ -18,7 +18,7 @@ from brainhops._core import path
 from brainhops._core.properties import (
     smartproperty,
 )
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
@@ -801,7 +801,7 @@ class AfniImage(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )
         if reading:
-            mmap = stored_proxy(self.rawdata).mmap
+            mmap = self.rawdata.root.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
@@ -998,7 +998,7 @@ def _stored_data(
         native = [dtype.newbyteorder("=") for dtype in whole.record.dtypes]
         if all(dtype == stored for dtype in native):
             return raw
-    if isinstance(stored_proxy(raw), _BrikProxy):
+    if isinstance(raw, ArrayProxy) and isinstance(raw.root, _BrikProxy):
         # The lazy array is read here rather than through `data`, so that
         # no cached view of the old file outlives a write over that file.
         raw = np.asarray(raw)

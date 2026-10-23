@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops._core.proxy import stored_proxy
 from brainhops.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import DisplacementField
@@ -114,7 +113,7 @@ def test_an_itk_field_drops_its_singleton_axis_lazily(tmp_path) -> None:  # noqa
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         field = io.transformations.load(tmp_path / "field.nii.gz", hint="itk")
-    assert isinstance(stored_proxy(field.dataobj), NibabelProxy)
+    assert isinstance(field.dataobj.root, NibabelProxy)
     assert field.dataobj.shape == (4, 5, 6, 3)
     np.testing.assert_array_equal(
         np.asarray(field.dataobj), values[:, :, :, 0, :]

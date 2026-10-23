@@ -23,7 +23,8 @@ proxies fall in three groups:
 Indexing and transposing keep these layers in a fixed order. A scaled
 proxy holds an indexed proxy, or a stored one, and an indexed proxy
 holds a stored proxy, so a chain of indexes never builds a chain of
-proxies. [`stored_proxy`][] returns the stored proxy at the bottom.
+proxies. Each layer keeps the proxy below it as `base`, and the `root`
+of every proxy is the stored proxy at the bottom.
 """
 
 __all__ = [
@@ -34,8 +35,6 @@ __all__ = [
     "IndexedProxy",
     "NewAxis",
     "ScaledProxy",
-    "stored_proxy",
-    "normalize_index",
 ]
 
 # stdlib
@@ -57,7 +56,7 @@ _Box: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 receives."""
 
 _Item: tx.TypeAlias = tx.Union[None, int, slice, np.ndarray]
-"""An item of an index that [`normalize_index`][] returns."""
+"""An item of an index that [`_normalize_index`][] returns."""
 
 
 @tx.runtime_checkable
@@ -146,6 +145,18 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
         of a stack. `None` means that the storage has no preference.
         """
         return None
+
+    @property
+    @abc.abstractmethod
+    def root(self) -> "StoredProxy":
+        """The stored proxy that a reader built, which the values come from.
+
+        An index, a permutation or a scaling of a proxy keeps the proxy
+        below it as `base`, and its root is the root of `base`. A writer
+        compares the file of the root with the file that it is about to
+        write, so that it does not empty a file that the array still
+        reads.
+        """
 
     @property
     def ndim(self) -> int:
@@ -361,6 +372,11 @@ class StoredProxy(ArrayProxy):
     such as an open store, is opened once and shared by all of them.
     """
 
+    @property
+    def root(self) -> "StoredProxy":
+        """The proxy itself, since it reads its values from its storage."""
+        return self
+
     @abc.abstractmethod
     def _read(self, box: _Box) -> np.ndarray:
         """Read a box of the stored array.
@@ -447,41 +463,44 @@ class PermutedProxy(StoredProxy):
     Transposing a [`StoredProxy`][] returns a permuted proxy, so that an
     [`IndexedProxy`][] never has to reorder axes itself: transposing an
     indexed proxy transposes the stored proxy that it holds. Axis `i` of
-    the permuted proxy is axis `perm[i]` of `inner`.
+    the permuted proxy is axis `perm[i]` of `base`.
 
     Transposing a permuted proxy composes the two permutations and
-    transposes `inner` once, so permuted proxies never nest. A read
-    reorders the box for `inner`, reads it, and transposes the values.
+    transposes `base` once, so permuted proxies never nest. A read
+    reorders the box for `base`, reads it, and transposes the values.
     """
 
-    inner: tx.Annotated[
-        tx.Any, tx.Doc("The stored proxy whose axes are permuted.")
-    ]
-    perm: tx.Annotated[
-        tx.Tuple[int, ...],
-        tx.Doc("The axis of `inner` that each axis of the proxy is."),
-    ]
+    base: tx.Any
+    """The stored proxy whose axes are permuted."""
+
+    perm: tx.Tuple[int, ...]
+    """The axis of `base` that each axis of the proxy is."""
+
+    @property
+    def root(self) -> StoredProxy:
+        """The stored proxy that a reader built, below `base`."""
+        return self.base.root
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of `inner`, in the order of the permutation."""
-        return tuple(self.inner.shape[p] for p in self.perm)
+        """The shape of `base`, in the order of the permutation."""
+        return tuple(self.base.shape[p] for p in self.perm)
 
     @property
     def dtype(self) -> np.dtype:
-        """The data type of the values of `inner`."""
-        return self.inner.dtype
+        """The data type of the values of `base`."""
+        return self.base.dtype
 
     @property
     def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
-        """The block shape of `inner`, in the order of the permutation."""
-        chunks = self.inner.chunks
+        """The block shape of `base`, in the order of the permutation."""
+        chunks = self.base.chunks
         if chunks is None:
             return None
         return tuple(chunks[p] for p in self.perm)
 
     def transpose(self, *axes: tx.Any) -> StoredProxy:
-        """Return `inner` transposed by the two permutations, composed.
+        """Return `base` transposed by the two permutations, composed.
 
         Parameters
         ----------
@@ -500,17 +519,17 @@ class PermutedProxy(StoredProxy):
             If the axes are not a permutation of the axes of the proxy.
         """
         perm = _permutation(axes, self.ndim)
-        return self.inner.transpose([self.perm[p] for p in perm])
+        return self.base.transpose([self.perm[p] for p in perm])
 
     def _read(self, box: _Box) -> np.ndarray:
-        inner_box = [None] * len(box)
+        base_box = [None] * len(box)
         for axis, p in enumerate(self.perm):
-            inner_box[p] = box[axis]
-        values = np.asarray(self.inner[tuple(inner_box)])
+            base_box[p] = box[axis]
+        values = np.asarray(self.base[tuple(base_box)])
         # The values hold the axes that slices keep, in the order of
-        # `inner`, and they are put in the order of the permutation.
+        # `base`, and they are put in the order of the permutation.
         kept = [
-            p for p, item in enumerate(inner_box) if isinstance(item, slice)
+            p for p, item in enumerate(base_box) if isinstance(item, slice)
         ]
         order = [kept.index(p) for p in self.perm if p in kept]
         return values.transpose(order)
@@ -536,13 +555,9 @@ class NewAxis(tx.NamedTuple):
     of zeros repeats it.
     """
 
-    kept: tx.Annotated[
-        tx.Union[slice, np.ndarray],
-        tx.Doc(
-            "The positions of the single value that the axis presents: a "
-            "slice of `range(1)` or an array of zeros."
-        ),
-    ] = slice(0, 1, 1)
+    kept: tx.Union[slice, np.ndarray] = slice(0, 1, 1)
+    """The positions of the single value that the axis presents: a slice
+    of `range(1)` or an array of zeros."""
 
 
 _Entry: tx.TypeAlias = tx.Union[int, slice, np.ndarray, NewAxis]
@@ -578,16 +593,17 @@ class IndexedProxy(ArrayProxy):
     the arrays of positions and the new axes are then applied in memory.
     """
 
-    base: tx.Annotated[
-        tx.Any, tx.Doc("The stored proxy whose values are selected.")
-    ]
-    selection: tx.Annotated[
-        tx.Tuple[tx.Any, ...],
-        tx.Doc(
-            "One entry for each axis of `base`, in order, with a `NewAxis` "
-            "entry for each axis that is not stored."
-        ),
-    ]
+    base: tx.Any
+    """The stored proxy whose values are selected."""
+
+    selection: tx.Tuple[tx.Any, ...]
+    """One entry for each axis of `base`, in order, with a `NewAxis`
+    entry for each axis that is not stored."""
+
+    @property
+    def root(self) -> StoredProxy:
+        """The stored proxy that a reader built, below `base`."""
+        return self.base.root
 
     def _entries(self) -> tx.Iterator[tx.Tuple[tx.Any, int, bool]]:
         """Yield each entry, the length that it indexes, and whether it is new.
@@ -652,7 +668,7 @@ class IndexedProxy(ArrayProxy):
         TypeError
             If an element of the index has an unsupported type.
         """
-        items, front = normalize_index(index, self.shape)
+        items, front = _normalize_index(index, self.shape)
         remaining = iter(items)
         selection = []
         for entry, n, new in self._entries():
@@ -854,38 +870,36 @@ class ScaledProxy(ArrayProxy):
     with a factor and an offset: the value is `slope * stored + inter`.
     The factor and the offset may be single numbers, or arrays that
     broadcast against the stored array, such as one factor for each
-    volume. A scaled proxy applies them to the values of `inner`, which
+    volume. A scaled proxy applies them to the values of `base`, which
     reads the stored integers.
 
-    Indexing or transposing the proxy does the same to `inner` and to
+    Indexing or transposing the proxy does the same to `base` and to
     the factors, so that only the selected values are read and scaled.
     An axis of length one of a factor stays of length one, so the
     factors never grow to the shape of the values. The values are
     floating-point numbers of at least single precision.
     """
 
-    inner: tx.Annotated[
-        tx.Any, tx.Doc("The proxy of the values before scaling.")
-    ]
-    slope: tx.Annotated[
-        tx.Optional[np.ndarray],
-        tx.Doc(
-            "The factor, a number or an array that broadcasts against the "
-            "shape of `inner`, or `None`."
-        ),
-    ] = None
-    inter: tx.Annotated[
-        tx.Optional[np.ndarray],
-        tx.Doc(
-            "The offset, a number or an array that broadcasts against the "
-            "shape of `inner`, or `None`."
-        ),
-    ] = None
+    base: tx.Any
+    """The proxy of the values before scaling."""
+
+    slope: tx.Optional[np.ndarray] = None
+    """The factor, a number or an array that broadcasts against the shape
+    of `base`, or `None`."""
+
+    inter: tx.Optional[np.ndarray] = None
+    """The offset, a number or an array that broadcasts against the shape
+    of `base`, or `None`."""
+
+    @property
+    def root(self) -> StoredProxy:
+        """The stored proxy that a reader built, below `base`."""
+        return self.base.root
 
     def __post_init__(self) -> None:
-        # A factor is given one axis for each axis of `inner`, so that an
+        # A factor is given one axis for each axis of `base`, so that an
         # index applies to it axis by axis.
-        ndim = len(self.inner.shape)
+        ndim = len(self.base.shape)
         for name in ("slope", "inter"):
             factor = getattr(self, name)
             if factor is None:
@@ -903,8 +917,8 @@ class ScaledProxy(ArrayProxy):
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of `inner`."""
-        return tuple(self.inner.shape)
+        """The shape of `base`."""
+        return tuple(self.base.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -913,12 +927,12 @@ class ScaledProxy(ArrayProxy):
         An integer becomes a float32, and a float32 stays one, whatever
         the type of the factors.
         """
-        return np.result_type(self.inner.dtype, np.float32)
+        return np.result_type(self.base.dtype, np.float32)
 
     @property
     def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
-        """The block shape of `inner`."""
-        return self.inner.chunks
+        """The block shape of `base`."""
+        return self.base.chunks
 
     def __getitem__(self, index: tx.Any) -> "ScaledProxy":
         """Return the scaled proxy of a part of the values.
@@ -931,9 +945,9 @@ class ScaledProxy(ArrayProxy):
         TypeError
             If an element of the index has an unsupported type.
         """
-        items, front = normalize_index(index, self.shape)
+        items, front = _normalize_index(index, self.shape)
         return ScaledProxy(
-            self.inner[index],
+            self.base[index],
             _index_factor(self.slope, items, self.shape, front),
             _index_factor(self.inter, items, self.shape, front),
         )
@@ -959,7 +973,7 @@ class ScaledProxy(ArrayProxy):
         """
         perm = _permutation(axes, self.ndim)
         return ScaledProxy(
-            self.inner.transpose(perm),
+            self.base.transpose(perm),
             None if self.slope is None else self.slope.transpose(perm),
             None if self.inter is None else self.inter.transpose(perm),
         )
@@ -967,7 +981,7 @@ class ScaledProxy(ArrayProxy):
     def __array__(
         self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
     ) -> np.ndarray:
-        """Read the values of `inner` and scale them.
+        """Read the values of `base` and scale them.
 
         Raises
         ------
@@ -976,7 +990,7 @@ class ScaledProxy(ArrayProxy):
             without making them.
         """
         _refuse_no_copy(copy)
-        values = np.asarray(self.inner, dtype=self.dtype)
+        values = np.asarray(self.base, dtype=self.dtype)
         if self.slope is not None:
             values = values * self.slope
         if self.inter is not None:
@@ -992,7 +1006,7 @@ def _index_factor(
     shape: tx.Sequence[int],
     front: tx.Optional[int],
 ) -> tx.Optional[np.ndarray]:
-    """Index a factor as [`normalize_index`][] says the values are indexed.
+    """Index a factor as [`_normalize_index`][] says the values are indexed.
 
     An axis of length one of the factor stays of length one: an integer
     selects its single value, a slice keeps it unless the slice selects
@@ -1040,40 +1054,7 @@ def _index_factor(
 # ----------------------------------------------------------------------
 
 
-def stored_proxy(proxy: tx.Any) -> tx.Optional[StoredProxy]:
-    """Return the stored proxy that a proxy reads, or `None`.
-
-    A writer uses this function to tell whether an array reads a file
-    that it is about to write, whatever index, permutation or scaling
-    the array applies. The function looks through a [`ScaledProxy`][], an
-    [`IndexedProxy`][] and a [`PermutedProxy`][], and returns the stored
-    proxy that a reader built.
-
-    Parameters
-    ----------
-    proxy : array
-        A proxy, or any other array.
-
-    Returns
-    -------
-    StoredProxy or None
-        The stored proxy at the bottom of `proxy`, or `None` if `proxy`
-        is not a proxy of brainhops.
-    """
-    while True:
-        if isinstance(proxy, ScaledProxy):
-            proxy = proxy.inner
-        elif isinstance(proxy, IndexedProxy):
-            proxy = proxy.base
-        elif isinstance(proxy, PermutedProxy):
-            proxy = proxy.inner
-        elif isinstance(proxy, StoredProxy):
-            return proxy
-        else:
-            return None
-
-
-def normalize_index(
+def _normalize_index(
     index: tx.Any, shape: tx.Sequence[int]
 ) -> tx.Tuple[tx.List[_Item], tx.Optional[int]]:
     """Return an index with one item for each axis, and the axis it moves.

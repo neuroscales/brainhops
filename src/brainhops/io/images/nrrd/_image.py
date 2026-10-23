@@ -13,7 +13,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.axes import Axis
@@ -919,7 +919,7 @@ class NrrdImage(
             written = [filename, _sibling(filename, data_file)]
         reading = _reads_from(self.rawdata, written)
         if reading:
-            mmap = stored_proxy(self.rawdata).mmap
+            mmap = self.rawdata.root.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
@@ -1434,7 +1434,7 @@ def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
 
 def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     """Tell whether a lazy array reads one of the files just written."""
-    raw = stored_proxy(raw)
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _NrrdProxy):
         return False
     return any(

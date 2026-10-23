@@ -13,7 +13,7 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 
 # internals
-from brainhops._core.proxy import StoredProxy, stored_proxy
+from brainhops._core.proxy import ArrayProxy, StoredProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._utils_files import open_path, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
@@ -154,7 +154,7 @@ def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
     bool
         Whether `raw` is a lazy array of that file, or an index of one.
     """
-    raw = stored_proxy(raw)
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _PillowProxy) or not _is_path(raw.source):
         return False
     return same_file(raw.source, filename)

@@ -196,7 +196,10 @@ permutations, so permuted proxies never nest.
 
 The kinds are kept in a fixed order, which every operation preserves:
 a scaled proxy holds an indexed proxy or a stored one, and an indexed
-proxy holds a stored proxy.
+proxy holds a stored proxy. Each layer keeps the proxy below it as
+`base`, and the property `root` of every proxy is the stored proxy at
+the bottom, the one that a reader built. The `root` of a stored proxy
+is the proxy itself.
 
 - Indexing an indexed proxy composes the new index with its selection,
   so a chain of indexes gives what NumPy gives for the same chain, and
@@ -205,8 +208,8 @@ proxy holds a stored proxy.
 - Transposing an indexed proxy moves the entries of its selection with
   their axes and transposes the stored proxy, so that the selection
   stays in the order of the stored axes.
-- Indexing or transposing a scaled proxy does the same to its inner
-  proxy and to the factors. An axis of length one of a factor stays of
+- Indexing or transposing a scaled proxy does the same to its `base`
+  and to the factors. An axis of length one of a factor stays of
   length one, so a factor never grows to the shape of the values, and
   only the values that are read are scaled.
 - NumPy moves the axis of an array index to the front of the result
@@ -217,7 +220,7 @@ Reading follows from this order. An indexed proxy calls the `_read`
 method of its stored proxy with the smallest box with a positive step
 that holds the selected values, and then applies the negative steps,
 the arrays of positions and the new axes in memory, so a stored proxy
-never sees them. A scaled proxy reads its inner proxy and scales the
+never sees them. A scaled proxy reads its `base` and scales the
 values. `__array__` honors `dtype`, and it raises a `ValueError` when
 `copy=False` is asked for, since the values cannot be read without
 making them.
@@ -232,9 +235,9 @@ The order also answers the two questions that writers ask.
   of the header (`whole_file` and `whole_brik`). The test
   `tests/test_io_proxy_views.py` writes a flipped index of a file in
   each of these formats.
-- A writer that must not empty a file that a proxy still reads asks
-  `stored_proxy(array)`, which returns the stored proxy below any
-  scaling, index or permutation, and compares its file with the target.
+- A writer that must not empty a file that a proxy still reads
+  compares the file of the `root` of the proxy, which lies below any
+  scaling, index or permutation, with the target.
 
 Every indexed proxy reads through the stored proxy that a reader built,
 so a handle that the stored proxy opens on its first read, such as an

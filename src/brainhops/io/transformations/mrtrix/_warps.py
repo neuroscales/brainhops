@@ -24,7 +24,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from brainhops._core import affines as _affines
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -437,7 +437,7 @@ class MrtrixWarp(
         options = {**writer_options(kwargs), **fields}
         reading = reads_from(self.rawdata, written_files(filename))
         if reading:
-            mmap = stored_proxy(self.rawdata).mmap
+            mmap = self.rawdata.root.mmap
             xform = self.consolidate(inplace=True, **options)
         else:
             xform = self.consolidate(**options)
@@ -1968,7 +1968,9 @@ def _encoded(
             whole.record.scaling,
         )
     else:
-        if isinstance(stored_proxy(source), _MrtrixProxy):
+        if isinstance(source, ArrayProxy) and isinstance(
+            source.root, _MrtrixProxy
+        ):
             # A lazy array is read here rather than through `data`, so that
             # no cached view of the old file outlives a write over that file.
             source = np.asarray(source)

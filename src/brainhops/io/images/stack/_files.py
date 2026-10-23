@@ -13,7 +13,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.base import _utils_raster as raster
@@ -185,7 +185,7 @@ def reads_from(raw: tx.Any, target: Target, record: StackRaw) -> bool:
     bool
         Whether `raw` is a lazy array that reads one of those files.
     """
-    raw = stored_proxy(raw)
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _StackProxy):
         return False
     read = {os.path.realpath(name) for name in raw.filenames()}

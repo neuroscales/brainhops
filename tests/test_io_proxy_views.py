@@ -13,7 +13,7 @@ import pytest
 from bagof.magic import replace
 
 import brainhops.io as io
-from brainhops._core.proxy import ArrayProxy, stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 
@@ -48,7 +48,7 @@ def test_a_view_is_written_as_its_values(
         image = io.images.load(tmp_path / name)
         assert isinstance(image.rawdata, ArrayProxy)
         view = image.rawdata[::-1]
-        assert stored_proxy(view) is stored_proxy(image.rawdata)
+        assert view.root is image.rawdata.root
         assert view is not image.rawdata
         flipped = replace(image, rawdata=view)
         io.save(flipped, tmp_path / ("b" + name[1:]))

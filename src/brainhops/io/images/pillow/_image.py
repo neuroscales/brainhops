@@ -12,7 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.images import SingleScaleImage
@@ -952,7 +952,8 @@ def _check_reading(image: PillowImage) -> None:
         If `frame` or `palette` differ from those with which `rawdata`
         reads its file.
     """
-    raw = stored_proxy(image.rawdata)
+    raw = image.rawdata
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _PillowProxy):
         return
     if image.frame != raw.record.frame or image.palette != raw.palette:

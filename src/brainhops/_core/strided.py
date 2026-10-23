@@ -34,6 +34,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import DTypeLike
@@ -69,8 +70,9 @@ class StridedProxy(StoredProxy):
     [`Magic`][bagof.magic.Magic] class, and it converts each argument to
     the type of its field, such as a list of sizes to a tuple of integers.
     The stored type and shape are given as `dtype=` and `shape=` and kept
-    in the private fields `_dtype` and `_shape`, because the base class
-    declares `dtype` and `shape` as properties, which a field cannot
+    in the private fields `_dtype` and `_shape`, which the read-only
+    aliases `dtype` and `shape` give, because the base class declares
+    `dtype` and `shape` as abstract properties, which a field cannot
     implement.
     """
 
@@ -195,15 +197,11 @@ class StridedProxy(StoredProxy):
     #   DESCRIPTION
     # ------------------------------------------------------------------
 
-    @property
-    def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the array."""
-        return self._shape
+    shape = alias("_shape", readonly=True)
+    """The shape of the array."""
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the stored values, with their byte order."""
-        return self._dtype
+    dtype = alias("_dtype", readonly=True)
+    """The type of the stored values, with their byte order."""
 
     @property
     def nbytes_stored(self) -> int:

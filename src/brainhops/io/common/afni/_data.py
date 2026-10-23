@@ -15,7 +15,7 @@ from bagof.magic import KwOnly, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy, ScaledProxy, stored_proxy
+from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import is_local, replace_file
@@ -572,7 +572,7 @@ def whole_brik(raw: tx.Any) -> tx.Optional[_BrikProxy]:
         The proxy of the stored voxels, or `None`.
     """
     scaled = isinstance(raw, ScaledProxy)
-    proxy = raw.inner if scaled else raw
+    proxy = raw.base if scaled else raw
     if not isinstance(proxy, _BrikProxy):
         return None
     if not scaled:
@@ -603,5 +603,5 @@ def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
     bool
         Whether `raw` is a lazy array that reads `brik`.
     """
-    raw = stored_proxy(raw)
+    raw = raw.root if isinstance(raw, ArrayProxy) else raw
     return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)

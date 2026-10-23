@@ -13,7 +13,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import stored_proxy
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.axes import Axis
@@ -656,7 +656,7 @@ class MrtrixImage(
         options = _options(kwargs)
         reading = reads_from(self.rawdata, written_files(filename))
         if reading:
-            mmap = stored_proxy(self.rawdata).mmap
+            mmap = self.rawdata.root.mmap
             image = self.consolidate(inplace=True, **options)
         else:
             image = self.consolidate(**options)
@@ -768,7 +768,9 @@ def _encoded(
     else:
         # A lazy array is read here rather than through `data`, so that no
         # cached view of the old file outlives a write over that file.
-        reads = isinstance(stored_proxy(raw), _MrtrixProxy)
+        reads = isinstance(raw, ArrayProxy) and isinstance(
+            raw.root, _MrtrixProxy
+        )
         source = np.asarray(raw) if reads else raw
         if moved:
             source = arranged.layout.apply(source)

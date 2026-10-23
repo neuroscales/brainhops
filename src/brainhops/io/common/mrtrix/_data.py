@@ -328,7 +328,7 @@ def whole_file(raw: tx.Any) -> tx.Optional[_MrtrixProxy]:
         The proxy of the stored voxels, or `None`.
     """
     scaled = isinstance(raw, ScaledProxy)
-    proxy = raw.inner if scaled else raw
+    proxy = raw.base if scaled else raw
     if not isinstance(proxy, _MrtrixProxy):
         return None
     if not scaled:
