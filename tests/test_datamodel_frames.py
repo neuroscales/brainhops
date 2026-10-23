@@ -310,8 +310,9 @@ def test_reframe_skips_a_foreign_frame(values: np.ndarray, a: Affine) -> None:
         image.reframe({"c": None})
 
 
-def test_reframe_a_covector(values: np.ndarray, a: Affine) -> None:
-    voxel = _system("ijk", "voxel", "covector")
+def test_reframe_a_gradient(values: np.ndarray, a: Affine) -> None:
+    gradient = VectorAxis("c", valence="covector")
+    voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], gradient])
     image = SingleScaleImage(values, [a.to(input=voxel)])
 
     out = image.reframe()
@@ -714,3 +715,30 @@ def test_cropping_moves_the_voxel_frame_of_points(
 
     assert image[1:3].frames[3] is not None
     assert image[:, :, :].frames[3] is None
+
+
+def test_reframe_expands_a_diagonal_tensor(a: Affine) -> None:
+    diagonal = np.random.default_rng(0).random((*_SHAPE, 3))
+    axis = TensorAxis("c", layout="diagonal")
+    voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], axis])
+    image = SingleScaleImage(diagonal, [a.to(input=voxel)])
+
+    out = image.reframe()
+
+    new_axis = out.transformation.input.axes[3]
+    assert new_axis.layout == "symmetric"
+    assert out.shape == (*_SHAPE, 6)
+    assert out.frames[3] is not None
+    assert out.frames[3].input.axes[3] == new_axis
+    expected = _LA @ (diagonal[..., None] * np.eye(3)) @ _LA.T
+    pairs = new_axis.entries(3)
+    assert np.allclose(
+        np.asarray(out.data),
+        np.stack([expected[..., i, j] for i, j in pairs], -1),
+    )
+    # The expanded image goes back to the array system in its new layout.
+    back = np.asarray(out.reframe(None).data)
+    assert np.allclose(
+        back,
+        np.stack([diagonal[..., i] * (i == j) for i, j in pairs], -1),
+    )

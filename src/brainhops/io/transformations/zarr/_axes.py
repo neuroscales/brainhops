@@ -8,7 +8,6 @@ from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
     CoordinateAxis,
-    CovectorAxis,
     DisplacementAxis,
     PointAxis,
     SpaceAxis,
@@ -25,7 +24,6 @@ _AXIS_TYPES = {
     "coordinate": CoordinateAxis,
     "point": PointAxis,
     "vector": VectorAxis,
-    "covector": CovectorAxis,
     "tensor": TensorAxis,
 }
 

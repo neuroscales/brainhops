@@ -44,7 +44,7 @@ from ._transformations.compute.multiscale import (
     nearest_level,
 )
 from ._transformations.compute.separable import pull_separable
-from .axes import AxisSequence
+from .axes import AxisSequence, TensorAxis
 from .base import DataModelBase, _ComparesByIdMixin
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry, _index2transform
@@ -601,12 +601,17 @@ class SingleScaleImage(Image):
         ```
 
         where `D` is the Jacobian, which is the linear part of a map that
-        is affine. The type of the axis says how the components change
-        (see [`ComponentAxis`][brainhops.datamodel.axes.ComponentAxis]):
-        a vector becomes `J v`, a covector becomes `J⁻ᵀ g`, and each index
-        of a tensor is multiplied by `J` or by `J⁻ᵀ` according to its
-        kind, so that a diffusion tensor becomes `J T Jᵀ`. The
-        coordinates of points cannot be re-expressed this way.
+        is affine. The type and the valence of the axis say how the
+        components change (see
+        [`ComponentAxis`][brainhops.datamodel.axes.ComponentAxis]): each
+        vector index is multiplied by `J` and each covector index by
+        `J⁻ᵀ`, so that a vector becomes `J v`, a gradient becomes
+        `J⁻ᵀ g` and a diffusion tensor becomes `J T Jᵀ`. A tensor stored
+        in a layout with components that are zero by construction is
+        stored in a closed layout afterwards (see
+        [`TensorAxis`][brainhops.datamodel.axes.TensorAxis]), which
+        changes the length of its axis. The coordinates of points cannot
+        be re-expressed this way.
 
         The components follow some axes of the system of their frame, in
         order, and these axes are read from the structure of the frame,
@@ -707,6 +712,7 @@ class SingleScaleImage(Image):
             return cache[key]
 
         new_slots = list(slots)
+        new_axes = list(axes)
         for i, target in targets.items():
             axis = axes[i]
             ncomponents = axis.frame_ndim(shape[i])
@@ -722,9 +728,24 @@ class SingleScaleImage(Image):
             )
             data = axis.apply(data, squeeze_axis(matrix, i, len(shape)), i)
             new_slots[i] = target
+            if isinstance(axis, TensorAxis):
+                # A layout with components that are zero by construction is
+                # replaced by a layout that holds the tensor in any frame.
+                new_axes[i] = axis.reframed(ncomponents, shape[i])
+        transformations = self.transformations
+        if any(new is not old for new, old in zip(new_axes, axes)):
+            transformations = [
+                _with_input_axes(xform, new_axes) for xform in transformations
+            ]
+            new_slots = [
+                _with_input_axes(slot, new_axes)
+                if isinstance(slot, Transformation)
+                else slot
+                for slot in new_slots
+            ]
         return SingleScaleImage(
             data=data,
-            transformations=self.transformations,
+            transformations=transformations,
             metadata=self.metadata,
             frames=tuple(new_slots),
         )
@@ -1114,6 +1135,20 @@ def _frame_targets(
             restricted[key] = explicit_frame(target, axes, ncomponents)
         targets[i] = restricted[key]
     return targets
+
+
+def _with_input_axes(
+    xform: Transformation, axes: tx.Sequence[tx.Any]
+) -> Transformation:
+    """Return a transformation whose input system has other axes.
+
+    The axes replace those of the input system when the system has as
+    many axes, and the transformation is returned as it is otherwise.
+    """
+    system = xform.input
+    if array_axes(system, len(axes)) is None:
+        return xform
+    return xform.to(input=replace(system, axes=list(axes)))
 
 
 def _source_axes(sub2full: Transformation) -> tx.List[tx.Optional[int]]:

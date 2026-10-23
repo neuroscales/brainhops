@@ -215,11 +215,12 @@ InterpolationLike: tx.TypeAlias = tx.Union[
 class AxisType(StrEnum):
     """Types of the axes of coordinate systems and transformations.
 
-    The last six types describe axes whose entries are the components of
-    a geometric object, such as a vector or a tensor, rather than
+    The last five types describe axes whose entries are the components
+    of a geometric object, such as a vector or a tensor, rather than
     independent values. `displacement` behaves as `vector` and
     `coordinate` behaves as `point`, and both are kept for the
-    transformation fields of OME-NGFF.
+    transformation fields of OME-NGFF. A covector, such as the gradient
+    of an image, is a `vector` whose valence is `"covector"`.
 
     | Name           | Value            | Description                       |
     |----------------|------------------|-----------------------------------|
@@ -230,7 +231,6 @@ class AxisType(StrEnum):
     | `coordinate`   | `"coordinate"`   | Coordinates of points of a field. |
     | `point`        | `"point"`        | Coordinates of points.            |
     | `vector`       | `"vector"`       | Components of vectors.            |
-    | `covector`     | `"covector"`     | Components of covectors.          |
     | `tensor`       | `"tensor"`       | Components of tensors.            |
     """
 
@@ -241,7 +241,6 @@ class AxisType(StrEnum):
     coordinate = "coordinate"
     point = "point"
     vector = "vector"
-    covector = "covector"
     tensor = "tensor"
 
 
@@ -253,7 +252,6 @@ AxisTypeName: tx.TypeAlias = tx.Literal[
     "coordinate",
     "point",
     "vector",
-    "covector",
     "tensor",
 ]
 """Axis type names."""

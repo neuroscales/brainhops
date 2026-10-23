@@ -10,10 +10,14 @@ the object is:
 | ---------------------- | ---------------- | ---------------------------- |
 | [`PointAxis`][]        | `"point"`        | none (see below)             |
 | [`CoordinateAxis`][]   | `"coordinate"`   | none, as for `"point"`       |
-| [`VectorAxis`][]       | `"vector"`       | `v ↦ J v`                    |
-| [`DisplacementAxis`][] | `"displacement"` | `v ↦ J v`, as for `"vector"` |
-| [`CovectorAxis`][]     | `"covector"`     | `g ↦ J⁻ᵀ g`                  |
+| [`VectorAxis`][]       | `"vector"`       | `v ↦ J v`, or `g ↦ J⁻ᵀ g`    |
+| [`DisplacementAxis`][] | `"displacement"` | `v ↦ J v`                    |
 | [`TensorAxis`][]       | `"tensor"`       | `J` or `J⁻ᵀ` on each index   |
+
+The valence of a vector or a tensor says, for each of its indices,
+whether the index is multiplied by `J` (a `"vector"` index) or by `J⁻ᵀ`
+(a `"covector"` index). The gradient of an image is a vector whose
+valence is `"covector"`.
 
 When an image is moved or resampled, the components of vectors and
 tensors must be re-expressed with the Jacobian of the transformation.
@@ -37,7 +41,6 @@ __all__ = [
     "CoordinateAxis",
     "VectorAxis",
     "DisplacementAxis",
-    "CovectorAxis",
     "TensorAxis",
 ]
 
@@ -46,7 +49,7 @@ import math
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import NoRepr, replace
 
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import _is_dask, get_array_backend
@@ -66,19 +69,17 @@ COMPONENT_TYPES: tx.FrozenSet[str] = frozenset(
         AxisType.coordinate,
         AxisType.vector,
         AxisType.displacement,
-        AxisType.covector,
         AxisType.tensor,
     }
 )
 """The types of the axes whose entries are the components of an object."""
 
-# The kind of each index of the object that an axis of this type holds.
-# A point has no such kinds, because its coordinates are not changed by
-# the Jacobian of a map. A tensor reads its kinds from its `indices`.
+# The valence of the object that an axis of this type holds, for the types
+# whose valence is fixed. A point has no valence, because its coordinates
+# are not changed by the Jacobian of a map. A vector and a tensor read their
+# valence from their `valence` field.
 _INDEX_KINDS: tx.Dict[str, tx.Tuple[IndexKind, ...]] = {
-    AxisType.vector: ("vector",),
     AxisType.displacement: ("vector",),
-    AxisType.covector: ("covector",),
 }
 
 
@@ -133,18 +134,18 @@ class ComponentAxis(Axis):
     def index_kinds(self) -> tx.Optional[tx.Tuple[IndexKind, ...]]:
         """The kind of each index of the object, or `None` for a point.
 
-        A vector has one index of kind `"vector"`, a covector has one of
-        kind `"covector"`, and a tensor has one per entry of its
-        `indices`. A point has none, because its coordinates do not
-        change with the Jacobian of a map.
+        A vector has one index, whose kind is its `valence`, a
+        displacement has one index of kind `"vector"`, and a tensor has
+        one per entry of its `valence`. A point has none, because its
+        coordinates do not change with the Jacobian of a map.
         """
         return _INDEX_KINDS.get(self.type)
 
     def frame_ndim(self, size: int) -> int:
         """Return the number of axes of the frame that the entries follow.
 
-        Each entry of a point, a vector or a covector follows one axis of
-        the frame, so this number is the number of entries.
+        Each entry of a point or a vector follows one axis of the frame,
+        so this number is the number of entries.
 
         Parameters
         ----------
@@ -163,8 +164,9 @@ class ComponentAxis(Axis):
     ) -> ArrayProtocol:
         """Apply a linear map of the frame to the entries along an axis.
 
-        A vector index is multiplied by the map `J`, and a covector
-        index by `J⁻ᵀ`, so that a vector becomes `J v` and a covector
+        Each index of the object is multiplied by the map `J` when it is
+        a vector index and by `J⁻ᵀ` when it is a covector index, so that
+        a vector becomes `J v` and a vector of valence `"covector"`
         becomes `J⁻ᵀ g`.
 
         Parameters
@@ -196,9 +198,10 @@ class ComponentAxis(Axis):
                 f"with its Jacobian, so they cannot be re-expressed in "
                 f"another frame."
             )
-        if kinds == ("vector",):
-            return _matvec(values, matrix, axis)
-        return _matvec(values, _swap_last(_batched(_inv, matrix)), axis)
+        xp = get_array_backend(values)
+        moved = xp.moveaxis(values, axis, -1)
+        out = _multilinear(moved, matrix, kinds, values)
+        return xp.moveaxis(out, -1, axis)
 
 
 class PointAxis(ComponentAxis, on={"type": "point"}):
@@ -265,8 +268,12 @@ class CoordinateAxis(ComponentAxis, on={"type": "coordinate"}):
 class VectorAxis(ComponentAxis, on={"type": "vector"}):
     """Axis whose entries are the components of vectors.
 
-    A velocity or a fibre direction is a vector. When the frame changes
-    by a linear map `J`, the components become `J v`.
+    A velocity or a fibre direction is a vector of valence `"vector"`.
+    When the frame changes by a linear map `J`, its components become
+    `J v`. The gradient of an image and the normal of a surface are
+    vectors of valence `"covector"`, which are also called covectors.
+    Their components become `J⁻ᵀ g`, so that the pairing of a covector
+    with a vector does not change.
 
     Parameters
     ----------
@@ -276,25 +283,34 @@ class VectorAxis(ComponentAxis, on={"type": "vector"}):
         Pinned axis type.
     unit : Unit | str, optional
         Unit of the coordinates along the axis.
-
-    Other Parameters
-    ----------------
     discrete : bool, optional
         Whether the axis is discrete, meaning that its elements have
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
+    valence : {"vector", "covector"}, default="vector"
+        Whether the components are multiplied by `J` or by `J⁻ᵀ` when
+        the frame changes by `J`.
     """
 
     type: NoRepr[...]
+
+    valence: IndexKind = "vector"
+    """Whether the components change with `J` or with `J⁻ᵀ`."""
+
+    @property
+    def index_kinds(self) -> tx.Tuple[IndexKind, ...]:
+        """The kind of the single index of the vector, its `valence`."""
+        return (self.valence,)
 
 
 class DisplacementAxis(ComponentAxis, on={"type": "displacement"}):
     """Axis that enumerates the components of displacement vectors.
 
     A displacement field has its spatial axes and one displacement axis.
-    The axis behaves as a [`VectorAxis`][], and its type is kept so that
-    the fields of OME-NGFF keep their type.
+    The axis behaves as a [`VectorAxis`][] of valence `"vector"`, which it
+    has no field to change, and its type is kept so that the fields of
+    OME-NGFF keep their type.
 
     Parameters
     ----------
@@ -317,70 +333,84 @@ class DisplacementAxis(ComponentAxis, on={"type": "displacement"}):
     type: NoRepr[...]
 
 
-class CovectorAxis(ComponentAxis, on={"type": "covector"}):
-    """Axis whose entries are the components of covectors.
-
-    The gradient of an image and the normal of a surface are covectors.
-    When the frame changes by a linear map `J`, the components become
-    `J⁻ᵀ g`, so that the pairing of a covector with a vector does not
-    change.
-
-    Parameters
-    ----------
-    name : str, optional
-        Name of the axis, such as `"c"`.
-    type : {"covector"}, default="covector"
-        Pinned axis type.
-    unit : Unit | str, optional
-        Unit of the coordinates along the axis.
-
-    Other Parameters
-    ----------------
-    discrete : bool, optional
-        Whether the axis is discrete, meaning that its elements have
-        no specific order and should not be interpolated.
-    orientation : Orientation | str, optional
-        Meaningful direction of the axis, such as left to right.
-    """
-
-    type: NoRepr[...]
-
-
 class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     """Axis whose entries are the components of tensors.
 
     A diffusion tensor, the Hessian of an image and the Jacobian of a
     map are tensors with two indices. Each index is either a vector
-    index or a covector index, and `indices` lists their kinds, so that
-    the number of indices is the rank of the tensor. When the frame
+    index or a covector index, and `valence` lists their kinds, so that
+    the number of indices is the rank `k` of the tensor. When the frame
     changes by a linear map `J`, each vector index is multiplied by `J`
     and each covector index by `J⁻ᵀ`:
 
-    | `indices`                  | Example          | New components |
+    | `valence`                  | Example          | New components |
     | -------------------------- | ---------------- | -------------- |
     | `("vector", "vector")`     | diffusion tensor | `J T Jᵀ`       |
     | `("covector", "covector")` | Hessian          | `J⁻ᵀ H J⁻¹`    |
     | `("vector", "covector")`   | linear map       | `J A J⁻¹`      |
 
     A tensor whose two indices belong to different frames, such as the
-    Jacobian of a warp between two spaces, is stored with two axes, a
-    vector axis and a covector axis, so that each axis has its own frame.
+    Jacobian of a warp between two spaces, is stored with two vector
+    axes, one of valence `"vector"` and one of valence `"covector"`, so
+    that each axis has its own frame.
 
-    With the `"full"` layout, the axis stores the `n**k` components of a
-    tensor of rank `k` in a frame of `n` axes. With the `"symmetric"`
-    layout, it stores only the `C(n + k - 1, k)` components of a
-    symmetric tensor whose indices do not decrease, and all the indices
-    must then be of the same kind. `order` gives, for each entry, the
-    frame axis of each index. By default, the full layout lists the
-    components in row-major order, and the symmetric layout lists the
-    non-decreasing indices in lexicographic order. FSL and MRtrix both
-    store a diffusion tensor with the symmetric layout, but in different
-    orders, and the order of FSL is the default:
+    `layout` says which components the axis stores, and in which order,
+    for a frame of `n` axes. It is either a name or an explicit tuple
+    that gives, for each entry, the frame axis of each index. The names
+    are listed below with their order for a tensor of rank 2 in a frame
+    of three axes, where `ij` stands for the entry `(i, j)`:
 
-    | Software | `order` for a frame of three axes                  |
-    | -------- | -------------------------------------------------- |
-    | FSL      | `((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))` |
-    | MRtrix   | `((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))` |
+    | `layout`                     | Order for `k = 2` and `n = 3` |
+    | ---------------------------- | ----------------------------- |
+    | `"C"`                        | `00 01 02 10 11 12 20 21 22`  |
+    | `"F"`                        | `00 10 20 01 11 21 02 12 22`  |
+    | `"symmetric"`                | `00 01 02 11 12 22`           |
+    | `"symmetric-lower"`          | `00 10 11 20 21 22`           |
+    | `"symmetric-diagonal-first"` | `00 11 22 01 02 12`           |
+    | `"diagonal"`                 | `00 11 22`                    |
+
+    `"C"` lists all the components with the last index varying fastest,
+    and `"F"` with the first index varying fastest. `"symmetric"` lists
+    the indices that do not decrease in lexicographic order, which is the
+    upper triangle row by row for a matrix. `"symmetric-lower"` lists the
+    indices that do not increase in lexicographic order, which is the
+    lower triangle row by row. `"symmetric-diagonal-first"` lists the
+    diagonal and then the upper triangle row by row, and it is only
+    defined for tensors of rank 2. `"diagonal"` stores the components
+    whose indices are all equal, and the other components are zero. The
+    full layouts store `n**k` entries, the symmetric layouts store
+    `C(n + k - 1, k)` entries, and the diagonal layout stores `n`.
+
+    Software stores a symmetric matrix in these layouts:
+
+    | Software               | `layout`                     |
+    | ---------------------- | ---------------------------- |
+    | FSL, ITK, NRRD, Camino | `"symmetric"`                |
+    | MRtrix                 | `"symmetric-diagonal-first"` |
+    | DIPY                   | `"symmetric-lower"`          |
+
+    An explicit tuple lists each stored component once, and no two of
+    its entries may be permutations of each other. A component that it
+    does not list takes the value of the listed component whose indices
+    are a permutation of its own, if there is one, so that the tensor is
+    symmetric, and it is zero otherwise. A symmetric tensor needs all
+    its indices to be of the same kind, because the symmetry of a tensor
+    whose indices change differently depends on the frame. The symmetric
+    layouts are therefore refused for a mixed valence.
+
+    `None`, the default, reads the layout from the number of entries
+    once the size `n` of the frame is known: `n**k` entries are `"C"`
+    and `C(n + k - 1, k)` entries are `"symmetric"`. These two numbers
+    differ when `n` and `k` are both at least 2, and any other number of
+    entries is refused.
+
+    A layout with components that are zero by construction, such as
+    `"diagonal"` or an explicit tuple that leaves components out without
+    a permutation to take their value from, cannot hold the tensor after
+    a general change of frame. [`apply`][] then returns the tensor in the
+    smallest layout that can, which is `"symmetric"` when all the indices
+    are of the same kind and `"C"` otherwise, and [`reframed`][] gives
+    the axis that describes it. The length of the axis changes.
 
     Parameters
     ----------
@@ -395,69 +425,100 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         no specific order and should not be interpolated.
     orientation : Orientation | str, optional
         Meaningful direction of the axis, such as left to right.
-    indices : tuple of {"vector", "covector"}, default=("vector", "vector")
+    valence : tuple of {"vector", "covector"}, default=("vector", "vector")
         The kind of each index of the tensor, one per index.
-    layout : {"full", "symmetric"}, default="full"
-        Whether the axis stores all the components of the tensor, or
-        only those of a symmetric tensor whose indices do not decrease.
-    order : tuple of tuple of int, optional
-        For each entry along the axis, the frame axis of each index of
-        the tensor. By default, the components are listed in row-major
-        order for the full layout, and in lexicographic order for the
-        symmetric layout.
+    layout : str or tuple of tuple of int, optional
+        Which components the axis stores and in which order, as a name
+        of the table above or as an explicit tuple. By default, the
+        layout is read from the number of entries.
 
     Raises
     ------
     ValueError
-        If the tensor has no index, if a symmetric tensor has indices of
-        different kinds, or if an entry of `order` does not have one
-        frame axis per index.
+        If the tensor has fewer than two indices, if the layout is an
+        unknown name or
+        a name that is not defined for the rank of the tensor, if a
+        symmetric layout has indices of different kinds, or if an
+        explicit layout lists a component twice or has entries of the
+        wrong length.
     """
 
     type: NoRepr[...]
 
-    indices: tx.Tuple[IndexKind, ...] = ("vector", "vector")
+    valence: tx.Tuple[IndexKind, ...] = ("vector", "vector")
     """The kind of each index of the tensor, one per index."""
 
-    layout: tx.Literal["full", "symmetric"] = "full"
-    """Whether all the components are stored, or those of a symmetric
-    tensor whose indices do not decrease."""
-
-    order: tx.Optional[Entries] = None
-    """For each entry, the frame axis of each index of the tensor."""
+    layout: tx.Optional[tx.Union[str, Entries]] = None
+    """Which components the axis stores, and in which order."""
 
     def __post_init__(self) -> None:
-        if not self.indices:
-            raise ValueError("A tensor axis needs at least one index.")
-        if self.layout == "symmetric" and len(set(self.indices)) > 1:
+        rank = len(self.valence)
+        if rank < 2:
             raise ValueError(
-                f"A symmetric tensor has indices of a single kind, but "
-                f"these indices are {self.indices}. Store the tensor with "
-                f"the full layout instead."
+                f"A tensor axis has at least two indices, not {rank}. A "
+                f"tensor with one index is a vector."
             )
-        rank = len(self.indices)
-        for entry in self.order or ():
+        mixed = len(set(self.valence)) > 1
+        layout = self.layout
+        if isinstance(layout, str):
+            if layout not in _LAYOUTS:
+                raise ValueError(
+                    f"The layout of a tensor is one of {sorted(_LAYOUTS)} "
+                    f"or a tuple of entries, not {layout!r}."
+                )
+            if layout == "symmetric-diagonal-first" and rank != 2:
+                raise ValueError(
+                    f"The layout 'symmetric-diagonal-first' is defined for "
+                    f"tensors of rank 2, not {rank}."
+                )
+            if layout.startswith("symmetric") and mixed:
+                raise ValueError(
+                    f"A symmetric tensor has indices of a single kind, but "
+                    f"its valence is {self.valence}. Use the layout 'C' "
+                    f"instead."
+                )
+            return
+        if layout is None:
+            return
+        seen: tx.Set[tx.Tuple[int, ...]] = set()
+        for entry in layout:
             if len(entry) != rank:
                 raise ValueError(
-                    f"Each entry of the order of a tensor of rank {rank} "
+                    f"Each entry of the layout of a tensor of rank {rank} "
                     f"gives {rank} frame axes, but {entry} gives "
                     f"{len(entry)}."
+                )
+            key = tuple(sorted(entry))
+            if key in seen:
+                raise ValueError(
+                    f"The layout lists the component {entry} twice, or "
+                    f"together with a permutation of its indices."
+                )
+            seen.add(key)
+            if mixed and len(set(entry)) > 1:
+                raise ValueError(
+                    f"The layout takes the components that it leaves out "
+                    f"from a permutation of {entry}, which needs indices "
+                    f"of a single kind, but the valence is {self.valence}."
                 )
 
     @property
     def index_kinds(self) -> tx.Tuple[IndexKind, ...]:
-        """The kind of each index of the tensor, as in `indices`."""
-        return tuple(self.indices)
+        """The kind of each index of the tensor, as in `valence`."""
+        return tuple(self.valence)
 
-    def frame_ndim(self, size: int) -> int:
+    def frame_ndim(self, size: int, ndim: tx.Optional[int] = None) -> int:
         """Return the number of axes `n` of the frame of the tensor.
 
         Parameters
         ----------
         size : int
-            The number of entries along the axis, which is `n**k` for the
-            full layout and `C(n + k - 1, k)` for the symmetric layout,
-            where `k` is the rank of the tensor.
+            The number of entries along the axis.
+        ndim : int, optional
+            The number of axes of the frame, when it is known from
+            elsewhere. It is checked against `size`. An explicit layout
+            accepts any frame that has the axes that it names, and
+            without `ndim` it gives the smallest such frame.
 
         Returns
         -------
@@ -467,58 +528,163 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         Raises
         ------
         ValueError
-            If no frame gives `size` entries.
+            If no frame, or more than one, gives `size` entries.
         """
-        rank = len(self.indices)
-        ndim = 1
-        while self._size(ndim) < size:
-            ndim += 1
-        if self._size(ndim) != size:
+        rank = len(self.valence)
+        layout = self.layout
+        if isinstance(layout, tuple):
+            # An explicit layout needs at least the axes that it names, and
+            # it may leave the last axes of a larger frame out.
+            least = 1 + max(max(entry) for entry in layout)
+            found = set()
+            if size == len(layout):
+                found = {least}
+                if ndim is not None and ndim >= least:
+                    found.add(ndim)
+        else:
+            if layout is not None:
+                names = [layout]
+            elif len(set(self.valence)) > 1:
+                names = ["C"]
+            else:
+                names = ["C", "symmetric"]
+            found = set()
+            for name in names:
+                for n in range(1, size + 1):
+                    if _layout_size(name, n, rank) == size:
+                        found.add(n)
+        if ndim is not None:
+            if ndim not in found:
+                raise ValueError(
+                    f"{size} entries do not hold a tensor of rank {rank} "
+                    f"in a frame of {ndim} axes with the layout "
+                    f"{layout!r}."
+                )
+            return ndim
+        if len(found) != 1:
             raise ValueError(
-                f"{size} entries cannot hold the components of a "
-                f"{self.layout} tensor of rank {rank}."
+                f"{size} entries hold a tensor of rank {rank} with the "
+                f"layout {layout!r} in frames of {sorted(found)} axes, "
+                f"so the size of the frame is not known."
             )
-        return ndim
+        return found.pop()
 
-    def entries(self, ndim: int) -> Entries:
+    def resolved_layout(
+        self, ndim: int, size: tx.Optional[int] = None
+    ) -> tx.Union[str, Entries]:
+        """Return the layout, read from the number of entries if needed.
+
+        Parameters
+        ----------
+        ndim : int
+            The number of axes of the frame.
+        size : int, optional
+            The number of entries along the axis, which reads a layout
+            that is `None`.
+
+        Returns
+        -------
+        str or tuple of tuple of int
+            The layout, never `None`.
+
+        Raises
+        ------
+        ValueError
+            If the layout is `None` and `size` is neither `n**k` nor
+            `C(n + k - 1, k)`.
+        """
+        if self.layout is not None:
+            return self.layout
+        rank = len(self.valence)
+        for name in ("C", "symmetric"):
+            if size is not None and _layout_size(name, ndim, rank) == size:
+                if name == "symmetric" and len(set(self.valence)) > 1:
+                    break
+                return name
+        raise ValueError(
+            f"{size} entries are neither all the components nor the "
+            f"symmetric components of a tensor of rank {rank} in a frame "
+            f"of {ndim} axes, so the layout must be given."
+        )
+
+    def entries(self, ndim: int, size: tx.Optional[int] = None) -> Entries:
         """Return the frame axis of each index, for each entry.
 
         Parameters
         ----------
         ndim : int
             The number of axes of the frame.
+        size : int, optional
+            The number of entries along the axis, which reads a layout
+            that is `None`.
 
         Returns
         -------
         tuple of tuple of int
             For each entry, the frame axis of each index of the tensor.
-            The indices of a symmetric tensor are listed in
-            non-decreasing order.
 
         Raises
         ------
         ValueError
-            If `order` does not list each component of the tensor once.
+            If an explicit layout names a frame axis that does not exist.
         """
-        rank = len(self.indices)
-        if self.layout == "symmetric":
-            expected = tuple(
-                itertools.combinations_with_replacement(range(ndim), rank)
-            )
-        else:
-            expected = tuple(itertools.product(range(ndim), repeat=rank))
-        if self.order is None:
-            return expected
-        entries = tuple(tuple(int(i) for i in entry) for entry in self.order)
-        if self.layout == "symmetric":
-            entries = tuple(tuple(sorted(entry)) for entry in entries)
-        if len(entries) != len(expected) or set(entries) != set(expected):
+        layout = self.resolved_layout(ndim, size)
+        rank = len(self.valence)
+        if isinstance(layout, str):
+            return _layout_entries(layout, ndim, rank)
+        entries = tuple(tuple(int(i) for i in entry) for entry in layout)
+        if any(not 0 <= i < ndim for entry in entries for i in entry):
             raise ValueError(
-                f"The order {entries} does not list each component of a "
-                f"{self.layout} tensor of rank {rank} in a frame of {ndim} "
-                f"axes once."
+                f"The layout {entries} names an axis that a frame of "
+                f"{ndim} axes does not have."
             )
         return entries
+
+    def closed(self, ndim: int, size: tx.Optional[int] = None) -> bool:
+        """Return whether the layout holds the tensor in any frame.
+
+        A layout is closed when every component of the tensor is either
+        stored or taken from a stored component, so that no component is
+        zero by construction.
+
+        Parameters
+        ----------
+        ndim : int
+            The number of axes of the frame.
+        size : int, optional
+            The number of entries along the axis, which reads a layout
+            that is `None`.
+
+        Returns
+        -------
+        bool
+            Whether a change of frame keeps the tensor in this layout.
+        """
+        return -1 not in self._unpack(ndim, size)
+
+    def reframed(
+        self, ndim: int, size: tx.Optional[int] = None
+    ) -> "TensorAxis":
+        """Return the axis that describes the tensor after [`apply`][].
+
+        Parameters
+        ----------
+        ndim : int
+            The number of axes of the frame.
+        size : int, optional
+            The number of entries along the axis, which reads a layout
+            that is `None`.
+
+        Returns
+        -------
+        TensorAxis
+            This axis when its layout is closed, and otherwise a copy in
+            the layout `"symmetric"` when all the indices are of the same
+            kind, and `"C"` otherwise.
+        """
+        if self.closed(ndim, size):
+            return self
+        return replace(self, layout=self._closure())
 
     def apply(
         self, values: ArrayProtocol, matrix: ArrayProtocol, axis: int
@@ -527,7 +693,8 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
 
         The entries are unpacked into a full tensor, each of its indices
         is multiplied by `J` or by `J⁻ᵀ` according to its kind, and the
-        result is packed again in the same order.
+        result is packed again in the same layout, or in the layout of
+        [`reframed`][] when this layout is not closed.
 
         Parameters
         ----------
@@ -542,48 +709,106 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
         Returns
         -------
         ArrayProtocol
-            The transformed values, with the shape of `values`.
+            The transformed values. The length of `axis` changes when the
+            layout is not closed.
 
         Raises
         ------
         ValueError
-            If the number of entries or `order` does not describe a
-            tensor of this rank and layout.
+            If the number of entries does not match the layout and the
+            size of `matrix`.
         """
         xp = get_array_backend(values)
-        rank = len(self.indices)
-        ndim = self.frame_ndim(values.shape[axis])
-        entries = self.entries(ndim)
-        symmetric = self.layout == "symmetric"
-        position = {entry: k for k, entry in enumerate(entries)}
-        unpack = np.array(
-            [
-                position[tuple(sorted(multi)) if symmetric else multi]
-                for multi in itertools.product(range(ndim), repeat=rank)
-            ]
-        )
-        pack = np.array(
-            [np.ravel_multi_index(entry, (ndim,) * rank) for entry in entries]
-        )
+        rank = len(self.valence)
+        size = values.shape[axis]
+        ndim = self.frame_ndim(size, int(matrix.shape[-1]))
+        unpack = self._unpack(ndim, size)
         packed = xp.moveaxis(values, axis, -1)
+        if -1 in unpack:
+            # The components that are zero by construction are read from an
+            # extra entry of zeros.
+            zeros = xp.zeros_like(packed[..., :1])
+            packed = xp.concatenate([packed, zeros], axis=-1)
+            unpack = np.where(unpack < 0, size, unpack)
         full = packed[..., unpack]
         full = full.reshape(tuple(packed.shape[:-1]) + (ndim,) * rank)
-        forward = _like(matrix, values)
-        backward = None
-        if "covector" in self.indices:
-            backward = _swap_last(_batched(_inv, forward))
-        for index, kind in enumerate(self.indices):
-            factor = forward if kind == "vector" else backward
-            full = _contract(full, factor, index, rank)
+        full = _multilinear(full, matrix, tuple(self.valence), values)
+        out = self.reframed(ndim, size)
+        pack = np.array(
+            [
+                np.ravel_multi_index(entry, (ndim,) * rank)
+                for entry in out.entries(ndim, size)
+            ]
+        )
         flat = full.reshape(tuple(full.shape[:-rank]) + (ndim**rank,))
         return xp.moveaxis(flat[..., pack], -1, axis)
 
-    def _size(self, ndim: int) -> int:
-        """Return the number of entries of the tensor in `ndim` axes."""
-        rank = len(self.indices)
-        if self.layout == "symmetric":
-            return math.comb(ndim + rank - 1, rank)
+    def _closure(self) -> str:
+        """Return the smallest closed layout for the valence."""
+        return "symmetric" if len(set(self.valence)) == 1 else "C"
+
+    def _unpack(self, ndim: int, size: tx.Optional[int]) -> np.ndarray:
+        """Return the entry of each component, in row-major order.
+
+        A component that is zero by construction has the entry `-1`.
+        """
+        rank = len(self.valence)
+        entries = self.entries(ndim, size)
+        position = {entry: k for k, entry in enumerate(entries)}
+        permuted = {tuple(sorted(entry)): k for k, entry in enumerate(entries)}
+        symmetric = len(set(self.valence)) == 1
+        unpack = []
+        for multi in itertools.product(range(ndim), repeat=rank):
+            if multi in position:
+                unpack.append(position[multi])
+            elif symmetric:
+                unpack.append(permuted.get(tuple(sorted(multi)), -1))
+            else:
+                unpack.append(-1)
+        return np.array(unpack, dtype=int)
+
+
+_LAYOUTS = frozenset(
+    {
+        "C",
+        "F",
+        "symmetric",
+        "symmetric-lower",
+        "symmetric-diagonal-first",
+        "diagonal",
+    }
+)
+"""The names of the layouts of a tensor axis."""
+
+
+def _layout_size(name: str, ndim: int, rank: int) -> int:
+    """Return the number of entries of a named layout."""
+    if name in ("C", "F"):
         return ndim**rank
+    if name == "diagonal":
+        return ndim
+    return math.comb(ndim + rank - 1, rank)
+
+
+def _layout_entries(name: str, ndim: int, rank: int) -> Entries:
+    """Return the entries of a named layout, in their order."""
+    if name == "C":
+        return tuple(itertools.product(range(ndim), repeat=rank))
+    if name == "F":
+        return tuple(
+            entry[::-1]
+            for entry in itertools.product(range(ndim), repeat=rank)
+        )
+    if name == "diagonal":
+        return tuple((i,) * rank for i in range(ndim))
+    upper = tuple(itertools.combinations_with_replacement(range(ndim), rank))
+    if name == "symmetric":
+        return upper
+    if name == "symmetric-lower":
+        return tuple(sorted(entry[::-1] for entry in upper))
+    # "symmetric-diagonal-first", which is only defined for rank 2.
+    diagonal = tuple(entry for entry in upper if entry[0] == entry[1])
+    return diagonal + tuple(entry for entry in upper if entry[0] != entry[1])
 
 
 # --- helpers ----------------------------------------------------------
@@ -598,15 +823,27 @@ def _like(matrix: ArrayProtocol, values: ArrayProtocol) -> ArrayProtocol:
     return matrix.astype(dtype)
 
 
-def _matvec(
-    values: ArrayProtocol, matrix: ArrayProtocol, axis: int
+def _multilinear(
+    full: ArrayProtocol,
+    matrix: ArrayProtocol,
+    valence: tx.Tuple[IndexKind, ...],
+    like: ArrayProtocol,
 ) -> ArrayProtocol:
-    """Multiply each vector along `axis` by `matrix`."""
-    xp = get_array_backend(values)
-    vectors = xp.moveaxis(values, axis, -1)
-    matrix = _like(matrix, values)
-    out = xp.matmul(matrix, vectors[..., None])[..., 0]
-    return xp.moveaxis(out, -1, axis)
+    """Multiply each index of a stack of tensors by `J` or by `J⁻ᵀ`.
+
+    The last `len(valence)` axes of `full` are the indices of the tensors.
+    A vector index is multiplied by `matrix` and a covector index by the
+    inverse of its transpose. A vector is a tensor with one index.
+    """
+    rank = len(valence)
+    forward = _like(matrix, like)
+    backward = None
+    if "covector" in valence:
+        backward = _swap_last(_batched(_inv, forward))
+    for index, kind in enumerate(valence):
+        factor = forward if kind == "vector" else backward
+        full = _contract(full, factor, index, rank)
+    return full
 
 
 def _contract(

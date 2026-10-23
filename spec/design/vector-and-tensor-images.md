@@ -19,7 +19,7 @@ in it is specific to diffusion imaging.
 Two separate facts describe a vector image.
 
 - What the entries along an axis are. An axis may hold the components of
-  a point, a vector, a covector or a tensor, rather than independent
+  a point, a vector or a tensor, rather than independent
   channels such as colours.
 - In which coordinate system the components are expressed. This system
   is called the frame of the values. Diffusion software often uses the
@@ -34,9 +34,9 @@ therefore belongs to the image (section 3).
 
 ## 2. Component axes
 
-`AxisType` has four types for the axes whose entries are the components
+`AxisType` has three types for the axes whose entries are the components
 of one object, besides the `displacement` and `coordinate` types of
-OME-NGFF. These six types are called component types, and an axis of
+OME-NGFF. These five types are called component types, and an axis of
 one of these types is a component axis. Calling `Axis` with a component
 type builds a subclass of `ComponentAxis`, which says how the entries
 change under a linear map `J` of the frame:
@@ -45,10 +45,21 @@ change under a linear map `J` of the frame:
 | -------------- | ------------------ | -------------------------------- |
 | `point`        | `PointAxis`        | not by `J` (see below)           |
 | `coordinate`   | `CoordinateAxis`   | as for `point`                   |
-| `vector`       | `VectorAxis`       | `v ↦ J v`                        |
-| `displacement` | `DisplacementAxis` | as for `vector`                  |
-| `covector`     | `CovectorAxis`     | `g ↦ J⁻ᵀ g`                      |
+| `vector`       | `VectorAxis`       | `v ↦ J v`, or `g ↦ J⁻ᵀ g`        |
+| `displacement` | `DisplacementAxis` | `v ↦ J v`                        |
 | `tensor`       | `TensorAxis`       | `J` or `J⁻ᵀ` on each index       |
+
+The valence of a vector or a tensor says, for each index of the object,
+whether the index changes with `J` (a `"vector"` index) or with `J⁻ᵀ` (a
+`"covector"` index). A vector axis has a field `valence`, which is
+`"vector"` by default and `"covector"` for an object such as the
+gradient of an image, whose pairing with a vector does not depend on the
+frame. A covector is therefore a vector axis rather than a type of its
+own, so that vectors and tensors describe the kinds of their indices in
+the same way, and one rule applies the map to both: each vector index is
+multiplied by `J` and each covector index by `J⁻ᵀ`. A displacement axis
+has no `valence` field, because a displacement is always of valence
+`"vector"`, and a point has no valence.
 
 The type is used, rather than a separate field of the axis, because the
 entries of an axis are either independent values or the components of
@@ -57,33 +68,76 @@ contradictory combinations. OME-NGFF already describes the components of
 its fields with axis types. `displacement` and `coordinate` are kept so
 that the fields of OME-NGFF keep their types. A subclass of `Axis` cannot
 pin a different type than its parent, so `DisplacementAxis` and
-`VectorAxis` are siblings that share their behaviour through a table of
-`ComponentAxis`, and so are `CoordinateAxis` and `PointAxis`. The
+`VectorAxis` are siblings, and so are `CoordinateAxis` and `PointAxis`.
+Each class gives the valence of its axis, and `ComponentAxis` applies
+the map from the valence, so the siblings behave in the same way. The
 function `is_component_type` tells whether a type is a component type,
 and the readers and the writers use it to store component axes with the
 channels.
 
-The entries of a vector or a covector axis follow axes of the system of
-the frame, in order. This is also the rule that OME-NGFF RFC-3 states
+The entries of a vector axis follow axes of the system of the frame, in
+order. This is also the rule that OME-NGFF RFC-3 states
 for vector axes, and section 5 explains how these axes are found.
 
-A tensor axis has three fields of its own.
+A tensor axis has two fields of its own.
 
-- `indices` lists the kind of each index of the tensor, `"vector"` or
+- `valence` lists the kind of each index of the tensor, `"vector"` or
   `"covector"`, so that its length is the rank `k` of the tensor. The
   default is `("vector", "vector")`.
-- `layout` is `"full"`, which stores the `n**k` components of a tensor
-  in a frame of `n` axes, or `"symmetric"`, which stores only the
-  `C(n + k - 1, k)` components whose indices do not decrease. A
-  symmetric tensor must have indices of a single kind, because the
-  symmetry of a tensor whose indices change differently depends on the
-  frame. The default is `"full"`.
-- `order` gives, for each entry along the axis, the frame axis of each
-  index. By default, the full layout lists the components in row-major
-  order and the symmetric layout lists the non-decreasing indices in
-  lexicographic order, which is the order of FSL for a matrix. The
-  order is a field because software packs a symmetric matrix in
-  different orders, as MRtrix does.
+- `layout` says which components the axis stores, and in which order,
+  for a frame of `n` axes. It is a name or an explicit tuple that gives,
+  for each entry, the frame axis of each index. A single field holds
+  both, because a named layout is only a short way to write a common
+  tuple, and because software stores a symmetric matrix in different
+  orders.
+
+The names are generic rather than the names of software, so that they
+also describe tensors of other ranks. Their orders for `k = 2` and
+`n = 3` are given below, where `ij` stands for the entry `(i, j)`:
+
+| `layout`                     | Order for `k = 2`, `n = 3`   | Used by                |
+| ---------------------------- | ---------------------------- | ---------------------- |
+| `"C"`                        | `00 01 02 10 11 12 20 21 22` |                        |
+| `"F"`                        | `00 10 20 01 11 21 02 12 22` |                        |
+| `"symmetric"`                | `00 01 02 11 12 22`          | FSL, ITK, NRRD, Camino |
+| `"symmetric-lower"`          | `00 10 11 20 21 22`          | DIPY                   |
+| `"symmetric-diagonal-first"` | `00 11 22 01 02 12`          | MRtrix                 |
+| `"diagonal"`                 | `00 11 22`                   |                        |
+
+`"C"` and `"F"` store all the `n**k` components, with the last and the
+first index varying fastest. `"symmetric"` and `"symmetric-lower"` store
+the `C(n + k - 1, k)` components whose indices do not decrease, or do
+not increase, in lexicographic order, which is defined for every rank.
+`"symmetric-diagonal-first"` has no natural order beyond rank 2, so it
+is refused for other ranks. `"diagonal"` stores the `n` components whose
+indices are all equal, and the other components are zero.
+
+An explicit tuple lists each stored component once, and no two of its
+entries may be permutations of each other. A component that it does
+not list takes the value of the listed component whose indices are a
+permutation of its own, if there is one, and is zero otherwise. Taking
+a value from a permutation makes the tensor symmetric, which needs all
+its indices to be of the same kind, because the symmetry of a tensor
+whose indices change differently depends on the frame. The symmetric
+layouts, and explicit tuples that rely on a permutation, are therefore
+refused for a mixed valence.
+
+`None`, the default, reads the layout from the number of entries once
+`n` is known: `n**k` entries are `"C"` and `C(n + k - 1, k)` entries are
+`"symmetric"`. These numbers differ when `n` and `k` are both at least
+2, and any other number of entries is refused. `"diagonal"` is never
+inferred. When `n` is not known, as before a change of frame, it is read
+from the number of entries, and a number that two frames could give,
+such as 36 for a matrix, is refused until the layout is given.
+
+A layout with components that are zero by construction, such as
+`"diagonal"` or an explicit tuple that leaves components out without a
+permutation to take them from, cannot hold the tensor after a general
+change of frame. `reframe` then stores the result in the smallest layout
+that can hold it, `"symmetric"` when all the indices are of the same
+kind and `"C"` otherwise. The axis changes its layout and its length,
+and the transformations and the frames of the image get the new axis in
+their input system.
 
 When the frame changes by `J`, each vector index is multiplied by `J`
 and each covector index by `J⁻ᵀ`. A diffusion tensor, with two vector
@@ -91,7 +145,8 @@ indices, becomes `J T Jᵀ`, a Hessian, with two covector indices, becomes
 `J⁻ᵀ H J⁻¹`, and a linear map, with one index of each kind, becomes
 `J A J⁻¹`. A two-point tensor, such as the Jacobian of a warp between
 two spaces, has indices in two different frames, so it is stored as two
-axes, a vector axis and a covector axis, each with its own frame.
+vector axes, one of valence `"vector"` and one of valence `"covector"`,
+each with its own frame.
 
 The coordinates of a point change with the map itself rather than with
 its Jacobian. A point axis can have a frame, which records the space of
@@ -306,23 +361,25 @@ defines no layout for them.
 Everything that these documents let a file state can be represented
 here. A vector axis of an OME-Zarr image is a `vector` axis whose frame
 is the transformation from the array to the intrinsic coordinate system.
-The Zarr reader maps the types `point`, `vector`, `covector` and
-`tensor` to their classes, and a tensor axis that it reads has the
-default `indices`, `layout` and `order`, since OME-NGFF does not state
-them. The reverse is lossy: NGFF has no standard way to store a
-covector, the layout of a tensor, a two-point tensor or a foreign frame,
-so a writer would store them as custom axis types and report the loss.
+The Zarr reader maps the types `point`, `vector` and `tensor` to their
+classes, and a vector or a tensor axis that it reads has the default
+`valence` and `layout`, since OME-NGFF does not state them. The reverse
+is lossy: NGFF has no standard way to store the valence of a vector, the
+valence and the layout of a tensor, a two-point tensor or a foreign
+frame, so a writer would store them as custom axis types and report the
+loss.
 
 ## 8. Status
 
 Implemented:
 
 - the component types of `AxisType` and their classes `ComponentAxis`,
-  `PointAxis`, `CoordinateAxis`, `VectorAxis`, `DisplacementAxis`,
-  `CovectorAxis` and `TensorAxis` (`brainhops.datamodel.axes`), and the
-  predicate `is_component_type`, which the code that places the axes of
-  an image in the order of a file format uses to store these axes with
-  the channels;
+  `PointAxis`, `CoordinateAxis`, `VectorAxis`, `DisplacementAxis` and
+  `TensorAxis` (`brainhops.datamodel.axes`), with the `valence` of
+  vectors and tensors and the `layout` of tensors, and the predicate
+  `is_component_type`, which the code that places the axes of an image
+  in the order of a file format uses to store these axes with the
+  channels;
 - the `frames` field of single-scale images, the restriction of the
   frames that a user gives, and the way lazy transformations, indexing
   and reslicing keep the frames;
