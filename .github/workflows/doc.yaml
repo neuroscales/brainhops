@@ -4,6 +4,11 @@ on:
     branches:
       - master
       - main
+    paths:
+      - src/**
+      - docs/**
+      - zensical.toml
+      - .github/workflows/doc.yaml
 permissions:
   contents: read
   pages: write
