@@ -194,7 +194,15 @@ repo = "fontawesome/brands/github"
 # mkdocstrings
 # ----------------------------------------------------------------------------
 [project.plugins.mkdocstrings.handlers.python]
-inventories = ["https://docs.python.org/3/objects.inv"]
+inventories = [
+  "https://docs.python.org/3/objects.inv",
+  "https://typing-extensions.readthedocs.io/en/latest/objects.inv",
+  "https://numpy.org/doc/stable/objects.inv",
+  "https://docs.cupy.dev/en/stable/reference/objects.inv",
+  "https://docs.dask.org/en/stable/objects.inv",
+  "https://bagofseeds.github.io/bagof-hints/objects.inv",
+  "https://bagofseeds.github.io/bagof-magic/objects.inv",
+]
 paths = ["src"]
 
 [project.plugins.mkdocstrings.handlers.python.options]

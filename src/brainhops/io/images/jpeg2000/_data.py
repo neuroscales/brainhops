@@ -98,25 +98,31 @@ class _Jpeg2000Proxy(StoredProxy):
     [`StoredProxy`][]), but Pillow decodes the whole level for any read.
     """
 
-    source: tx.Annotated[tx.Any, tx.Doc("Where the file lies.")]
-    record: NoRepr[
-        Jpeg2000Raw,
-        tx.Doc(
-            "The record that the file was read with, which gives the shape "
-            "and the type of the samples."
-        ),
-    ]
-    level: tx.Annotated[
-        int, tx.Doc("The resolution level, where 0 is the full resolution.")
-    ]
+    # --- magic attributes ----
+
+    source: tx.Any
+    """Where the file lies."""
+
+    record: NoRepr[Jpeg2000Raw]
+    """
+    The record that the file was read with, which gives the shape and
+    the type of the samples."
+    """
+
+    level: int = 0
+    """The resolution level, where 0 is the full resolution."""
+
+    # --- properties ----
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the samples, read from the record."""
         return tuple(self.record.stored_shape(self.level))
 
-    dtype = alias("record.dtype")
+    dtype = alias("record.dtype", readonly=True)
     """The type of the samples, read from the record."""
+
+    # --- methods ----
 
     def read_samples(self) -> np.ndarray:
         """Decode all the samples of the level.

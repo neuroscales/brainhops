@@ -1,5 +1,4 @@
-"""HDF5 datasets that can still be read after their file was
-closed."""
+"""HDF5 datasets that can still be read after their file was closed."""
 
 # stdlib
 from os import PathLike
@@ -10,16 +9,19 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoInit, NoRepr
 
-from brainhops._core.proxy import StoredProxy
-
 # core
+from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import ArrayProtocol
 
 # this format
 from ._parsers import H5Like
 
+# typing
+_T = tx.TypeVar("_T")
+_Internal = NoInit[NoRepr[tx.Optional[_T]]]
 
-class DelayedH5Array(StoredProxy):
+
+class H5ArrayProxy(StoredProxy):
     """
     An HDF5 dataset that can be read after its file was closed, by
     reopening the file on demand.
@@ -31,35 +33,23 @@ class DelayedH5Array(StoredProxy):
     keeps open is used by every index of it.
     """
 
-    file: tx.Annotated[
-        tx.Any,
-        tx.Doc("The HDF5 file, by its path, as an open file, or as bytes."),
-    ]
-    path: tx.Annotated[str, tx.Doc("The path of the dataset in the file.")]
-    _handle: NoInit[
-        NoRepr[
-            tx.Optional[tx.Any],
-            tx.Doc("The file that the array opened and keeps, or `None`."),
-        ]
-    ] = None
-    _shape: NoInit[
-        NoRepr[
-            tx.Optional[tx.Tuple[int, ...]],
-            tx.Doc("The shape of the dataset, once it was opened."),
-        ]
-    ] = None
-    _dtype: NoInit[
-        NoRepr[
-            tx.Optional[np.dtype],
-            tx.Doc("The type of the dataset, once it was opened."),
-        ]
-    ] = None
-    _chunks: NoInit[
-        NoRepr[
-            tx.Optional[tx.Tuple[int, ...]],
-            tx.Doc("The chunks of the dataset, once it was opened."),
-        ]
-    ] = None
+    file: tx.Any
+    """The HDF5 file, by its path, as an open file, or as bytes."""
+
+    path: str
+    """The path of the dataset in the file."""
+
+    _handle: _Internal[tx.Any] = None
+    """The file that the array opened and keeps, or `None`."""
+
+    _shape: _Internal[tx.Tuple[int, ...]] = None
+    """The shape of the dataset, once it was opened."""
+
+    _dtype: _Internal[np.dtype] = None
+    """The type of the dataset, once it was opened."""
+
+    _chunks: _Internal[tx.Tuple[int, ...]] = None
+    """The chunks of the dataset, once it was opened."""
 
     def open(self) -> h5py.File:
         """Open the HDF5 file, or reuse the open one, and return it."""
@@ -138,7 +128,7 @@ class DelayedH5Array(StoredProxy):
         return super().to_dask(**kwargs)
 
     @property
-    def shape(self) -> tuple:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the dataset."""
         if self._shape is None:
             self.to_dataset()
@@ -161,7 +151,7 @@ class DelayedH5Array(StoredProxy):
 
 def delayed_dataset(
     h5file: h5py.File, key: str, keep_open: bool
-) -> tx.Union[DelayedH5Array, ArrayProtocol]:
+) -> tx.Union[H5ArrayProxy, ArrayProtocol]:
     """
     Return a dataset of an open HDF5 file that is read later.
 
@@ -178,7 +168,7 @@ def delayed_dataset(
 
         fileish = h5file.filename
         fileish = op.abspath(fileish) if fileish else None
-    array = DelayedH5Array(fileish, key)
+    array = H5ArrayProxy(fileish, key)
     if da:
         array = array.to_dask(keep_open=keep_open)
     return array

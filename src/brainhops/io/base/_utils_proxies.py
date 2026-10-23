@@ -44,7 +44,8 @@ class NibabelProxy(StoredProxy):
     components.
     """
 
-    proxy: tx.Annotated[tx.Any, tx.Doc("The proxy of nibabel.")]
+    proxy: tx.Any
+    """The proxy of nibabel."""
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:

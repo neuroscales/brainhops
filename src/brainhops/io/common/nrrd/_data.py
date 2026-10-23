@@ -267,30 +267,24 @@ class _NrrdProxy(StoredProxy):
     or preceded by skipped lines are decoded whole for any read.
     """
 
-    source: tx.Annotated[
-        tx.Any,
-        tx.Doc("The path of the header file, or the stream that holds it."),
-    ]
-    start: tx.Annotated[int, tx.Doc("The position of the header in a stream.")]
-    files: tx.Annotated[
-        tx.Tuple[tx.Any, ...],
-        tx.Doc(
-            "The paths of the data files, which are empty for attached "
-            "samples."
-        ),
-    ]
-    record: NoRepr[
-        NrrdRaw,
-        tx.Doc(
-            "The record of the image, which describes how samples are stored."
-        ),
-    ]
-    mmap: tx.Annotated[
-        bool,
-        tx.Doc(
-            "Whether raw samples in a single local file are memory-mapped."
-        ),
-    ]
+    # --- magic attributes ----
+
+    source: tx.Any
+    """The path of the header file, or the stream that holds it."""
+
+    start: int
+    """The position of the header in a stream."""
+
+    files: tx.Tuple[tx.Any, ...]
+    """The paths of the data files, which are empty for attached samples."""
+
+    record: NoRepr[NrrdRaw]
+    """The record of the image, which describes how samples are stored."""
+
+    mmap: bool
+    """Whether raw samples in a single local file are memory-mapped."""
+
+    # --- properties ----
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -298,7 +292,7 @@ class _NrrdProxy(StoredProxy):
         sizes = self.record.sizes
         return tuple(sizes[i] for i in image_order(self.record))
 
-    dtype = alias("record.dtype")
+    dtype = alias("record.dtype", readonly=True)
     """The type of the samples, with the byte order of the file."""
 
     @property
@@ -309,6 +303,32 @@ class _NrrdProxy(StoredProxy):
         again by a writer, which stores them in one file.
         """
         return len(self.files) <= 1
+
+    @property
+    def partial(self) -> bool:
+        """Whether the samples can be read in part.
+
+        They can when they lie in one file, are raw or compressed with
+        gzip or bzip2, and follow the header without skipped lines, so
+        that each sample lies at a known position of the decoded stream.
+        A byte skip of -1 counts from the end of the file, which is known
+        only for raw samples.
+        """
+        record = self.record
+        if len(self.files) > 1 or record.line_skip:
+            return False
+        if record.encoding == "raw":
+            return True
+        return record.encoding in _PARTIAL_ENCODINGS and record.byte_skip >= 0
+
+    @property
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        """The block shape, or `None` for samples that are decoded whole."""
+        if not self.partial:
+            return None
+        return self._strided(self.source, self.start, 0).chunks
+
+    # --- methods ----
 
     def _locations(self) -> tx.List[tx.Tuple[tx.Any, int]]:
         """Return where the samples lie, after checking the header again.
@@ -373,30 +393,6 @@ class _NrrdProxy(StoredProxy):
         """
         values = _decode(self.record, self._locations(), self.mmap)
         return values.transpose(image_order(self.record))
-
-    @property
-    def partial(self) -> bool:
-        """Whether the samples can be read in part.
-
-        They can when they lie in one file, are raw or compressed with
-        gzip or bzip2, and follow the header without skipped lines, so
-        that each sample lies at a known position of the decoded stream.
-        A byte skip of -1 counts from the end of the file, which is known
-        only for raw samples.
-        """
-        record = self.record
-        if len(self.files) > 1 or record.line_skip:
-            return False
-        if record.encoding == "raw":
-            return True
-        return record.encoding in _PARTIAL_ENCODINGS and record.byte_skip >= 0
-
-    @property
-    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
-        """The block shape, or `None` for samples that are decoded whole."""
-        if not self.partial:
-            return None
-        return self._strided(self.source, self.start, 0).chunks
 
     def _strided(self, file: tx.Any, start: int, skip: int) -> StridedProxy:
         """The strided reader of the samples that lie in `file`."""

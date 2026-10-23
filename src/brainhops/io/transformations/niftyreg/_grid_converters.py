@@ -299,7 +299,7 @@ def _sandwich(parts: FieldParts) -> tx.Tuple[_xforms.Transformation, ...]:
             output=VOXEL,
             degree=degree,
             bound=BoundaryCondition.nearest,
-            store=StoreEnum.from_coefficients(degree > 1),
+            store=[StoreEnum.values, StoreEnum.coefficients][degree > 1],
             **velocity,
         ),
         VoxelToRAS(matrix=parts.grid2world[:-1]),

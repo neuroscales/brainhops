@@ -45,22 +45,37 @@ class _MincProxy(StoredProxy):
     as many as fit in the block size of Dask.
     """
 
-    source: tx.Annotated[
-        tx.Any,
-        tx.Doc("The path of the file, or the bytes of the decompressed file."),
-    ]
-    record: NoRepr[
-        MincRaw,
-        tx.Doc("The record of the image, which gives its shape and type."),
-    ]
+    # --- magic attributes ----
+
+    source: tx.Any
+    """The path of the file, or the bytes of the decompressed file."""
+
+    record: NoRepr[MincRaw]
+    """The record of the image, which gives its shape and type."""
+
+    # --- properties ----
+
+    shape = alias("record.shape", readonly=True)
+    """The shape of the voxels in file order, read from the record."""
+
+    dtype = alias("record.scaled_dtype", readonly=True)
+    """The type of the voxels once they are scaled."""
 
     @property
-    def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the voxels in file order, read from the record."""
-        return tuple(self.record.shape)
+    def chunks(self) -> tx.Tuple[int, ...]:
+        """The block shape: slabs of the slowest dimension.
 
-    dtype = alias("record.scaled_dtype")
-    """The type of the voxels once they are scaled."""
+        A block holds every value of the other dimensions, and as many
+        slabs as fit in the block size of Dask, with at least one slab.
+        """
+        shape = self.shape
+        if not shape:
+            return shape
+        slab = int(np.prod(shape[1:])) * np.dtype(self.dtype).itemsize
+        count = max(1, _chunk_bytes() // max(1, slab))
+        return (min(count, shape[0]),) + shape[1:]
+
+    # --- methods
 
     def read_voxels(self) -> np.ndarray:
         """Return all the scaled voxels in file order.
@@ -80,20 +95,6 @@ class _MincProxy(StoredProxy):
                 f"that the image was read with says {self.shape}."
             )
         return values
-
-    @property
-    def chunks(self) -> tx.Tuple[int, ...]:
-        """The block shape: slabs of the slowest dimension.
-
-        A block holds every value of the other dimensions, and as many
-        slabs as fit in the block size of Dask, with at least one slab.
-        """
-        shape = self.shape
-        if not shape:
-            return shape
-        slab = int(np.prod(shape[1:])) * np.dtype(self.dtype).itemsize
-        count = max(1, _chunk_bytes() // max(1, slab))
-        return (min(count, shape[0]),) + shape[1:]
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         def read(container: tx.Any, mfile: tx.Any, version: int) -> np.ndarray:

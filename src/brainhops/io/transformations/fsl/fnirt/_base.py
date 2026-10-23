@@ -497,9 +497,9 @@ class FnirtWarpField(
         header = _header(self)
         if header is None:
             return None
-        return StoreEnum.from_coefficients(
+        return [StoreEnum.values, StoreEnum.coefficients][
             _nifti_intent(header) in _COEFFICIENT_INTENTS
-        )
+        ]
 
     # --- intent-driven behaviour --------------------------------------
 
@@ -717,7 +717,7 @@ class FnirtWarpField(
         return _warp_chain(
             field=self._field_array(ref),
             degree=self._degree(),
-            store=StoreEnum.from_coefficients(self._is_coeff()),
+            store=[StoreEnum.values, StoreEnum.coefficients][self._is_coeff()],
             bound=self._bound(),
             ref_to_field=self._ref_to_field(ref),
             ref=ref,

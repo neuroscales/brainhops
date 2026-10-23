@@ -126,10 +126,10 @@ class Image(
         """The number of dimensions of the data."""
         return len(self.shape)
 
-    dtype = alias("dataobj.dtype")
+    dtype = alias("dataobj.dtype", readonly=True)
     """The data type of the data."""
 
-    grid = alias("geometry.grid")
+    grid = alias("geometry.grid", readonly=True)
     """The Cartesian field that defines the sampling grid."""
 
     @property

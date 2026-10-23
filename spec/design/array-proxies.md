@@ -52,7 +52,7 @@ proxies of this group decode the bytes themselves or ask nibabel to.
 
 The second group wraps a library that already reads chunks or tiles:
 Zarr (`_ZarrProxy`), N5 (`_N5Proxy`), Neuroglancer precomputed
-(`_PrecomputedProxy`), HDF5 (`DelayedH5Array`, `_BdvProxy`,
+(`_PrecomputedProxy`), HDF5 (`H5ArrayProxy`, `_BdvProxy`,
 `_ImarisProxy`), OpenSlide (`_SlideArray`), TIFF (`_TiffProxy`), image
 stacks (`_StackProxy`), JPEG 2000 (`_Jpeg2000Proxy`) and Pillow
 (`_PillowProxy`). Most of these proxies read only the part of the file
@@ -372,13 +372,13 @@ library, and set `chunks` to the native block shape. They lose their
 copies of the shortcuts and of `_basic_index`, but their reading code
 does not change. The TensorStore proxies of N5 and precomputed share a
 small base class, because they differ only in the driver name.
-`DelayedH5Array` becomes the shared HDF5 proxy of BigDataViewer, Imaris,
+`H5ArrayProxy` becomes the shared HDF5 proxy of BigDataViewer, Imaris,
 ITK and X5. Pillow and JPEG 2000 keep reading the whole image, because
 their codecs cannot decode a part of it.
 
 The native block shapes are implemented: the proxies of Zarr, N5,
 precomputed, BigDataViewer, Imaris, OpenSlide and image stacks, and
-`DelayedH5Array`, give them as `chunks`. The shared base class of
+`H5ArrayProxy`, give them as `chunks`. The shared base class of
 N5 and precomputed is not implemented. The readers of transformation
 fields stored in HDF5 (ITK and X5) and in OME-Zarr convert their lazy
 arrays with the backend setting, so that under `"dask"` a field is a

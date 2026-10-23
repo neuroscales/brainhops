@@ -1240,7 +1240,7 @@ def _data2values(
     * If `store == "values"`, return `data` as is.
     * If `store == "coefficients"`, decode the spline coefficients.
     """
-    if data is None or store == StoreEnum.VALUES:
+    if data is None or store == StoreEnum.values:
         return data
     return coeff2value_field(data, degree=degree, bound=bound)
 
@@ -1256,7 +1256,7 @@ def _values2data(
     * If `store == "values"`, return `values` as is.
     * If `store == "coefficients"`, return the spline coefficients.
     """
-    if values is None or store == StoreEnum.VALUES:
+    if values is None or store == StoreEnum.values:
         return values
     return value2coeff_field(values, degree=degree, bound=bound)
 
@@ -1272,7 +1272,7 @@ def _data2coeffs(
     * If `store == "coefficients"`, return `data` as is.
     * If `store == "values"`, fit a spline to the values.
     """
-    if data is None or store == StoreEnum.COEFFICIENTS:
+    if data is None or store == StoreEnum.coefficients:
         return data
     return value2coeff_field(data, degree=degree, bound=bound)
 

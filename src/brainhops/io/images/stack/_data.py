@@ -7,12 +7,12 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoInit, NoRepr
-
-from brainhops._core.properties import alias
+from bagof.magic import NoRepr
 
 # internals
+from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
+from brainhops._core.typing import Internal
 from brainhops.io.base.parsers import ParserContentError
 
 # this format
@@ -39,26 +39,22 @@ class _StackProxy(StoredProxy):
     permuted layouts of MRtrix do.
     """
 
-    folder: tx.Annotated[
-        tx.Any, tx.Doc("The path of the folder that holds the files.")
-    ]
-    record: NoRepr[
-        StackRaw,
-        tx.Doc("The record of the stack, which lists the files in order."),
-    ]
-    _fill: tx.Annotated[
-        tx.Any,
-        tx.Doc(
-            "The value of the pixels of a missing slice, as it was given "
-            "as `fill=`, or `None` for the default of the type."
-        ),
-    ] = None
-    _members: NoInit[
-        NoRepr[
-            tx.Optional[tx.Dict[int, int]],
-            tx.Doc("The index in the record of the file of each slice."),
-        ]
-    ] = None
+    # --- magic attributes ----
+
+    folder: tx.Any
+    """The path of the folder that holds the files."""
+
+    record: NoRepr[StackRaw]
+    """"The record of the stack, which lists the files in order."""
+
+    _fill: tx.Any = None
+    """
+    The value of the pixels of a missing slice, as it was given as `fill=`,
+    or `None` for the default of the type.
+    """
+
+    _members: Internal[tx.Dict[int, int]]
+    """The index in the record of the file of each slice."""
 
     def __post_init__(self) -> None:
         # A fill value that the type of the stack cannot hold is refused
@@ -72,23 +68,25 @@ class _StackProxy(StoredProxy):
             for index, member in enumerate(members)
         }
 
+    # --- properties ----
+
     @property
     def fill(self) -> tx.Any:
         """The value of a missing pixel, in the type of the stack."""
         return fill_value(self._fill, self.record.dtype)
 
-    @property
-    def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the stacked pixels, read from the record."""
-        return tuple(self.record.shape)
+    shape = alias("record.shape", readonly=True)
+    """The shape of the stacked pixels, read from the record."""
 
-    dtype = alias("record.dtype")
+    dtype = alias("record.dtype", readonly=True)
     """The type of the pixels."""
 
     @property
     def chunks(self) -> tx.Tuple[int, ...]:
         """The shape of the block that one file fills: one plane."""
         return (1,) + self.shape[1:]
+
+    # --- methods ----
 
     def to_dask(
         self, *, device: tx.Union[str, int, None] = "cpu", **kwargs: tx.Any

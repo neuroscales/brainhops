@@ -11,6 +11,7 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
@@ -174,27 +175,25 @@ class _MrtrixProxy(StridedProxy):
     as nibabel's proxy applies the scaling of a NIfTI header.
 
     A read gets only the bytes that its selection needs (see
-    [`StridedProxy`][brainhops._core.strided.StridedProxy]): the voxels
-    of a local file that is not compressed are memory-mapped when `mmap`
-    is true, and a compressed file is decompressed up to the end of the
-    selection. The blocks that the proxy gives Dask are slabs of the axis
-    that the file stores slowest. Packed `Bit` data cannot be read in
-    part, so any read of such an image decodes the whole file.
+    [`StridedProxy`][]): the voxels of a local file that is not
+    compressed are memory-mapped when `mmap` is true, and a compressed
+    file is decompressed up to the end of the selection. The blocks that
+    the proxy gives Dask are slabs of the axis that the file stores
+    slowest. Packed `Bit` data cannot be read in part, so any read of
+    such an image decodes the whole file.
 
     A reader builds the lazy array of the image, scaled or not, from
-    its record with
-    [`from_record`][brainhops.io.common.mrtrix._data._MrtrixProxy.from_record].
+    its record with [`from_record`][].
     """
 
-    record: KwOnly[
-        NoRepr[
-            MrtrixRaw,
-            tx.Doc(
-                "The record of the image, which describes how its voxels "
-                "are stored."
-            ),
-        ]
-    ]
+    # --- magic attributes ----
+
+    record: KwOnly[NoRepr[MrtrixRaw]]
+    """
+    The record of the image, which describes how its voxels are stored.
+    """
+
+    # --- factory ---
 
     @classmethod
     def from_record(
@@ -254,6 +253,8 @@ class _MrtrixProxy(StridedProxy):
         offset, scale = record.scaling
         return ScaledProxy(proxy, scale, offset)
 
+    # --- properties ----
+
     @property
     def dtype(self) -> np.dtype:
         """The type of the stored values, which is `bool` for `Bit` data."""
@@ -266,10 +267,10 @@ class _MrtrixProxy(StridedProxy):
             return None
         return super().chunks
 
-    @property
-    def nbytes_stored(self) -> int:
-        """The number of bytes of the stored voxels."""
-        return self.record.nbytes
+    nbytes_stored = alias("record.nbytes", readonly=True)
+    """The number of bytes of the stored voxels."""
+
+    # --- methods ----
 
     def read_stored(self) -> bytes:
         """Return the bytes of the voxels as the file stores them.

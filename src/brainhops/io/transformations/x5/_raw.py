@@ -29,7 +29,7 @@ from brainhops.io.base.parsers import (
 )
 
 # io
-from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5ReaderWriter
+from brainhops.io.common.hdf5 import H5ArrayProxy, Hdf5ReaderWriter
 from brainhops.io.common.hdf5._parsers import read_string
 
 X5_FORMAT = "X5"
@@ -70,7 +70,7 @@ class X5Node(Magic, repr=HIDE_IF_NONE):
 
     The fields mirror the group's attributes and datasets. The large datasets
     (`Transform`, `Inverse` and `Jacobian` of more than two dimensions) are
-    held as a [`DelayedH5Array`][], which reads them from the file when they
+    held as a [`H5ArrayProxy`][], which reads them from the file when they
     are used, unless the file is read with `load=True`.
     """
 
@@ -153,7 +153,7 @@ class X5Raw(Raw, Hdf5ReaderWriter):
     `/TransformGroup` in `nodes`, including the JSON metadata of the groups
     and the datasets that brainhops does not interpret. The matrices are
     read at once. The fields, which are large, are held as a
-    [`DelayedH5Array`][], which opens the file again by its name when the
+    [`H5ArrayProxy`][], which opens the file again by its name when the
     values are needed, so the record never keeps an open file.
 
     The metadata of an X5 file,
@@ -250,7 +250,7 @@ class X5Raw(Raw, Hdf5ReaderWriter):
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the record into an empty HDF5 file open for writing.
 
-        The fields that are still held by a [`DelayedH5Array`][] are read
+        The fields that are still held by a [`H5ArrayProxy`][] are read
         from their file and written as they are, without being decoded.
 
         Parameters
@@ -310,7 +310,7 @@ def read_x5(
     """Read the header and nodes of an open X5 file.
 
     The matrices and the other small datasets are read at once. The
-    fields, which are large, are read later through a [`DelayedH5Array`][]
+    fields, which are large, are read later through a [`H5ArrayProxy`][]
     that opens the file again by its name, unless `load` is true or the
     file has no name because it was opened from a stream.
 
@@ -417,7 +417,7 @@ def _read_dataset(
     dataset = group[key]
     if source is None or dataset.ndim <= 2:
         return dataset[()]
-    return DelayedH5Array(source, dataset.name)
+    return H5ArrayProxy(source, dataset.name)
 
 
 def _read_node(group: h5py.Group, source: tx.Optional[str]) -> X5Node:

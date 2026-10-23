@@ -867,7 +867,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
     @property
     def store(self) -> StoreEnum:
         """Whether the grid holds spline coefficients, as above degree 1."""
-        return StoreEnum.from_coefficients(self.degree > 1)
+        return [StoreEnum.values, StoreEnum.coefficients][self.degree > 1]
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
@@ -940,7 +940,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             chain,
             self._WHAT,
             ndim=_NDIM,
-            store=StoreEnum.from_coefficients(degree > 1),
+            store=[StoreEnum.values, StoreEnum.coefficients][degree > 1],
             degree=degree,
             bound=self.bound,
         )

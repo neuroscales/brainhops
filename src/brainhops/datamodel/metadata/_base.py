@@ -10,7 +10,6 @@ import typing_extensions as tx
 from bagof.magic import Factory, HideIf, HideIfNone, replace
 
 # internals
-from ..base import DataModelBase
 from ._derive import (
     Indexed,
     Resampled,
@@ -42,7 +41,6 @@ from ._vocabulary import (
 # so that `repr` shows `extra`, then the vocabulary in its declared
 # order.
 class Metadata(
-    DataModelBase,
     TransformVocabulary,
     MicroscopyVocabulary,
     StorageVocabulary,
@@ -93,15 +91,14 @@ class Metadata(
 
     extra: tx.Annotated[
         tx.Dict[str, tx.Any],
-        tx.Doc(
-            "Free-form keys the vocabulary does not cover, copied into "
-            "any free-form store a format has."
-        ),
         Scoped(Scope.FILE),
-        Factory(dict),
         # Hidden from `repr` when empty, as well as when absent.
         HideIf(operator.not_),
-    ]
+    ] = Factory()
+    """
+    Free-form keys the vocabulary does not cover, copied into any
+    free-form store a format has."
+    """
 
     @classmethod
     def from_instance(

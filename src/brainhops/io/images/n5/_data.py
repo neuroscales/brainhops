@@ -11,6 +11,7 @@ from bagof.magic import NoInit, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
+from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
@@ -160,27 +161,22 @@ class _N5Proxy(StoredProxy):
     open dataset. The proxy keeps no open dataset when it is pickled.
     """
 
-    location: tx.Annotated[tx.Any, tx.Doc("The directory of the dataset.")]
-    record: NoRepr[
-        N5Raw,
-        tx.Doc("The record of the dataset, which gives its shape and type."),
-    ]
-    _store: NoInit[
-        NoRepr[
-            tx.Optional[tx.Any],
-            tx.Doc("The dataset that TensorStore opened, or `None`."),
-        ]
-    ] = None
+    location: tx.Any
+    """The directory of the dataset."""
 
-    @property
-    def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the samples, read from the record."""
-        return tuple(int(n) for n in self.record.dimensions)
+    record: NoRepr[N5Raw]
+    """The record of the dataset, which gives its shape and type."""
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the samples, in the native byte order."""
-        return self.record.dtype
+    _store: NoInit[NoRepr[tx.Optional[tx.Any]]] = None
+    """The dataset that TensorStore opened, or `None`."""
+
+    # --- properties ----
+
+    shape = alias("record.dimensions", readonly=True)
+    """The shape of the samples, read from the record."""
+
+    dtype = alias("record.dtype", readonly=True)
+    """The type of the samples, in the native byte order."""
 
     @property
     def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
@@ -191,6 +187,8 @@ class _N5Proxy(StoredProxy):
         """
         block = self.record.block_size
         return None if block is None else tuple(int(n) for n in block)
+
+    # --- methods ---
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         state = dict(self.__dict__)

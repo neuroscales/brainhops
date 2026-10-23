@@ -141,23 +141,14 @@ class StoreEnum(StrEnum):
     The following table lists each member with its aliases, its value and
     what `data` holds when the member is used.
 
-    | Name           | Aliases                            | Value            | Description                                                           |
-    |----------------|------------------------------------|------------------|-----------------------------------------------------------------------|
-    | `coefficients` | `COEFFICIENTS`, `COEFFS`, `coeffs` | `"coefficients"` | `data` holds spline coefficients, and `field` decodes them to values. |
-    | `values`       | `VALUES`                           | `"values"`       | `data` holds the field's values, and `field` is `data` itself.        |
+    | Name           | Aliases  | Value            | Description                                                           |
+    |----------------|----------|------------------|-----------------------------------------------------------------------|
+    | `coefficients` | `coeffs` | `"coefficients"` | `data` holds spline coefficients, and `field` decodes them to values. |
+    | `values`       |          | `"values"`       | `data` holds the field's values, and `field` is `data` itself.        |
     """
 
-    COEFFICIENTS = COEFFS = coefficients = coeffs = "coefficients"
-    VALUES = values = "values"
-
-    @classmethod
-    def from_coefficients(cls, coefficients: bool) -> "StoreEnum":
-        """Return the member matching a boolean `coefficients` flag.
-
-        File formats state with a boolean whether they store coefficients,
-        and this method turns that boolean into a member.
-        """
-        return cls.coefficients if coefficients else cls.values
+    coefficients = coeffs = "coefficients"
+    values = "values"
 # fmt: on
 # ruff: enable[E501]
 

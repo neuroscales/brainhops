@@ -16,9 +16,10 @@ from bagof.magic import replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
-from brainhops.io.common.hdf5 import DelayedH5Array
+from brainhops.io.common.hdf5 import H5ArrayProxy
 from brainhops.io.common.hdf5._parsers import read_string
 
 # this format
@@ -35,7 +36,7 @@ class _BdvProxy(StoredProxy):
     """A lazy array of the voxels of one level of one view.
 
     The proxy holds a
-    [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] of the
+    [`H5ArrayProxy`][brainhops.io.common.hdf5.H5ArrayProxy] of the
     `cells` dataset, which opens the HDF5 file by its name each time
     values are read, and the type of the voxels that the record
     gives. The values are presented in the order of the file, z, y, x,
@@ -47,24 +48,20 @@ class _BdvProxy(StoredProxy):
     reads only the selected part of the dataset.
     """
 
-    cells: tx.Annotated[DelayedH5Array, tx.Doc("The lazy `cells` dataset.")]
-    _dtype: tx.Annotated[
-        np.dtype,
-        tx.Doc(
-            "The type of the voxels that the record gives, given as "
-            "`dtype=`, which may differ from the stored type."
-        ),
-    ]
+    cells: H5ArrayProxy
+    """The lazy `cells` dataset."""
 
-    @property
-    def shape(self) -> tx.Tuple[int, ...]:
-        """The shape of the voxels, in the order z, y, x of the file."""
-        return tuple(int(d) for d in self.cells.shape)
+    _dtype: np.dtype
+    """
+    The type of the voxels that the record gives, given as `dtype=`,
+    which may differ from the stored type.
+    """
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The type of the voxels, which may differ from the stored type."""
-        return self._dtype
+    shape = alias("cells.shape", readonly=True)
+    """The shape of the voxels, in the order z, y, x of the file."""
+
+    dtype = alias("_dtype", readonly=True)
+    """The type of the voxels, which may differ from the stored type."""
 
     @property
     def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
@@ -286,7 +283,7 @@ def _level(
             f"The HDF5 file of this BigDataViewer dataset has no {name} "
             f"dataset."
         )
-    cells = DelayedH5Array(hdf5, name)
+    cells = H5ArrayProxy(hdf5, name)
     # Reading the dataset from the open file stores its shape and type,
     # so that the array knows them without opening the file again.
     stored = cells.to_dataset(h5file).dtype
