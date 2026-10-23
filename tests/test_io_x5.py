@@ -24,7 +24,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common.hdf5 import DelayedH5Array  # noqa: E402
+from brainhops.io.common.hdf5 import H5ArrayProxy  # noqa: E402
 from brainhops.io.transformations.x5 import (  # noqa: E402
     X5BSplineField,
     X5CoordinatesField,
@@ -308,7 +308,7 @@ def test_fields_are_read_lazily(field_x5: Path) -> None:
     node = xform.metadata.raw.nodes[0]
     # The field is read from the file when it is used, and the small
     # datasets are read at once.
-    assert isinstance(node.transform, DelayedH5Array)
+    assert isinstance(node.transform, H5ArrayProxy)
     assert isinstance(node.domain.mapping, np.ndarray)
     assert "_cache_transformations" not in vars(xform)
     points = _ras(IJK)
@@ -316,7 +316,7 @@ def test_fields_are_read_lazily(field_x5: Path) -> None:
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
     # Decoding the chain leaves the record as it was read.
     assert xform.metadata.raw.nodes[0] is node
-    assert isinstance(node.transform, DelayedH5Array)
+    assert isinstance(node.transform, H5ArrayProxy)
 
 
 def test_fields_can_be_read_at_once(field_x5: Path) -> None:
@@ -928,7 +928,7 @@ def test_fslpy_linear_is_read(tmp_path: Path) -> None:
 def test_fslpy_nonlinear_is_read(tmp_path: Path, kind: str) -> None:
     xform = io.load(_write_fslpy(tmp_path / "fsl.x5", kind))
     # The deformation is read when it is used, as in the current layout.
-    assert isinstance(xform.metadata.raw.nodes[0].transform, DelayedH5Array)
+    assert isinstance(xform.metadata.raw.nodes[0].transform, H5ArrayProxy)
     points = _ras(IJK)
     expected = _ramp()[tuple(IJK.T)] + (points if kind == "relative" else 0)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)

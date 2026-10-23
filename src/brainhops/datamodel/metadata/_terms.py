@@ -18,13 +18,15 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
-from brainhops._core.enum import EnumConverter
-from brainhops._core.typing import ArrayLike
+from brainhops._core.typing import ArrayLike, DTypeLike
 
 from ..base import DataModelBase
 from ..enums import SpaceEnum
 from ..systems import CoordinateSystem
 from ..units import Unit
+
+if tx.TYPE_CHECKING:
+    from ..transformations import Transformation
 
 AXES = "ijk"
 """The voxel axes of a BIDS direction, in order."""
@@ -33,22 +35,25 @@ AXES = "ijk"
 class GeneratedBy(DataModelBase):
     """One entry of BIDS `GeneratedBy`: a program that produced the data."""
 
-    name: tx.Annotated[str, tx.Doc("Name of the program (BIDS `Name`).")]
-    version: tx.Annotated[
-        tx.Optional[str], tx.Doc("Its version (BIDS `Version`).")
-    ] = None
-    description: tx.Annotated[
-        tx.Optional[str], tx.Doc("What it did (BIDS `Description`).")
-    ] = None
-    code_url: tx.Annotated[
-        tx.Optional[str], tx.Doc("Where its code lives (BIDS `CodeURL`).")
-    ] = None
+    name: str
+    """Name of the program (BIDS `Name`)."""
+
+    version: tx.Optional[str] = None
+    """Its version (BIDS `Version`)."""
+
+    description: tx.Optional[str] = None
+    """What it did (BIDS `Description`)."""
+
+    code_url: tx.Optional[str] = None
+    """Where its code lives (BIDS `CodeURL`)."""
 
 
 # The converter of `Channel.color`; above the class, which evaluates it.
 def _rgba(value: tx.Any) -> tx.Any:
-    """A color as an RGBA hex string: upper case, without `#`, with an
-    opaque alpha when it has none."""
+    """
+    A color as an RGBA hex string: upper case, without `#`,
+    with an opaque alpha when it has none.
+    """
     if not isinstance(value, str):
         return value
     value = value.lstrip("#").upper()
@@ -60,25 +65,22 @@ def _rgba(value: tx.Any) -> tx.Any:
 class Channel(DataModelBase):
     """The description of one channel of an image."""
 
-    name: tx.Annotated[tx.Optional[str], tx.Doc("The channel label.")] = None
-    color: tx.Annotated[
-        tx.Optional[str],
-        tx.Doc(
-            """
-            Display color, as an RGBA hex string. It is held in upper
-            case, without `#`, and an RGB string (6 digits) is given an
-            opaque alpha (`"0000ff"` is `"0000FFFF"`).
-            """
-        ),
-        ConvertTo(_rgba),
-    ] = None
-    display_range: tx.Annotated[
-        tx.Optional[tx.Tuple[float, float]],
-        tx.Doc("Display window `(min, max)`."),
-    ] = None
-    unit: tx.Annotated[
-        tx.Optional[str], tx.Doc("Unit of the channel's values.")
-    ] = None
+    name: tx.Optional[str] = None
+    """The channel label."""
+
+    color: tx.Annotated[tx.Optional[str], ConvertTo(_rgba)] = None
+    """
+    Display color, as an RGBA hex string.
+
+    It is held in upper case, without `#`, and an RGB string (6 digits)
+    is given an opaque alpha (`"0000ff"` is `"0000FFFF"`).
+    """
+
+    display_range: tx.Optional[tx.Tuple[float, float]] = None
+    """Display window `(min, max)`."""
+
+    unit: tx.Optional[str] = None
+    """Unit of the channel's values."""
 
 
 # The converters of `EncodingDirection.vector` and `.space`; above the
@@ -87,14 +89,6 @@ def _vector(value: tx.Union[str, ArrayLike]) -> tx.Tuple[float, ...]:
     if isinstance(value, str):
         return _bids_vector(value)
     return tuple(float(v) for v in np.ravel(np.asarray(value, dtype=float)))
-
-
-def _space(value: tx.Any) -> tx.Any:
-    """The converter of `EncodingDirection.space`: a coordinate system is
-    kept as it is, and a label becomes a known space when it is one."""
-    if isinstance(value, CoordinateSystem):
-        return value
-    return _SPACE_TERM(value)
 
 
 class EncodingDirection(DataModelBase, kw_only=False):
@@ -129,22 +123,19 @@ class EncodingDirection(DataModelBase, kw_only=False):
 
     vector: tx.Annotated[
         ArrayLike,
-        tx.Doc(
-            "The direction: an array-like vector (or a BIDS string, "
-            "`'j-'`), stored as a tuple of floats, normalised and with "
-            "its near-axis components snapped on construction."
-        ),
         ConvertTo(_vector),
     ]
-    space: tx.Annotated[
-        tx.Optional[tx.Union[SpaceEnum, CoordinateSystem, str]],
-        tx.Doc(
-            "The coordinate system of `vector`: `None` for the image's "
-            "voxel axes, the label of a world space, or a "
-            "`CoordinateSystem`."
-        ),
-        ConvertTo(_space),
-    ] = None
+    """
+    The direction: an array-like vector (or a BIDS string,  `'j-'`),
+    stored as a tuple of floats, normalised and with its near-axis
+    components snapped on construction.
+    """
+
+    space: tx.Optional[tx.Union[SpaceEnum, CoordinateSystem, str]] = None
+    """
+    The coordinate system of `vector`: `None` for the image's voxel axes,
+    the label of a world space, or a `CoordinateSystem`."
+    """
 
     def __post_init__(self) -> None:
         parent = getattr(super(), "__post_init__", None)
@@ -179,7 +170,9 @@ class EncodingDirection(DataModelBase, kw_only=False):
             return None
         return AXES[index] + ("-" if vector[index] < 0 else "")
 
-    def transform(self, linear: tx.Any) -> tx.Self:
+    def transform(
+        self, linear: tx.Union[ArrayLike, "Transformation"]
+    ) -> tx.Self:
         """
         The direction after a linear map of its coordinate system.
 
@@ -256,7 +249,7 @@ def unit(value: tx.Any) -> tx.Any:
     raise TypeError(f"Expected a Unit or a str, not {type(value).__name__}.")
 
 
-def to_dtype(value: tx.Any) -> tx.Any:
+def to_dtype(value: tx.Optional[DTypeLike]) -> tx.Optional[np.dtype]:
     """
     Convert the value of a data type field to a numpy data type in native
     byte order.
@@ -328,10 +321,6 @@ def _snapped(value: float) -> float:
     return value
 
 
-# The converter of a label of a space (see `_space`).
-_SPACE_TERM = EnumConverter(SpaceEnum)
-
-
 def _bids_vector(value: str) -> tx.Tuple[float, ...]:
     """The unit vector of a BIDS direction (`"i"`, `"j-"`, `"k"`)."""
     axis = value[:-1] if value.endswith("-") else value
@@ -346,8 +335,11 @@ def _bids_vector(value: str) -> tx.Tuple[float, ...]:
 
 
 def _linear_part(linear: tx.Any) -> np.ndarray:
-    """The matrix of `EncodingDirection.transform`: an array as it is, or
-    the linear part of a transformation that reduces to an affine."""
+    """
+    The matrix of `EncodingDirection.transform`:
+    an array as it is, or the linear part of a transformation that
+    reduces to an affine.
+    """
     # Not at the top: the transformations import the metadata (their
     # `metadata` field), which imports this module.
     from .._transformations.base import Transformation

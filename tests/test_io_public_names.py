@@ -471,7 +471,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.itk.h5": Package(
         names=frozenset(
             {
-                "DelayedH5Array",
+                "H5ArrayProxy",
                 "H5Header",
                 "H5Metadata",
                 "H5Raw",

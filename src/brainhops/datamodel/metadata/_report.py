@@ -42,29 +42,24 @@ class ConversionReport(DataModelBase):
     (see [`metadata_loss_policy`][]).
     """
 
-    source: tx.Annotated[
-        tx.Optional[str], tx.Doc("The format converted from.")
-    ] = None
-    target: tx.Annotated[
-        tx.Optional[str], tx.Doc("The format converted to.")
-    ] = None
-    lost: tx.Annotated[
-        tx.Dict[str, tx.Any],
-        tx.Doc("The value that was dropped, for each field name."),
-        Factory(),
-    ]
-    approximated: tx.Annotated[
-        tx.Dict[str, str],
-        tx.Doc("What changed in the stored value, for each field name."),
-        Factory(),
-    ]
+    source: tx.Optional[str] = None
+    """The format converted from."""
+
+    target: tx.Optional[str] = None
+    """The format converted to."""
+
+    lost: tx.Dict[str, tx.Any] = Factory()
+    """The value that was dropped, for each field name."""
+
+    approximated: tx.Dict[str, str] = Factory()
+    """What changed in the stored value, for each field name."""
 
     @property
     def lossy(self) -> bool:
         """Whether the report lists a field as lost or approximated."""
         return bool(self.lost or self.approximated)
 
-    def merge(self, other: "ConversionReport") -> tx.Self:
+    def merge(self, other: tx.Self) -> tx.Self:
         """
         Add the entries of another report to this report, in place.
 
@@ -152,10 +147,10 @@ class MetadataLossError(Exception):
         self.report = report
 
 
-LossPolicy = tx.Literal["ignore", "warn", "raise"]
+LossPolicy: tx.TypeAlias = tx.Literal["ignore", "warn", "raise"]
 """A loss policy: ignore a loss, warn about it, or raise."""
 
-OnLoss = tx.Union[LossPolicy, ConversionReport]
+OnLoss: tx.TypeAlias = tx.Union[LossPolicy, ConversionReport]
 """
 What an `on_loss=` argument takes: a [`LossPolicy`][], or a
 [`ConversionReport`][] to fill with what is lost, instead of warning or

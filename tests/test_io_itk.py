@@ -1071,12 +1071,12 @@ def test_tfm_options_are_refused() -> None:
 
 def test_h5_warps_are_read_lazily_by_default() -> None:
     pytest.importorskip("h5py")
-    from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.common.hdf5 import H5ArrayProxy
 
     path = data_dir / "itk_displacement3d.h5"
     transform = itk.h5.H5Transform.from_file(path)
     (block,) = transform.metadata.raw.blocks
-    assert isinstance(block.parameters, DelayedH5Array)
+    assert isinstance(block.parameters, H5ArrayProxy)
     loaded = itk.h5.H5Transform.from_file(path, load=True)
     np.testing.assert_array_equal(
         np.asarray(block.parameters),

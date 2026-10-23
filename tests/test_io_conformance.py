@@ -438,7 +438,7 @@ try:
     import h5py
 
     from brainhops.io.common.bdv._hdf5 import _BdvProxy
-    from brainhops.io.common.hdf5 import DelayedH5Array
+    from brainhops.io.common.hdf5 import H5ArrayProxy
     from brainhops.io.images.bdv import BdvImage
     from brainhops.io.images.bdv._views import (
         _image_to_disk as _bdv_to_disk,
@@ -2574,7 +2574,7 @@ if h5py is not None:
     EXEMPLARS[X5Transform] = Exemplar(
         metadata=X5Metadata,
         suffix=".x5",
-        proxies=(DelayedH5Array,),
+        proxies=(H5ArrayProxy,),
         to_model=lambda raw: _x5_field_to_model(raw, _X5_KINDS),
         to_disk=_x5_field_to_disk,
         sample=_vectors,
@@ -3961,7 +3961,7 @@ if h5py is not None:
         metadata=H5Metadata,
         suffix=".h5",
         # The parameters of a warp are read when they are used.
-        proxies=(DelayedH5Array,),
+        proxies=(H5ArrayProxy,),
         sample=lambda: np.arange(72.0),
         edit_record=lambda record: replace(
             record, header=replace(record.header, OSName="edited")

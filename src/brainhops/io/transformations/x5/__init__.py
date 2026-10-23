@@ -103,7 +103,7 @@ attributes and chains in an [`X5Header`][], and each transform, with its
 JSON `Metadata`, `Domain`, `Inverse`, `Jacobian` and other attributes, in
 an [`X5Node`][], and it is written back as read. The matrices are read at
 once, and the fields are kept as a
-[`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array], which opens
+[`H5ArrayProxy`][brainhops.io.common.hdf5.H5ArrayProxy], which opens
 the file again by its name when the values are needed, so no object keeps
 an open file. `X5Metadata.load` therefore reads the transforms of a file
 without reading its fields. A transformation built from scratch is written

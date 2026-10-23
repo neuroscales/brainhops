@@ -22,7 +22,7 @@ __all__ = ["Indexed", "Resampled"]
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Field, NoEq, NoInit, NoRepr
+from bagof.magic import Field
 
 # internals
 from ..base import DataModelBase
@@ -45,54 +45,34 @@ class Indexed(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
     from the coordinate system (`axes`).
     """
 
-    index: tx.Annotated[
-        tuple,
-        tx.Doc("The full index, as given to `image[index]`."),
-        Field(convert=False),
-    ]
-    shape: tx.Annotated[
-        tx.Tuple[int, ...],
-        tx.Doc("The shape of the indexed image."),
-    ]
-    system: tx.Annotated[
-        tx.Optional[CoordinateSystem],
-        tx.Doc(
-            "The coordinate system of the voxels of the image (the input "
-            "of its grid), which gives the type of each axis; `None` when "
-            "it is not known."
-        ),
-        Field(convert=False),
-    ] = None
-    expanded: tx.Annotated[
-        tuple,
-        tx.Doc(
-            "The index, with its `...` replaced by as many full slices as "
-            "the axes it stands for, and the axes it leaves out filled at "
-            "the end."
-        ),
-        NoInit(),
-        NoRepr(),
-        NoEq(),
-    ] = ()
-    axes: tx.Annotated[
-        tx.Tuple[tx.Optional[AxisType], ...],
-        tx.Doc(
-            "The type of each axis of the image, `None` where it is not known."
-        ),
-        NoInit(),
-        NoRepr(),
-        NoEq(),
-    ] = ()
+    # The record is built by `SingleScaleImage.__getitem__`, never by a
+    # user, from values that already have the right type. Converting the
+    # index would also change its meaning: the tuple converter turns a
+    # list such as `[0, 2]`, which selects two positions along one axis,
+    # into the tuple `(0, 2)`, which selects one voxel.
+    index: tx.Annotated[tuple, Field(convert=False)]
+    """The full index, as given to `image[index]`."""
 
-    def __post_init__(self) -> None:
-        parent = getattr(super(), "__post_init__", None)
-        if parent is not None:
-            parent()
-        index = self.index if isinstance(self.index, tuple) else (self.index,)
-        ndim = len(self.shape)
-        object.__setattr__(self, "index", index)
-        object.__setattr__(self, "expanded", _expand_index(index, ndim))
-        object.__setattr__(self, "axes", _axis_types(self.system, ndim))
+    shape: tx.Tuple[int, ...]
+    """The shape of the indexed image."""
+
+    system: tx.Annotated[
+        tx.Optional[CoordinateSystem], Field(convert=False)
+    ] = None
+    """
+    The coordinate system of the voxels of the image (the input of its
+    grid), which gives the type of each axis; `None` when it is not known.
+    """
+
+    @property
+    def expanded(self) -> tx.Tuple[tx.Any, ...]:
+        """The index, with its `...` replaced by full slices and filled."""
+        return _expand_index(self.index, len(self.shape))
+
+    @property
+    def axes(self) -> tx.Tuple[tx.Optional[AxisType], ...]:
+        """The type of each axis of the image, `None` where it is not known."""
+        return _axis_types(self.system, len(self.shape))
 
     def positions(self, axis: AxisType) -> tx.Optional[np.ndarray]:
         """
@@ -181,23 +161,18 @@ class Resampled(
     The image builds this record and passes it to `Metadata.derive`.
     """
 
-    transformation: tx.Annotated[
-        "Transformation",
-        tx.Doc(
-            "The map from the new voxel coordinates to the old ones, "
-            "without the grid of the new geometry."
-        ),
-        Field(convert=False),
-    ]
-    geometry: tx.Annotated[
-        tx.Optional["Geometry"],
-        tx.Doc(
-            "The geometry the image is resampled onto, or `None` when it "
-            "is not known (a level of a pyramid, whose shape is not known "
-            "until its data is read)."
-        ),
-        Field(convert=False),
-    ] = None
+    transformation: "Transformation" = Field(convert=False)
+    """
+    The map from the new voxel coordinates to the old ones, without the
+    grid of the new geometry.
+    """
+
+    geometry: tx.Optional["Geometry"] = Field(default=None, convert=False)
+    """
+    The geometry the image is resampled onto, or `None` when it is not
+    known (a level of a pyramid, whose shape is not known until its data
+    is read).
+    """
 
     @property
     def moves_space(self) -> bool:

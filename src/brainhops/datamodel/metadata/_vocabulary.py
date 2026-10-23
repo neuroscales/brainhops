@@ -28,11 +28,12 @@ import itertools
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, Field, HideIfNone, Magic, fields
+from bagof.magic import ConvertTo, Field, fields
 
 # internals
-from brainhops._core.enum import EnumConverter, StrEnum
+from brainhops._core.enum import StrEnum
 
+from ..base import DataModelBase
 from ..enums import (
     AxisType,
     ContrastMethod,
@@ -200,13 +201,7 @@ class Along(Field):
 # ----------------------------------------------------------------------
 
 
-class Vocabulary(
-    Magic,
-    kw_only=True,
-    convert=True,
-    # A field is shown in `repr` only when it holds a value.
-    repr=HideIfNone,
-):
+class Vocabulary(DataModelBase):
     """
     The base class of the vocabulary groups.
 
@@ -227,66 +222,60 @@ class ProvenanceVocabulary(Vocabulary):
     scope). Not meant to be instantiated; see [`Metadata`][].
     """
 
-    name: tx.Annotated[
-        tx.Optional[str],
-        tx.Doc("A short name for the data."),
-        Scoped(Scope.FILE),
-    ] = None
+    name: tx.Annotated[tx.Optional[str], Scoped(Scope.FILE)] = None
+    """A short name for the data."""
 
     description: tx.Annotated[
         tx.Optional[str],
-        tx.Doc("A free-text description."),
         Bids("Description"),
         Scoped(Scope.FILE),
     ] = None
+    """A free-text description."""
 
     history: tx.Annotated[
         tx.Optional[tx.Tuple[str, ...]],
-        tx.Doc("The commands that produced the data, oldest first."),
         Scoped(Scope.FILE),
     ] = None
+    """The commands that produced the data, oldest first."""
 
     generated_by: tx.Annotated[
         tx.Optional[tx.Tuple[GeneratedBy, ...]],
-        tx.Doc("The programs that produced the data."),
         Bids("GeneratedBy"),
         Scoped(Scope.FILE),
     ] = None
+    """The programs that produced the data."""
 
     creation_time: tx.Annotated[
         tx.Optional[datetime.datetime],
-        tx.Doc("When the file was created."),
         Scoped(Scope.FILE),
     ] = None
+    """When the file was created."""
 
     sources: tx.Annotated[
         tx.Optional[tx.Tuple[str, ...]],
-        tx.Doc("Files the data was derived from (BIDS provenance)."),
         Bids("Sources"),
         Scoped(Scope.FILE),
     ] = None
+    """Files the data was derived from (BIDS provenance)."""
 
     space: tx.Annotated[
         tx.Optional[tx.Union[SpaceEnum, str]],
-        tx.Doc(
-            "The label of the world space (`'MNI152NLin6Asym'`, "
-            "`'scanner'`, ...; a known one is a `SpaceEnum`); the space "
-            "itself is geometry."
-        ),
         Bids("SpatialReference"),
         Scoped(Scope.FILE),
-        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
+    """
+    The label of the world space (`'MNI152NLin6Asym'`, `'scanner'`, ...;
+    a known one is a `SpaceEnum`); the space itself is geometry.
+    """
 
     intent: tx.Annotated[
         tx.Optional[tx.Union[IntentEnum, str]],
-        tx.Doc(
-            "What the values are, as a NIfTI intent name (a known one is "
-            "an `IntentEnum`)."
-        ),
         Scoped(Scope.FILE),
-        ConvertTo(EnumConverter(IntentEnum)),
     ] = None
+    """
+    What the values are, as a NIfTI intent name
+    (a known one is an `IntentEnum`).
+    """
 
 
 class MRIVocabulary(Vocabulary):
@@ -299,122 +288,119 @@ class MRIVocabulary(Vocabulary):
 
     repetition_time: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Repetition time, in seconds."),
         Bids("RepetitionTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Repetition time, in seconds."""
 
     echo_time: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Echo time, in seconds."),
         Bids("EchoTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Echo time, in seconds."""
 
     inversion_time: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Inversion time, in seconds."),
         Bids("InversionTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Inversion time, in seconds."""
 
     flip_angle: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Flip angle, in degrees."),
         Bids("FlipAngle"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Flip angle, in degrees."""
 
     magnetic_field_strength: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Nominal field strength, in tesla."),
         Bids("MagneticFieldStrength"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Nominal field strength, in tesla."""
 
     manufacturer: tx.Annotated[
         tx.Optional[tx.Union[Manufacturer, str]],
-        tx.Doc(
-            "Manufacturer of the equipment (a known one is a `Manufacturer`)."
-        ),
         Bids("Manufacturer"),
         Scoped(Scope.ACQUISITION),
-        ConvertTo(EnumConverter(Manufacturer)),
     ] = None
+    """Manufacturer of the equipment (a known one is a `Manufacturer`)."""
 
     manufacturers_model_name: tx.Annotated[
         tx.Optional[str],
-        tx.Doc("Model name of the equipment."),
         Bids("ManufacturersModelName"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Model name of the equipment."""
 
     institution_name: tx.Annotated[
         tx.Optional[str],
-        tx.Doc("Institution responsible for the equipment."),
         Bids("InstitutionName"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Institution responsible for the equipment."""
 
     acquisition_time: tx.Annotated[
         tx.Optional[datetime.datetime],
-        tx.Doc("When the acquisition started."),
         Bids("AcquisitionTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """When the acquisition started."""
 
     phase_encoding_direction: tx.Annotated[
         tx.Optional[EncodingDirection],
-        tx.Doc(
-            "Phase-encoding direction: a unit vector, by default in voxel "
-            "axes (BIDS `'j-'` is accepted)."
-        ),
         Bids("PhaseEncodingDirection"),
         Scoped(Scope.SPATIAL),
         ConvertTo(direction),
     ] = None
+    """
+    Phase-encoding direction: a unit vector.
+    By default in voxel axes (BIDS `'j-'` is accepted).
+    """
 
     total_readout_time: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Total readout time, in seconds."),
         Bids("TotalReadoutTime"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Total readout time, in seconds."""
 
     effective_echo_spacing: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Effective echo spacing, in seconds."),
         Bids("EffectiveEchoSpacing"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Effective echo spacing, in seconds."""
 
     slice_encoding_direction: tx.Annotated[
         tx.Optional[EncodingDirection],
-        tx.Doc(
-            "Slice-encoding direction: a unit vector, by default in voxel "
-            "axes (BIDS `'k'` is accepted)."
-        ),
         Bids("SliceEncodingDirection"),
         Scoped(Scope.SPATIAL),
         ConvertTo(direction),
     ] = None
+    """
+    Slice-encoding direction: a unit vector, by default in voxel axes
+    (BIDS `'k'` is accepted)."
+    """
 
     slice_timing: tx.Annotated[
         tx.Optional[tx.Tuple[float, ...]],
-        tx.Doc(
-            "Acquisition time of each slice, in seconds, along the slice "
-            "encoding direction."
-        ),
         Bids("SliceTiming"),
         Scoped(Scope.SPATIAL),
     ] = None
+    """
+    Acquisition time of each slice, in seconds, along the slice
+    encoding direction.
+    """
 
     multiband_acceleration_factor: tx.Annotated[
         tx.Optional[int],
-        tx.Doc("Multiband acceleration factor."),
         Bids("MultibandAccelerationFactor"),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Multiband acceleration factor."""
 
 
 class DiffusionVocabulary(Vocabulary):
@@ -427,21 +413,21 @@ class DiffusionVocabulary(Vocabulary):
 
     bvalues: tx.Annotated[
         tx.Optional[tx.Tuple[float, ...]],
-        tx.Doc(
-            "One b-value per index along the time axis (the volumes of a "
-            "diffusion series), in s/mm^2."
-        ),
         Along(AxisType.time),
     ] = None
+    """
+    One b-value per index along the time axis (the volumes of a diffusion
+    series), in s/mm^2."
+    """
 
     bvectors: tx.Annotated[
         tx.Optional[tx.Tuple[tx.Tuple[float, float, float], ...]],
-        tx.Doc(
-            "One unit gradient direction per index along the time axis, "
-            "in world (RAS) coordinates."
-        ),
         Along(AxisType.time),
     ] = None
+    """
+    One unit gradient direction per index along the time axis, in world
+    (RAS) coordinates."
+    """
 
 
 class DisplayVocabulary(Vocabulary):
@@ -454,28 +440,28 @@ class DisplayVocabulary(Vocabulary):
 
     display_range: tx.Annotated[
         tx.Optional[tx.Tuple[float, float]],
-        tx.Doc("Display window `(min, max)`."),
         Scoped(Scope.FILE),
     ] = None
+    """Display window `(min, max)`."""
 
     channels: tx.Annotated[
         tx.Optional[tx.Tuple[Channel, ...]],
-        tx.Doc("One description per channel."),
         Along(AxisType.channel),
     ] = None
+    """One description per channel."""
 
     data_unit: tx.Annotated[
         tx.Optional[tx.Union[Unit, str]],
-        tx.Doc(
-            "Unit of the data values: a `Unit` whenever the units module "
-            "parses the name (`'a.u.'`, `'mm/s'`, `'HU'`), and the name "
-            "itself, as a string, when it does not, so that a file with "
-            "an odd unit still reads. Formats write it as its symbol "
-            "(`Unit.symbol`), which parses back to the same unit."
-        ),
         Scoped(Scope.FILE),
         ConvertTo(unit),
     ] = None
+    """
+    Unit of the data values: a `Unit` whenever the units module parses
+    the name (`'a.u.'`, `'mm/s'`, `'HU'`), and the name itself, as a
+    string, when it does not, so that a file with an odd unit still reads.
+    Formats write it as its symbol (`Unit.symbol`), which parses back to
+    the same unit.
+    """
 
 
 class StorageVocabulary(Vocabulary):
@@ -496,34 +482,32 @@ class StorageVocabulary(Vocabulary):
 
     dtype: tx.Annotated[
         tx.Optional[np.dtype],
-        tx.Doc(
-            "The element type of the data as stored, in native byte "
-            "order. It may differ from the type of the loaded array: a "
-            "scaled integer file loads as floating-point values. An "
-            "override given to `save` or to `consolidate` takes "
-            "precedence over it."
-        ),
         Scoped(Scope.FILE),
         ConvertTo(to_dtype),
     ] = None
+    """
+    The element type of the data as stored, in native byte order.
 
-    scale_slope: tx.Annotated[
-        tx.Optional[float],
-        tx.Doc(
-            "The slope of the intensity scaling: a value is `stored * "
-            "scale_slope + scale_intercept`. `None` means no scaling."
-        ),
-        Scoped(Scope.FILE),
-    ] = None
+    It may differ from the type of the loaded array: a scaled integer
+    file loads as floating-point values. An override given to `save` or
+    to `consolidate` takes precedence over it.
+    """
+
+    scale_slope: tx.Annotated[tx.Optional[float], Scoped(Scope.FILE)] = None
+    """
+    The slope of the intensity scaling:
+    a value is `stored * scale_slope + scale_intercept`.
+    `None` means no scaling.
+    """
 
     scale_intercept: tx.Annotated[
         tx.Optional[float],
-        tx.Doc(
-            "The intercept of the intensity scaling (see `scale_slope`). "
-            "`None` means no intercept."
-        ),
         Scoped(Scope.FILE),
     ] = None
+    """
+    The intercept of the intensity scaling (see `scale_slope`).
+    `None` means no intercept.
+    """
 
 
 class MicroscopyVocabulary(Vocabulary):
@@ -534,29 +518,27 @@ class MicroscopyVocabulary(Vocabulary):
 
     objective_magnification: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Nominal magnification of the objective."),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Nominal magnification of the objective."""
 
     objective_numerical_aperture: tx.Annotated[
         tx.Optional[float],
-        tx.Doc("Numerical aperture of the objective."),
         Scoped(Scope.ACQUISITION),
     ] = None
+    """Numerical aperture of the objective."""
 
     illumination_type: tx.Annotated[
         tx.Optional[tx.Union[IlluminationType, str]],
-        tx.Doc("Illumination type (a known one is an `IlluminationType`)."),
         Scoped(Scope.ACQUISITION),
-        ConvertTo(EnumConverter(IlluminationType)),
     ] = None
+    """Illumination type (a known one is an `IlluminationType`)."""
 
     contrast_method: tx.Annotated[
         tx.Optional[tx.Union[ContrastMethod, str]],
-        tx.Doc("Contrast method (a known one is a `ContrastMethod`)."),
         Scoped(Scope.ACQUISITION),
-        ConvertTo(EnumConverter(ContrastMethod)),
     ] = None
+    """Contrast method (a known one is a `ContrastMethod`)."""
 
 
 class TransformVocabulary(Vocabulary):
@@ -567,29 +549,27 @@ class TransformVocabulary(Vocabulary):
 
     moving: tx.Annotated[
         tx.Optional[str],
-        tx.Doc("The moving image of a registration (file reference)."),
         Scoped(Scope.FILE),
     ] = None
+    """The moving image of a registration (file reference)."""
 
     fixed: tx.Annotated[
         tx.Optional[str],
-        tx.Doc("The fixed image of a registration (file reference)."),
         Scoped(Scope.FILE),
     ] = None
+    """The fixed image of a registration (file reference)."""
 
     input_space: tx.Annotated[
         tx.Optional[tx.Union[SpaceEnum, str]],
-        tx.Doc("Label of the space a transformation maps from."),
         Scoped(Scope.FILE),
-        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
+    """Label of the space a transformation maps from."""
 
     output_space: tx.Annotated[
         tx.Optional[tx.Union[SpaceEnum, str]],
-        tx.Doc("Label of the space a transformation maps to."),
         Scoped(Scope.FILE),
-        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
+    """Label of the space a transformation maps to."""
 
 
 GROUPS: tx.Dict[type, tx.Tuple[str, ...]] = {

@@ -14,6 +14,7 @@ from bagof.magic import NoRepr
 from brainhops import backends
 from brainhops._core import path
 from brainhops._core.dependencies import da
+from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy
 
 # internals
@@ -43,21 +44,23 @@ class _ZarrProxy(ArrayProxy):
     because the order depends on the record of the pyramid.
     """
 
-    node: NoRepr[tx.Any, tx.Doc("The opened array.")]
-    location: tx.Annotated[
-        tx.Any,
-        tx.Doc(
-            "The location of the store of the array, or `None` when it is "
-            "not known."
-        ),
-    ]
-    perm: tx.Annotated[
-        tx.Optional[tx.Tuple[int, ...]],
-        tx.Doc(
-            "The permutation from the stored axes to the axes of the proxy, "
-            "or `None` when the axes are those of the store."
-        ),
-    ] = None
+    # --- magic attributes ----
+
+    node: NoRepr[tx.Any]
+    """The opened array."""
+
+    location: tx.Any
+    """
+    The location of the store of the array, or `None` when it is not known.
+    """
+
+    perm: tx.Optional[tx.Tuple[int, ...]] = None
+    """
+    The permutation from the stored axes to the axes of the proxy, or
+    `None` when the axes are those of the store."
+    """
+
+    # --- properties ----
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -67,10 +70,8 @@ class _ZarrProxy(ArrayProxy):
             return shape
         return tuple(shape[p] for p in self.perm)
 
-    @property
-    def dtype(self) -> np.dtype:
-        """The data type of the array."""
-        return np.dtype(self.node.dtype)
+    dtype = alias("node.dtype", readonly=True)
+    """The type of the values of the array."""
 
     @property
     def base_chunks(self) -> tx.Tuple[int, ...]:
@@ -79,6 +80,8 @@ class _ZarrProxy(ArrayProxy):
         if self.perm is None:
             return chunks
         return tuple(chunks[p] for p in self.perm)
+
+    # --- methods ----
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         """Read a box of the array, through the permutation of the axes."""

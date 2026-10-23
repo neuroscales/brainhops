@@ -266,16 +266,24 @@ class _SlideArray(ArrayProxy):
     over it, as [`view`][] describes.
     """
 
-    slide: NoRepr[tx.Any, tx.Doc("The slide whose level the array reads.")]
-    record: NoRepr[OpenSlideRaw, tx.Doc("The record of the slide.")]
-    level: tx.Annotated[int, tx.Doc("The index of the level in the record.")]
-    lazy: tx.Annotated[
-        tx.Optional[bool],
-        tx.Doc(
-            "Whether the data is a dask array, or `None` for the array "
-            "backend to decide."
-        ),
-    ] = None
+    # --- magic attributes ----
+
+    slide: NoRepr[tx.Any]
+    """The slide whose level the array reads."""
+
+    record: NoRepr[OpenSlideRaw]
+    """The record of the slide."""
+
+    level: int = 0
+    """The index of the level in the record."""
+
+    lazy: tx.Optional[bool] = None
+    """
+    Whether the data is a dask array, or `None` for the array backend to
+    decide.
+    """
+
+    # --- properties ----
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -291,6 +299,8 @@ class _SlideArray(ArrayProxy):
     def base_chunks(self) -> tx.Tuple[int, int, int]:
         """The blocks that group whole tiles of the level."""
         return _chunks(self.record, self.level, self.base_shape)
+
+    # --- methods ----
 
     def view(self) -> ArrayProtocol:
         """Return the data of the level, without reading any pixel.

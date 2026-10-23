@@ -43,18 +43,16 @@ class _PillowProxy(ArrayProxy):
     file that it was read from.
     """
 
-    source: tx.Annotated[
-        tx.Any, tx.Doc("The path of the file, or the stream that holds it.")
-    ]
-    record: NoRepr[
-        PillowRaw,
-        tx.Doc(
-            "The record of the frame, which says what the frame decodes to."
-        ),
-    ]
-    palette: tx.Annotated[
-        bool, tx.Doc("Whether the colours of a palette image are looked up.")
-    ]
+    source: tx.Any
+    """"The path of the file, or the stream that holds it."""
+
+    record: NoRepr[PillowRaw]
+    """The record of the frame, which says what the frame decodes to."""
+
+    palette: bool
+    """Whether the colours of a palette image are looked up."""
+
+    # --- properties ----
 
     @property
     def base_shape(self) -> tx.Tuple[int, ...]:
@@ -65,6 +63,8 @@ class _PillowProxy(ArrayProxy):
     def dtype(self) -> np.dtype:
         """The type of the decoded pixels, read from the record."""
         return self.record.layout(self.palette)[1]
+
+    # --- methods ----
 
     def read_stored(self) -> bytes:
         """Return the bytes of the file.

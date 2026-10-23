@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common.hdf5 import DelayedH5Array
+from brainhops.io.common.hdf5 import H5ArrayProxy
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -221,7 +221,7 @@ def _read_parameter(stored: tx.Any) -> np.ndarray:
 def _read(stored: tx.Any) -> ArrayProtocol:
     """Return an array of a node, read from the file if it is a proxy.
 
-    A [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array] is
+    A [`H5ArrayProxy`][brainhops.io.common.hdf5.H5ArrayProxy] is
     converted as the backend setting says (see
     [`to_backend`][brainhops.backends.to_backend]): it is read with NumPy,
     or kept lazy as a Dask array whose blocks are the chunks of the
@@ -229,7 +229,7 @@ def _read(stored: tx.Any) -> ArrayProtocol:
     only the blocks that it needs.
     A NumPy array is returned as a read-only view.
     """
-    if isinstance(stored, DelayedH5Array):
+    if isinstance(stored, H5ArrayProxy):
         array = to_backend(stored)
     else:
         array = get_array_backend(stored).asarray(stored)

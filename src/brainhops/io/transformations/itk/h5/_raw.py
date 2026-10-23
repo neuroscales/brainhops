@@ -17,7 +17,7 @@ from brainhops.io.base.parsers import (
 )
 
 # io
-from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5ReaderWriter
+from brainhops.io.common.hdf5 import H5ArrayProxy, Hdf5ReaderWriter
 from brainhops.io.common.hdf5._parsers import read_string
 
 from .._chains import _check_composite, _is_composite, _read_only, _type_name
@@ -68,7 +68,7 @@ class H5Raw(Raw, Hdf5ReaderWriter):
     block.
 
     The parameters of a warp, which are large, are held as a
-    [`DelayedH5Array`][brainhops.io.common.hdf5.DelayedH5Array], which
+    [`H5ArrayProxy`][brainhops.io.common.hdf5.H5ArrayProxy], which
     opens the file again by its name when the values are needed, so the
     record never keeps an open file. The other parameters are read at
     once and are read-only, because the blocks of a record are also the
@@ -272,7 +272,7 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
     elif source is None or kind not in _LARGE_TYPES:
         parameters = parameters[()]
     else:
-        parameters = DelayedH5Array(source, parameters.name)
+        parameters = H5ArrayProxy(source, parameters.name)
     if fixed_parameters is None:
         fixed_parameters = np.array([])
     else:

@@ -14,6 +14,7 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.properties import alias
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import is_local, replace_file
@@ -255,12 +256,8 @@ class _BrikProxy(StridedProxy):
     [`from_record`][brainhops.io.common.afni._data._BrikProxy.from_record].
     """
 
-    record: KwOnly[
-        NoRepr[
-            AfniRaw,
-            tx.Doc("The record of the dataset, which describes the BRIK."),
-        ]
-    ]
+    record: KwOnly[NoRepr[AfniRaw]]
+    """The record of the dataset, which describes the BRIK."""
 
     @classmethod
     def from_record(
@@ -305,10 +302,8 @@ class _BrikProxy(StridedProxy):
             record=record,
         )
 
-    @property
-    def brik(self) -> tx.Any:
-        """The path of the BRIK file, which is the source of the proxy."""
-        return self.source
+    brik = alias("source")
+    """The path of the BRIK file, which is the source of the proxy."""
 
     @property
     def _single_type(self) -> bool:
@@ -323,10 +318,8 @@ class _BrikProxy(StridedProxy):
             return np.result_type(stored, np.float32)
         return stored
 
-    @property
-    def nbytes_stored(self) -> int:
-        """The number of bytes of the BRIK."""
-        return self.record.nbytes
+    nbytes_stored = alias("record.nbytes", readonly=True)
+    """The number of bytes of the BRIK."""
 
     @property
     def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:

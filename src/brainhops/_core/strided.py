@@ -34,6 +34,7 @@ import typing_extensions as tx
 from brainhops._core import path
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops._core.typing import DTypeLike
 
 _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
@@ -73,66 +74,55 @@ class StridedProxy(ArrayProxy):
     the scaled values and the shape of a view.
     """
 
-    source: tx.Annotated[
-        tx.Any,
-        tx.Doc("The file, by its path, or a stream open in binary mode."),
-    ]
-    _dtype: tx.Annotated[
-        np.dtype,
-        tx.Doc(
-            "The type of the stored values, with their byte order. It is "
-            "given as `dtype=`, and the property `dtype` is the type of "
-            "the scaled values."
-        ),
-    ]
-    _shape: tx.Annotated[
-        tx.Tuple[int, ...],
-        tx.Doc(
-            "The shape of the array, given as `shape=`. The property "
-            "`shape` is the shape of a view."
-        ),
-    ]
-    strides: tx.Annotated[
-        tx.Tuple[int, ...],
-        tx.Doc(
-            "The distance in bytes between two neighbouring values along "
-            "each axis. A negative stride reverses the axis."
-        ),
-    ]
-    offset: tx.Annotated[
-        int,
-        tx.Doc(
-            "The position in the decoded stream of the value whose index "
-            "is zero along every axis."
-        ),
-    ] = 0
-    slope: tx.Annotated[
-        tx.Optional[np.ndarray],
-        tx.Doc(
-            "The factor of the scaling, a number or an array that "
-            "broadcasts against the shape, or `None`."
-        ),
-    ] = None
-    inter: tx.Annotated[
-        tx.Optional[np.ndarray],
-        tx.Doc(
-            "The offset of the scaling, a number or an array that "
-            "broadcasts against the shape, or `None`."
-        ),
-    ] = None
-    start: tx.Annotated[
-        int,
-        tx.Doc(
-            "The position of the content in `source`, a path or a stream, "
-            "before decompression."
-        ),
-    ] = 0
-    mmap: tx.Annotated[
-        bool,
-        tx.Doc(
-            "Whether a local file that is not compressed is memory-mapped."
-        ),
-    ] = True
+    source: tx.Any
+    """The file, by its path, or a stream open in binary mode."""
+
+    _dtype: np.dtype
+    """
+    The type of the stored values, with their byte order.
+
+    It is  given as `dtype=`, and the property `dtype` is the type of
+    the scaled values.
+    """
+
+    _shape: tx.Tuple[int, ...]
+    """
+    The shape of the array, given as `shape=`.
+    The property `shape` is the shape of a view.
+    """
+
+    strides: tx.Tuple[int, ...]
+    """
+    The distance in bytes between two neighbouring values along each axis.
+    A negative stride reverses the axis.
+    """
+
+    offset: int = 0
+    """
+    The position in the decoded stream of the value whose index is zero
+    along every axis.
+    """
+
+    slope: tx.Optional[np.ndarray] = None
+    """
+    The factor of the scaling, a number or an array that broadcasts
+    against the shape, or `None`.
+    """
+
+    inter: tx.Optional[np.ndarray] = None
+    """
+    The offset of the scaling, a number or an array that broadcasts
+    against the shape, or `None`.
+    """
+
+    start: int = 0
+    """
+    The position of the content in `source`, a path or a stream, before
+    decompression.
+    """
+
+    mmap: bool = True
+    """Whether a local file that is not compressed is memory-mapped."""
 
     def __post_init__(self) -> None:
         # The layout is checked before anything is read.
@@ -151,7 +141,7 @@ class StridedProxy(ArrayProxy):
     def contiguous(
         cls,
         source: tx.Any,
-        dtype: tx.Any,
+        dtype: DTypeLike,
         shape: tx.Sequence[int],
         offset: int = 0,
         order: tx.Literal["C", "F"] = "C",
@@ -203,7 +193,7 @@ class StridedProxy(ArrayProxy):
         if order not in ("C", "F"):
             raise ValueError(f"order must be 'C' or 'F', not {order!r}.")
         dtype = np.dtype(dtype)
-        shape = tuple(int(n) for n in shape)
+        shape = tuple(map(int, shape))
         axes = tuple(range(len(shape))) if axes is None else tuple(axes)
         if sorted(axes) != list(range(len(shape))):
             raise ValueError(
