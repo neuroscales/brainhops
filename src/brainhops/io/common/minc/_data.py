@@ -12,7 +12,7 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
@@ -26,7 +26,7 @@ _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
 
 
-class _MincProxy(ArrayProxy):
+class _MincProxy(StoredProxy):
     """A lazy array of the voxels of a MINC image.
 
     The proxy holds where the file lies, which is a path or the bytes of
@@ -55,7 +55,7 @@ class _MincProxy(ArrayProxy):
     ]
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the voxels in file order, read from the record."""
         return tuple(self.record.shape)
 
@@ -64,9 +64,6 @@ class _MincProxy(ArrayProxy):
 
     def read_voxels(self) -> np.ndarray:
         """Return all the scaled voxels in file order.
-
-        The voxels are those of the whole file, whatever part of it a view
-        of the proxy selects.
 
         Raises
         ------
@@ -77,21 +74,21 @@ class _MincProxy(ArrayProxy):
         values = _read_minc(
             _opened(self.source), self.record.version, _read_voxels
         )
-        if tuple(values.shape) != self.base_shape:
+        if tuple(values.shape) != self.shape:
             raise ParserContentError(
                 f"The MINC voxels have shape {values.shape}, but the header "
-                f"that the image was read with says {self.base_shape}."
+                f"that the image was read with says {self.shape}."
             )
         return values
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, ...]:
+    def chunks(self) -> tx.Tuple[int, ...]:
         """The block shape: slabs of the slowest dimension.
 
         A block holds every value of the other dimensions, and as many
         slabs as fit in the block size of Dask, with at least one slab.
         """
-        shape = self.base_shape
+        shape = self.shape
         if not shape:
             return shape
         slab = int(np.prod(shape[1:])) * np.dtype(self.dtype).itemsize
@@ -100,11 +97,11 @@ class _MincProxy(ArrayProxy):
 
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         def read(container: tx.Any, mfile: tx.Any, version: int) -> np.ndarray:
-            if tuple(mfile.get_data_shape()) != self.base_shape:
+            if tuple(mfile.get_data_shape()) != self.shape:
                 raise ParserContentError(
                     f"The MINC voxels have shape {mfile.get_data_shape()}, "
                     f"but the header that the image was read with says "
-                    f"{self.base_shape}."
+                    f"{self.shape}."
                 )
             return _read_voxels(container, mfile, version, index)
 

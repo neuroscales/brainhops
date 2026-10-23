@@ -1083,10 +1083,8 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
     if volume is None or volume._data is not None:
         return None
     proxy = volume.rawdata
-    if (
-        isinstance(proxy, _MincProxy)
-        and not proxy.is_view
-        and isinstance(proxy.source, (str, os.PathLike))
+    if isinstance(proxy, _MincProxy) and isinstance(
+        proxy.source, (str, os.PathLike)
     ):
         return proxy.source
     return None

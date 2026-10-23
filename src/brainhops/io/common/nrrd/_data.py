@@ -15,7 +15,7 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import local_path as _local_path
@@ -238,7 +238,7 @@ def _storage(header: NrrdRaw) -> tx.Tuple[tx.Any, ...]:
 # ----------------------------------------------------------------------
 
 
-class _NrrdProxy(ArrayProxy):
+class _NrrdProxy(StoredProxy):
     """A lazy array of the samples of a NRRD image.
 
     The proxy holds where the header lies, which is a path or the stream
@@ -293,7 +293,7 @@ class _NrrdProxy(ArrayProxy):
     ]
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the image, read from the record."""
         sizes = self.record.sizes
         return tuple(sizes[i] for i in image_order(self.record))
@@ -365,9 +365,6 @@ class _NrrdProxy(ArrayProxy):
     def read_samples(self) -> np.ndarray:
         """Return all the samples in the axis order of the image.
 
-        The samples are those of the whole file, whatever part of them a
-        view of the proxy selects.
-
         Raises
         ------
         ParserContentError
@@ -395,11 +392,11 @@ class _NrrdProxy(ArrayProxy):
         return record.encoding in _PARTIAL_ENCODINGS and record.byte_skip >= 0
 
     @property
-    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The block shape, or `None` for samples that are decoded whole."""
         if not self.partial:
             return None
-        return self._strided(self.source, self.start, 0).base_chunks
+        return self._strided(self.source, self.start, 0).chunks
 
     def _strided(self, file: tx.Any, start: int, skip: int) -> StridedProxy:
         """The strided reader of the samples that lie in `file`."""

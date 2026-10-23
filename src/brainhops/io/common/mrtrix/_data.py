@@ -11,6 +11,7 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
 from brainhops.io.base._utils_files import local_path as _local_path
@@ -159,16 +160,18 @@ def _is_scaled(record: MrtrixRaw) -> bool:
 
 
 class _MrtrixProxy(StridedProxy):
-    """A lazy array of the voxels of an MRtrix image.
+    """A lazy array of the stored voxels of an MRtrix image.
 
     The proxy holds where the voxels lie, which is a path or the stream
     that the caller passed, and the record of the image, which says how
     they are stored. It reads them each time its values are needed and
     keeps no file open, but a stream given by the caller must stay open
     while the values may be read. The values are presented in the axis
-    order of the header, whatever `layout` the file uses, and the
-    intensity `scaling` of the header is applied when they are read, as
-    nibabel's proxy applies the scaling of a NIfTI header.
+    order of the header, whatever `layout` the file uses. They are the
+    stored values: when the header has an intensity `scaling`, the
+    reader wraps the proxy in a
+    [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] that applies it,
+    as nibabel's proxy applies the scaling of a NIfTI header.
 
     A read gets only the bytes that its selection needs (see
     [`StridedProxy`][brainhops._core.strided.StridedProxy]): the voxels
@@ -178,7 +181,8 @@ class _MrtrixProxy(StridedProxy):
     that the file stores slowest. Packed `Bit` data cannot be read in
     part, so any read of such an image decodes the whole file.
 
-    A reader builds the proxy from the record of the image with
+    A reader builds the lazy array of the image, scaled or not, from
+    its record with
     [`from_record`][brainhops.io.common.mrtrix._data._MrtrixProxy.from_record].
     """
 
@@ -200,14 +204,17 @@ class _MrtrixProxy(StridedProxy):
         offset: int,
         record: MrtrixRaw,
         mmap: bool,
-    ) -> "_MrtrixProxy":
+    ) -> ArrayProxy:
         """
-        Return the proxy of the voxels that a record describes.
+        Return the lazy array of the voxels that a record describes.
 
         The strided layout is read from the record: the stored shape and
-        the reversed axes come from its `layout`, and the intensity
-        scaling from its `scaling`. Packed `Bit` data are described as
-        bytes, which only the whole file decodes.
+        the reversed axes come from its `layout`. Packed `Bit` data are
+        described as bytes, which only the whole file decodes. When the
+        record has an intensity `scaling` that changes values, the proxy
+        is wrapped in a
+        [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] that applies
+        it.
 
         Parameters
         ----------
@@ -225,13 +232,12 @@ class _MrtrixProxy(StridedProxy):
 
         Returns
         -------
-        _MrtrixProxy
-            The proxy of the voxels.
+        _MrtrixProxy or ScaledProxy
+            The lazy array of the voxels.
         """
         shape, position = _storage_shape(record.dim, record.layout)
         flips = [axis for axis, s in enumerate(record.layout) if s < 0]
-        scaling = record.scaling if _is_scaled(record) else None
-        return cls.contiguous(
+        proxy = cls.contiguous(
             source,
             np.dtype(np.uint8) if record.is_bit else record.dtype,
             shape,
@@ -239,24 +245,26 @@ class _MrtrixProxy(StridedProxy):
             order="C",
             axes=position,
             flips=flips,
-            slope=None if scaling is None else scaling[1],
-            inter=None if scaling is None else scaling[0],
             start=start,
             mmap=mmap,
             record=record,
         )
+        if not _is_scaled(record):
+            return proxy
+        offset, scale = record.scaling
+        return ScaledProxy(proxy, scale, offset)
 
     @property
     def dtype(self) -> np.dtype:
-        """The type of the values once the intensity scaling applies."""
-        return _scaled_dtype(self.record)
+        """The type of the stored values, which is `bool` for `Bit` data."""
+        return np.dtype(bool) if self.record.is_bit else self.record.dtype
 
     @property
-    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The block shape, or `None` for packed `Bit` data."""
         if self.record.is_bit:
             return None
-        return super().base_chunks
+        return super().chunks
 
     @property
     def nbytes_stored(self) -> int:
@@ -265,9 +273,6 @@ class _MrtrixProxy(StridedProxy):
 
     def read_stored(self) -> bytes:
         """Return the bytes of the voxels as the file stores them.
-
-        The bytes are those of the whole file, whatever part of it a view
-        of the proxy selects.
 
         Raises
         ------
@@ -285,8 +290,7 @@ class _MrtrixProxy(StridedProxy):
     def get_unscaled(self) -> np.ndarray:
         """Return all the stored values in the axis order of the header.
 
-        The values are those of the whole file, whatever part of it a view
-        of the proxy selects, and the intensity scaling is not applied.
+        The intensity scaling is not applied.
         """
         return decode_data(self.record, self.read_stored())
 
@@ -299,12 +303,45 @@ class _MrtrixProxy(StridedProxy):
                     f"The MRtrix data are shorter than the header asks "
                     f"for. {error}"
                 ) from error
-        values = self.get_unscaled()[index]
-        if _is_scaled(self.record):
-            offset, scale = self.record.scaling
-            values = offset + scale * np.asarray(values, dtype=self.dtype)
-            values = values.astype(self.dtype, copy=False)
-        return values
+        return self.get_unscaled()[index]
+
+
+def whole_file(raw: tx.Any) -> tx.Optional[_MrtrixProxy]:
+    """Return the lazy array of a whole MRtrix file that an array reads.
+
+    A writer copies the stored bytes of such a lazy array as they are.
+    The array qualifies when it is the lazy array that the reader built
+    for the file: the stored proxy itself, or the scaled proxy that
+    applies the intensity scaling of its header. An index, a
+    permutation, or a scaling that differs from the header is encoded
+    like an array in memory.
+
+    Parameters
+    ----------
+    raw : array
+        The `rawdata` array of an object.
+
+    Returns
+    -------
+    _MrtrixProxy or None
+        The proxy of the stored voxels, or `None`.
+    """
+    scaled = isinstance(raw, ScaledProxy)
+    proxy = raw.inner if scaled else raw
+    if not isinstance(proxy, _MrtrixProxy):
+        return None
+    if not scaled:
+        return None if _is_scaled(proxy.record) else proxy
+    if not _is_scaled(proxy.record):
+        return None
+    offset, scale = proxy.record.scaling
+    if raw.slope is None or raw.inter is None:
+        return None
+    if raw.slope.size != 1 or raw.inter.size != 1:
+        return None
+    if float(raw.slope.item()) != scale or float(raw.inter.item()) != offset:
+        return None
+    return proxy
 
 
 def _read_at(file: tx.BinaryIO, offset: int, nbytes: int) -> bytes:
@@ -319,7 +356,7 @@ def _read_at(file: tx.BinaryIO, offset: int, nbytes: int) -> bytes:
 
 def read_mrtrix(
     file: tx.Any, mmap: bool = True
-) -> tx.Tuple[MrtrixRaw, _MrtrixProxy]:
+) -> tx.Tuple[MrtrixRaw, ArrayProxy]:
     """Read the record and a lazy array of the voxels of an MRtrix image.
 
     The file is a path or a stream, gzipped or not. The record is read
@@ -341,7 +378,7 @@ def read_mrtrix(
         The record.
     proxy : array
         A lazy array of the voxels, with one axis for each axis of the
-        header.
+        header, and the intensity scaling of the header applied.
 
     Raises
     ------

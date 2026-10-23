@@ -10,7 +10,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoInit, NoRepr
 
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 
 # core
 from brainhops._core.typing import ArrayProtocol
@@ -19,16 +19,16 @@ from brainhops._core.typing import ArrayProtocol
 from ._parsers import H5Like
 
 
-class DelayedH5Array(ArrayProxy):
+class DelayedH5Array(StoredProxy):
     """
     An HDF5 dataset that can be read after its file was closed, by
     reopening the file on demand.
 
     Indexing the array returns another lazy array (see
-    [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]), and
+    [`StoredProxy`][brainhops._core.proxy.StoredProxy]), and
     converting that array reads only the selected part of the dataset.
-    A view reads through the array that it was made from, and opening or
-    closing a view opens or closes the file of that array.
+    That lazy array reads through this one, so a file that this array
+    keeps open is used by every index of it.
     """
 
     file: tx.Annotated[
@@ -61,28 +61,19 @@ class DelayedH5Array(ArrayProxy):
         ]
     ] = None
 
-    @property
-    def _owner(self) -> "DelayedH5Array":
-        """The array that owns the file handle and the cached attributes."""
-        return self._root if self._root is not None else self
-
     def open(self) -> h5py.File:
         """Open the HDF5 file, or reuse the open one, and return it."""
-        owner = self._owner
-        owner.to_dataset(keep_open=True)
-        return owner._handle
+        self.to_dataset(keep_open=True)
+        return self._handle
 
     def close(self) -> None:
         """Close the HDF5 file if this array opened it."""
-        owner = self._owner
-        if owner._handle is not None:
-            owner._handle.close()
-            owner._handle = None
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
 
     def __del__(self) -> None:
-        # A view does not own the file of the array it was made from.
-        if self._root is None:
-            self.close()
+        self.close()
 
     def to_dataset(
         self, file: tx.Optional[H5Like] = None, keep_open: bool = False
@@ -91,11 +82,7 @@ class DelayedH5Array(ArrayProxy):
         Return the whole `h5py.Dataset`, opening the file if needed.
 
         With `keep_open`, a file opened by name stays open until [`close`][].
-        The dataset is the whole stored dataset, also for a view.
         """
-        if self._root is not None:
-            return self._root.to_dataset(file, keep_open=keep_open)
-
         if file is None:
             return self.to_dataset(self.file, keep_open=keep_open)
 
@@ -140,11 +127,10 @@ class DelayedH5Array(ArrayProxy):
         """
         Wrap the array in a dask array that reads its chunks lazily.
 
-        With `keep_open`, the chunks of an array that is not a view are
-        read from the open dataset; otherwise the file is reopened for each
-        chunk.
+        With `keep_open`, the chunks are read from the open dataset;
+        otherwise the file is reopened for each chunk.
         """
-        if keep_open and not self.is_view:
+        if keep_open:
             import dask.array as da
 
             kwargs.setdefault("chunks", self.chunks or "auto")
@@ -152,28 +138,25 @@ class DelayedH5Array(ArrayProxy):
         return super().to_dask(**kwargs)
 
     @property
-    def base_shape(self) -> tuple:
+    def shape(self) -> tuple:
         """The shape of the dataset."""
-        owner = self._owner
-        if owner._shape is None:
-            owner.to_dataset()
-        return tuple(owner._shape)
+        if self._shape is None:
+            self.to_dataset()
+        return tuple(self._shape)
 
     @property
     def dtype(self) -> np.dtype:
         """The dtype of the dataset."""
-        owner = self._owner
-        if owner._dtype is None:
-            owner.to_dataset()
-        return owner._dtype
+        if self._dtype is None:
+            self.to_dataset()
+        return self._dtype
 
     @property
-    def base_chunks(self) -> tx.Optional[tuple]:
+    def chunks(self) -> tx.Optional[tuple]:
         """The shape of a chunk, or `None` if the dataset is not chunked."""
-        owner = self._owner
-        if owner._shape is None:
-            owner.to_dataset()
-        return owner._chunks
+        if self._shape is None:
+            self.to_dataset()
+        return self._chunks
 
 
 def delayed_dataset(

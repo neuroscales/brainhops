@@ -13,6 +13,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import stored_proxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import systems as _systems
@@ -601,7 +602,7 @@ class AfniBrikWarp(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )
         if reading:
-            mmap = self.rawdata.mmap
+            mmap = stored_proxy(self.rawdata).mmap
             xform = self.consolidate(inplace=True, **options)
         else:
             xform = self.consolidate(**options)

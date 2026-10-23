@@ -19,6 +19,7 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 import brainhops.io as io
+from brainhops._core.proxy import stored_proxy
 from brainhops.backends import backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -446,7 +447,7 @@ def test_brick_scaling_factors(tmp_path) -> None:  # noqa: ANN001
     head = _header(nvals=3, types=(1,), BRICK_FLOAT_FACS=(0.5, 0.0, 2.0))
     path = _dataset(tmp_path, head, _brik([a, a, a], ["<h"] * 3))
     image = AfniImage.load(path)
-    assert image.rawdata.get_unscaled().dtype == np.int16
+    assert stored_proxy(image.rawdata).get_unscaled().dtype == np.int16
     assert image.rawdata.dtype == np.float32
     assert image.data.dtype == np.float32
     # A factor of zero means that the sub-brick is not scaled.

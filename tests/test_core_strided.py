@@ -15,6 +15,7 @@ import itertools
 import numpy as np
 import pytest
 
+from brainhops._core.proxy import ScaledProxy
 from brainhops._core.strided import StridedProxy
 
 SHAPE = (5, 6, 7)
@@ -76,9 +77,8 @@ def test_the_values_are_those_of_numpy(
                 order=order,
                 axes=axes,
                 flips=flips,
-                slope=2.0,
-                inter=1.0,
             )
+            proxy = ScaledProxy(proxy, 2.0, 1.0)
             assert proxy.shape == expected.shape
             assert proxy.dtype == np.float32
             for index in INDEXES:
@@ -133,7 +133,7 @@ def test_dask_blocks_are_slabs_of_the_slowest_axis(tmp_path) -> None:  # noqa: A
         proxy = StridedProxy.contiguous(
             path, ">f4", SHAPE, offset=len(HEADER), order="F", axes=(2, 0, 1)
         )
-        assert proxy.base_chunks == (2, SHAPE[0], SHAPE[1])
+        assert proxy.chunks == (2, SHAPE[0], SHAPE[1])
         lazy = proxy.to_dask()
     assert lazy.chunks[0] == (2, 2, 2, 1)
     np.testing.assert_array_equal(
@@ -155,8 +155,9 @@ def test_a_scaling_per_volume_follows_the_selection(tmp_path) -> None:  # noqa: 
     _write(path, "F", compressed=False)
     slope = np.arange(1, SHAPE[2] + 1, dtype=float)
     proxy = StridedProxy.contiguous(
-        path, ">f4", SHAPE, offset=len(HEADER), order="F", slope=slope
+        path, ">f4", SHAPE, offset=len(HEADER), order="F"
     )
+    proxy = ScaledProxy(proxy, slope)
     expected = _values().astype("f4") * slope
     for index in itertools.product(
         [slice(None), 1], [slice(2, 4)], [3, slice(1, 6, 2)]

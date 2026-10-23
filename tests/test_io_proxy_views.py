@@ -1,8 +1,8 @@
-"""Tests of writing an image whose lazy array is a view of its file.
+"""Tests of writing an image whose lazy array is an index of its file.
 
-Indexing the lazy array of a file returns another lazy array of the same
-class, which selects a part of the file. A writer that copies the stored
-bytes of a lazy array as they are must not copy those of a view, since
+Indexing the lazy array of a file returns an indexed proxy, which
+selects a part of the file. A writer that copies the stored bytes of a
+lazy array as they are must not copy those of an indexed proxy, since
 they hold the whole file.
 """
 
@@ -13,7 +13,7 @@ import pytest
 from bagof.magic import replace
 
 import brainhops.io as io
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import ArrayProxy, stored_proxy
 from brainhops.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 
@@ -48,8 +48,8 @@ def test_a_view_is_written_as_its_values(
         image = io.images.load(tmp_path / name)
         assert isinstance(image.rawdata, ArrayProxy)
         view = image.rawdata[::-1]
-        assert type(view) is type(image.rawdata)
-        assert view.is_view
+        assert stored_proxy(view) is stored_proxy(image.rawdata)
+        assert view is not image.rawdata
         flipped = replace(image, rawdata=view)
         io.save(flipped, tmp_path / ("b" + name[1:]))
         with backend("numpy"):

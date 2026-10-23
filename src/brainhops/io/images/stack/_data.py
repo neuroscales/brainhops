@@ -12,14 +12,14 @@ from bagof.magic import NoInit, NoRepr
 from brainhops._core.properties import alias
 
 # internals
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.base.parsers import ParserContentError
 
 # this format
 from ._raw import StackMember, StackRaw
 
 
-class _StackProxy(ArrayProxy):
+class _StackProxy(StoredProxy):
     """A lazy array of the pixels of an image stack.
 
     The proxy holds the path of the folder and the record of the stack.
@@ -30,7 +30,7 @@ class _StackProxy(ArrayProxy):
     and no file is kept open. A selection along the first axis therefore
     reads only the files that it selects, which lets Dask read one file
     per chunk (see `chunks`). Indexing the proxy returns another lazy
-    array (see [`ArrayProxy`][]), which reads the files when it is
+    array (see [`StoredProxy`][]), which reads the files when it is
     converted. A slice whose number no file carries is
     filled with `fill`, and reading it reads no file.
 
@@ -78,7 +78,7 @@ class _StackProxy(ArrayProxy):
         return fill_value(self._fill, self.record.dtype)
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the stacked pixels, read from the record."""
         return tuple(self.record.shape)
 
@@ -86,9 +86,9 @@ class _StackProxy(ArrayProxy):
     """The type of the pixels."""
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, ...]:
+    def chunks(self) -> tx.Tuple[int, ...]:
         """The shape of the block that one file fills: one plane."""
-        return (1,) + self.base_shape[1:]
+        return (1,) + self.shape[1:]
 
     def to_dask(
         self, *, device: tx.Union[str, int, None] = "cpu", **kwargs: tx.Any
@@ -149,7 +149,7 @@ class _StackProxy(ArrayProxy):
         """
         index = self._members.get(position)
         if index is None:
-            return np.full(self.base_shape[1:], self.fill, self.dtype)
+            return np.full(self.shape[1:], self.fill, self.dtype)
         member = self.record.members[index]
         filename = os.path.join(self.folder, *member.name.split("/"))
         if not os.path.isfile(filename):
@@ -183,7 +183,7 @@ class _StackProxy(ArrayProxy):
             The pixels, of shape `(len(positions), rows, columns[,
             channels])`.
         """
-        out = np.empty((len(positions),) + self.base_shape[1:], self.dtype)
+        out = np.empty((len(positions),) + self.shape[1:], self.dtype)
         for k, position in enumerate(positions):
             out[k] = self.read_member(position)
         return out
@@ -194,7 +194,7 @@ class _StackProxy(ArrayProxy):
         first, rest = index[0], index[1:]
         if isinstance(first, int):
             return self.read_member(first)[rest]
-        positions = range(self.base_shape[0])[first]
+        positions = range(self.shape[0])[first]
         return self.read_members(positions)[(slice(None),) + rest]
 
 

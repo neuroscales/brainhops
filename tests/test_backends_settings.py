@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from brainhops import backends
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.backends import (
     _is_lazy,
     backend,
@@ -20,7 +20,7 @@ from brainhops.backends import (
 da = pytest.importorskip("dask.array")
 
 
-class _Proxy(ArrayProxy):
+class _Proxy(StoredProxy):
     """A lazy array over an array in memory, which counts its reads."""
 
     def __init__(self, array: np.ndarray) -> None:
@@ -28,7 +28,7 @@ class _Proxy(ArrayProxy):
         self.reads = 0
 
     @property
-    def base_shape(self) -> tuple:
+    def shape(self) -> tuple:
         return self.array.shape
 
     @property

@@ -11,6 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import stored_proxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.images import SingleScaleImage
@@ -383,12 +384,13 @@ class StackImage(
         refuse_options(type(self), kwargs)
         target = stack_target(filename)
         read = []
-        if isinstance(self.rawdata, _StackProxy):
-            read = self.rawdata.filenames()
+        stored = stored_proxy(self.rawdata)
+        if isinstance(stored, _StackProxy):
+            read = stored.filenames()
         image = self.consolidate(axis=axis, on_loss=on_loss, **fields)
         reading = reads_from(self.rawdata, target, image.metadata.raw)
         if reading:
-            fill = self.rawdata.fill
+            fill = stored.fill
             # What the metadata loses was acted on by the copy above.
             image = self.consolidate(
                 inplace=True, axis=axis, on_loss="ignore", **fields

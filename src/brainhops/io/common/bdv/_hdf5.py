@@ -16,7 +16,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from brainhops.io.common.hdf5 import DelayedH5Array
 from brainhops.io.common.hdf5._parsers import read_string
@@ -31,7 +31,7 @@ _LEGACY_TYPE = np.dtype("uint16")
 """The type of the voxels of a file without a `dataType` attribute."""
 
 
-class _BdvProxy(ArrayProxy):
+class _BdvProxy(StoredProxy):
     """A lazy array of the voxels of one level of one view.
 
     The proxy holds a
@@ -43,7 +43,7 @@ class _BdvProxy(ArrayProxy):
     reinterpreted as unsigned, bit for bit, as BigDataViewer reads them,
     and values stored in another type than the one that the `dataType`
     attribute declares are converted to it. Indexing the proxy returns
-    another lazy array (see [`ArrayProxy`][]), and converting that array
+    another lazy array (see [`StoredProxy`][]), and converting that array
     reads only the selected part of the dataset.
     """
 
@@ -57,9 +57,9 @@ class _BdvProxy(ArrayProxy):
     ]
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the voxels, in the order z, y, x of the file."""
-        return tuple(int(d) for d in self.cells.base_shape)
+        return tuple(int(d) for d in self.cells.shape)
 
     @property
     def dtype(self) -> np.dtype:
@@ -67,13 +67,13 @@ class _BdvProxy(ArrayProxy):
         return self._dtype
 
     @property
-    def base_chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
         """The shape of an HDF5 chunk of the `cells` dataset, or `None`.
 
         A chunk is the unit that HDF5 reads at once. `None` is given
         for a dataset that is stored without chunks.
         """
-        return self.cells.base_chunks
+        return self.cells.chunks
 
     def _converted(self, values: tx.Any) -> np.ndarray:
         """Return stored values in the type of the voxels."""

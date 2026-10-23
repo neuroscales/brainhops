@@ -11,7 +11,7 @@ from bagof.magic import NoInit, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
-from brainhops._core.proxy import ArrayProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -154,7 +154,7 @@ def stream_location(file: tx.Any) -> str:
     return dataset_location(name)
 
 
-class _PrecomputedProxy(ArrayProxy):
+class _PrecomputedProxy(StoredProxy):
     """A lazy array of the voxels of one scale of a precomputed volume.
 
     The proxy holds the location of the volume and the record of the
@@ -165,7 +165,7 @@ class _PrecomputedProxy(ArrayProxy):
     as `[x, y, z, channel]`, with the first voxel at index 0 whatever the
     `voxel_offset` of the scale, and the channel axis is dropped when the
     volume has a single channel. Indexing the proxy returns another lazy
-    array (see [`ArrayProxy`][]), which shares the open scale. The proxy
+    array (see [`StoredProxy`][]), which shares the open scale. The proxy
     keeps no open scale when it is pickled.
     """
 
@@ -194,7 +194,7 @@ class _PrecomputedProxy(ArrayProxy):
         return int(self.record.num_channels)
 
     @property
-    def base_shape(self) -> tx.Tuple[int, ...]:
+    def shape(self) -> tx.Tuple[int, ...]:
         """The shape of the voxels, read from the record."""
         shape = tuple(self.scale.size)
         if self.num_channels != 1:
@@ -207,7 +207,7 @@ class _PrecomputedProxy(ArrayProxy):
         return self.record.dtype
 
     @property
-    def base_chunks(self) -> tx.Tuple[int, ...]:
+    def chunks(self) -> tx.Tuple[int, ...]:
         """The shape of a chunk of the scale, read from the record.
 
         The chunk is the first of the `chunk_sizes` of the scale, which
@@ -271,12 +271,12 @@ class _PrecomputedProxy(ArrayProxy):
         store = store.translate_to[0]
         if self.num_channels == 1:
             store = store[..., 0]
-        if tuple(store.shape) != self.base_shape:
+        if tuple(store.shape) != self.shape:
             raise ParserContentError(
                 f"The scale {self.scale.key!r} of the precomputed volume at "
                 f"{self.location} has shape {tuple(store.shape)}, but the "
                 f"info file that the image was read with says "
-                f"{self.base_shape}."
+                f"{self.shape}."
             )
         self._store = store
         return store
