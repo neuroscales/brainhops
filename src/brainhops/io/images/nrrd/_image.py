@@ -276,7 +276,9 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
        direction (the `spacings` of the other axes, else 1);
     2. index -> world: the `Affine` whose columns are the space directions
        and whose translation is the `space origin`, the position of the
-       centre of the first sample.
+       centre of the first sample. The column of each axis without a
+       space direction, such as time or a channel, is zero, so that the
+       matrix has a column for every axis of the index system.
 
     Without a world space, a single `Scaling` or `Affine` to `"physical"`
     is built from `spacings`, `axis mins`, `axis maxs` and `centers`. A
@@ -304,7 +306,7 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
                 scale.append(s if math.isfinite(s) and s != 0 else 1.0)
                 phys_axes.append(_with_unit(axis, units[i]))
         physical = CoordinateSystem(name="physical", axes=phys_axes)
-        matrix = np.zeros((sdim, nspace + 1))
+        matrix = np.zeros((sdim, len(axes) + 1))
         for j in range(nspace):
             matrix[:, j] = dirs[perm[j]]
         origin = header.space_origin
