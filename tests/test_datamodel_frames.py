@@ -835,7 +835,7 @@ def _with_metadata(image: SingleScaleImage, **fields: tx.Any) -> tx.Any:
     return SingleScaleImage(
         np.asarray(image.data),
         image.transformations,
-        frames=image._frames,
+        frames=image.frames,
         metadata=Metadata(**fields),
     )
 

@@ -700,29 +700,88 @@ def test_a_template_does_not_lay_out_other_values_as_fsl(
     assert np.allclose(_stored(path), values, atol=1e-6)
 
 
-def test_the_writer_keeps_the_header_frames_by_identity(
+def test_the_writer_keeps_the_frames_of_the_header(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Transformations compare by identity. Frames that are the objects the
-    # image decoded from its header keep the file as it is, and an equal
-    # frame that is another object is another frame, which the writer
-    # re-expresses in RAS.
+    # Frames that are read from the header keep the file as it is. Frames
+    # that are assigned, even the same objects, are frames given to the
+    # image, which the writer re-expresses in RAS.
     data = np.random.default_rng(11).normal(size=(*_SHAPE, 3))
     affine = _reference_affine(True)
     path = _fsl_file(tmp_path / "warp.nii", data, affine, FNIRT_DISPLACEMENT)
     image = NiftiImage.load(path)
-    frame = image.frames[4]
+    image.data = np.asarray(image.data) + 1.0
     copy = tmp_path / "copy.nii"
 
-    image.frames = {4: frame}
     save(image, copy)
     assert _intent(copy) == FNIRT_DISPLACEMENT
 
-    image.frames = {
-        4: Affine(matrix=frame.matrix, input=frame.input, output=frame.output)
-    }
+    image.frames = image.frames
     with pytest.raises(LossyConversionError, match="FSL scaled"):
         image.consolidate()
+
+
+def _dispvect(path: pathlib.Path, values: np.ndarray) -> NiftiImage:
+    save(SingleScaleImage(values, [_affine(*_systems())]), path)
+    return NiftiImage.load(path)
+
+
+def test_the_frames_of_the_header_are_the_same_objects(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    image = _dispvect(tmp_path / "field.nii", values)
+
+    assert image.frames is image.frames
+    assert image.frames[4] is image.frames[4]
+
+
+def test_the_frames_of_the_header_follow_the_image(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    # The operations of the data model read the frames through the
+    # property, so the frames of the header reach their results.
+    image = _dispvect(tmp_path / "field.nii", values)
+    frame = image.frames[4]
+    world = image.transformation.output
+    shift = np.eye(6)[:-1]
+    shift[0, -1] = 7.0
+    u = Affine(matrix=shift, input=world, output=world)
+
+    assert image(u).frames[4] is frame
+    assert image.to(SingleScaleImage).frames[4] is frame
+    indexed = image[1:3]
+    assert indexed.frames[4] is not None
+    ras = np.asarray(indexed.reframe(-1).data)[:, :, :, 0, :]
+    assert np.allclose(ras, values[1:3] @ _L.T, atol=1e-5)
+    resliced = image.reslice()
+    assert resliced.frames[4] is not None
+    ras = np.asarray(resliced.reframe(-1).data)[:, :, :, 0, :]
+    assert np.allclose(ras, values @ _L.T, atol=1e-4)
+
+
+def test_assigning_the_header_state_decodes_new_frames(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    image = _dispvect(tmp_path / "field.nii", values)
+    first = image.frames[4]
+
+    image.metadata = image.metadata
+    second = image.frames[4]
+    assert second is not first
+
+    image.transformations = list(image.transformations)
+    assert image.frames[4] is not second
+
+
+def test_assigned_frames_stick(
+    tmp_path: pathlib.Path, values: np.ndarray
+) -> None:
+    image = _dispvect(tmp_path / "field.nii", values)
+
+    image.frames = {4: None}
+
+    assert image.frames[4] is None
+    assert image.frames is image.frames
 
 
 def test_a_moving_image_with_another_origin_adds_an_offset(

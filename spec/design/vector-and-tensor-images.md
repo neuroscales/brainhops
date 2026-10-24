@@ -496,31 +496,35 @@ the header states.
   re-expressed in another frame are then wrong, because positions also
   change with the translation of the frame.
 
-`NiftiImage` builds the frames of its file from its header once, and
-returns the same objects at every read, because transformations compare
-by identity and a frame is the same frame only when it is the same
-object. It builds them again when the header, the shape or the decoded
-transformations change, so that an image that is consolidated gets the
-frames of its new header. Frames that are given to the image take
-precedence over those of the header. The data model knows
-nothing of files: the format overrides the `frames` property in its own
-class, and it gives the frames it reads to the images that it builds,
-such as the result of a lazily applied transformation, as ordinary
-frames.
+The `frames` property of `SingleScaleImage` is a cached
+`smartproperty`. Its stored value is the frames as they were given, and
+its getter makes the slots explicit once, so that the same objects are
+returned at every read, because transformations compare by identity and
+a frame is the same frame only when it is the same object. When nothing
+is given, every slot is the array system. `NiftiImage` declares the
+property again with a getter that builds the frames from the header
+when nothing is given. Assigning other metadata, transformations or
+data drops the cached frames, so that an image that is consolidated
+gets the frames of its new header, and frames that are given to the
+image take precedence over those of the header. The operations of the
+data model read the frames through the property, so the frames of a
+header reach the result of a lazily applied transformation, of
+indexing, of reslicing and of a conversion to another class, and the
+data model knows nothing of files.
 
 The writer of `NiftiImage` follows the same table in reverse. The
 intent of the header is the one given by keyword, or else that of the
 metadata, or else that of `like`, and the values are written in the
 frame that this intent states.
 
-- An image whose frames are the very objects that it decoded from its
-  own header, whose geometry is kept, and whose intent does not change,
-  is written with its values and its intent as they are, including an
-  FSL intent, because its values are already in the frame that the
-  header states. A frame that is equal to one of these but is another
-  object is another frame, as transformations compare by identity, so
-  its values are re-expressed, which leaves them unchanged. A field that
-  keeps the FSL intent of its own header is laid out as FSL writes it.
+- An image whose frames are those of its own header, because none were
+  assigned, whose geometry is kept, and whose intent does not change, is
+  written with its values and its intent as they are, including an FSL
+  intent, because its values are already in the frame that the header
+  states. Frames that are assigned are given frames, even when they are
+  the objects that the header gave, and their values are re-expressed.
+  A field that keeps the FSL intent of its own header is laid out as
+  FSL writes it.
 - Otherwise, the vectors of a displacement axis, or of a vector axis of
   valence `"vector"`, are re-expressed in the world of the preferred
   transformation, which the writer stores as the best affine, and the

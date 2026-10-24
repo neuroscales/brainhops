@@ -9,7 +9,7 @@ from bagof.magic import Forget, NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.magic import smart_replace
-from brainhops._core.properties import alias
+from brainhops._core.properties import alias, smartproperty
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
 from brainhops.backends import BackendLike, DeviceLike
 
@@ -59,6 +59,14 @@ from .transformations import (
     Sequence,
     Transformation,
 )
+
+
+def _always_unset(value: tx.Any) -> bool:
+    """Return true, so that a property always computes its value.
+
+    The value is then cached, and an assignment deletes the cache.
+    """
+    return True
 
 
 class Image(
@@ -278,7 +286,7 @@ class SingleScaleImage(Image):
     # the array on first access, and cannot supply it at construction time.
     # This mirrors `Affine.matrix`, which is optional for the same reason.
 
-    data = dataproperty()
+    data = dataproperty(invalidates="frames")
     """The image data, in the backend of the setting in effect.
 
     Under the default setting, the stored array is returned as it is.
@@ -307,7 +315,12 @@ class SingleScaleImage(Image):
     _frames: NoRepr[tx.Any] = ()
     """The frames of the values, as they were given (see `frames`)."""
 
-    @property
+    # The stored value of `frames` is what was given, which may be a
+    # mapping or a frame that must still be restricted, so the property
+    # always reads it through its getter, which makes the slots explicit
+    # once and caches them. A subclass that decodes frames from a file
+    # declares the property again with its own getter.
+    @smartproperty(cache=True, unset=_always_unset)
     def frames(self) -> tx.Tuple[FrameSlot, ...]:
         """The frame of the values along each axis.
 
@@ -329,7 +342,9 @@ class SingleScaleImage(Image):
 
         Only a component axis can have a frame. The constructor and the
         setter also accept a mapping from axis names or indices to slots,
-        and an empty tuple, which leaves every slot `None`.
+        and an empty tuple, which leaves every slot `None`. The slots are
+        made explicit once and cached, so the same objects are returned
+        at every read, and assigning frames or data drops the cache.
 
         A stored transformation corresponds exactly to the components:
         the outputs that no component axis of the array feeds are as
@@ -358,19 +373,9 @@ class SingleScaleImage(Image):
         KeyError
             If a mapping names an axis that does not exist.
         """
-        raw = self._frames
-        slots = normalize_frames(raw, self._array_axes(), tuple(self.shape))
-        if isinstance(raw, Mapping) or any(
-            new is not old for new, old in zip(slots, raw)
-        ):
-            # The slots are stored once they are explicit, so that a frame
-            # restricted by a projection is the same object at every read.
-            self._frames = slots
-        return slots
-
-    @frames.setter
-    def frames(self, value: tx.Any) -> None:
-        self._frames = () if value is None else value
+        return normalize_frames(
+            self._frames, self._array_axes(), tuple(self.shape)
+        )
 
     def _array_axes(self) -> tx.Optional[AxisSequence]:
         """Return the axes of the array system, or `None` if unknown."""
@@ -394,7 +399,7 @@ class SingleScaleImage(Image):
         converted = as_backend(transformations, **opt)
         if converted is not transformations:
             changes["transformations"] = converted
-        frames = obj._frames
+        frames = obj.frames
         converted = frames_as_backend(frames, **opt)
         if converted is not frames:
             changes["frames"] = converted
@@ -785,7 +790,7 @@ class SingleScaleImage(Image):
             data=_stored_data(self),
             transformations=transformations,
             metadata=self.metadata,
-            frames=self._frames,
+            frames=self.frames,
         )
 
     def __getitem__(self, index: CartesianIndex) -> "SingleScaleImage":
