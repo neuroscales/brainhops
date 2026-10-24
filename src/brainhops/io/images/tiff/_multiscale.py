@@ -553,6 +553,14 @@ class TiffMultiScaleImage(
             if not reading:
                 source = raws[0].source
                 write_target(filename, lambda f: copy_source(source, f))
+                return
+            # The file already holds the pixels and the record, so it is
+            # left as it is. The pyramid still drops the fields that the
+            # write lost, as it does after any save over its own file.
+            # The loss was reported above, so it is not reported again.
+            self.consolidate(
+                inplace=True, on_loss="ignore", **options, **fields
+            )
             return
         plan = self._planned(**options)
         write_target(filename, lambda f: write_plan(plan, f, encoding))

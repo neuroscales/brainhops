@@ -787,6 +787,40 @@ def test_write_multiscale_from_datamodel(tmp_path: Path) -> None:
     assert math.isclose(_shift(back.images[1])[0], 0.5)
 
 
+def test_save_over_own_file_drops_lost_field(tmp_path: Path) -> None:
+    # A save over the file of the image copies nothing, since the file
+    # already holds the image. The description, which TIFF cannot store,
+    # is reported lost once and is then dropped from the image (#527).
+    path = _write(tmp_path, "a.tif", GREY)
+    content = path.read_bytes()
+    image = load(path)
+    image.metadata.description = "edited"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        bio.save(image, path, on_loss="warn")
+    assert len(caught) == 1
+    assert "description" in str(caught[0].message)
+    assert image.metadata.description is None
+    assert path.read_bytes() == content
+    np.testing.assert_array_equal(image.data, GREY.T)
+
+
+def test_save_pyramid_over_own_file_drops_lost_field(tmp_path: Path) -> None:
+    # The pyramid counterpart of the test above (#527).
+    path = _pyramid(tmp_path)
+    content = path.read_bytes()
+    pyramid = load(path)
+    pyramid.metadata.description = "edited"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        bio.save(pyramid, path, on_loss="warn")
+    assert len(caught) == 1
+    assert "description" in str(caught[0].message)
+    assert pyramid.metadata.description is None
+    assert all(level.metadata.description is None for level in pyramid.images)
+    assert path.read_bytes() == content
+
+
 # File handles (#266)
 
 

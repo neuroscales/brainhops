@@ -662,6 +662,14 @@ class TiffImage(
         if not encoding and self._copies_source(**options):
             if not reading:
                 write_target(filename, lambda f: copy_source(raw.source, f))
+                return
+            # The file already holds the pixels and the record, so it is
+            # left as it is. The image still drops the fields that the
+            # write lost, as it does after any save over its own file.
+            # The loss was reported above, so it is not reported again.
+            self.consolidate(
+                inplace=True, on_loss="ignore", **options, **fields
+            )
             return
         plan = self._planned(**options)
         write_target(filename, lambda f: write_plan(plan, f, encoding))
