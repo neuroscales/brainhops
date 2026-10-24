@@ -2456,7 +2456,7 @@ pyramid of the conformance test and the checks P1 to P12.
      writing, and a `.npz` or `.mat` file of several arrays would have to
      keep its other arrays. Status: open, for the maintainer to decide
      whether these formats should write.
-302. The plain matrix formats give the coordinate systems of their record
+302. ~~The plain matrix formats give the coordinate systems of their record
      to the transformation as its own `input` and `output`, instead of
      decoding them as properties as LTA does, and a system counts as
      assigned only when it is not the very object of the record
@@ -2467,7 +2467,7 @@ pyramid of the conformance test and the checks P1 to P12.
      `LtaTransformation.to(Affine).input` is `None` for a file of the RAS
      type, on `main` as well. Status: open, for the maintainer to decide
      whether the data model should copy the decoded systems of another
-     class, which would let the plain matrix formats decode them too.
+     class, which would let the plain matrix formats decode them too.~~
 303. `NiftyRegAffine` holds a `NiftyRegAffineRaw` record that keeps the
      text of the file, as `C3dAffineRaw` does in item 170, so an untouched
      file keeps its `%.7g` numbers, and a matrix that is encoded is

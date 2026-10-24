@@ -142,11 +142,28 @@ def _convert_withlog(
                 kwargs[_fallback] = getattr(t, _fallback)
             elif getattr(t, "_data", None) is None:
                 kwargs["data"] = t.data
-        if crossing:
-            # The rebuild would otherwise carry the flag over from `t`, but
-            # changing the encoding is the purpose of this conversion, so
-            # the flag is set explicitly.
-            kwargs["log"] = out_log
+    if changes_class:
+        # The input and output systems follow the same rule as the data.
+        # A file format such as LTA leaves the stored system empty and
+        # decodes it from its record, so the rebuild would carry over
+        # nothing. The public system is transferred in that case.
+        for name in ("input", "output"):
+            private = "_" + name
+            if (
+                name in kwargs
+                or private in kwargs
+                or not stores(cls, private)
+                or getattr(t, private, None) is not None
+            ):
+                continue
+            system = getattr(t, name)
+            if system is not None:
+                kwargs[name] = system
+    if crossing:
+        # The rebuild would otherwise carry the flag over from `t`, but
+        # changing the encoding is the purpose of this conversion, so the
+        # flag is set explicitly.
+        kwargs["log"] = out_log
     return _convert_withdata(t, cls, **kwargs)
 
 

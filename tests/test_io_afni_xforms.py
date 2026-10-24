@@ -188,14 +188,6 @@ def test_ras_points_are_mapped_with_x_and_y_negated() -> None:
     _check_ras_mapping(plain)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "An affine whose matrix lives in its record, such as an LTA or an "
-        "AFNI matrix read from a file, converts to a plain Affine without "
-        "its matrix, so the data model composes it as the identity."
-    ),
-)
 def test_a_read_affine_is_composed_with_its_matrix() -> None:
     _check_ras_mapping(AfniAffine.from_text(ALLINEATE + _row(M1)))
 
