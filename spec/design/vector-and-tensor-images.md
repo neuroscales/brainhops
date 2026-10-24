@@ -1,8 +1,8 @@
 # Images of vectors and tensors
 
 Status: the data model, the operations, the metadata and the frames of
-NIfTI files are implemented; the readers and the writers of the other
-formats are not (see section 9).
+NIfTI and MRtrix files are implemented; the readers and the writers of
+the other formats are not (see section 9).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -575,7 +575,61 @@ Implemented:
   single-scale and multi-scale images;
 - the `Reframed` record and the `VALUES` scope of the metadata (#540);
 - the frames of NIfTI displacement fields, which the reader sets from
-  the intent and the writer stores as section 8 describes.
+  the intent and the writer stores as section 8 describes;
+- the frames of MRtrix images, described below.
+
+MRtrix stores vectors and tensors along the fourth axis of an image, in
+scanner RAS millimetres, which do not depend on the strides of the file
+or on the reordering of the axes that MRtrix applies when it loads an
+image. The header has no key that says what the volumes are, so
+`MrtrixImage` types the fourth axis only from two clues, and never from
+the values: the key `brainhops_field_type` (`coordinates`,
+`displacements`, `vectors`, `covectors` or `tensors`) while brainhops
+wrote the file last, and otherwise the last line of `command_history`
+when that command writes one kind of values in that shape (`dwi2tensor`
+with six volumes and no `dw_scheme` key, which its predicted signal
+keeps, the warp commands that the MRtrix warp readers know with three
+volumes, with the conversion type of `warpconvert` read from its second
+positional argument, except `mrregister`, which also writes the moved
+image, and `mrregister` for the 5-D file of `-nl_warp_full`). A tensor
+axis gets the layout `"symmetric-diagonal-first"` of `dwi2tensor`.
+The key is not trusted under a later command, because MRtrix copies it
+into derived images that may hold other values. Every other image keeps
+a channel axis: the peaks of `sh2peaks` and `fixel2peaks` hold several
+directions along one axis, the eigenvectors and eigenvalues of
+`tensor2metric` share their shape, and spherical harmonics change under
+a rotation by a rule of their own. The frame of the fourth axis is the
+preferred transformation, the voxel-to-scanner affine, which has a zero
+column for each voxel axis after the spatial ones, because the scanner
+has three axes and the MRtrix transform maps the spatial axes only.
+NIfTI instead carries such axes through to its world, because its header
+gives a time axis a spacing and an offset. The writers that place axes
+for a format accept such a map to a spatial world. They place the axes
+first, so that a vector axis read from MRtrix becomes the fifth axis of
+a NIfTI file after an inserted time axis, and then leave out the last
+stored axes whose columns are zero. Trailing axes without a type, such
+as the volumes of an MRtrix series, declare no place, so they are left
+out before the axes are placed and the data keeps its order. Their
+voxel sizes, such as a repetition time, are held by the `Scaling` of the
+MRtrix image alone, so a NIfTI file written from it has a `pixdim[4]` of
+one.
+
+The writer keeps an image whose frames are those of its own header and
+whose geometry is kept as it is. Otherwise it re-expresses the values in
+the scanner of the written header through the exact Jacobian, reorders
+the coefficients of a tensor into the order of `dwi2tensor`, which is a
+permutation with the zeros of a diagonal layout filled in, records the
+kind in `brainhops_field_type` and appends its line to
+`command_history`. The component axis is stored fourth, before a time
+axis, so a series of fields keeps its components where MRtrix reads
+them. Covector-valued tensors, non-symmetric tensors, a
+component axis that is not stored fourth or that has another number of
+entries than three or six, foreign frames, frames that are not affine
+and points in another frame are refused unless `lossy=True` is given.
+When the base header describes its fourth axis, or carries the key of
+brainhops, and the written image holds something else there, the key is
+removed and the line of brainhops is appended, so that neither clue
+describes the new values.
 
 A writer applies a change of frame through affine maps silently, because
 it is exact and part of the encoding of the format. It refuses, with a
@@ -601,8 +655,8 @@ the derivatives of the splines of the fields, is left for later.
 Not implemented:
 
 - readers and writers of the frames of the component axes in the other
-  formats (ITK, MRtrix, the FSL transformation formats, NRRD and
-  OME-Zarr), which #539 tracks. Until then, the frame of a component
+  formats (ITK, the FSL transformation formats, NRRD and OME-Zarr),
+  which #539 tracks. Until then, the frame of a component
   axis that such a reader creates is the array system by default, even
   when the file stores the vectors in another frame;
 - the descriptions of the channels in the metadata, which run along the
