@@ -5933,6 +5933,35 @@ def test_18_saving_over_its_own_file_consolidates_the_object(
     )
 
 
+@pytest.mark.parametrize("cls, exemplar", CASES)
+def test_18_saving_over_its_own_file_keeps_its_content(
+    cls: type,
+    exemplar: Exemplar,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The check above needs a `rawdata` array. This check also covers a
+    # format whose stored data lives in its record, such as the lazy
+    # fields of an X5 file (#429), and checks only what the file holds.
+    path = _saved(cls, exemplar, tmp_path)
+    loaded = _load(cls, exemplar, path)
+    if exemplar.source is not None or _stored(exemplar, loaded) is None:
+        pytest.skip("Only an object whose stored data reads its file.")
+    # An untouched object is written over the file that it reads.
+    loaded.save(path)
+    back = _load(cls, exemplar, path)
+    assert np.array_equal(np.asarray(_data(exemplar, back)), exemplar.sample())
+    assert np.allclose(exemplar.geometry(loaded), exemplar.geometry(back))
+    # A changed object is written over the file that it read.
+    loaded = _changed(cls, exemplar, tmp_path)
+    path = _path(tmp_path, exemplar, "src")
+    expected = np.asarray(_data(exemplar, loaded.consolidate()))
+    geometry = exemplar.geometry(loaded)
+    loaded.save(path)
+    back = _load(cls, exemplar, path)
+    assert np.allclose(np.asarray(_data(exemplar, back)), expected)
+    assert np.allclose(exemplar.geometry(back), geometry)
+
+
 def _compared(cls: type, exemplar: Exemplar, tmp_path: tx.Any) -> tx.Any:
     """Return the path of a file of an image whose list is compared.
 

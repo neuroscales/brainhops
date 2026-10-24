@@ -341,6 +341,24 @@ def test_no_open_file_is_kept(field_x5: Path) -> None:
     ]
 
 
+@pytest.mark.parametrize("reassign", [False, True])
+def test_saving_over_its_own_file_keeps_the_fields(
+    chain_x5: Path, reassign: bool
+) -> None:
+    # The fields of the chain are read lazily from the file that is
+    # replaced, so the new file must be written beside it (#429).
+    points = _ras(IJK)
+    xform = X5Transform.load(chain_x5)
+    expected = _apply(xform, points)
+    if reassign:
+        xform.transformations = list(xform)
+    xform.save(chain_x5)
+    back = X5Transform.load(chain_x5)
+    np.testing.assert_allclose(_apply(back, points), expected, atol=1e-5)
+    np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
+    assert not list(chain_x5.parent.glob(".*"))
+
+
 def test_decoded_matrices_are_read_only(linear_x5: Path) -> None:
     # The writer writes the record, not the decoded chain, so an edit in
     # place would be lost. A new chain is assigned instead.
