@@ -4974,6 +4974,24 @@ PYRAMID_CASES = [
 _PARSER_STATE = {"image", "header", "_header", "struct", "dataobj", "node"}
 
 
+_BACKENDS: tx.Tuple[tx.Tuple[tx.Tuple[str, ...], tx.Any], ...] = (
+    (("brainhops.io.images.openslide.",), openslide),
+    (("brainhops.io.images.n5.", "brainhops.io.images.precomputed."), ts),
+    (("brainhops.io.images.stack.",), tifffile),
+    (("brainhops.io.transformations.fsl.flirt.",), nb),
+)
+"""Packages that import without the dependency that their readers need.
+
+Each entry pairs the prefixes of the dotted names in a package with the
+optional module whose import guards the exemplars of that package. When
+the module is `None`, the dependency is missing. `_resolve` then treats
+the classes of the package as not installed, as it does for a package
+that fails to import. The registry test leaves these classes out of both
+of the sets that it compares, so a class that is registered without its
+exemplar does not make the test fail.
+"""
+
+
 def _resolve(name: str, *, require_backend: bool = True) -> tx.Optional[type]:
     """Import a class by its dotted name.
 
@@ -4981,18 +4999,9 @@ def _resolve(name: str, *, require_backend: bool = True) -> tx.Optional[type]:
     is not installed. Static checks can set `require_backend=False` to
     inspect classes that remain importable without their reader backend.
     """
-    if (
-        require_backend
-        and openslide is None
-        and name.startswith("brainhops.io.images.openslide.")
-    ):
-        return None
-    if (
-        require_backend
-        and ts is None
-        and name.startswith(
-            ("brainhops.io.images.n5.", "brainhops.io.images.precomputed.")
-        )
+    if require_backend and any(
+        guard is None and name.startswith(prefixes)
+        for prefixes, guard in _BACKENDS
     ):
         return None
     module, _, attr = name.rpartition(".")
