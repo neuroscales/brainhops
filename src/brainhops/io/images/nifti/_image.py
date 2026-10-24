@@ -729,6 +729,11 @@ def _nifti_to_transformations(
     that scales by `pixdim[4]` and translates by `toffset`. Other axes pass
     through, and a time axis without a valid spacing stays a frame index
     in every space. An image with only spatial axes gets a plain `Affine`.
+
+    Only spatial axes receive an anatomical orientation. Under a flat
+    intent, such as a time series, a shape or a point set, the axes named
+    x, y and z are not spatial. An image without spatial axes has no
+    voxel-to-RAS transformation, so the list holds only the first entry.
     """
 
     xforms = []
@@ -784,6 +789,9 @@ def _nifti_to_transformations(
     ]
     phys_space = CoordinateSystem(name="physical", axes=phys_axes)
 
+    # Only spatial axes have an anatomical orientation. Under a flat intent,
+    # such as a time series or a point set, the axes named x, y and z are
+    # plain indices and keep their type.
     ras_axes = [
         replace(
             axis,
@@ -791,7 +799,7 @@ def _nifti_to_transformations(
                 type="anatomical", value=orientation[axis.name]
             ),
         )
-        if axis.name in orientation
+        if axis.type == "space" and axis.name in orientation
         else axis
         for axis in phys_axes
     ]
@@ -881,6 +889,11 @@ def _nifti_to_transformations(
                 )
             )
         return Sequence(transformations=steps, input=voxel_space, output=world)
+
+    # The qform and the sform map the spatial axes. An image without
+    # spatial axes, such as one with a flat intent, has no world space.
+    if not keep_dims:
+        return xforms
 
     # --- qform --------------------------------------------------------
     # get_qform and get_sform return None for a form whose code is 0, and
