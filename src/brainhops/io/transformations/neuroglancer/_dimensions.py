@@ -524,9 +524,14 @@ def _scale_and_unit(
             f"affine of the image first."
         )
     quantity = 1 * unit.to_pint()
-    radian = "radian" in str(unit)
+    # pint treats the radian as dimensionless, so hertz and radian per
+    # second convert into each other. The power of the radian among the
+    # root units of the axis unit tells them apart: 1 for an angular
+    # frequency, 0 for any other unit. A steradian counts as a squared
+    # radian and has no Neuroglancer equivalent.
+    radians = dict(quantity.to_root_units().unit_items()).get("radian", 0)
     for base, long_name in BASES.items():
-        if (base == "rad/s") != radian:
+        if radians != (1 if base == "rad/s" else 0):
             continue
         try:
             factor = quantity.to(long_name).magnitude

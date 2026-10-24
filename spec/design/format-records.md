@@ -2191,11 +2191,12 @@ registrations of its views back into the XML file.
      which the file cannot say. Status: accepted and documented.
 235. An axis without a unit is written as a dimension without a unit, and
      a dimension without a unit is read as an axis without a unit, so an
-     unknown unit and the absence of a unit are not told apart. pint
+     unknown unit and the absence of a unit are not told apart. ~~pint
      treats the radian as dimensionless, so a unit is written as `rad/s`
      rather than `Hz` when its name contains `radian`
-     (`_scale_and_unit`). Status: accepted for now by the maintainer, with
-     a follow-up issue to tell the two units apart by their dimensions.
+     (`_scale_and_unit`).~~ Status: accepted for now by the maintainer,
+     ~~with a follow-up issue to tell the two units apart by their
+     dimensions~~.
 236. The coefficients are converted between the SI prefixes of the input
      and output axes with decimal arithmetic on the shortest
      representation of each number. When the two prefixes are equal,
