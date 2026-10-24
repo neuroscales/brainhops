@@ -342,9 +342,12 @@ class SingleScaleImage(Image):
 
         Only a component axis can have a frame. The constructor and the
         setter also accept a mapping from axis names or indices to slots,
-        and an empty tuple, which leaves every slot `None`. The slots are
-        made explicit once and cached, so the same objects are returned
-        at every read, and assigning frames or data drops the cache.
+        and an empty tuple or `None`, which means that nothing is given,
+        so that every slot is `None`. A subclass that decodes frames from
+        a file returns those frames instead when nothing is given. The
+        slots are made explicit once and cached, so the same objects are
+        returned at every read, and assigning frames or data drops the
+        cache.
 
         A stored transformation corresponds exactly to the components:
         the outputs that no component axis of the array feeds are as

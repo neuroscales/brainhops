@@ -321,7 +321,9 @@ class NiftiImage(
         the frames of its new header. Frames that are assigned, or given to
         the constructor, take precedence over those of the header, as
         [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
-        describes them.
+        describes them. Assigning `None` or an empty tuple assigns
+        nothing, so the frames of the header are read again; assigning
+        `(None,) * ndim` puts every axis in the array system.
         """
         given = self._frames or self._header_frames()
         return normalize_frames(given, self._array_axes(), tuple(self.shape))
