@@ -31,6 +31,10 @@ from brainhops.datamodel.images import (  # noqa: E402
     MultiScaleImage,
     SingleScaleImage,
 )
+from brainhops.datamodel.metadata import (  # noqa: E402
+    ConversionReport,
+    MetadataLossError,
+)
 from brainhops.datamodel.transformations import (  # noqa: E402
     Affine,
     Scaling,
@@ -625,6 +629,33 @@ def test_a_multiscale_image_of_fewer_levels(tmp_path: Path) -> None:
     assert built.metadata is None
     back = Jpeg2000MultiScaleImage.from_bytes(built.to_bytes())
     np.testing.assert_array_equal(np.asarray(back.data), RAMP.T)
+
+
+def test_a_multiscale_image_writes_its_metadata_over_its_level() -> None:
+    # The full-resolution level is read from another file, whose record
+    # holds another comment, and the pyramid sets a field that the record
+    # of a JPEG 2000 file cannot hold.
+    content = _with(_encode(RAMP), comments=("pyramid",))
+    pyramid = Jpeg2000MultiScaleImage.from_bytes(content)
+    level = Jpeg2000MultiScaleImage.from_bytes(
+        _with(_encode(RAMP), comments=("level",))
+    ).images[0]
+    pyramid = replace(
+        pyramid,
+        metadata=replace(pyramid.metadata, flip_angle=30.0),
+        images=[level],
+    )
+    assert pyramid.images[0].metadata is not pyramid.metadata
+
+    # The metadata of the pyramid is written, and the field that the
+    # record cannot hold is reported as lost.
+    report = ConversionReport(source="a", target="b")
+    copy = pyramid.consolidate(on_loss=report)
+    assert list(report.lost) == ["flip_angle"]
+    assert copy.metadata.raw.comments == ("pyramid",)
+    np.testing.assert_array_equal(np.asarray(copy.data), RAMP.T)
+    with pytest.raises(MetadataLossError):
+        pyramid.consolidate(on_loss="raise")
 
 
 def test_a_multiscale_image_written_with_its_placement(
