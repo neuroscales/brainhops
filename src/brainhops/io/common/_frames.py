@@ -13,9 +13,12 @@ the values in that frame before it encodes them. The rules are these:
   finite differences, so the written values are approximations;
 - an axis whose frame is foreign, or whose type the format cannot store
   in a frame of its own, is written with its values as they are, and the
-  file loses what the values are.
+  file loses what the values are;
+- the coordinates of points in another frame than that of the format
+  are written as they are, because re-expressing them needs the inverse
+  of a map, which is not computed.
 
-The last two cases lose information about the data, so they are refused
+The last three cases lose information about the data, so they are refused
 unless `lossy=True` is given, as a lossy conversion of a transformation
 is. Readers never re-express values: they record the frame of the file.
 Values whose frame is the very frame in which the format stores them,
@@ -31,6 +34,7 @@ from brainhops.datamodel._frames import (
     FrameSlot,
     _structure,
     component_axes,
+    is_point_axis,
 )
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -116,6 +120,15 @@ def values_in_format_frames(
             losses.append(
                 f"the format cannot store the frame of the values along "
                 f"axis {name}, which would be written as they are"
+            )
+            continue
+        if is_point_axis(axes[i]):
+            # Re-expressing points needs the inverse of a map, which
+            # `reframe` does not compute.
+            losses.append(
+                f"the coordinates of the points along axis {name} cannot "
+                f"be re-expressed in the frame of the format, and would be "
+                f"written as they are"
             )
             continue
         note = None if caveat is None else caveat(i, slot)

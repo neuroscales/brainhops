@@ -386,6 +386,7 @@ def plan_axes(
     fill_time: bool = False,
     time_slot: tx.Optional[int] = None,
     max_nonspatial: tx.Optional[int] = None,
+    components_first: bool = False,
 ) -> AxisLayout:
     """Place declared axes in the storage order of a format.
 
@@ -411,6 +412,10 @@ def plan_axes(
         number of spatial axes that must precede it.
     max_nonspatial : int, optional
         The number of non-spatial axes the format can store.
+    components_first : bool, default=False
+        Whether to store the component axes, which hold the components
+        of points, vectors or tensors, right after the spatial axes and
+        before time, for a format that expects the components there.
 
     Raises
     ------
@@ -442,7 +447,13 @@ def plan_axes(
     if all(n in _SPACE_NAMES for n in names) and len(set(names)) == len(names):
         spatial.sort(key=lambda i: _SPACE_NAMES.index(axes[i].name))
     rest = [i for i, g in enumerate(groups) if g != "space"]
-    rest.sort(key=lambda i: (STORAGE_GROUPS.index(groups[i]), i))
+
+    def rank(i: int) -> int:
+        if components_first and is_component_type(axes[i].type):
+            return -1
+        return STORAGE_GROUPS.index(groups[i])
+
+    rest.sort(key=lambda i: (rank(i), i))
     order = spatial + rest
 
     stored = [axes[i] for i in order]
@@ -604,6 +615,23 @@ def arrange_voxel_to_ras(
     matrix = affine.homogeneous_matrix
     matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
     n_out, n_in = matrix.shape[0] - 1, matrix.shape[1] - 1
+    spatial_world = n_out <= 3
+    if spatial_world and voxel_axes is not None:
+        # The last axes of the data that have no type and do not move in a
+        # spatial world, such as the volumes of an MRtrix image, declare no
+        # place of their own, so they are left out of the map and the data
+        # is stored in its own order, as for a space without types.
+        kept = n_in
+        while (
+            kept > 3
+            and len(voxel_axes) == n_in
+            and getattr(voxel_axes[kept - 1], "type", None) is None
+            and not np.any(matrix[:-1, kept - 1])
+        ):
+            kept -= 1
+        if kept < n_in:
+            matrix = np.concatenate([matrix[:, :kept], matrix[:, -1:]], 1)
+            n_in = kept
 
     # Place the voxel side in the order in which the data is stored.
     layout = None
@@ -635,7 +663,13 @@ def arrange_voxel_to_ras(
     rows = None
     if world_axes is not None:
         wgroups = _groups(world_axes)
-        rows = plan_axes(world_axes, "world", fmt, fill_space=False).order
+        rows = plan_axes(
+            world_axes,
+            "world",
+            fmt,
+            fill_space=False,
+            components_first=policy.get("components_first", False),
+        ).order
         world_axes = [world_axes[i] for i in rows]
         wgroups = [wgroups[i] for i in rows]
     elif layout is not None and n_out == n_in:
@@ -691,6 +725,8 @@ def arrange_voxel_to_ras(
             matrix[:3, unplaced] = complete_basis(matrix[:3, given])
         vgroups = list(layout.groups)
 
+    if spatial_world:
+        matrix = _without_unmapped_axes(matrix, layout)
     if world_axes is not None:
         world = CoordinateSystem(axes=world_axes)
     spatial, others = split_spatial(matrix, fmt, world_name)
@@ -704,6 +740,34 @@ def arrange_voxel_to_ras(
         world,
         filled_time,
     )
+
+
+def _without_unmapped_axes(
+    matrix: np.ndarray, layout: tx.Optional[AxisLayout]
+) -> np.ndarray:
+    """Remove the columns of the last stored axes that do not move.
+
+    A map to a world of spatial axes only may have a zero column for each
+    voxel axis after the spatial ones, such as the volumes of an MRtrix
+    image or the components of a vector field. These axes are not mapped,
+    so they get no spacing, and their columns are removed once the axes
+    are placed, so that the singleton axes that the layout inserts keep
+    their places. Only the last stored axes are removed, and never a
+    spatial axis or an inserted one.
+    """
+    inserted = set(layout.inserted) if layout is not None else set()
+    groups = list(layout.groups) if layout is not None else None
+    kept = matrix.shape[1] - 1
+    while kept > 3:
+        column = kept - 1
+        if column in inserted or np.any(matrix[:-1, column]):
+            break
+        if groups is not None and groups[column] == "space":
+            break
+        kept -= 1
+    if kept == matrix.shape[1] - 1:
+        return matrix
+    return np.concatenate([matrix[:, :kept], matrix[:, -1:]], axis=1)
 
 
 def held_transformations(image: tx.Any) -> tx.Optional[tx.List[tx.Any]]:

@@ -39,6 +39,19 @@ the field of view on the origin. The writer accepts the `layout`,
 `datatype`, `scaling` and `keyval` options, and writes back the keys of
 the source header. An image that is read and written again without
 changes keeps its bytes.
+
+Some images hold the components of vectors or tensors along their
+fourth axis, such as the diffusion tensors of `dwi2tensor`, in the order
+`D11`, `D22`, `D33`, `D12`, `D13`, `D23`, and the warps of `warpconvert`.
+MRtrix expresses these components in scanner RAS millimetres. The header
+has no key that says what the volumes are, so the reader makes the
+fourth axis a tensor, vector, displacement or coordinate axis only when
+the command that wrote the file, or the key `brainhops_field_type` that
+brainhops writes, says so, and records the scanner as the frame of the
+values (see
+[`MrtrixImage.frames`][brainhops.io.images.mrtrix.MrtrixImage.frames]).
+The writer re-expresses the values in the scanner and stores the
+coefficients of a tensor in the order of `dwi2tensor`.
 """
 
 __all__ = ["MrtrixImage", "MrtrixMetadata", "MrtrixRaw"]

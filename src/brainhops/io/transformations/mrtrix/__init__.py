@@ -135,7 +135,10 @@ the clues. A field may be written without the key, with
 A 4-D image with three volumes, or a 5-D image of shape
 `(X, Y, Z, 3, 4)`, is also a valid MRtrix image. The image reader scores
 it `Confidence.WEAK`, so `io.load` returns a warp, and `io.images.load`
-returns an image.
+returns an image. The image writer of brainhops also records the kind of
+the values of an image of vectors or tensors in `brainhops_field_type`
+(`vectors`, `covectors` or `tensors`). Such a file is not a warp while
+brainhops wrote it last, so `io.load` returns an image for it.
 
 Values of `nan` in a deformation mark the points that lie outside the
 field of view of the composition that made it (`ComposeHalfwayKernel`),

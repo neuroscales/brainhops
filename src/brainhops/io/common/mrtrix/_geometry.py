@@ -14,13 +14,16 @@ from brainhops.io.common._geometry import Arrangement, arrange_voxel_to_ras
 # ----------------------------------------------------------------------
 
 
-MRTRIX_POLICY = dict(fill_space=True)
+MRTRIX_POLICY = dict(fill_space=True, components_first=True)
 """
 Where MRtrix stores the axes of an array, as a policy of
 [`plan_axes`][brainhops.io.common._geometry.plan_axes].
 
 A slice with non-spatial axes gets a `z` axis of size one, so that
-those axes are not read as spatial.
+those axes are not read as spatial. The components of vectors and
+tensors are stored fourth, before time, because MRtrix commands read
+them along the fourth axis, so a series of fields `(X, Y, Z, 3, T)`
+keeps its components fourth.
 """
 
 
