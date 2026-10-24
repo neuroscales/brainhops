@@ -2194,8 +2194,9 @@ registrations of its views back into the XML file.
      unknown unit and the absence of a unit are not told apart. ~~pint
      treats the radian as dimensionless, so a unit is written as `rad/s`
      rather than `Hz` when its name contains `radian`
-     (`_scale_and_unit`).~~ Status: accepted for now by the maintainer~~, with
-     a follow-up issue to tell the two units apart by their dimensions~~.
+     (`_scale_and_unit`).~~ Status: accepted for now by the maintainer,
+     ~~with a follow-up issue to tell the two units apart by their
+     dimensions~~.
 236. The coefficients are converted between the SI prefixes of the input
      and output axes with decimal arithmetic on the shortest
      representation of each number. When the two prefixes are equal,
