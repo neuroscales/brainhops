@@ -125,7 +125,9 @@ class OmeZarrLevel(ZarrImage):
         are assigned, or given to the constructor, take precedence over
         those of the store, as
         [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
-        describes them.
+        describes them. Assigning `None` or `()` restores the frames
+        decoded from the store, and assigning `(None,) * ndim` sets
+        every frame to the array system.
         """
         given = self._frames
         if not given and self._decoded is not None:
@@ -554,7 +556,11 @@ class OmeZarrImage(
         # The levels are prepared before any array is written, so that
         # a level whose values the format cannot hold leaves the group
         # without arrays.
-        losses = axis_losses(axes) + _type_losses(images[0], axes)
+        losses = axis_losses(axes)
+        for image in images:
+            for loss in _type_losses(image, axes):
+                if loss not in losses:
+                    losses.append(loss)
         if losses and not lossy:
             raise LossyConversionError(
                 f"Writing this image loses information about its values: "

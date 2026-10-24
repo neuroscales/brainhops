@@ -183,7 +183,10 @@ parameters.
 
 The writer encodes the geometry from the levels and the placements, and
 does not keep the metadata as it was read, so a pyramid that is saved
-unchanged does not keep the bytes of its metadata. It writes
+unchanged does not keep the bytes of its metadata. In particular, the
+writer normalises the fields of the axes: it writes the long name of
+each unit, such as `millimeter`, and `"discrete": true` on the axis of
+a displacement or a coordinate field. It writes
 every placement that reduces to an affine as a `scale`, a
 `translation`, a `rotation`, an `affine` or a `sequence` of them, so
 that a placement read as an inverse is written in the forward direction.

@@ -499,3 +499,22 @@ def test_a_component_axis_written_as_a_channel_is_refused(
     with pytest.raises(LossyConversionError, match="'channel'"):
         pyramid.save(path)
     pyramid.save(path, lossy=True)
+
+    # A channel states no frame, so the voxel vectors are written as they
+    # are, without a change of frame or of order.
+    assert np.allclose(_stored(path), _values())
+
+
+def test_every_level_is_checked_for_its_axis_types(tmp_path: Path) -> None:
+    channel = CoordinateSystem(
+        [Axis(n, "space") for n in "xyz"] + [Axis("c", "channel")],
+        name="voxel",
+    )
+    plain = Scaling(scale=[*(2 * _SCALE), 1.0], input=channel, output=channel)
+    fine = SingleScaleImage(_values(), [_scaling()])
+    coarse = SingleScaleImage(_values(shape=(2, 3, 3)), [plain])
+    axes = [Axis(n, "space") for n in "xyz"] + [Axis("c", "channel")]
+    pyramid = OmeZarrImage(images=[coarse, fine], axes=axes)
+
+    with pytest.raises(LossyConversionError, match="'channel'"):
+        pyramid.save(tmp_path / "image.ome.zarr")

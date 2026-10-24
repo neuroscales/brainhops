@@ -32,7 +32,7 @@ from brainhops.datamodel._frames import (
     explicit_frame,
     is_point_axis,
 )
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.enums import AxisType
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -190,7 +190,10 @@ class OmeFrames:
     a loss, for the coordinates of a coordinate field in any other
     frame, since the format cannot state their frame, and for the
     coordinates of points in another frame than that of the format,
-    since re-expressing points needs the inverse of a map.
+    since re-expressing points needs the inverse of a map. It also
+    returns `None` for an axis that the store lists with a type that is
+    not a component type, such as `channel`, whose values are then
+    written as they are.
 
     Parameters
     ----------
@@ -219,6 +222,7 @@ class OmeFrames:
         decoded: tx.Optional[DecodedFrames] = None,
     ) -> None:
         self.slots = image.frames
+        self.axes = list(axes)
         self.own: tx.Dict[int, FrameSlot] = {}
         if decoded is not None and decoded[0] is geometry:
             self.own = dict(decoded[1])
@@ -246,6 +250,12 @@ class OmeFrames:
         slot = self.slots[index]
         if index in self.own and slot is self.own[index]:
             return slot
+        written = self.axes[index] if index < len(self.axes) else None
+        if not is_component_type(getattr(written, "type", None)):
+            # The store lists this axis with another type, such as a
+            # channel, so it states no frame, and the values are written
+            # as they are.
+            return None
         if axis.type == AxisType.coordinate:
             return None
         target = self.targets.get(index)

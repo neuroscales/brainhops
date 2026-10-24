@@ -456,7 +456,10 @@ axis that the given axes of the pyramid give another type, and a change
 of frame through a map that is not affine. When the writer moves the
 flip of the levels, or the whole geometry of a single level, into the
 placements of the pyramid, the intrinsic system changes, and the values
-are re-expressed in the new one.
+are re-expressed in the new one. The writer also normalises the fields
+of the axes, writing the long name of each unit and `"discrete": true`
+on a displacement or a coordinate axis, so a pyramid that is saved
+again unchanged does not keep the bytes of its metadata.
 
 ## 8. The frames of NIfTI files
 
