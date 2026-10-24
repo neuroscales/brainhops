@@ -25,6 +25,8 @@ _CHANNEL_KINDS = frozenset(
         "4-vector",
         "3-gradient",
         "3-normal",
+        "3-color",
+        "4-color",
         "rgb-color",
         "hsv-color",
         "xyz-color",
