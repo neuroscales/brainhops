@@ -529,7 +529,8 @@ def _scale_and_unit(
     # root units of the axis unit tells them apart: 1 for an angular
     # frequency, 0 for any other unit. A steradian counts as a squared
     # radian and has no Neuroglancer equivalent.
-    radians = dict(quantity.to_root_units().unit_items()).get("radian", 0)
+    root_units = quantity.to_root_units()._units
+    radians = dict(root_units.items()).get("radian", 0)
     for base, long_name in BASES.items():
         if radians != (1 if base == "rad/s" else 0):
             continue
