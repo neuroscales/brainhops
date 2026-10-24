@@ -713,3 +713,198 @@ def test_re_expressed_values_keep_the_type_of_the_header(
 
     save(moved, copy, datatype="Float64LE")
     assert MrtrixImage.load(copy).metadata.raw.datatype == "Float64LE"
+
+
+# ----------------------------------------------------------------------
+#   OTHER FORMATS AND OTHER LAYOUTS
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "history, extra, kind",
+    [
+        (
+            "warpconvert w.mif deformation2displacement d.mif",
+            [],
+            "displacement",
+        ),
+        (
+            "brainhops  (version=1)",
+            ["brainhops_field_type: vectors"],
+            "vector",
+        ),
+    ],
+)
+def test_a_field_read_from_mrtrix_is_written_to_nifti_as_a_field(
+    tmp_path: pathlib.Path,
+    vectors: np.ndarray,
+    history: str,
+    extra: tx.List[str],
+    kind: str,
+) -> None:
+    nb = pytest.importorskip("nibabel")
+    from brainhops.io.images.nifti import NiftiImage
+
+    path = _mif(
+        tmp_path / "w.mif", vectors, _TRANSFORM, _VOX, history, extra=extra
+    )
+    image = MrtrixImage.load(path)
+    assert image.system.axes[3].type == kind
+    nifti = tmp_path / "w.nii"
+
+    save(SingleScaleImage.from_instance(image), nifti)
+
+    stored = nb.load(str(nifti))
+    assert stored.shape == (*_SHAPE, 1, 3)
+    assert stored.header.get_intent()[0] == "displacement vector"
+    # Both files store the vectors in the same scanner RAS.
+    values = np.asarray(stored.dataobj)[:, :, :, 0, :]
+    assert np.allclose(values, vectors, atol=1e-6)
+    back = NiftiImage.load(nifti)
+    assert back.transformation.input.axes[4].type == "displacement"
+    assert back.frames[4] is not None
+    voxel = np.asarray(back.reframe(None).data)[:, :, :, 0, :]
+    expected = vectors @ np.linalg.inv(_V2S).T
+    assert np.allclose(voxel, expected, atol=1e-5)
+
+
+def test_tensors_read_from_mrtrix_need_lossy_in_nifti(
+    tmp_path: pathlib.Path, tensors: np.ndarray
+) -> None:
+    pytest.importorskip("nibabel")
+    path = _mif(
+        tmp_path / "dt.mif",
+        tensors,
+        _TRANSFORM,
+        _VOX,
+        "dwi2tensor dwi.mif dt.mif  (version=3.0.4)",
+    )
+    image = SingleScaleImage.from_instance(MrtrixImage.load(path))
+
+    with pytest.raises(WriterError, match="lossy=True"):
+        save(image, tmp_path / "dt.nii")
+
+
+def test_a_field_read_from_mrtrix_is_written_to_mgh(
+    tmp_path: pathlib.Path, vectors: np.ndarray
+) -> None:
+    pytest.importorskip("nibabel")
+    path = _mif(
+        tmp_path / "w.mif",
+        vectors,
+        _TRANSFORM,
+        _VOX,
+        "warpconvert w.mif deformation2displacement d.mif",
+    )
+    image = SingleScaleImage.from_instance(MrtrixImage.load(path))
+
+    save(image, tmp_path / "w.mgz")
+
+    back = io.images.load(tmp_path / "w.mgz")
+    assert np.allclose(
+        np.reshape(np.asarray(back.data), vectors.shape), vectors
+    )
+
+
+def test_a_series_of_fields_keeps_its_components_fourth(
+    tmp_path: pathlib.Path, vectors: np.ndarray
+) -> None:
+    voxel = CoordinateSystem(
+        [Axis(n, "space") for n in "ijk"]
+        + [Axis("c", "vector"), Axis("t", "time")],
+        name="voxel",
+    )
+    world = CoordinateSystem(
+        [Axis(n, "space") for n in "xyz"]
+        + [Axis("c", "vector"), Axis("t", "time", unit="s")],
+        name="RAS",
+    )
+    matrix = np.eye(6)[:-1]
+    matrix[:3, :3] = _L
+    matrix[4, 4] = 2.0
+    a = Affine(matrix=matrix, input=voxel, output=world)
+    series = np.stack([vectors, 2 * vectors], axis=-1)
+    path = tmp_path / "series.mif"
+
+    save(SingleScaleImage(series, [a]), path)
+
+    back = MrtrixImage.load(path)
+    assert back.shape == (*_SHAPE, 3, 2)
+    assert back.system.axes[3].type == "vector"
+    assert back.metadata.raw.vox[4] == 2.0
+    stored = np.asarray(back.data)
+    assert np.allclose(stored[..., 0], vectors @ _L.T, atol=1e-5)
+    assert np.allclose(stored[..., 1], 2 * vectors @ _L.T, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    "history, kind",
+    [
+        # The name of a file does not decide.
+        (
+            "warpconvert my2displacement.mif displacement2deformation o.mif",
+            "coordinate",
+        ),
+        # The options are skipped with their values.
+        (
+            "warpconvert -template t.mif w.mif warpfull2displacement o.mif",
+            "displacement",
+        ),
+        ("warpconvert w.mif -from 2 warpfull2deformation o.mif", "coordinate"),
+        (
+            "warpconvert -nthreads 4 w.mif deformation2displacement o.mif",
+            "displacement",
+        ),
+    ],
+)
+def test_the_conversion_type_of_warpconvert_decides(
+    tmp_path: pathlib.Path, vectors: np.ndarray, history: str, kind: str
+) -> None:
+    path = _mif(tmp_path / "w.mif", vectors, _TRANSFORM, _VOX, history)
+
+    assert MrtrixImage.load(path).system.axes[3].type == kind
+
+
+def test_a_predicted_signal_of_six_volumes_is_not_a_tensor(
+    tmp_path: pathlib.Path, tensors: np.ndarray
+) -> None:
+    # The predicted signal keeps the gradient table of its input, and the
+    # tensor image moves it to `prior_dw_scheme`.
+    scheme = [f"dw_scheme: 1,0,0,{b}" for b in (1000,) * 6]
+    path = _mif(
+        tmp_path / "p.mif",
+        tensors,
+        _TRANSFORM,
+        _VOX,
+        "dwi2tensor dwi.mif dt.mif -predicted_signal p.mif",
+        extra=scheme,
+    )
+    assert MrtrixImage.load(path).system.axes[3].type is None
+
+    path = _mif(
+        tmp_path / "dt.mif",
+        tensors,
+        _TRANSFORM,
+        _VOX,
+        "dwi2tensor dwi.mif dt.mif -predicted_signal p.mif",
+        extra=["prior_dw_scheme: 1,0,0,1000"],
+    )
+    assert MrtrixImage.load(path).system.axes[3].type == "tensor"
+
+
+def test_a_lossy_write_removes_a_stale_key(
+    tmp_path: pathlib.Path, vectors: np.ndarray
+) -> None:
+    path = tmp_path / "v.mif"
+    save(SingleScaleImage(vectors, [_affine(*_systems("vector"))]), path)
+    header = MrtrixImage.load(path).metadata
+    values = np.random.default_rng(4).random((*_SHAPE, 9))
+    a = _affine(*_systems("tensor", layout="C"))
+    image = MrtrixImage(data=values, transformations=[a], metadata=header)
+    copy = tmp_path / "t.mif"
+
+    save(image, copy, lossy=True)
+
+    written = MrtrixImage.load(copy)
+    assert "brainhops_field_type" not in written.metadata.raw.keyval
+    assert written.system.axes[3].type is None

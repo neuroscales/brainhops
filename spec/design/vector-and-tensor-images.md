@@ -586,8 +586,10 @@ the values: the key `brainhops_field_type` (`coordinates`,
 `displacements`, `vectors`, `covectors` or `tensors`) while brainhops
 wrote the file last, and otherwise the last line of `command_history`
 when that command writes one kind of values in that shape (`dwi2tensor`
-with six volumes, the warp commands that the MRtrix warp readers know
-with three volumes, except `mrregister`, which also writes the moved
+with six volumes and no `dw_scheme` key, which its predicted signal
+keeps, the warp commands that the MRtrix warp readers know with three
+volumes, with the conversion type of `warpconvert` read from its second
+positional argument, except `mrregister`, which also writes the moved
 image, and `mrregister` for the 5-D file of `-nl_warp_full`). A tensor
 axis gets the layout `"symmetric-diagonal-first"` of `dwi2tensor`.
 The key is not trusted under a later command, because MRtrix copies it
@@ -601,8 +603,15 @@ column for each voxel axis after the spatial ones, because the scanner
 has three axes and the MRtrix transform maps the spatial axes only.
 NIfTI instead carries such axes through to its world, because its header
 gives a time axis a spacing and an offset. The writers that place axes
-for a format accept such a map to a spatial world, leave out the trailing
-voxel axes whose columns are zero, and store the data as it is.
+for a format accept such a map to a spatial world. They place the axes
+first, so that a vector axis read from MRtrix becomes the fifth axis of
+a NIfTI file after an inserted time axis, and then leave out the last
+stored axes whose columns are zero. Trailing axes without a type, such
+as the volumes of an MRtrix series, declare no place, so they are left
+out before the axes are placed and the data keeps its order. Their
+voxel sizes, such as a repetition time, are held by the `Scaling` of the
+MRtrix image alone, so a NIfTI file written from it has a `pixdim[4]` of
+one.
 
 The writer keeps an image whose frames are those of its own header and
 whose geometry is kept as it is. Otherwise it re-expresses the values in
@@ -610,13 +619,16 @@ the scanner of the written header through the exact Jacobian, reorders
 the coefficients of a tensor into the order of `dwi2tensor`, which is a
 permutation with the zeros of a diagonal layout filled in, records the
 kind in `brainhops_field_type` and appends its line to
-`command_history`. Covector-valued tensors, non-symmetric tensors, a
+`command_history`. The component axis is stored fourth, before a time
+axis, so a series of fields keeps its components where MRtrix reads
+them. Covector-valued tensors, non-symmetric tensors, a
 component axis that is not stored fourth or that has another number of
 entries than three or six, foreign frames, frames that are not affine
 and points in another frame are refused unless `lossy=True` is given.
-When the base header describes its fourth axis and the written image
-holds something else there, the key is removed and the line of
-brainhops is appended, so that neither clue describes the new values.
+When the base header describes its fourth axis, or carries the key of
+brainhops, and the written image holds something else there, the key is
+removed and the line of brainhops is appended, so that neither clue
+describes the new values.
 
 A writer applies a change of frame through affine maps silently, because
 it is exact and part of the encoding of the format. It refuses, with a

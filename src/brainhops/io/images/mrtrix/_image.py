@@ -151,7 +151,13 @@ class MrtrixImage(
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are a [`Scaling`][]
     to `"physical"` by the voxel sizes and the preferred [`Affine`][] to
-    scanner RAS+ in millimeters, `transform @ diag(vox)`.
+    scanner RAS+ in millimeters, `transform @ diag(vox)`. The `transform`
+    maps the spatial axes only, so the affine has a zero column for each
+    axis after them, and the voxel sizes of these axes, such as the
+    repetition time of a series, are held by the [`Scaling`][] alone. A
+    writer that takes the spacing of such an axis from the preferred
+    transformation, as the NIfTI writer does for `pixdim[4]`, therefore
+    does not get it, and writes a spacing of one.
 
     `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
@@ -323,20 +329,21 @@ class MrtrixImage(
         them in the array system.
 
         The header has no key that says what the volumes are. The fourth
-        axis is a component axis only when one of these clues says so:
+        axis is a component axis only when one of these clues says so,
+        where a command is the last one of `command_history`:
 
-        | Clue                                                | Axis         |
-        | --------------------------------------------------- | ------------ |
-        | `brainhops_field_type: coordinates`                 | coordinate   |
-        | `brainhops_field_type: displacements`               | displacement |
-        | `brainhops_field_type: vectors` or `covectors`      | vector       |
-        | `brainhops_field_type: tensors`                     | tensor       |
-        | last command `dwi2tensor`, six volumes              | tensor       |
-        | last command `warpconvert` with `*2deformation`     | coordinate   |
-        | last command `warpconvert` with `*2displacement`    | displacement |
-        | last command `warpinvert` with `-displacement`      | displacement |
-        | last command `warpinvert`, `warpinit`, `warpcorrect` | coordinate  |
-        | last command `mrregister`, shape `(X, Y, Z, 3, 4)`  | coordinate   |
+        | Clue                                           | Axis         |
+        | ---------------------------------------------- | ------------ |
+        | `brainhops_field_type: coordinates`            | coordinate   |
+        | `brainhops_field_type: displacements`          | displacement |
+        | `brainhops_field_type: vectors` or `covectors` | vector       |
+        | `brainhops_field_type: tensors`                | tensor       |
+        | `dwi2tensor`, six volumes, no `dw_scheme` key  | tensor       |
+        | `warpconvert` with a type `*2deformation`      | coordinate   |
+        | `warpconvert` with a type `*2displacement`     | displacement |
+        | `warpinvert -displacement`                     | displacement |
+        | `warpinvert`, `warpinit` or `warpcorrect`      | coordinate   |
+        | `mrregister`, shape `(X, Y, Z, 3, 4)`          | coordinate   |
 
         The key `brainhops_field_type` decides only while brainhops
         wrote the file last, as the last line of `command_history`
@@ -376,14 +383,18 @@ class MrtrixImage(
 
         The frame is the preferred transformation that the record
         decodes to, which maps the voxels to the scanner. An image
-        without a record, or whose header says nothing of its fourth
-        axis, gives an empty mapping, so that its frames are the array
-        system.
+        without a record, whose header says nothing of its fourth axis,
+        or whose data have another shape than the header, gives an empty
+        mapping, so that its frames are the array system.
         """
         metadata = self.metadata
         if metadata is None or metadata.raw is None:
             return {}
         if _kinds.header_kind(metadata.raw) is None:
+            return {}
+        # Data of another shape are not the values that the header
+        # describes.
+        if tuple(metadata.raw.dim) != tuple(self.shape):
             return {}
         if self._transformations is None:
             decoded = self.transformations
@@ -904,8 +915,11 @@ def _encoded_values(
     geometry is kept, already holds its values as the header describes
     them, so it is encoded as it is. The values of any other image are
     re-expressed in the scanner and packed in the order of MRtrix by
-    [`_in_scanner`][], and the header keys record their kind. When the
-    record would still describe its fourth axis as the base did,
+    [`_in_scanner`][], and the header keys record their kind. A key of
+    brainhops in the base is always written again, or removed when no
+    kind is recorded, as when values are written as they are with
+    `lossy`. When the record would still describe its fourth axis as the
+    base did,
     although the image holds something else there, it is encoded again
     without the key of brainhops and with the line of brainhops in
     `command_history`, so that neither clue describes the new values.
@@ -926,7 +940,11 @@ def _encoded_values(
             options["datatype"] = stored
     keyval = options["keyval"]
     first = dict(options)
-    if kind is not None:
+    if kind is not None or (
+        held is not None and _kinds.FIELD_TYPE in held.keyval
+    ):
+        # The key of the base describes values that may no longer be there,
+        # so it is always written again, or removed.
         first["keyval"] = _typed_keyval(held, keyval, kind)
     record, raw = _encoded(written, None, first)
     if _kinds.header_kind(record) == kind:

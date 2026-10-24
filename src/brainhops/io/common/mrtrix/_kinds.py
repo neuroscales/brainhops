@@ -121,6 +121,31 @@ _SIZES = {
 # A few commands write one kind of 4-D warp only (see `history_kind`).
 _DEFORMATION_COMMANDS = ("warpinit", "warpcorrect", "mrregister")
 
+_WARPCONVERT_TYPES = {
+    "deformation2displacement": DISPLACEMENT,
+    "displacement2deformation": DEFORMATION,
+    "warpfull2deformation": DEFORMATION,
+    "warpfull2displacement": DISPLACEMENT,
+}
+"""The conversion types of `warpconvert`, and the warp that each writes."""
+
+_WARPCONVERT_OPTIONS = {
+    "template": 1,
+    "midway_space": 0,
+    "from": 1,
+    "nthreads": 1,
+    "config": 2,
+}
+"""The number of values of each option of `warpconvert` that takes any.
+
+The options are those of `cmd/warpconvert.cpp` and the standard options
+of every MRtrix command (`core/app.cpp`). An option that is not listed
+takes no value.
+"""
+
+_DW_SCHEME = "dw_scheme"
+"""The header key of the diffusion gradient table of an image."""
+
 _COMPONENT_AXIS = 3
 """The axis that holds the components, after the three spatial axes."""
 
@@ -229,6 +254,29 @@ def last_command(header: MrtrixRaw) -> tx.Tuple[str, tx.List[str]]:
     return os.path.basename(tokens[0]), tokens[1:]
 
 
+def _positional(
+    args: tx.Sequence[str], options: tx.Mapping[str, int]
+) -> tx.List[str]:
+    """Return the positional arguments of a command line.
+
+    MRtrix options start with one or two dashes and may appear anywhere,
+    and each takes the number of values that `options` gives. A number
+    such as `-1` is a value rather than an option.
+    """
+    positional = []
+    skip = 0
+    for arg in args:
+        if skip:
+            skip -= 1
+            continue
+        name = arg.lstrip("-")
+        if arg.startswith("-") and name and not name[0].isdigit():
+            skip = options.get(name, 0)
+            continue
+        positional.append(arg)
+    return positional
+
+
 def history_kind(header: MrtrixRaw) -> tx.Optional[str]:
     """Return the kind of warp that the command that wrote a file outputs.
 
@@ -236,7 +284,10 @@ def history_kind(header: MrtrixRaw) -> tx.Optional[str]:
     file, and a few commands output one kind of 4-D warp only.
 
     - `warpconvert <in> <type> <out>` writes a displacement or a
-      deformation, which `*2displacement` or `*2deformation` says.
+      deformation, which its second positional argument, the conversion
+      type, says (`*2displacement` or `*2deformation`). The options are
+      skipped with their values, so that the name of a file decides
+      nothing.
     - `warpinvert` writes a displacement with `-displacement`, and a
       deformation otherwise.
     - `warpinit`, `warpcorrect` and `mrregister -nl_warp` write a
@@ -257,12 +308,9 @@ def history_kind(header: MrtrixRaw) -> tx.Optional[str]:
     """
     command, args = last_command(header)
     if command == "warpconvert":
-        for arg in args:
-            if arg.endswith("2" + DISPLACEMENT):
-                return DISPLACEMENT
-            if arg.endswith("2" + DEFORMATION):
-                return DEFORMATION
-        return None
+        positional = _positional(args, _WARPCONVERT_OPTIONS)
+        kind = positional[1] if len(positional) > 1 else None
+        return _WARPCONVERT_TYPES.get(kind)
     if command == "warpinvert":
         if any(arg.lstrip("-") == DISPLACEMENT for arg in args):
             return DISPLACEMENT
@@ -281,11 +329,14 @@ def header_kind(header: MrtrixRaw) -> tx.Optional[str]:
     writes one kind of values only, in the shape that it gives them:
 
     - `dwi2tensor` writes the six coefficients of a diffusion tensor in
-      a 4-D image of six volumes (`cmd/dwi2tensor.cpp`). Its other
-      outputs have another shape: the kurtosis tensor has 15 volumes,
-      the predicted signal has one volume per diffusion-weighted volume,
-      at least seven since the fit has seven unknowns, and the `b0`
-      image is 3-D.
+      a 4-D image of six volumes (`cmd/dwi2tensor.cpp`). The kurtosis
+      tensor that it also writes has 15 volumes, and the `b0` image is
+      3-D. The predicted signal has one volume per volume of the
+      diffusion-weighted input, which may also be six, but it keeps the
+      `dw_scheme` key of the input, whereas the tensor image moves that
+      key to `prior_dw_scheme` (`DWI::stash_DW_scheme`, in
+      `core/dwi/gradient.h`). An image of six volumes with a
+      `dw_scheme` key is therefore not read as tensors.
     - the warp commands of [`history_kind`][] write a 4-D image of three
       volumes. `mrregister` is left out, because it also writes the
       moved image, which may have three volumes as well.
@@ -322,7 +373,12 @@ def header_kind(header: MrtrixRaw) -> tx.Optional[str]:
             return None
         return kind
     command, _ = last_command(header)
-    if len(dim) == 4 and command == "dwi2tensor" and count == 6:
+    if (
+        len(dim) == 4
+        and command == "dwi2tensor"
+        and count == 6
+        and _DW_SCHEME not in header.keyval
+    ):
         return TENSOR
     if len(dim) == 4 and count == 3 and command != "mrregister":
         return history_kind(header)
