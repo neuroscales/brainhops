@@ -42,7 +42,7 @@ from brainhops.io.base.parsers import (
     WriterError,
     WriterNotImplementedError,
 )
-from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
+from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw, _kinds
 from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
 from brainhops.io.common.mrtrix._data import (
     _MrtrixProxy,
@@ -98,39 +98,23 @@ _NWARPS = 4
 _LINEAR = ("linear1", "linear2")
 """The header keys of the linear transforms of a `warpfull` file."""
 
-_HISTORY = "command_history"
-"""The header key in which MRtrix records the commands that wrote a file."""
+# The kinds of warps, the header keys and the history of MRtrix files are
+# shared with the MRtrix image, which reads the same keys.
+_DEFORMATION = _kinds.DEFORMATION
+_DISPLACEMENT = _kinds.DISPLACEMENT
+_FIELD_TYPE = _kinds.FIELD_TYPE
+_HISTORY = _kinds.HISTORY
+_brainhops_history = _kinds.brainhops_history
+_history_kind = _kinds.history_kind
+_history_lines = _kinds.history_lines
+_written_by_brainhops = _kinds.written_by_brainhops
 
-# The commands whose 4-D output is known to hold one kind of warp. The
-# last `command_history` line names the command that wrote the file.
-_DEFORMATION_COMMANDS = ("warpinit", "warpcorrect", "mrregister")
-_DEFORMATION, _DISPLACEMENT = "deformation", "displacement"
-
-_FIELD_TYPE = "brainhops_field_type"
-"""The header key in which brainhops records the kind of a 4-D warp.
-
-MRtrix keeps a header key that it does not know as free-form text
-(`core/formats/mrtrix_utils.h`), and copies it into the images that its
-commands derive from the file (`Header::create`, in `core/header.cpp`).
-"""
-
-# The values of `brainhops_field_type` that brainhops writes, and those
-# that it reads, mapped to the kind of warp.
 _FIELD_TYPE_VALUES = {
-    _DEFORMATION: "coordinates",
-    _DISPLACEMENT: "displacements",
+    kind: value
+    for kind, value in _kinds.FIELD_TYPE_VALUES.items()
+    if kind in (_DEFORMATION, _DISPLACEMENT)
 }
-_FIELD_TYPE_KINDS = {
-    "coordinates": _DEFORMATION,
-    "coord": _DEFORMATION,
-    "deformation": _DEFORMATION,
-    "displacement": _DISPLACEMENT,
-    "displacements": _DISPLACEMENT,
-    "disp": _DISPLACEMENT,
-}
-
-_BRAINHOPS = "brainhops"
-"""The command name that brainhops writes in `command_history`."""
+"""The values of `brainhops_field_type` that a warp writes."""
 
 _SNIFF_VOXELS = 64**3
 """The number of voxels, at most, that the content of a warp is sniffed
@@ -1520,8 +1504,21 @@ class MrtrixWarpFull(
 
 
 def _is_warp(header: MrtrixRaw) -> bool:
-    """Tell whether a header has the shape of a 4-D warp (`check_warp`)."""
-    return header.ndim == 4 and header.dim[3] == _NDIM
+    """Tell whether a header may describe a 4-D warp (`check_warp`).
+
+    A 4-D image with three volumes has the shape of a warp. An image of
+    vectors that brainhops wrote has that shape too, but it records the
+    kind of its values in `brainhops_field_type`, so it is not a warp
+    while brainhops wrote it last.
+    """
+    if header.ndim != 4 or header.dim[3] != _NDIM:
+        return False
+    other = _kinds.stored_kind(header) not in (
+        None,
+        _DEFORMATION,
+        _DISPLACEMENT,
+    )
+    return not (other and _written_by_brainhops(header))
 
 
 def _is_warpfull(header: MrtrixRaw) -> bool:
@@ -1534,86 +1531,14 @@ def _is_warpfull(header: MrtrixRaw) -> bool:
     )
 
 
-def _history_kind(header: MrtrixRaw) -> tx.Optional[str]:
-    """Return the kind of warp that the command that wrote a file outputs.
-
-    MRtrix appends `argv` to `command_history` in every image it writes
-    (`core/app.cpp`), so the last line names the command that wrote this
-    file. A few commands output one kind of 4-D warp only.
-
-    - `warpconvert <in> <type> <out>` writes a displacement or a
-      deformation, which `*2displacement` or `*2deformation` says.
-    - `warpinvert` writes a displacement with `-displacement`, and a
-      deformation otherwise.
-    - `warpinit`, `warpcorrect` and `mrregister -nl_warp` write a
-      deformation.
-
-    Anything else, such as a file processed further or written by another
-    program, says nothing, and `None` is returned.
-    """
-    history = header.keyval.get(_HISTORY)
-    if not history:
-        return None
-    last = str(history).strip().split("\n")[-1]
-    # The trailing "  (version=...)" that MRtrix appends is dropped.
-    last = last.split("  (version=", 1)[0]
-    tokens = [t.strip("'\"") for t in last.split()]
-    if not tokens:
-        return None
-    command = os.path.basename(tokens[0])
-    args = tokens[1:]
-    if command == "warpconvert":
-        for arg in args:
-            if arg.endswith("2" + _DISPLACEMENT):
-                return _DISPLACEMENT
-            if arg.endswith("2" + _DEFORMATION):
-                return _DEFORMATION
-        return None
-    if command == "warpinvert":
-        if any(arg.lstrip("-") == _DISPLACEMENT for arg in args):
-            return _DISPLACEMENT
-        return _DEFORMATION
-    if command in _DEFORMATION_COMMANDS:
-        return _DEFORMATION
-    return None
-
-
-def _history_lines(header: tx.Optional[MrtrixRaw]) -> tx.List[str]:
-    """Return the lines of the `command_history` of a header."""
-    if header is None:
-        return []
-    history = header.keyval.get(_HISTORY)
-    if not history:
-        return []
-    return [line for line in str(history).split("\n") if line.strip()]
-
-
-def _brainhops_history() -> str:
-    """Return the `command_history` line that brainhops writes.
-
-    MRtrix appends the command line and its version to the
-    `command_history` of every file that it writes (`core/app.cpp`).
-    """
-    from brainhops import __version__
-
-    return f"{_BRAINHOPS}  (version={__version__})"
-
-
-def _written_by_brainhops(header: MrtrixRaw) -> bool:
-    """Tell whether the last `command_history` line names brainhops."""
-    lines = _history_lines(header)
-    if not lines:
-        return False
-    tokens = lines[-1].split()
-    return bool(tokens) and tokens[0] == _BRAINHOPS
-
-
 def _stored_kind(header: MrtrixRaw) -> tx.Optional[str]:
-    """Return the kind of warp that `brainhops_field_type` records."""
-    value = header.keyval.get(_FIELD_TYPE)
-    if value is None:
-        return None
-    return _FIELD_TYPE_KINDS.get(str(value).strip().lower())
+    """Return the kind of warp that `brainhops_field_type` records.
+
+    The key may also record vectors or tensors, which are not warps, and
+    `None` is then returned.
+    """
+    kind = _kinds.stored_kind(header)
+    return kind if kind in (_DEFORMATION, _DISPLACEMENT) else None
 
 
 def _field_kind(
