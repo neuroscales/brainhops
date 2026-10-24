@@ -604,6 +604,16 @@ def arrange_voxel_to_ras(
     matrix = affine.homogeneous_matrix
     matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
     n_out, n_in = matrix.shape[0] - 1, matrix.shape[1] - 1
+    # A map to a spatial world may have a zero column for each voxel axis
+    # after the spatial ones, such as the volumes of an MRtrix image,
+    # which do not move in the world. These axes are not mapped, so their
+    # columns are left out, and the data is then stored as it is.
+    kept = n_in
+    while kept > max(n_out, 3) and not np.any(matrix[:-1, kept - 1]):
+        kept -= 1
+    if n_out <= 3 and kept < n_in:
+        matrix = np.concatenate([matrix[:, :kept], matrix[:, -1:]], axis=1)
+        n_in = kept
 
     # Place the voxel side in the order in which the data is stored.
     layout = None

@@ -596,10 +596,13 @@ a channel axis: the peaks of `sh2peaks` and `fixel2peaks` hold several
 directions along one axis, the eigenvectors and eigenvalues of
 `tensor2metric` share their shape, and spherical harmonics change under
 a rotation by a rule of their own. The frame of the fourth axis is the
-voxel-to-scanner map with a zero column for each axis after the spatial
-ones, because the decoded preferred transformation has columns for the
-spatial axes only; for the same reason, `reframe()` with its default
-frame fails on these images.
+preferred transformation, the voxel-to-scanner affine, which has a zero
+column for each voxel axis after the spatial ones, because the scanner
+has three axes and the MRtrix transform maps the spatial axes only.
+NIfTI instead carries such axes through to its world, because its header
+gives a time axis a spacing and an offset. The writers that place axes
+for a format accept such a map to a spatial world, leave out the trailing
+voxel axes whose columns are zero, and store the data as it is.
 
 The writer keeps an image whose frames are those of its own header and
 whose geometry is kept as it is. Otherwise it re-expresses the values in

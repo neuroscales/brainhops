@@ -43,6 +43,7 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
+    ParserContentError,
     UnrepresentableTransformationError,
     WriterError,
 )
@@ -55,7 +56,7 @@ from brainhops.io.common._geometry import (
     same_transformations,
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw, _kinds
-from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
+from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix, mrtrix_dtype
 from brainhops.io.common.mrtrix._data import (
     _MrtrixProxy,
     read_mrtrix,
@@ -313,21 +314,13 @@ class MrtrixImage(
         scanner RAS millimetres, which is the world of the `transform`
         of the header. The coordinate system in which the components are
         expressed is called their frame, so the frame of the fourth axis
-        is the map from the voxels to the scanner. It is the preferred
-        transformation, written as an affine with a zero column for each
-        axis after the spatial ones, because the preferred
-        transformation has a column for each spatial axis only. The
-        scanner does not depend on the order in which the voxel axes are
-        stored (`layout`), nor on the way in which MRtrix reorders the
-        axes when it loads an image, so this frame holds whatever the
-        strides of the file are.
-
-        The preferred transformation itself cannot serve as a frame for
-        the same reason, so `reframe()`, whose default frame is the
-        preferred transformation, fails on such an image. The values are
-        already in the scanner, `reframe(None)` re-expresses them in the
-        array system, and `reframe(frame)` with another affine map from
-        the array system re-expresses them in its frame.
+        is the preferred transformation, which maps the voxels to the
+        scanner. The scanner does not depend on the order in which the
+        voxel axes are stored (`layout`), nor on the way in which MRtrix
+        reorders the axes when it loads an image, so this frame holds
+        whatever the strides of the file are. `reframe()` therefore
+        leaves the values as they are, and `reframe(None)` re-expresses
+        them in the array system.
 
         The header has no key that says what the volumes are. The fourth
         axis is a component axis only when one of these clues says so:
@@ -381,8 +374,8 @@ class MrtrixImage(
     def _header_frames(self) -> tx.Dict[int, FrameSlot]:
         """Return the frame of each component axis, as the header states it.
 
-        The frame is the map from the voxels to the scanner that the
-        record decodes to (see [`frames`][]). An image
+        The frame is the preferred transformation that the record
+        decodes to, which maps the voxels to the scanner. An image
         without a record, or whose header says nothing of its fourth
         axis, gives an empty mapping, so that its frames are the array
         system.
@@ -399,23 +392,11 @@ class MrtrixImage(
         if not decoded:
             return {}
         preferred = decoded[-1]
-        ndim = len(self.shape)
-        axes = array_axes(preferred.input, ndim)
-        # The preferred transformation has a column for each spatial axis
-        # only, so the frame is the same map with a zero column for each
-        # other axis, which a frame needs to tell which axes of the array
-        # the components follow.
-        stored = np.asarray(preferred.matrix, dtype=float)
-        matrix = np.zeros((stored.shape[0], ndim + 1))
-        matrix[:, : stored.shape[1] - 1] = stored[:, :-1]
-        matrix[:, ndim] = stored[:, -1]
-        frame = Affine(
-            matrix=matrix, input=preferred.input, output=preferred.output
-        )
+        axes = array_axes(preferred.input, len(self.shape))
         frames: tx.Dict[int, FrameSlot] = {}
         for i in component_axes(axes):
             count = axes[i].frame_ndim(self.shape[i])
-            frames[i] = explicit_frame(frame, axes, count)
+            frames[i] = explicit_frame(preferred, axes, count)
         return frames
 
     # --- reading ------------------------------------------------------
@@ -935,6 +916,14 @@ def _encoded_values(
     if own or (image._data is None and image.rawdata is None):
         return _encoded(image, None, options)
     written, kind = _in_scanner(image, lossy)
+    options = dict(options)
+    if written is not image and options["datatype"] is None:
+        # Re-expressed values are computed in a wider type, and are
+        # written in the floating-point type of the header unless another
+        # type is asked for.
+        stored = _float_datatype(held)
+        if stored is not None:
+            options["datatype"] = stored
     keyval = options["keyval"]
     first = dict(options)
     if kind is not None:
@@ -944,6 +933,19 @@ def _encoded_values(
         return record, raw
     second = dict(options, keyval=_typed_keyval(held, keyval, None))
     return _encoded(written, None, second)
+
+
+def _float_datatype(held: tx.Optional[MrtrixRaw]) -> tx.Optional[str]:
+    """Return the data type of a header if it is a floating-point type."""
+    if held is None:
+        return None
+    try:
+        dtype = mrtrix_dtype(held.datatype)
+    except ParserContentError:
+        return None
+    if dtype is None or not np.issubdtype(dtype, np.floating):
+        return None
+    return held.datatype
 
 
 def _typed_keyval(
@@ -1357,7 +1359,11 @@ def _mrtrix_to_transformations(
        `transform @ diag(vox)` (or MRtrix's centred default).
 
     A non-finite voxel size, which is common on the volume axis, gives a
-    scale of one.
+    scale of one. The scanner has three axes, and the affine has a zero
+    column for each voxel axis after the spatial ones, which does not
+    move in the scanner. NIfTI instead carries such axes through to its
+    world, because its header gives a time axis a spacing and an offset;
+    the MRtrix transform maps the spatial axes only.
     """
     ndim = header.ndim
     voxel_axes = _record_axes(header)
@@ -1378,7 +1384,11 @@ def _mrtrix_to_transformations(
     nspatial = min(3, ndim)
     world = _scanner_space()
     vox2ras = header.voxel_to_scanner()
-    columns = list(range(nspatial)) + [3]
-    matrix = vox2ras[:3][:, columns]
+    # The map has a column for every voxel axis, so that it is a map from
+    # the whole voxel space. The axes after the spatial ones do not move in
+    # the scanner, so their columns are zero.
+    matrix = np.zeros((3, ndim + 1))
+    matrix[:, :nspatial] = vox2ras[:3, :nspatial]
+    matrix[:, ndim] = vox2ras[:3, 3]
     vox2scanner = Affine(input=voxel_space, output=world, matrix=matrix)
     return [vox2phys, vox2scanner]

@@ -21,6 +21,9 @@ import pytest
 import typing_extensions as tx
 
 import brainhops.io as io
+from brainhops.datamodel._transformations.compute.multiscale import (
+    _as_affine,
+)
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
@@ -218,6 +221,12 @@ def test_a_dwi2tensor_file_is_read_as_tensors_in_the_scanner(
     assert frame.output is image.transformation.output
     assert np.allclose(np.asarray(frame.matrix)[:, :3], _V2S)
     assert np.allclose(np.asarray(frame.matrix)[:, 3], 0)
+    # The frame is the preferred transformation, so the values are already
+    # in the default frame and in the frame named after the scanner.
+    assert frame is image.transformation
+    for target in (-1, "scanner"):
+        ras = np.asarray(image.reframe(target).data)
+        assert np.allclose(ras, values, atol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -515,25 +524,6 @@ def test_an_image_written_by_brainhops_is_not_read_as_a_warp(
     assert isinstance(io.load(path), MrtrixImage)
 
 
-def _as_channels(image: MrtrixImage, data: np.ndarray) -> MrtrixImage:
-    """Return an image with the header of `image` and a fourth channel axis.
-
-    Indexing the fourth axis of an MRtrix image would do the same, but
-    the voxel-to-scanner map of an MRtrix image has columns for its
-    spatial axes only, which indexing cannot compose with yet.
-    """
-    xform = image.transformation
-    axes = list(xform.input.axes)
-    axes[3] = Axis("dim3", "channel")
-    system = CoordinateSystem(axes, name="voxel")
-    channel = Affine(
-        matrix=np.asarray(xform.matrix), input=system, output=xform.output
-    )
-    return MrtrixImage(
-        data=data, metadata=image.metadata, transformations=[channel]
-    )
-
-
 def test_a_stale_kind_is_removed(
     tmp_path: pathlib.Path, vectors: np.ndarray
 ) -> None:
@@ -541,7 +531,8 @@ def test_a_stale_kind_is_removed(
     save(SingleScaleImage(vectors, [_affine(*_systems("vector"))]), path)
     image = MrtrixImage.load(path)
     # Reordered components are channels, under the header of vectors.
-    reordered = _as_channels(image, np.asarray(image.data)[..., ::-1])
+    reordered = image[..., ::-1]
+    assert reordered.transformation.input.axes[3].type == "channel"
     copy = tmp_path / "copy.mif"
 
     save(reordered, copy)
@@ -558,8 +549,7 @@ def test_a_stale_kind_is_removed(
         _VOX,
         "dwi2tensor dwi.mif dt.mif -predicted_signal p.mif",
     )
-    predicted = MrtrixImage.load(dt)
-    six = _as_channels(predicted, np.asarray(predicted.data)[..., :6])
+    six = MrtrixImage.load(dt)[..., :6]
     save(six, copy)
     assert MrtrixImage.load(copy).system.axes[3].type is None
 
@@ -665,3 +655,61 @@ def test_coordinates_in_another_frame_need_lossy(
     save(image(u), copy, lossy=True)
     assert np.allclose(_stored(copy), vectors)
     assert MrtrixImage.load(copy).system.axes[3].type is None
+
+
+# ----------------------------------------------------------------------
+#   GEOMETRY AND DATA TYPE
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        (Ellipsis, slice(1, 3)),
+        (slice(0, 2),),
+        (slice(None), slice(None, None, -1)),
+    ],
+)
+def test_an_indexed_image_is_written_again(
+    tmp_path: pathlib.Path, index: tx.Tuple[tx.Any, ...]
+) -> None:
+    values = np.random.default_rng(3).random((*_SHAPE, 7)).astype("f4")
+    path = _mif(tmp_path / "dwi.mif", values, _TRANSFORM, _VOX)
+    image = MrtrixImage.load(path)
+    part = image[index]
+    copy = tmp_path / "part.mif"
+
+    save(part, copy)
+
+    written = MrtrixImage.load(copy)
+    assert np.allclose(np.asarray(written.data), values[index])
+    point = np.array([1.0, 1.0, 1.0])
+    voxel = np.asarray(_as_affine(part.transformation).matrix)
+    expected = voxel[:, :3] @ point + voxel[:, -1]
+    stored = np.asarray(written.transformation.matrix)
+    assert np.allclose(stored[:, :3] @ point + stored[:, -1], expected)
+    assert np.allclose(stored[:, 3], 0)
+
+
+def test_re_expressed_values_keep_the_type_of_the_header(
+    tmp_path: pathlib.Path, tensors: np.ndarray
+) -> None:
+    path = _mif(
+        tmp_path / "dt.mif",
+        tensors,
+        _TRANSFORM,
+        _VOX,
+        "dwi2tensor dwi.mif dt.mif  (version=3.0.4)",
+    )
+    image = MrtrixImage.load(path)
+    world = image.transformation.output
+    rotation = np.eye(4)[:-1]
+    rotation[:2, :2] = _rotation()[:2, :2]
+    moved = image(Affine(matrix=rotation, input=world, output=world))
+    copy = tmp_path / "copy.mif"
+
+    save(moved, copy)
+    assert MrtrixImage.load(copy).metadata.raw.datatype == "Float32LE"
+
+    save(moved, copy, datatype="Float64LE")
+    assert MrtrixImage.load(copy).metadata.raw.datatype == "Float64LE"
