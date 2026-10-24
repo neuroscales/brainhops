@@ -842,3 +842,37 @@ def test_vectors_in_lps_are_written_in_ras(tmp_path: pathlib.Path) -> None:
     image = NiftiImage.load(path)
     voxel_values = np.asarray(image.reframe(None).data)[:, :, :, 0, :]
     assert np.allclose(voxel_values, values / [2.0, 3.0, 4.0], atol=1e-5)
+
+
+def test_a_field_whose_world_mixes_its_axes_needs_lossy(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The two components follow the first two axes of a world in SAR,
+    # which are the third and second axes of RAS, and DISPVECT holds two
+    # components along the first two axes of RAS.
+    voxel = CoordinateSystem(
+        [Axis(n, "space") for n in "ijk"] + [Axis("c", "displacement")],
+        name="voxel",
+    )
+    world = CoordinateSystem(
+        [
+            Axis("s", "space", orientation="inferior-to-superior"),
+            Axis("a", "space", orientation="posterior-to-anterior"),
+            Axis("r", "space", orientation="left-to-right"),
+            Axis("c", "displacement"),
+        ],
+        name="SAR",
+    )
+    matrix = np.eye(5)[:-1]
+    matrix[:3, :3] = np.diag([2.0, 3.0, 4.0])
+    a = Affine(matrix=matrix, input=voxel, output=world)
+    image = SingleScaleImage(np.ones((*_SHAPE, 2)), [a])
+    path = tmp_path / "field.nii"
+
+    with pytest.raises(WriterError, match="lossy=True"):
+        save(image, path)
+    with pytest.raises(LossyConversionError, match="first axes"):
+        NiftiImage.from_instance(image).consolidate()
+
+    save(image, path, lossy=True)
+    assert _intent(path) == DISPVECT

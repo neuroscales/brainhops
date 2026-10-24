@@ -32,6 +32,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
+from brainhops.errors import LossyConversionError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -741,7 +742,7 @@ class NiftiImage(
                 image = replace(self, data=reframed[0], frames=reframed[1])
             dispvect = frame_of.used
         if dispvect:
-            image = _in_ras_millimetres(image, frame_of.indices)
+            image = _in_ras_millimetres(image, frame_of.indices, lossy)
         fsl_layout = own and own_intent in _NIFTI_FSL_INTENTS
         raw, record = _nifti_encoded(
             image,
@@ -892,7 +893,7 @@ class NiftiImage(
 
 
 def _in_ras_millimetres(
-    image: NiftiImage, indices: tx.Sequence[int]
+    image: NiftiImage, indices: tx.Sequence[int], lossy: bool = False
 ) -> NiftiImage:
     """Return an image whose vectors are converted to RAS millimetres.
 
@@ -901,6 +902,21 @@ def _in_ras_millimetres(
     millimetres, and the writer converts the matrices of a world of other
     orientations or another unit to it, such as LPS or centimetres, so it
     converts the vectors by the same linear map.
+
+    A field with fewer components than spatial axes holds them along the
+    first axes of its world, and DISPVECT along the first axes of RAS.
+    When the conversion maps these axes of the world onto other axes of
+    RAS, as for a world whose first axis is inferior to superior, the
+    components cannot be held by the axes of RAS that DISPVECT gives
+    them. Such a field is refused unless `lossy` is true, and the
+    components are then converted by the block of the conversion between
+    these first axes.
+
+    Raises
+    ------
+    LossyConversionError
+        If the conversion moves the components of a field onto axes that
+        it does not hold, and `lossy` is false.
     """
     world = image.transformation.output
     conversion = _world_unit_scale(world) * ras_conversion(world)[:3, :3]
@@ -911,6 +927,17 @@ def _in_ras_millimetres(
     axes = image._array_axes()
     for index in indices:
         count = int(data.shape[index])
+        coupled = np.any(conversion[count:, :count]) or np.any(
+            conversion[:count, count:]
+        )
+        if coupled and not lossy:
+            raise LossyConversionError(
+                f"Writing this image loses information about its values: "
+                f"the {count} components along axis {index} follow the "
+                f"first axes of a world that RAS orders differently, and "
+                f"DISPVECT holds them along the first axes of RAS. Pass "
+                f"lossy=True to write them anyway."
+            )
         matrix = backend.asarray(conversion[:count, :count])
         data = axes[index].apply(data, matrix, index)
     return replace(image, data=data)
