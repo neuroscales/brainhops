@@ -208,7 +208,8 @@ def header_frames(
     header without a world space give.
 
     A measurement frame that is not a square matrix of the dimension of
-    the world space, or that cannot be inverted, gives a foreign frame,
+    the world space, or that cannot be inverted accurately, gives a
+    foreign frame,
     a coordinate system named `"measurement"` that no transformation of
     the image reaches. So does a measurement frame in a header without a
     world space, since nothing then relates the array to that space.
@@ -263,7 +264,7 @@ def _measured_frame(
         or matrix is None
         or matrix.shape != (n, n)
         or not np.all(np.isfinite(matrix))
-        or np.linalg.det(matrix) == 0
+        or np.linalg.cond(matrix) >= 1 / np.finfo(float).eps
     ):
         return _measurement_system(preferred.output)
     return measurement_change(preferred, matrix)
@@ -510,18 +511,24 @@ def _widened(matrix: np.ndarray, ndim: int) -> np.ndarray:
     return np.concatenate([linear, matrix[:, -1:]], axis=1)
 
 
-def same_reading(first: str, second: str) -> bool:
+def same_reading(first: str, second: str, size: int) -> bool:
     """Return whether the reader reads two kinds as the same axis.
 
-    The kinds of vectors of the same valence are read alike, whatever the
-    length that they require, such as `vector` and `3-vector`, and so
-    are the kinds of points. The kinds of matrices are read alike only
-    when they are the same kind. Other kinds are compared by name,
-    regardless of case.
+    The kinds of vectors of the same valence are read alike when the
+    axis has the length that each of them requires, such as `vector`
+    and `3-vector` for an axis of three entries. The kinds of matrices
+    are read alike only when they are the same kind. Other kinds are
+    compared by name, regardless of case.
     """
     first, second = first.lower(), second.lower()
     if first in _VECTOR_KINDS and second in _VECTOR_KINDS:
-        return _VECTOR_KINDS[first][0] == _VECTOR_KINDS[second][0]
+        valence, length = _VECTOR_KINDS[first]
+        other, needed = _VECTOR_KINDS[second]
+        return (
+            valence == other
+            and length in (None, size)
+            and needed in (None, size)
+        )
     return first == second
 
 

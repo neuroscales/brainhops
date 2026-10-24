@@ -32,6 +32,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.errors import WriterError
 from brainhops.io.images.nrrd import NrrdImage
+from brainhops.io.images.nrrd._image import _planned_kinds
 
 _SHAPE = (2, 3, 4)
 _DIRECTIONS = np.array([[0.0, -2.0, 0.0], [1.5, 0.0, 0.0], [0.0, 0.0, 3.0]])
@@ -698,3 +699,108 @@ def test_an_indexed_image_keeps_its_measurement_frame(
         np.asarray(image.reframe().data)[1:, :, ::2],
         atol=1e-6,
     )
+
+
+def _slice(path: pathlib.Path) -> np.ndarray:
+    """Write vectors of three components on a slice of a 3-D world."""
+    values = np.random.default_rng(8).random((3, 4, 5)).astype("f4")
+    path.write_bytes(
+        b"NRRD0004\ntype: float\ndimension: 3\n"
+        b"space: right-anterior-superior\nsizes: 3 4 5\n"
+        b"space directions: none (1,0,0) (0,1,0)\n"
+        b"kinds: vector domain domain\nendian: little\nencoding: raw\n\n"
+        + values.ravel(order="F").tobytes()
+    )
+    return np.moveaxis(values, 0, -1)
+
+
+def test_vectors_of_a_slice_in_a_volume_are_refused_when_changed(
+    tmp_path: pathlib.Path,
+) -> None:
+    values = _slice(tmp_path / "a.nrrd")
+    image = NrrdImage.load(tmp_path / "a.nrrd")
+    assert image.system.axes[2].type == "vector"
+
+    # The file is written again as it is.
+    image.save(tmp_path / "b.nrrd")
+    assert (tmp_path / "b.nrrd").read_bytes() == (
+        tmp_path / "a.nrrd"
+    ).read_bytes()
+
+    # The world maps two axes of the array onto the three components, so
+    # no measurement frame relates another frame to it.
+    assigned = NrrdImage.load(tmp_path / "a.nrrd")
+    assigned.frames = assigned.frames
+    for changed in (image[1:], assigned):
+        with pytest.raises(WriterError, match="lossy=True"):
+            io.save(changed, tmp_path / "c.nrrd")
+    io.save(image[1:], tmp_path / "c.nrrd", lossy=True)
+    assert _record(tmp_path / "c.nrrd").kinds[2] == "list"
+    np.testing.assert_array_equal(
+        NrrdImage.load(tmp_path / "c.nrrd").data, values[1:]
+    )
+
+
+def test_an_axis_written_as_a_list_gives_no_measurement_frame(
+    tmp_path: pathlib.Path,
+) -> None:
+    voxel = CoordinateSystem(
+        [Axis(n, "space") for n in "ijk"]
+        + [
+            Axis("t", "tensor", valence=("covector", "covector")),
+            Axis("v", "vector"),
+        ],
+        name="voxel",
+    )
+    world = CoordinateSystem(
+        [Axis(n, "space", unit="mm") for n in "xyz"], name="world"
+    )
+    matrix = np.zeros((3, 6))
+    matrix[:, :3] = _DIRECTIONS
+    matrix[:, -1] = _ORIGIN
+    a = Affine(matrix=matrix, input=voxel, output=world)
+    values = np.random.default_rng(9).random((*_SHAPE, 6, 3)).astype("f4")
+    # The tensor is in the array system, which NRRD cannot describe, and
+    # the vector is in the world.
+    image = SingleScaleImage(values, [a], frames={"v": a})
+
+    io.save(image, tmp_path / "a.nrrd", lossy=True)
+
+    record = _record(tmp_path / "a.nrrd")
+    assert record.kinds[3:] == ["list", "vector"]
+    np.testing.assert_array_equal(record.measurement_frame, np.eye(3))
+    back = NrrdImage.load(tmp_path / "a.nrrd")
+    np.testing.assert_array_equal(back.data, values)
+
+
+def test_a_nearly_singular_measurement_frame_is_foreign(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write(tmp_path / "a.nrrd", "vector", 3, frame=np.diag([1, 1, 1e-17]))
+
+    image = NrrdImage.load(tmp_path / "a.nrrd")
+
+    slot = image.frames[3]
+    assert isinstance(slot, CoordinateSystem)
+    assert slot.name == "measurement"
+
+
+@pytest.mark.parametrize(
+    "base,size,written",
+    [
+        ("3-vector", 3, "3-vector"),
+        # In a plane, a vector has two entries, which `3-vector` cannot
+        # hold.
+        ("3-vector", 2, "vector"),
+        ("2-vector", 2, "2-vector"),
+    ],
+)
+def test_a_kind_is_kept_only_with_the_length_that_it_requires(
+    base: str, size: int, written: str
+) -> None:
+    # The image axes x, y and c are stored in the order c, x, y.
+    kinds = _planned_kinds(
+        f"{base} domain domain", [1, 2, 0], {2: "vector"}, (4, 5, size)
+    )
+
+    assert kinds == f"{written} domain domain"

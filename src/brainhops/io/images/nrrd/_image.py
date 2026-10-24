@@ -1245,6 +1245,7 @@ def _values_to_write(
     kinds: tx.Dict[int, tx.Any] = {}
     ndims: tx.Dict[int, tx.Optional[int]] = {}
     measured: tx.Dict[int, tx.Optional[MeasuredFrame]] = {}
+    identities: tx.Dict[int, MeasuredFrame] = {}
     for i in components:
         size = shape[i]
         target = None
@@ -1265,22 +1266,39 @@ def _values_to_write(
         ndims[i] = ndim
         targets[i] = target
         measured[i] = None
-        if target is not None and not isinstance(slots[i], CoordinateSystem):
-            try:
+        if target is None:
+            continue
+        try:
+            identities[i] = measured_frame(target, target, axes, i, size)
+            if not isinstance(slots[i], CoordinateSystem):
                 measured[i] = measured_frame(slots[i], target, axes, i, size)
-            except ValueError:
-                pass
+        except ValueError:
+            # The world maps fewer axes of the array onto the components
+            # than there are components, as for the vectors of a slice in a
+            # three-dimensional world, or the frame takes them from other
+            # axes, so no measurement frame relates the two and the values
+            # cannot be re-expressed. NRRD cannot describe this axis.
+            kinds[i] = None
+            measured[i] = None
     # A header with a world space records the measurement frame of the first
-    # axis whose frame gives one, and any other header records none, so its
-    # frame is that of the preferred transformation.
+    # axis that is written with its kind and whose frame gives one, and any
+    # other header records none, so its frame is that of the preferred
+    # transformation.
     common: tx.Optional[MeasuredFrame] = None
     if recorded:
-        common = next((m for m in measured.values() if m is not None), None)
+        common = next(
+            (
+                m
+                for i, m in measured.items()
+                if m is not None and kinds[i] is not None
+            ),
+            None,
+        )
     if common is None:
-        for i, target in targets.items():
-            if target is not None:
-                common = measured_frame(target, target, axes, i, shape[i])
-                break
+        common = next(
+            (m for i, m in identities.items() if kinds[i] is not None),
+            next(iter(identities.values()), None),
+        )
 
     def frame_of(index: int, axis: Axis) -> tx.Any:
         if kinds[index] is None:
@@ -1324,19 +1342,23 @@ def _values_to_write(
 
 
 def _planned_kinds(
-    kinds: str, order: tx.Sequence[int], planned: tx.Mapping[int, str]
+    kinds: str,
+    order: tx.Sequence[int],
+    planned: tx.Mapping[int, str],
+    shape: tx.Sequence[int],
 ) -> str:
     """Return the `kinds` field with the kinds of the component axes.
 
-    `kinds` is the field that the writer would write otherwise, and
-    `order` gives the file axis of each image axis. A kind of the field
-    that the reader reads as the same axis as the planned kind, such as
-    `3-vector` for `vector`, is kept as it is spelled.
+    `kinds` is the field that the writer would write otherwise, `order`
+    gives the file axis of each image axis, and `shape` is the shape of
+    the image. A kind of the field that the reader reads as the same axis
+    as the planned kind, with the number of entries of the axis, such as
+    `3-vector` for a `vector` of three entries, is kept as it is spelled.
     """
     words = kinds.split()
     for j, kind in planned.items():
         i = order[j]
-        if same_reading(words[i], kind):
+        if same_reading(words[i], kind, shape[j]):
             continue
         words[i] = kind
     return " ".join(words)
@@ -1456,7 +1478,9 @@ def _encoded(
     else:
         fields["kinds"] = " ".join(_kinds(roles, order))
     if plan is not None:
-        fields["kinds"] = _planned_kinds(fields["kinds"], order, plan.kinds)
+        fields["kinds"] = _planned_kinds(
+            fields["kinds"], order, plan.kinds, shape
+        )
 
     # --- geometry -------------------------------------------------
     measurement = None if plan is None else plan.measurement
