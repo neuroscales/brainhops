@@ -22,7 +22,10 @@ from brainhops.datamodel._transformations.compute.multiscale import (  # noqa: E
 )
 from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
-from brainhops.datamodel.systems import CoordinateSystem  # noqa: E402
+from brainhops.datamodel.systems import (  # noqa: E402
+    CoordinateSystem,
+    LPSCoordinateSystem,
+)
 from brainhops.datamodel.transformations import (  # noqa: E402
     Affine,
     DisplacementField,
@@ -812,3 +815,30 @@ def test_a_moving_image_with_another_origin_adds_an_offset(
     moved = np.asarray(chain.compute().field)
     offset = (moved - points) - ras
     assert np.allclose(offset, [4.0, -3.0, 2.0], atol=1e-4)
+
+
+def test_vectors_in_lps_are_written_in_ras(tmp_path: pathlib.Path) -> None:
+    # NIfTI stores its world as RAS, so the writer flips the first two
+    # components of vectors in LPS, as it flips the matrix.
+    voxel = CoordinateSystem(
+        [Axis(n, "space") for n in "ijk"] + [Axis("c", "displacement")],
+        name="voxel",
+    )
+    world = CoordinateSystem(
+        list(LPSCoordinateSystem().axes) + [Axis("c", "displacement")],
+        name="LPS",
+    )
+    matrix = np.eye(5)[:-1]
+    matrix[:3, :3] = np.diag([2.0, 3.0, 4.0])
+    a = Affine(matrix=matrix, input=voxel, output=world)
+    values = np.random.default_rng(13).normal(size=(*_SHAPE, 3))
+    path = tmp_path / "field.nii"
+
+    save(SingleScaleImage(values, [a], frames={"c": a}), path)
+
+    assert np.allclose(nb.load(str(path)).affine[:3, :3], np.diag([-2, -3, 4]))
+    expected = values * np.array([-1.0, -1.0, 1.0])
+    assert np.allclose(_stored(path), expected, atol=1e-5)
+    image = NiftiImage.load(path)
+    voxel_values = np.asarray(image.reframe(None).data)[:, :, :, 0, :]
+    assert np.allclose(voxel_values, values / [2.0, 3.0, 4.0], atol=1e-5)

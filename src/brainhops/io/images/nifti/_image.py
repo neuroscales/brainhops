@@ -13,6 +13,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+from brainhops.backends import get_array_backend
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel._frames import FrameSlot, normalize_frames
 from brainhops.datamodel.axes import Axis
@@ -42,6 +43,7 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common._frames import values_in_format_frames
 from brainhops.io.common._geometry import (
     held_transformations,
+    ras_conversion,
     same_transformations,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -602,8 +604,9 @@ class NiftiImage(
         then keeps the 4-D layout of FSL. Otherwise, the vectors of a
         displacement axis or of a vector axis of valence `"vector"` are
         re-expressed in the world of the preferred transformation, which
-        becomes the best affine, and converted to millimetres when that
-        world has another unit, and the header gets the DISPVECT intent.
+        becomes the best affine, and converted to RAS millimetres when
+        that world has another orientation or unit, and the header gets
+        the DISPVECT intent.
         The change of frame is exact when both frames are affine.
         Vectors in FSL scaled millimetres are re-expressed only with
         `lossy=True`, because the result is the displacement of the map
@@ -738,12 +741,7 @@ class NiftiImage(
                 image = replace(self, data=reframed[0], frames=reframed[1])
             dispvect = frame_of.used
         if dispvect:
-            # NIfTI stores a world in millimetres, and the writer converts
-            # the matrices of another unit, so it converts the vectors in
-            # the same way.
-            factor = _world_unit_scale(self.transformation.output)
-            if factor != 1.0:
-                image = replace(image, data=image.data * factor)
+            image = _in_ras_millimetres(image, frame_of.indices)
         fsl_layout = own and own_intent in _NIFTI_FSL_INTENTS
         raw, record = _nifti_encoded(
             image,
@@ -893,6 +891,31 @@ class NiftiImage(
         return self.to_nibabel(**kwargs).to_bytes()
 
 
+def _in_ras_millimetres(
+    image: NiftiImage, indices: tx.Sequence[int]
+) -> NiftiImage:
+    """Return an image whose vectors are converted to RAS millimetres.
+
+    The vectors along the axes `indices` are expressed in the world of the
+    preferred transformation. NIfTI stores its world as RAS in
+    millimetres, and the writer converts the matrices of a world of other
+    orientations or another unit to it, such as LPS or centimetres, so it
+    converts the vectors by the same linear map.
+    """
+    world = image.transformation.output
+    conversion = _world_unit_scale(world) * ras_conversion(world)[:3, :3]
+    if np.array_equal(conversion, np.eye(3)):
+        return image
+    data = image.data
+    backend = get_array_backend(data)
+    axes = image._array_axes()
+    for index in indices:
+        count = int(data.shape[index])
+        matrix = backend.asarray(conversion[:count, :count])
+        data = axes[index].apply(data, matrix, index)
+    return replace(image, data=data)
+
+
 class _NiftiFrames:
     """The frame in which NIfTI stores the values along each axis.
 
@@ -928,6 +951,7 @@ class _NiftiFrames:
     def __init__(self, image: NiftiImage, dispvect: bool = True) -> None:
         self.image = image
         self.used = False
+        self.indices: tx.List[int] = []
         self.dispvect = dispvect
         self.coefficients = _holds_fsl_coefficients(image)
 
@@ -947,6 +971,7 @@ class _NiftiFrames:
         if not isinstance(frame, Transformation):
             return None
         self.used = True
+        self.indices.append(index)
         return frame
 
 

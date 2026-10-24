@@ -534,9 +534,10 @@ frame that this intent states.
   in this way too. DISPVECT is chosen rather than an FSL intent because
   every reader of NIfTI fields reads it, and because an FSL field is
   written by `FnirtWarpField`, which also stores what the image does not
-  hold, such as the parameters of a spline. NIfTI stores its world in
-  millimetres, so the writer converts the vectors of a world in another
-  unit as it converts the matrices.
+  hold, such as the parameters of a spline. NIfTI stores its world as
+  RAS in millimetres, so the writer converts the vectors of a world of
+  another orientation, such as LPS, or of another unit as it converts
+  the matrices.
 - Re-expressing vectors in FSL scaled millimetres in RAS is exact as a
   computation, but the result is the displacement of the map in RAS only
   when the moving image of the field has the same voxel-to-RAS map as
