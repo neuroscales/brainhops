@@ -1,8 +1,8 @@
 # Images of vectors and tensors
 
 Status: the data model, the operations, the metadata and the frames of
-NIfTI files are implemented; the readers and the writers of the other
-formats are not (see section 9).
+NIfTI and OME-Zarr files are implemented; the readers and the writers of
+the other formats are not (see section 9).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -398,15 +398,65 @@ the spatial axes. It gives diffusion tensors as a motivating case but
 defines no layout for them.
 
 Everything that these documents let a file state can be represented
-here. A vector axis of an OME-Zarr image is a `vector` axis whose frame
-is the transformation from the array to the intrinsic coordinate system.
-The Zarr reader maps the types `point`, `vector` and `tensor` to their
-classes, and a vector or a tensor axis that it reads has the default
-`valence` and `layout`, since OME-NGFF does not state them. The reverse
-is lossy: NGFF has no standard way to store the valence of a vector, the
-valence and the layout of a tensor, a two-point tensor or a foreign
-frame, so a writer would store them as custom axis types and report the
-loss.
+here. `OmeZarrImage` reads and writes the frames of each level as
+follows.
+
+| Axis type      | Frame of the components of a level          |
+| -------------- | ------------------------------------------- |
+| `displacement` | the map to the intrinsic system, permuted   |
+| `coordinate`   | a foreign `CoordinateSystem` without a name |
+| `vector`       | the map to the intrinsic system, permuted   |
+| `tensor`       | the map to the intrinsic system, permuted   |
+| `point`        | the map to the intrinsic system, permuted   |
+
+The intrinsic system is the system onto which every level maps. The
+frame of a level is the map from its voxels to that system, followed by
+a permutation that puts the axes of the system in the order of the
+store, because the components follow the stored order (`DZYX` holds its
+vectors as `ZYX`) and brainhops sorts the axes of a system into x, y
+and z. The frame is restricted to the axes that the components follow,
+as section 3 describes, so a time axis is left out. The values are not
+reordered when they are read. Each level has its own frame, which
+differs from the frame of another level by the scale of its voxels, so
+a vector in the intrinsic system has the same components at every
+level.
+
+`point`, `vector` and `tensor` are custom axis types, which OME-NGFF
+0.6 allows, and RFC-3 gives the frame of the vectors. The frame of
+points and tensors is taken to be the same, since nothing else states
+it. The valence of a vector, and the valence and the named layout of a
+tensor, are written as the custom fields `valence` and `layout` of the
+axis, which the schema allows, and the reader reads them back. Their
+values are strings, the valences of a tensor joined by commas, because
+abczarr keeps only scalar values in the custom fields of an axis. An
+explicit layout therefore has no encoding.
+
+A displacement field read as an image does not know the transformation
+that uses it, whose output system holds its vectors. OME-NGFF states
+that the field maps its array onto the input system of that
+transformation and that a displacement has as many outputs as inputs,
+because it is added to the input point. The reader therefore takes the
+output axes to be the axes of the system of the field, in its order,
+which is the identification that adding a vector to a point makes, and
+the one that `OmeZarrField` makes when it converts the vectors to
+voxels. The tests check that the two readers agree. A coordinate field
+holds positions in the output system, which it does not name and whose
+number of axes may differ, so its frame is foreign, and every level
+shares the same object.
+
+The writer re-expresses the values of each level in the frame of the
+written level, through the rules of section 9. Values whose slot is the
+very frame that the level decoded from its store, at a level whose
+geometry is written unchanged, are written as they are, and this is the
+only case in which the coordinates of a coordinate field, or the
+coordinates of points, are written without a loss. The writer refuses,
+unless `lossy=True` is given, values in a foreign frame, a tensor with
+an explicit layout, coordinates of points in another frame, a component
+axis that the given axes of the pyramid give another type, and a change
+of frame through a map that is not affine. When the writer moves the
+flip of the levels, or the whole geometry of a single level, into the
+placements of the pyramid, the intrinsic system changes, and the values
+are re-expressed in the new one.
 
 ## 8. The frames of NIfTI files
 
@@ -574,7 +624,9 @@ Implemented:
   single-scale and multi-scale images;
 - the `Reframed` record and the `VALUES` scope of the metadata (#540);
 - the frames of NIfTI displacement fields, which the reader sets from
-  the intent and the writer stores as section 8 describes.
+  the intent and the writer stores as section 8 describes;
+- the frames of the component axes of OME-Zarr images, which the reader
+  sets for each level and the writer stores as section 7 describes.
 
 A writer applies a change of frame through affine maps silently, because
 it is exact and part of the encoding of the format. It refuses, with a
@@ -600,8 +652,8 @@ the derivatives of the splines of the fields, is left for later.
 Not implemented:
 
 - readers and writers of the frames of the component axes in the other
-  formats (ITK, MRtrix, the FSL transformation formats, NRRD and
-  OME-Zarr), which #539 tracks. Until then, the frame of a component
+  formats (ITK, MRtrix, the FSL transformation formats and NRRD), which
+  #539 tracks, and in plain Zarr arrays, which store no axis types. Until then, the frame of a component
   axis that such a reader creates is the array system by default, even
   when the file stores the vectors in another frame;
 - the descriptions of the channels in the metadata, which run along the
