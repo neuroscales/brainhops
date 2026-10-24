@@ -507,6 +507,15 @@ def _spaces(
     return outputs, inputs
 
 
+def _unit_powers(quantity: tx.Any) -> tx.Dict[str, tx.Any]:
+    # The power of each unit of a pint quantity, by unit name. Older
+    # versions of pint, such as 0.21, have no `Quantity.unit_items`, and
+    # then the same mapping is read from the units container instead.
+    if hasattr(quantity, "unit_items"):
+        return dict(quantity.unit_items())
+    return dict(quantity._units.items())
+
+
 def _scale_and_unit(
     unit: tx.Optional[Unit], name: str, side: str
 ) -> tx.List[tx.Any]:
@@ -529,8 +538,7 @@ def _scale_and_unit(
     # root units of the axis unit tells them apart: 1 for an angular
     # frequency, 0 for any other unit. A steradian counts as a squared
     # radian and has no Neuroglancer equivalent.
-    root_units = quantity.to_root_units()._units
-    radians = dict(root_units.items()).get("radian", 0)
+    radians = _unit_powers(quantity.to_root_units()).get("radian", 0)
     for base, long_name in BASES.items():
         if radians != (1 if base == "rad/s" else 0):
             continue
