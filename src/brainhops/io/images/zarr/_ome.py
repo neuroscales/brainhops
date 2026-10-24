@@ -35,7 +35,7 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
-from brainhops.io.transformations.zarr._axes import _to_axis
+from brainhops.io.transformations.zarr._axes import _to_axis, axis_to_json
 
 # Spline degree of each OME interpolation name.
 _INTERPOLATION_DEGREE = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
@@ -749,22 +749,6 @@ def common_transformations(
         else:
             transformations.append(Sequence(parts, input=input, output=output))
     return transformations
-
-
-def axis_to_json(axis: Axis) -> tx.Dict[str, tx.Any]:
-    """Return the OME-Zarr JSON description of one axis."""
-    entry = {}  # type: tx.Dict[str, tx.Any]
-    name = getattr(axis, "name", None)
-    type_ = getattr(axis, "type", None)
-    unit = getattr(axis, "unit", None)
-    entry["name"] = name if isinstance(name, str) else ""
-    if isinstance(type_, str):
-        entry["type"] = type_
-    if unit is not None:
-        value = getattr(unit, "value", unit)
-        if isinstance(value, str):
-            entry["unit"] = value
-    return entry
 
 
 # Versions that only carry per-axis scale and translation.
