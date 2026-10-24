@@ -868,7 +868,7 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
                 self.transformations = placements
                 self.metadata = metadata
             return self
-        arrays, levels = _consolidated_levels(self, images)
+        arrays, levels = _consolidated_levels(self, images, metadata)
         raw = self.rawdata if _same(arrays, self.rawdata) else arrays
         if not inplace:
             return replace(
@@ -1102,7 +1102,9 @@ def _associated(
 
 
 def _consolidated_levels(
-    pyramid: OpenSlideMultiScaleImage, images: tx.Sequence[tx.Any]
+    pyramid: OpenSlideMultiScaleImage,
+    images: tx.Sequence[tx.Any],
+    consolidated: tx.Optional[OpenSlideMetadata],
 ) -> tx.Tuple[
     tx.Tuple[ArrayProtocol, ...], tx.Optional[tx.List[SingleScaleImage]]
 ]:
@@ -1111,7 +1113,10 @@ def _consolidated_levels(
     Each level must be a level of the slide of the pyramid. Its array is
     its pending data, or else its own `rawdata`. The levels are kept, each with
     its array and the transformations that it holds, only when a level
-    holds transformations that differ from those of the record.
+    holds transformations that differ from those of the record. The
+    levels that are kept hold `consolidated`, the metadata of the
+    consolidated pyramid, so that each level stays a level of the slide
+    that the consolidated pyramid describes.
 
     Raises
     ------
@@ -1163,6 +1168,7 @@ def _consolidated_levels(
             data=None,
             rawdata=array,
             transformations=None if kept is None else list(kept),
+            metadata=consolidated,
         )
         for image, array, kept in zip(images, arrays, held)
     ]
