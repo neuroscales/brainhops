@@ -77,6 +77,83 @@ components are reordered with the axes of that system. Drafts of version
 0.6 named the array of the field instead of a group, and such a field is
 read too.
 
+## Vectors and tensors
+
+Some images hold, at each voxel, the components of a vector or a tensor
+along one axis, rather than independent channels. The coordinate system
+in which these components are expressed is called their frame (see
+[`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]).
+The reader records the frame of each level without converting the
+values, and the writer re-expresses the values of each level in the
+frame that the store states for it. The types of these axes are read
+and written as follows.
+
+| OME-NGFF axis type | brainhops axis      | Frame of the components     |
+| ------------------ | ------------------- | --------------------------- |
+| `displacement`     | `DisplacementAxis`  | the intrinsic system        |
+| `coordinate`       | `CoordinateAxis`    | a foreign coordinate system |
+| `vector`           | `VectorAxis`        | the intrinsic system        |
+| `tensor`           | `TensorAxis`        | the intrinsic system        |
+| `point`            | `PointAxis`         | the intrinsic system        |
+
+The intrinsic system is the system onto which every level maps, and
+the components follow its axes in the order in which the store lists
+them, such as z, y and x. RFC-3 of OME-NGFF, which lets an image have
+any axes, orders the components of a vector in this way (rule 7 of its
+changes to the section "multiscales metadata"). It names no type for
+such an axis, and OME-NGFF 0.6 allows custom types, so `vector`,
+`tensor` and `point` are custom types of brainhops. A placement of the
+pyramid carries the intrinsic system to a world, so the components are
+not in that world. Each level has its own frame, the map of its voxels
+followed by the order of the store, so a vector has the same components
+at every level, and a level whose voxels are twice as large has a frame
+that scales twice as much.
+
+OME-NGFF 0.6 states that the `i`th entry along the axis of a
+displacement field refers to the `i`th output axis of the
+transformation that uses the field, and that the field maps its array
+onto the input system of that transformation (ngff-spec tag `0.6`,
+`index.md`, section "coordinates and displacements"). A field read as
+an image does not know that transformation. A displacement has as many
+output axes as input axes, because it is added to the input point, so
+the reader takes the output axes to be the axes of the system of the
+field, in its order. The reader of fields,
+[`OmeZarrField`][brainhops.io.transformations.zarr.OmeZarrField], makes
+the same assumption when it converts the vectors to voxels. A
+coordinate field holds positions in that output system, whose number of
+axes may differ and which the field does not name, so its frame is a
+foreign [`CoordinateSystem`][brainhops.datamodel.systems.CoordinateSystem]
+without a name, which every level shares.
+
+The valence of a vector, and the valence and the layout of a tensor,
+have no field in OME-NGFF, so the writer stores them in custom fields
+of the axis, which the schema of version 0.6 allows:
+
+| Field     | Axis type | Value                                  |
+| --------- | --------- | -------------------------------------- |
+| `valence` | `vector`  | `"covector"`                           |
+| `valence` | `tensor`  | the valences joined by commas          |
+| `layout`  | `tensor`  | the name of a layout, as `"symmetric"` |
+
+A field is written only when it differs from the default: a vector of
+valence `"vector"`, a tensor of two indices of valence `"vector"`, and
+no layout, with which a tensor reads its layout from the number of its
+entries. A tensor whose layout is an
+explicit tuple of components has no such field, because abczarr keeps
+only scalar values in the custom fields of an axis.
+
+The writer applies a change of frame through affine maps silently,
+since it is exact, as for vectors in the voxels of a level. Values in
+the frame that a level read from its store are written as they are when
+the geometry of the level is written unchanged, and this includes the
+coordinates of a coordinate field. The writer refuses, with a
+[`LossyConversionError`][brainhops.errors.LossyConversionError], values
+in a foreign frame, coordinates of points in another frame than that of
+the store, since re-expressing points needs the inverse of a map, a
+tensor with an explicit layout, and a change of frame through a map
+that is not affine. The argument `lossy=True` writes these values as
+they are, or approximately for a map that is not affine.
+
 ## Voxel centres
 
 An integer index is the centre of a voxel. OME-NGFF 0.6 states this
@@ -106,7 +183,10 @@ parameters.
 
 The writer encodes the geometry from the levels and the placements, and
 does not keep the metadata as it was read, so a pyramid that is saved
-unchanged does not keep the bytes of its metadata. It writes
+unchanged does not keep the bytes of its metadata. In particular, the
+writer normalises the fields of the axes: it writes the long name of
+each unit, such as `millimeter`, and `"discrete": true` on the axis of
+a displacement or a coordinate field. It writes
 every placement that reduces to an affine as a `scale`, a
 `translation`, a `rotation`, an `affine` or a `sequence` of them, so
 that a placement read as an inverse is written in the forward direction.

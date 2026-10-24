@@ -15,9 +15,17 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
+from brainhops.backends import get_array_backend
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
+from brainhops.datamodel._frames import (
+    FrameSlot,
+    array_axes,
+    component_axes,
+    explicit_frame,
+    normalize_frames,
+)
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.images import SingleScaleImage, _always_unset
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
@@ -35,17 +43,20 @@ from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
+    ParserContentError,
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common._frames import values_in_format_frames
 from brainhops.io.common._geometry import (
     Arrangement,
+    AxisLayout,
     declared_axes,
     held_transformations,
     same_transformations,
 )
-from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
-from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
+from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw, _kinds
+from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix, mrtrix_dtype
 from brainhops.io.common.mrtrix._data import (
     _MrtrixProxy,
     read_mrtrix,
@@ -95,21 +106,32 @@ _SCANNER = "scanner"
 """Name of the world space into which the MRtrix transform maps."""
 
 
-def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
+def _mrtrix_axes(ndim: int, kind: tx.Optional[str] = None) -> tx.List[Axis]:
     """Return the voxel axes of an MRtrix image.
 
     The first three axes are the spatial axes `x`, `y` and `z`. Further
     axes, such as diffusion volumes, time or spherical harmonic
     coefficients, have no meaning defined by MRtrix, so they are named
-    `dim3`, `dim4` and so on, without a type.
+    `dim3`, `dim4` and so on, without a type. When the header says what
+    the fourth axis holds (see
+    [`header_kind`][brainhops.io.common.mrtrix._kinds.header_kind]),
+    `kind` names it, and that axis is a component axis instead: a
+    coordinate, displacement, vector or tensor axis.
     """
     axes = []
     for i in range(ndim):
         if i < 3:
             axes.append(Axis(_SPATIAL[i], "space", unit=_INDEX))
+        elif i == 3 and kind is not None:
+            axes.append(_kinds.component_axis(kind, f"dim{i}", _INDEX))
         else:
             axes.append(Axis(f"dim{i}", unit=_INDEX))
     return axes
+
+
+def _record_axes(header: MrtrixRaw) -> tx.List[Axis]:
+    """Return the voxel axes that the record of a header describes."""
+    return _mrtrix_axes(header.ndim, _kinds.header_kind(header))
 
 
 @register_format
@@ -129,7 +151,13 @@ class MrtrixImage(
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are a [`Scaling`][]
     to `"physical"` by the voxel sizes and the preferred [`Affine`][] to
-    scanner RAS+ in millimeters, `transform @ diag(vox)`.
+    scanner RAS+ in millimeters, `transform @ diag(vox)`. The `transform`
+    maps the spatial axes only, so the affine has a zero column for each
+    axis after them, and the voxel sizes of these axes, such as the
+    repetition time of a series, are held by the [`Scaling`][] alone. A
+    writer that takes the spacing of such an axis from the preferred
+    transformation, as the NIfTI writer does for `pixdim[4]`, therefore
+    does not get it, and writes a spacing of one.
 
     `rawdata` and the record describe the file as it was read, or as the image
     was last consolidated. Data that are assigned are pending until
@@ -187,16 +215,18 @@ class MrtrixImage(
         "metadata", default=None
     )
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty(
+        "metadata", invalidates=("transformations", "frames")
+    )
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning
-    other metadata drops the transformations decoded from the previous
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations and the frames decoded from the previous
     record, so that they are decoded from the new one, and keeps the
-    transformations that were assigned.
+    transformations and the frames that were assigned.
     """
 
-    data = dataproperty()
+    data = dataproperty(invalidates="frames")
     """The image data, assigned or decoded from `rawdata`.
 
     An array assigned to the image is returned as it is, and stays
@@ -228,7 +258,7 @@ class MrtrixImage(
             return None
         return _image_to_model(self.rawdata)
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidates="frames")
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
@@ -270,12 +300,115 @@ class MrtrixImage(
         """The voxel coordinate system described by the record.
 
         The axes are `x`, `y` and `z`, then `dim3`, `dim4` and so on, in
-        Fortran order. An image without metadata has no system.
+        Fortran order. The fourth axis is a component axis when the
+        header says what it holds (see [`frames`][]). An image without
+        metadata has no system.
         """
         if self.metadata is None or self.metadata.raw is None:
             return None
-        axes = _mrtrix_axes(self.metadata.raw.ndim)
+        axes = _record_axes(self.metadata.raw)
         return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
+
+    @smartproperty(cache=True, unset=_always_unset)
+    def frames(self) -> tx.Tuple[FrameSlot, ...]:
+        """The frame of the values along each axis, as the header states it.
+
+        Some MRtrix images hold at each voxel the components of a vector
+        or of a tensor along their fourth axis, such as the diffusion
+        tensors that `dwi2tensor` writes and the warps that
+        `warpconvert` writes. MRtrix expresses these components in
+        scanner RAS millimetres, which is the world of the `transform`
+        of the header. The coordinate system in which the components are
+        expressed is called their frame, so the frame of the fourth axis
+        is the preferred transformation, which maps the voxels to the
+        scanner. The scanner does not depend on the order in which the
+        voxel axes are stored (`layout`), nor on the way in which MRtrix
+        reorders the axes when it loads an image, so this frame holds
+        whatever the strides of the file are. `reframe()` therefore
+        leaves the values as they are, and `reframe(None)` re-expresses
+        them in the array system.
+
+        The header has no key that says what the volumes are. The fourth
+        axis is a component axis only when one of these clues says so,
+        where a command is the last one of `command_history`:
+
+        | Clue                                           | Axis         |
+        | ---------------------------------------------- | ------------ |
+        | `brainhops_field_type: coordinates`            | coordinate   |
+        | `brainhops_field_type: displacements`          | displacement |
+        | `brainhops_field_type: vectors` or `covectors` | vector       |
+        | `brainhops_field_type: tensors`                | tensor       |
+        | `dwi2tensor`, six volumes, no `dw_scheme` key  | tensor       |
+        | `warpconvert` with a type `*2deformation`      | coordinate   |
+        | `warpconvert` with a type `*2displacement`     | displacement |
+        | `warpinvert -displacement`                     | displacement |
+        | `warpinvert`, `warpinit` or `warpcorrect`      | coordinate   |
+        | `mrregister`, shape `(X, Y, Z, 3, 4)`          | coordinate   |
+
+        The key `brainhops_field_type` decides only while brainhops
+        wrote the file last, as the last line of `command_history`
+        says, because MRtrix copies the key into the images that its
+        commands derive from the file, and these images may hold other
+        values. A command decides only when it writes one kind of values
+        in that shape. `mrregister` decides only for the 5-D file of
+        `-nl_warp_full`, because it also writes the moved image, which
+        may have three volumes. A tensor axis has the layout
+        `"symmetric-diagonal-first"`, which is the order `D11`, `D22`,
+        `D33`, `D12`, `D13` and `D23` of `dwi2tensor`.
+
+        Any other image keeps a channel axis. This includes the peaks of
+        `sh2peaks` and `fixel2peaks`, which hold several directions
+        along one axis, the eigenvectors and the eigenvalues of
+        `tensor2metric`, which have the same shape, and the coefficients
+        of spherical harmonics, which change under a rotation by a rule
+        of their own rather than as the components of a vector or a
+        tensor. The values are never read to decide, and they are never
+        converted when they are read.
+
+        The frames of the header are built once and cached, and the
+        same objects are returned at every read, because
+        transformations compare by identity. Assigning other metadata,
+        transformations or data drops them, so that they are built
+        again, and a consolidated image gets the frames of its new
+        header. Frames that are assigned, or given to the constructor,
+        take precedence over those of the header, as
+        [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        describes them.
+        """
+        given = self._frames or self._header_frames()
+        return normalize_frames(given, self._array_axes(), tuple(self.shape))
+
+    def _header_frames(self) -> tx.Dict[int, FrameSlot]:
+        """Return the frame of each component axis, as the header states it.
+
+        The frame is the preferred transformation that the record
+        decodes to, which maps the voxels to the scanner. An image
+        without a record, whose header says nothing of its fourth axis,
+        or whose data have another shape than the header, gives an empty
+        mapping, so that its frames are the array system.
+        """
+        metadata = self.metadata
+        if metadata is None or metadata.raw is None:
+            return {}
+        if _kinds.header_kind(metadata.raw) is None:
+            return {}
+        # Data of another shape are not the values that the header
+        # describes.
+        if tuple(metadata.raw.dim) != tuple(self.shape):
+            return {}
+        if self._transformations is None:
+            decoded = self.transformations
+        else:
+            decoded = _record_transformations(metadata)
+        if not decoded:
+            return {}
+        preferred = decoded[-1]
+        axes = array_axes(preferred.input, len(self.shape))
+        frames: tx.Dict[int, FrameSlot] = {}
+        for i in component_axes(axes):
+            count = axes[i].frame_ndim(self.shape[i])
+            frames[i] = explicit_frame(preferred, axes, count)
+        return frames
 
     # --- reading ------------------------------------------------------
 
@@ -286,8 +419,12 @@ class MrtrixImage(
         A 4D image with three volumes may be a warp, as may a NIfTI file
         of that shape, so it is only a weak match. So is a 5D image of
         shape `(X, Y, Z, 3, 4)`, the warps that `mrregister -nl_warp_full`
-        writes.
+        writes. An image whose header says that it holds vectors or
+        tensors, which are not warps, is a likely match.
         """
+        kind = _kinds.header_kind(header)
+        if kind in (_kinds.VECTOR, _kinds.COVECTOR, _kinds.TENSOR):
+            return Confidence.LIKELY
         if header.ndim == 4 and header.dim[3] == 3:
             return Confidence.WEAK
         if header.ndim == 5 and header.dim[3:] == (3, 4):
@@ -445,6 +582,7 @@ class MrtrixImage(
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
         on_loss: tx.Optional[OnLoss] = None,
+        lossy: bool = False,
         **fields: tx.Any,
     ) -> "MrtrixImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -473,6 +611,39 @@ class MrtrixImage(
            from a [`Scaling`][], or are one.
         3. The other keys of the base are kept, and `keyval` is merged
            into them last.
+
+        The values of a component axis, such as the vectors of a warp
+        or the coefficients of a diffusion tensor, are encoded as MRtrix
+        stores them: along the fourth axis, and in scanner RAS
+        millimetres, which is the world of the `transform` that the
+        record gets (see [`frames`][]). An image whose frames are those
+        of its own header, because none were assigned, and whose
+        geometry is kept, is encoded with its values and its header keys
+        as they are. Otherwise, the values are re-expressed in the
+        scanner through the exact Jacobian of the change of frame, so a
+        transformation applied lazily rotates them, and the coefficients
+        of a tensor are reordered into the order of MRtrix, `D11`, `D22`,
+        `D33`, `D12`, `D13` and `D23`, which is the layout
+        `"symmetric-diagonal-first"`. The kind of the values is recorded
+        in the key `brainhops_field_type`, and a `command_history` line
+        that names brainhops is appended, so that the image is read back
+        with the same axis. MRtrix itself reads neither, and takes the
+        meaning of the volumes from the command that it runs.
+
+        Some values cannot be written in this way without a loss, and
+        they are refused unless `lossy=True` is given: a frame that is
+        not affine, whose Jacobian is computed by finite differences; a
+        foreign frame; the coordinates of points in another frame, which
+        would need the inverse of a map; a covector-valued or a
+        non-symmetric tensor, which MRtrix has no order for; and a
+        component axis that would not be stored as the fourth axis, or
+        whose number of entries is not three for a vector or six for a
+        tensor once it is packed. With `lossy=True`, these values are
+        written as they are, and the header does not record their kind.
+        When the header of the base says what its fourth axis holds and
+        the written image holds something else, the key is removed and
+        the line of brainhops is appended, so that the header does not
+        describe the new values wrongly.
 
         The `file` entry of the base is kept, and a writer sets the entry
         of the file that it writes. When this encoding gives the header of
@@ -508,6 +679,10 @@ class MrtrixImage(
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do with the metadata that the record cannot hold. By
             default, the policy in effect.
+        lossy : bool, default=False
+            Whether the values of a component axis may be written
+            although MRtrix loses information about them, as described
+            above.
         **fields : Any
             Fields of the metadata to override.
 
@@ -522,6 +697,9 @@ class MrtrixImage(
             If a keyword names no field of the metadata.
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
+        LossyConversionError
+            If MRtrix loses information about the values of a component
+            axis and `lossy` is false.
         WriterError
             If there is no data, the data are zero-dimensional, the type
             cannot be stored, or `keyval` sets a key that the other
@@ -547,6 +725,7 @@ class MrtrixImage(
         )
         if (
             self._data is None
+            and not self._frames
             and kept
             and all(value is None for value in options.values())
             and not requested
@@ -558,7 +737,7 @@ class MrtrixImage(
                 return replace(self, transformations=None)
             self.transformations = None
             return self
-        record, raw = _encoded(self, None, options)
+        record, raw = _encoded_values(self, kept, options, lossy)
         if (
             self.metadata is not None
             and record is self.metadata.raw
@@ -576,11 +755,14 @@ class MrtrixImage(
                 transformations=None,
                 rawdata=raw,
                 metadata=metadata,
+                frames=(),
             )
         self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
+        # The frames of the values are now those that the record decodes.
+        self.frames = ()
         return self
 
     def to_bytes(self, **kwargs) -> bytes:
@@ -693,9 +875,9 @@ class MrtrixImage(
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
-    The options of the writer are read by `writer_options`, and `on_loss`
-    and the fields of the metadata, which go to the consolidation of the
-    metadata, are passed on.
+    The options of the writer are read by `writer_options`, and `on_loss`,
+    `lossy` and the fields of the metadata, which go to the consolidation
+    of the metadata and of the values, are passed on.
 
     Raises
     ------
@@ -705,13 +887,287 @@ def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     metadata = {
         name: value
         for name, value in kwargs.items()
-        if name in FIELDS or name == "on_loss"
+        if name in FIELDS or name in ("on_loss", "lossy")
     }
     options = writer_options(
         {name: v for name, v in kwargs.items() if name not in metadata}
     )
     options.update(metadata)
     return options
+
+
+_COMPONENTS = 3
+"""The stored position of the axis that holds the components."""
+
+_MRTRIX_ENTRIES = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
+"""The entries of a symmetric matrix in the order of `dwi2tensor`."""
+
+
+def _encoded_values(
+    image: MrtrixImage,
+    kept: bool,
+    options: tx.Mapping[str, tx.Any],
+    lossy: bool,
+) -> tx.Tuple[MrtrixRaw, ArrayProtocol]:
+    """Return the record and the voxels, with the values as MRtrix holds them.
+
+    An image whose frames are those of its own header, and whose
+    geometry is kept, already holds its values as the header describes
+    them, so it is encoded as it is. The values of any other image are
+    re-expressed in the scanner and packed in the order of MRtrix by
+    [`_in_scanner`][], and the header keys record their kind. A key of
+    brainhops in the base is always written again, or removed when no
+    kind is recorded, as when values are written as they are with
+    `lossy`. When the record would still describe its fourth axis as the
+    base did,
+    although the image holds something else there, it is encoded again
+    without the key of brainhops and with the line of brainhops in
+    `command_history`, so that neither clue describes the new values.
+    """
+    held = None if image.metadata is None else image.metadata.raw
+    own_kind = None if held is None else _kinds.header_kind(held)
+    own = not image._frames and kept and own_kind is not None
+    if own or (image._data is None and image.rawdata is None):
+        return _encoded(image, None, options)
+    written, kind = _in_scanner(image, lossy)
+    options = dict(options)
+    if written is not image and options["datatype"] is None:
+        # Re-expressed values are computed in a wider type, and are
+        # written in the floating-point type of the header unless another
+        # type is asked for.
+        stored = _float_datatype(held)
+        if stored is not None:
+            options["datatype"] = stored
+    keyval = options["keyval"]
+    first = dict(options)
+    if kind is not None or (
+        held is not None and _kinds.FIELD_TYPE in held.keyval
+    ):
+        # The key of the base describes values that may no longer be there,
+        # so it is always written again, or removed.
+        first["keyval"] = _typed_keyval(held, keyval, kind)
+    record, raw = _encoded(written, None, first)
+    if _kinds.header_kind(record) == kind:
+        return record, raw
+    second = dict(options, keyval=_typed_keyval(held, keyval, None))
+    return _encoded(written, None, second)
+
+
+def _float_datatype(held: tx.Optional[MrtrixRaw]) -> tx.Optional[str]:
+    """Return the data type of a header if it is a floating-point type."""
+    if held is None:
+        return None
+    try:
+        dtype = mrtrix_dtype(held.datatype)
+    except ParserContentError:
+        return None
+    if dtype is None or not np.issubdtype(dtype, np.floating):
+        return None
+    return held.datatype
+
+
+def _typed_keyval(
+    held: tx.Optional[MrtrixRaw],
+    keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]],
+    kind: tx.Optional[str],
+) -> tx.Dict[str, tx.Optional[str]]:
+    """Return the header keys that record what the fourth axis holds.
+
+    The key `brainhops_field_type` records the kind, or is removed when
+    `kind` is `None`, and the line of brainhops is appended to
+    `command_history`, as an MRtrix command appends its own, so that the
+    reader knows that the key is current. The line is not repeated when
+    it is already the last one. The keys given by the caller are merged
+    last.
+    """
+    line = _kinds.brainhops_history()
+    lines = _kinds.history_lines(held)
+    if not lines or lines[-1] != line:
+        lines.append(line)
+    typed: tx.Dict[str, tx.Optional[str]] = {
+        _kinds.FIELD_TYPE: (
+            None if kind is None else _kinds.FIELD_TYPE_VALUES[kind]
+        ),
+        _kinds.HISTORY: "\n".join(lines),
+    }
+    typed.update(keyval or {})
+    return typed
+
+
+def _in_scanner(
+    image: MrtrixImage, lossy: bool
+) -> tx.Tuple[MrtrixImage, tx.Optional[str]]:
+    """Return an image whose values are as MRtrix stores them, and their kind.
+
+    The values of each component axis are re-expressed in the scanner
+    by
+    [`values_in_format_frames`][brainhops.io.common._frames.values_in_format_frames],
+    which refuses a loss unless `lossy` is true. The coefficients of a
+    tensor are then reordered into the order of `dwi2tensor`, which is a
+    permutation, with the zeros of a diagonal layout filled in. The kind
+    is that of the axis whose values are now in the scanner, or `None`
+    when no axis is, as for values written as they are with `lossy`.
+    """
+    frame_of = _MrtrixFrames(image)
+    reframed = values_in_format_frames(image, frame_of, lossy)
+    if reframed is None:
+        return image, None
+    data, frames = reframed
+    kind = None
+    for index, axis_kind in frame_of.kinds.items():
+        # A tensor whose layout changes gets a frame with the new axis in
+        # its input system, so a frame of the scanner is told by its
+        # output, which is built for this write alone.
+        output = getattr(frames[index], "output", None)
+        if output is not frame_of.frame.output:
+            continue
+        kind = axis_kind
+        if axis_kind != _kinds.TENSOR:
+            continue
+        axis = frame_of.axes[index].reframed(3, image.shape[index])
+        order = _mrtrix_order(axis, int(data.shape[index]))
+        if order != list(range(len(_MRTRIX_ENTRIES))):
+            data = _packed(data, index, order)
+    # The frames of the values are those of the record once it is written,
+    # and the axis of a packed tensor no longer has the layout of the
+    # image, so no frame is kept.
+    return replace(image, data=data, frames=()), kind
+
+
+class _MrtrixFrames:
+    """The frame in which MRtrix stores the values along each axis.
+
+    MRtrix stores vectors and tensors along the fourth axis, in scanner
+    RAS millimetres. The frame of such an axis is therefore the map from
+    the voxels of the image to the scanner that the record gets, and
+    [`_scanner_frame`][] builds it. An axis that would be stored at
+    another position, or whose values MRtrix cannot hold, has no frame.
+    These are covector-valued tensors and tensors that are not
+    symmetric, which MRtrix has no order for, and vectors and tensors
+    whose frame has another number of axes than three.
+
+    An instance is the callable that
+    [`values_in_format_frames`][brainhops.io.common._frames.values_in_format_frames]
+    receives. It records the kind of each axis that it gives a frame.
+
+    Parameters
+    ----------
+    image : MrtrixImage
+        The image to write.
+    """
+
+    def __init__(self, image: MrtrixImage) -> None:
+        self.shape = tuple(int(d) for d in image.shape)
+        self.axes = image._array_axes()
+        self.frame, self.stored = _scanner_frame(image)
+        self.kinds: tx.Dict[int, str] = {}
+
+    def __call__(self, index: int, axis: Axis) -> tx.Optional[Transformation]:
+        """Return the frame of the values along an axis, or `None`."""
+        if self.frame is None or self.stored[index] != _COMPONENTS:
+            return None
+        kind = _kinds.axis_kind(axis)
+        if kind is None:
+            return None
+        size = self.shape[index]
+        try:
+            if axis.frame_ndim(size, 3) != 3:
+                return None
+            if kind == _kinds.TENSOR:
+                # A layout that is not closed becomes another one, with
+                # another number of entries, when the values are
+                # re-expressed.
+                closed = axis.reframed(3, size)
+                count = size if closed is axis else None
+                if _mrtrix_order(closed, count) is None:
+                    return None
+        except ValueError:
+            return None
+        self.kinds[index] = kind
+        return self.frame
+
+
+def _scanner_frame(
+    image: MrtrixImage,
+) -> tx.Tuple[tx.Optional[Affine], tx.Optional[tx.List[int]]]:
+    """Return the map from the voxels of an image to the written scanner.
+
+    The map is the voxel-to-scanner matrix that the record gets, which
+    [`_encoded`][] computes from the preferred transformation with the
+    axes placed where MRtrix stores them, written for the axes of the
+    image as they are. It maps to scanner RAS millimetres whatever the
+    orientation and the unit of the world of the image are. The stored
+    position of each axis of the image is also returned. An image
+    without geometry gives `None` for both.
+    """
+    transformations = image.transformations
+    if not transformations:
+        return None, None
+    xform = transformations[-1]
+    system = getattr(xform, "input", None)
+    if system is None:
+        return None, None
+    ndim = len(image.shape)
+    arranged = voxel_to_ras(xform, declared_axes(system, ndim))
+    stored = _stored_positions(arranged.layout, ndim)
+    matrix = np.zeros((3, ndim + 1))
+    for axis, position in enumerate(stored):
+        if position < 3:
+            matrix[:, axis] = arranged.matrix[:3, position]
+    matrix[:, ndim] = arranged.matrix[:3, 3]
+    frame = Affine(matrix=matrix, input=system, output=_scanner_space())
+    return frame, stored
+
+
+def _stored_positions(
+    layout: tx.Optional[AxisLayout], ndim: int
+) -> tx.List[int]:
+    """Return the position at which each axis of an array is stored.
+
+    The positions count the singleton axes that the layout inserts, as
+    the record does.
+    """
+    if layout is None:
+        return list(range(ndim))
+    total = len(layout.order) + len(layout.inserted)
+    free = [p for p in range(total) if p not in layout.inserted]
+    stored = list(range(ndim))
+    for k, axis in enumerate(layout.order):
+        stored[axis] = free[k]
+    return stored
+
+
+def _mrtrix_order(
+    axis: tx.Any, size: tx.Optional[int]
+) -> tx.Optional[tx.List[int]]:
+    """Return the entry of a tensor axis that each MRtrix volume takes.
+
+    MRtrix stores a symmetric matrix as `D11`, `D22`, `D33`, `D12`, `D13`
+    and `D23`. A layout that stores each component of a symmetric
+    matrix once can be reordered into this order, and an entry that the
+    layout leaves out, such as an off-diagonal entry of the layout
+    `"diagonal"`, is zero by construction and gets `-1`. A layout that
+    stores two entries whose indices are permutations of each other,
+    such as `"C"`, describes a matrix that may not be symmetric, and
+    `None` is returned.
+    """
+    position: tx.Dict[tx.Tuple[int, ...], int] = {}
+    for k, entry in enumerate(axis.entries(3, size)):
+        key = tuple(sorted(entry))
+        if key in position:
+            return None
+        position[key] = k
+    return [position.get(entry, -1) for entry in _MRTRIX_ENTRIES]
+
+
+def _packed(data: tx.Any, axis: int, order: tx.Sequence[int]) -> tx.Any:
+    """Return the entries of an axis in another order, with zeros for `-1`."""
+    xp = get_array_backend(data)
+    parts = []
+    for k in order:
+        part = xp.take(data, max(k, 0), axis=axis)
+        parts.append(part if k >= 0 else xp.zeros_like(part))
+    return xp.stack(parts, axis=axis)
 
 
 def _encoded(
@@ -879,6 +1335,26 @@ def _extra_vox(
 # ----------------------------------------------------------------------
 
 
+def _scanner_space() -> CoordinateSystem:
+    """Return the scanner space, in RAS millimetres.
+
+    The scanner space is always 3D, because the MRtrix transform maps
+    only the first three axes.
+    """
+    ras_axes = [
+        Axis(
+            name,
+            "space",
+            unit=_MM,
+            orientation=Orientation(
+                type="anatomical", value=_ORIENTATION[name]
+            ),
+        )
+        for name in _SPATIAL
+    ]
+    return CoordinateSystem(name=_SCANNER, axes=ras_axes)
+
+
 def _record_transformations(
     metadata: tx.Optional[MrtrixMetadata],
 ) -> tx.List[Transformation]:
@@ -901,10 +1377,14 @@ def _mrtrix_to_transformations(
        `transform @ diag(vox)` (or MRtrix's centred default).
 
     A non-finite voxel size, which is common on the volume axis, gives a
-    scale of one.
+    scale of one. The scanner has three axes, and the affine has a zero
+    column for each voxel axis after the spatial ones, which does not
+    move in the scanner. NIfTI instead carries such axes through to its
+    world, because its header gives a time axis a spacing and an offset;
+    the MRtrix transform maps the spatial axes only.
     """
     ndim = header.ndim
-    voxel_axes = _mrtrix_axes(ndim)
+    voxel_axes = _record_axes(header)
     voxel_space = ArrayCoordinateSystem(
         name="voxel", axes=voxel_axes, order="F"
     )
@@ -919,23 +1399,14 @@ def _mrtrix_to_transformations(
     scale = [v if math.isfinite(v) and v > 0 else 1.0 for v in spacing]
     vox2phys = Scaling(input=voxel_space, output=phys_space, scale=scale)
 
-    # The scanner space is always 3D, because the MRtrix transform maps
-    # only the first three axes.
-    ras_axes = [
-        Axis(
-            name,
-            "space",
-            unit=_MM,
-            orientation=Orientation(
-                type="anatomical", value=_ORIENTATION[name]
-            ),
-        )
-        for name in _SPATIAL
-    ]
     nspatial = min(3, ndim)
-    world = CoordinateSystem(name=_SCANNER, axes=ras_axes)
+    world = _scanner_space()
     vox2ras = header.voxel_to_scanner()
-    columns = list(range(nspatial)) + [3]
-    matrix = vox2ras[:3][:, columns]
+    # The map has a column for every voxel axis, so that it is a map from
+    # the whole voxel space. The axes after the spatial ones do not move in
+    # the scanner, so their columns are zero.
+    matrix = np.zeros((3, ndim + 1))
+    matrix[:, :nspatial] = vox2ras[:3, :nspatial]
+    matrix[:, ndim] = vox2ras[:3, 3]
     vox2scanner = Affine(input=voxel_space, output=world, matrix=matrix)
     return [vox2phys, vox2scanner]

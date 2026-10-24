@@ -526,15 +526,18 @@ def _with_lossy(
 ) -> tx.Dict[str, tx.Any]:
     """Return the options of a write, with `lossy` if the format takes it.
 
-    An image format takes `lossy` when its `consolidate` names it, as the
-    formats that store the frames of vector values do. The other
-    image formats read unknown options as fields of their header, so they
-    are not given it.
+    An image format takes `lossy` when its `consolidate` names it, as
+    the formats that store the frames of vector values do. A format of
+    Zarr stores may have no `consolidate`, and it takes `lossy` when its
+    `to_store` names it. The other image formats read unknown options
+    as fields of their header, so they are not given it.
     """
     options = dict(options)
-    consolidate = getattr(fmt, "consolidate", None)
-    if consolidate is not None and "lossy" in _parameters(consolidate):
-        options.setdefault("lossy", lossy)
+    for name in ("consolidate", "to_store"):
+        method = getattr(fmt, name, None)
+        if method is not None and "lossy" in _parameters(method):
+            options.setdefault("lossy", lossy)
+            break
     return options
 
 

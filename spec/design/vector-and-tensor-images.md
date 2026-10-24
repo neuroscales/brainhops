@@ -1,8 +1,8 @@
 # Images of vectors and tensors
 
 Status: the data model, the operations, the metadata and the frames of
-NIfTI and NRRD files are implemented; the readers and the writers of the
-other formats are not (see section 9).
+NIfTI, MRtrix, OME-Zarr and NRRD files are implemented; the readers and
+the writers of the other formats are not (see section 9).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -398,15 +398,68 @@ the spatial axes. It gives diffusion tensors as a motivating case but
 defines no layout for them.
 
 Everything that these documents let a file state can be represented
-here. A vector axis of an OME-Zarr image is a `vector` axis whose frame
-is the transformation from the array to the intrinsic coordinate system.
-The Zarr reader maps the types `point`, `vector` and `tensor` to their
-classes, and a vector or a tensor axis that it reads has the default
-`valence` and `layout`, since OME-NGFF does not state them. The reverse
-is lossy: NGFF has no standard way to store the valence of a vector, the
-valence and the layout of a tensor, a two-point tensor or a foreign
-frame, so a writer would store them as custom axis types and report the
-loss.
+here. `OmeZarrImage` reads and writes the frames of each level as
+follows.
+
+| Axis type      | Frame of the components of a level          |
+| -------------- | ------------------------------------------- |
+| `displacement` | the map to the intrinsic system, permuted   |
+| `coordinate`   | a foreign `CoordinateSystem` without a name |
+| `vector`       | the map to the intrinsic system, permuted   |
+| `tensor`       | the map to the intrinsic system, permuted   |
+| `point`        | the map to the intrinsic system, permuted   |
+
+The intrinsic system is the system onto which every level maps. The
+frame of a level is the map from its voxels to that system, followed by
+a permutation that puts the axes of the system in the order of the
+store, because the components follow the stored order (`DZYX` holds its
+vectors as `ZYX`) and brainhops sorts the axes of a system into x, y
+and z. The frame is restricted to the axes that the components follow,
+as section 3 describes, so a time axis is left out. The values are not
+reordered when they are read. Each level has its own frame, which
+differs from the frame of another level by the scale of its voxels, so
+a vector in the intrinsic system has the same components at every
+level.
+
+`point`, `vector` and `tensor` are custom axis types, which OME-NGFF
+0.6 allows, and RFC-3 gives the frame of the vectors. The frame of
+points and tensors is taken to be the same, since nothing else states
+it. The valence of a vector, and the valence and the named layout of a
+tensor, are written as the custom fields `valence` and `layout` of the
+axis, which the schema allows, and the reader reads them back. Their
+values are strings, the valences of a tensor joined by commas, because
+abczarr keeps only scalar values in the custom fields of an axis. An
+explicit layout therefore has no encoding.
+
+A displacement field read as an image does not know the transformation
+that uses it, whose output system holds its vectors. OME-NGFF states
+that the field maps its array onto the input system of that
+transformation and that a displacement has as many outputs as inputs,
+because it is added to the input point. The reader therefore takes the
+output axes to be the axes of the system of the field, in its order,
+which is the identification that adding a vector to a point makes, and
+the one that `OmeZarrField` makes when it converts the vectors to
+voxels. The tests check that the two readers agree. A coordinate field
+holds positions in the output system, which it does not name and whose
+number of axes may differ, so its frame is foreign, and every level
+shares the same object.
+
+The writer re-expresses the values of each level in the frame of the
+written level, through the rules of section 9. Values whose slot is the
+very frame that the level decoded from its store, at a level whose
+geometry is written unchanged, are written as they are, and this is the
+only case in which the coordinates of a coordinate field, or the
+coordinates of points, are written without a loss. The writer refuses,
+unless `lossy=True` is given, values in a foreign frame, a tensor with
+an explicit layout, coordinates of points in another frame, a component
+axis that the given axes of the pyramid give another type, and a change
+of frame through a map that is not affine. When the writer moves the
+flip of the levels, or the whole geometry of a single level, into the
+placements of the pyramid, the intrinsic system changes, and the values
+are re-expressed in the new one. The writer also normalises the fields
+of the axes, writing the long name of each unit and `"discrete": true`
+on a displacement or a coordinate axis, so a pyramid that is saved
+again unchanged does not keep the bytes of its metadata.
 
 ## 8. The frames of NIfTI files
 
@@ -575,8 +628,63 @@ Implemented:
 - the `Reframed` record and the `VALUES` scope of the metadata (#540);
 - the frames of NIfTI displacement fields, which the reader sets from
   the intent and the writer stores as section 8 describes;
-- the kinds and the measurement frame of NRRD files, as described
-  below.
+- the frames of the component axes of OME-Zarr images, which the reader
+  sets for each level and the writer stores as section 7 describes;
+- the frames of MRtrix images, described below;
+- the kinds and the measurement frame of NRRD files, described below.
+
+MRtrix stores vectors and tensors along the fourth axis of an image, in
+scanner RAS millimetres, which do not depend on the strides of the file
+or on the reordering of the axes that MRtrix applies when it loads an
+image. The header has no key that says what the volumes are, so
+`MrtrixImage` types the fourth axis only from two clues, and never from
+the values: the key `brainhops_field_type` (`coordinates`,
+`displacements`, `vectors`, `covectors` or `tensors`) while brainhops
+wrote the file last, and otherwise the last line of `command_history`
+when that command writes one kind of values in that shape (`dwi2tensor`
+with six volumes and no `dw_scheme` key, which its predicted signal
+keeps, the warp commands that the MRtrix warp readers know with three
+volumes, with the conversion type of `warpconvert` read from its second
+positional argument, except `mrregister`, which also writes the moved
+image, and `mrregister` for the 5-D file of `-nl_warp_full`). A tensor
+axis gets the layout `"symmetric-diagonal-first"` of `dwi2tensor`.
+The key is not trusted under a later command, because MRtrix copies it
+into derived images that may hold other values. Every other image keeps
+a channel axis: the peaks of `sh2peaks` and `fixel2peaks` hold several
+directions along one axis, the eigenvectors and eigenvalues of
+`tensor2metric` share their shape, and spherical harmonics change under
+a rotation by a rule of their own. The frame of the fourth axis is the
+preferred transformation, the voxel-to-scanner affine, which has a zero
+column for each voxel axis after the spatial ones, because the scanner
+has three axes and the MRtrix transform maps the spatial axes only.
+NIfTI instead carries such axes through to its world, because its header
+gives a time axis a spacing and an offset. The writers that place axes
+for a format accept such a map to a spatial world. They place the axes
+first, so that a vector axis read from MRtrix becomes the fifth axis of
+a NIfTI file after an inserted time axis, and then leave out the last
+stored axes whose columns are zero. Trailing axes without a type, such
+as the volumes of an MRtrix series, declare no place, so they are left
+out before the axes are placed and the data keeps its order. Their
+voxel sizes, such as a repetition time, are held by the `Scaling` of the
+MRtrix image alone, so a NIfTI file written from it has a `pixdim[4]` of
+one.
+
+The writer keeps an image whose frames are those of its own header and
+whose geometry is kept as it is. Otherwise it re-expresses the values in
+the scanner of the written header through the exact Jacobian, reorders
+the coefficients of a tensor into the order of `dwi2tensor`, which is a
+permutation with the zeros of a diagonal layout filled in, records the
+kind in `brainhops_field_type` and appends its line to
+`command_history`. The component axis is stored fourth, before a time
+axis, so a series of fields keeps its components where MRtrix reads
+them. Covector-valued tensors, non-symmetric tensors, a
+component axis that is not stored fourth or that has another number of
+entries than three or six, foreign frames, frames that are not affine
+and points in another frame are refused unless `lossy=True` is given.
+When the base header describes its fourth axis, or carries the key of
+brainhops, and the written image holds something else there, the key is
+removed and the line of brainhops is appended, so that neither clue
+describes the new values.
 
 NRRD names the content of each axis with its kind. `NrrdImage` reads
 `vector`, `2-vector`, `3-vector` and `4-vector` as vector axes of
@@ -653,10 +761,11 @@ the derivatives of the splines of the fields, is left for later.
 Not implemented:
 
 - readers and writers of the frames of the component axes in the other
-  formats (ITK, MRtrix, the FSL transformation formats and OME-Zarr),
-  which #539 tracks. Until then, the frame of a component
-  axis that such a reader creates is the array system by default, even
-  when the file stores the vectors in another frame;
+  formats (ITK and the FSL transformation formats), which #539 tracks,
+  and in plain Zarr arrays, which store no axis types. Until then, the
+  frame of a component axis that such a reader creates is the array
+  system by default, even when the file stores the vectors in another
+  frame;
 - the descriptions of the channels in the metadata, which run along the
   axes of type `channel` only (`Along(AxisType.channel)`), and therefore
   not along component axes, so that a change of frame keeps them.
