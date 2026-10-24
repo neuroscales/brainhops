@@ -1,8 +1,8 @@
 # Images of vectors and tensors
 
 Status: the data model, the operations, the metadata and the frames of
-NIfTI, MRtrix and OME-Zarr files are implemented; the readers and the
-writers of the other formats are not (see section 9).
+NIfTI, MRtrix, OME-Zarr and NRRD files are implemented; the readers and
+the writers of the other formats are not (see section 9).
 
 Some images hold, at each voxel, a vector or a tensor, whose components
 change when the coordinate system changes. Displacement fields, fibre
@@ -630,7 +630,8 @@ Implemented:
   the intent and the writer stores as section 8 describes;
 - the frames of the component axes of OME-Zarr images, which the reader
   sets for each level and the writer stores as section 7 describes;
-- the frames of MRtrix images, described below.
+- the frames of MRtrix images, described below;
+- the kinds and the measurement frame of NRRD files, described below.
 
 MRtrix stores vectors and tensors along the fourth axis of an image, in
 scanner RAS millimetres, which do not depend on the strides of the file
@@ -685,6 +686,57 @@ brainhops, and the written image holds something else there, the key is
 removed and the line of brainhops is appended, so that neither clue
 describes the new values.
 
+NRRD names the content of each axis with its kind. `NrrdImage` reads
+`vector`, `2-vector`, `3-vector` and `4-vector` as vector axes of
+valence `"vector"`, `covariant-vector`, `normal`, `3-gradient` and
+`3-normal` as vector axes of valence `"covector"`, `point` as a point
+axis, the symmetric matrices as tensor axes of layout `"symmetric"`,
+which is the order `Mxx Mxy Mxz Myy Myz Mzz` of the specification, and
+`2D-matrix` and `3D-matrix` as tensor axes of layout `"C"`. A matrix has
+two indices of valence `"vector"`, because NRRD does not say how a
+matrix changes with the frame, and because the measurement frame acts
+on a diffusion tensor in this way. A component kind whose length is not
+the dimension of the world space is read as a channel, since its
+entries cannot follow the axes of the frame. The masked kinds, such as
+`3D-masked-symmetric-matrix`, are read as channels: an axis holds either
+independent values or the components of one object, and a reader does
+not change the data, so the mask cannot be split from the components.
+Colours, `complex`, `quaternion` and `list` are channels.
+
+The `measurement frame` field is a matrix `M` whose columns are the
+basis vectors of the frame of the values in the world space of the
+header. The frame of a component axis is therefore `M⁻¹ ∘ A`, where `A`
+is the preferred transformation, and it is `A` itself when `M` is the
+identity. The specification gives no frame to a header without a
+measurement frame; ITK writes and reads vectors and tensors in the world
+space in that case, so the reader uses `A` then too. A measurement frame
+that cannot be inverted, or in a header without a world space, gives a
+foreign frame.
+
+The writer keeps the kinds and the measurement frame of an image whose
+frames are those of its own header and whose geometry is kept.
+Otherwise it records the frame rather than converting the values: the
+measurement frame `M = D A · (D F)⁻¹` relates the frame `F` of the
+values to the world space of the preferred transformation `A`, so a
+lazily applied rotation becomes part of `M`, and so does a change of
+space from LPS to RAS. NRRD has one measurement frame per file, so the
+values of a second axis whose frame gives another matrix are
+re-expressed in the frame of the first, exactly when both frames are
+affine. A header without a world space has no measurement frame, and
+its values are re-expressed in the physical space of its spacings. A
+symmetric tensor in another layout is reordered as the specification
+orders it, and the components that a layout such as `"diagonal"` leaves
+out are written as zeros, which are exact. NRRD has no kind for a
+covector index of a matrix, for a mixed valence, or for a vector whose
+length is not the dimension of the world space, and the coordinates of
+points cannot be re-expressed, so these values are written as `list`
+axes with their values as they are, only with `lossy=True`.
+
+A frame whose matrix `M` is not a rotation is valid NRRD, but ITK
+ignores the measurement frame, and software that reads diffusion data
+often assumes a rotation. Whether the writer should convert the values
+in such a case, rather than record `M`, is still open.
+
 A writer applies a change of frame through affine maps silently, because
 it is exact and part of the encoding of the format. It refuses, with a
 `LossyConversionError`, a change through a map that is not affine, which
@@ -709,11 +761,11 @@ the derivatives of the splines of the fields, is left for later.
 Not implemented:
 
 - readers and writers of the frames of the component axes in the other
-  formats (ITK, the FSL transformation formats and NRRD), which #539
-  tracks, and in plain Zarr arrays, which store no axis types. Until
-  then, the frame of a component axis that such a reader creates is
-  the array system by default, even when the file stores the vectors
-  in another frame;
+  formats (ITK and the FSL transformation formats), which #539 tracks,
+  and in plain Zarr arrays, which store no axis types. Until then, the
+  frame of a component axis that such a reader creates is the array
+  system by default, even when the file stores the vectors in another
+  frame;
 - the descriptions of the channels in the metadata, which run along the
   axes of type `channel` only (`Along(AxisType.channel)`), and therefore
   not along component axes, so that a change of frame keeps them.

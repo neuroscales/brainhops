@@ -16,8 +16,15 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
+from brainhops.datamodel._frames import (
+    FrameSlot,
+    array_axes,
+    component_axes,
+    component_count,
+    normalize_frames,
+)
 from brainhops.datamodel.axes import Axis, is_component_type
-from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.images import SingleScaleImage, _always_unset
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
@@ -38,6 +45,11 @@ from brainhops.io.base.parsers import (
     BinaryFileWriter,
     Confidence,
     WriterError,
+)
+from brainhops.io.common._frames import (
+    ARRAY_SYSTEM,
+    restricted_frame,
+    values_in_format_frames,
 )
 from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
@@ -63,6 +75,20 @@ from brainhops.io.common.nrrd._data import (
     _NrrdProxy,
     encode_data,
     read_nrrd,
+)
+from brainhops.io.common.nrrd._frames import (
+    MeasuredFrame,
+    component_axis,
+    embedded,
+    frame_size,
+    gathered,
+    has_world,
+    header_frames,
+    measured_frame,
+    measurement_change,
+    same_matrix,
+    same_reading,
+    written_kind,
 )
 from brainhops.io.common.nrrd._layout import axis_roles, image_order
 from brainhops.io.common.nrrd._raw import (
@@ -159,14 +185,25 @@ def _layout(header: NrrdRaw) -> tx.Tuple[tx.List[int], tx.List[Axis]]:
     """
     roles = axis_roles(header)
     perm = image_order(header)
-    return perm, _axes([roles[i] for i in perm], perm)
+    return perm, _axes([roles[i] for i in perm], perm, header)
 
 
-def _axes(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[Axis]:
-    """Name the index axes `x`, `y`, `z`, `t`, `c` or `dim<file index>`."""
+def _axes(
+    roles: tx.Sequence[str], perm: tx.Sequence[int], header: NrrdRaw
+) -> tx.List[Axis]:
+    """Name the index axes `x`, `y`, `z`, `t`, `c` or `dim<file index>`.
+
+    A channel whose kind names the components of a vector, a point or a
+    matrix is a component axis, when its length matches the frame of
+    the values (see
+    [`component_axis`][brainhops.io.common.nrrd._frames.component_axis]).
+    """
     axes = []
     nspace = 0
     seen = set()
+    ndim = frame_size(header, list(roles).count("space"))
+    kinds = header.kinds
+    sizes = header.sizes
     for role, i in zip(roles, perm):
         if role == "space":
             name = "xyz"[nspace] if nspace < 3 else f"dim{i}"
@@ -175,7 +212,14 @@ def _axes(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[Axis]:
         elif role in ("time", "channel"):
             name = role[0] if role not in seen else f"dim{i}"
             seen.add(role)
-            axes.append(Axis(name, role, unit=_INDEX))
+            axis = None
+            if role == "channel":
+                axis = component_axis(
+                    kinds[i], name, sizes[i], ndim, unit=_INDEX
+                )
+            if axis is None:
+                axis = Axis(name, role, unit=_INDEX)
+            axes.append(axis)
         else:
             axes.append(Axis(f"dim{i}", unit=_INDEX))
     return axes
@@ -276,7 +320,9 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
        direction (the `spacings` of the other axes, else 1);
     2. index -> world: the `Affine` whose columns are the space directions
        and whose translation is the `space origin`, the position of the
-       centre of the first sample.
+       centre of the first sample. The column of each axis without a
+       space direction, such as time or a channel, is zero, so that the
+       matrix has a column for every axis of the index system.
 
     Without a world space, a single `Scaling` or `Affine` to `"physical"`
     is built from `spacings`, `axis mins`, `axis maxs` and `centers`. A
@@ -291,7 +337,7 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
     spacings = header.spacings
     units = header.units
 
-    if dirs is not None and sdim and nspace:
+    if has_world(header, nspace):
         world = _world(header, sdim)
         world_unit = getattr(world.axes[0], "unit", None)
         scale, phys_axes = [], []
@@ -304,7 +350,7 @@ def _nrrd_to_transformations(header: NrrdRaw) -> tx.List[Transformation]:
                 scale.append(s if math.isfinite(s) and s != 0 else 1.0)
                 phys_axes.append(_with_unit(axis, units[i]))
         physical = CoordinateSystem(name="physical", axes=phys_axes)
-        matrix = np.zeros((sdim, nspace + 1))
+        matrix = np.zeros((sdim, len(axes) + 1))
         for j in range(nspace):
             matrix[:, j] = dirs[perm[j]]
         origin = header.space_origin
@@ -383,8 +429,12 @@ class NrrdImage(
 
     When the image is consolidated, the record of its metadata is the base
     of the new header, as [`consolidate`][] describes, so the fields and
-    the key/value pairs that the data model has no place for, such as the
-    `measurement frame` or `DWMRI_b-value`, are kept. An image that is
+    the key/value pairs that the data model has no place for, such as
+    `DWMRI_b-value`, are kept. The `measurement frame` of an image without
+    vectors or tensors, which describes the gradient directions of a
+    diffusion-weighted image, is kept in the same way. The axes that hold
+    vectors or tensors, and the frame of their values, are described in
+    [`frames`][]. An image that is
     read and written again without changes gives the same bytes, and a
     detached image keeps both of its files when it is written under the
     same name in another directory. A detached header names its data
@@ -430,16 +480,18 @@ class NrrdImage(
         "metadata", default=None
     )
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty(
+        "metadata", invalidates=("transformations", "frames")
+    )
     """The metadata of the file, which holds its record, or `None`.
 
-    An image built from data has no metadata. Assigning
-    other metadata drops the transformations decoded from the previous
+    An image built from data has no metadata. Assigning other metadata
+    drops the transformations and the frames decoded from the previous
     record, so that they are decoded from the new one, and keeps the
-    transformations that were assigned.
+    transformations and the frames that were assigned.
     """
 
-    data = dataproperty()
+    data = dataproperty(invalidates="frames")
     """The image data, assigned or decoded from `rawdata`.
 
     An array assigned to the image is returned as it is, and stays
@@ -471,7 +523,7 @@ class NrrdImage(
             return None
         return _image_to_model(self.rawdata)
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidates="frames")
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the record.
 
@@ -521,6 +573,87 @@ class NrrdImage(
             return None
         _, axes = _layout(self.metadata.raw)
         return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
+
+    @smartproperty(cache=True, unset=_always_unset)
+    def frames(self) -> tx.Tuple[FrameSlot, ...]:
+        """The frame of the values along each axis, as the header states it.
+
+        Some kinds of axes hold the components of a vector, a point or a
+        matrix, and the reader gives these axes a component type:
+
+        | Kind                             | Axis                   |
+        | -------------------------------- | ---------------------- |
+        | `vector`, `2-vector`, `3-vector` | `vector`, `"vector"`   |
+        | `4-vector`                       | `vector`, `"vector"`   |
+        | `covariant-vector`, `normal`     | `vector`, `"covector"` |
+        | `3-gradient`, `3-normal`         | `vector`, `"covector"` |
+        | `point`                          | `point`                |
+        | `2D-symmetric-matrix`            | `tensor`, symmetric    |
+        | `3D-symmetric-matrix`            | `tensor`, symmetric    |
+        | `2D-matrix`, `3D-matrix`         | `tensor`, `"C"`        |
+
+        A matrix has two indices of valence `"vector"`, since NRRD does
+        not say otherwise, and its components are in the order of the
+        specification, which is the `"symmetric"` layout for a symmetric
+        matrix. An axis whose length is not the dimension of the world
+        space is read as a channel axis. So are the kinds that store a
+        mask before a matrix, such as `3D-masked-symmetric-matrix`,
+        because a mask is not a component and the reader does not change
+        the data.
+
+        The components are expressed in a coordinate system, called the
+        frame, which the `measurement frame` field of the header gives.
+        The columns of that matrix `M` are the basis vectors of the frame
+        in the world space of the header, so the frame of the values is
+        the preferred transformation `A`, from the array to the world
+        space, followed by `M⁻¹`. The frame is `A` itself when `M` is the
+        identity. The specification gives no frame to a header without a
+        measurement frame, and the frame is then also `A`, because ITK
+        writes and reads vectors and tensors in the world space in that
+        case. A measurement frame that cannot be read, or a measurement
+        frame in a header without a world space, gives a foreign frame.
+
+        The values are never converted when they are read. The frames of
+        the header are built once and cached, and the same objects are
+        returned at every read, because transformations compare by
+        identity. Assigning other metadata, transformations or data drops
+        them, so that they are built again, and a consolidated image gets
+        the frames of its new header. Frames that are assigned, or given
+        to the constructor, take precedence over those of the header, as
+        [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        describes them.
+        """
+        given = self._frames or self._header_frames()
+        return normalize_frames(given, self._array_axes(), tuple(self.shape))
+
+    def _header_frames(self) -> tx.Dict[int, FrameSlot]:
+        """Return the frame of each component axis, as the header states it.
+
+        The frames are built from the transformations that the header
+        decodes to, which are those of the image unless others were
+        assigned. An image without a header gives an empty mapping, so
+        that its frames are the array system, and so does an axis that
+        the assigned transformations do not describe as a component axis.
+        """
+        metadata = self.metadata
+        if metadata is None or metadata.raw is None:
+            return {}
+        record = metadata.raw
+        if self._transformations is None:
+            decoded = self.transformations
+        else:
+            decoded = _record_transformations(metadata)
+        if not decoded:
+            return {}
+        preferred = decoded[-1]
+        shape = tuple(self.shape)
+        axes = array_axes(preferred.input, len(shape))
+        nspace = axis_roles(record).count("space")
+        frames = header_frames(
+            record, preferred, has_world(record, nspace), axes, shape
+        )
+        components = set(component_axes(self._array_axes()))
+        return {i: slot for i, slot in frames.items() if i in components}
 
     # --- reading ------------------------------------------------------
 
@@ -679,6 +812,7 @@ class NrrdImage(
         space: tx.Optional[str] = None,
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
         on_loss: tx.Optional[OnLoss] = None,
+        lossy: bool = False,
         **fields: tx.Any,
     ) -> "NrrdImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -697,8 +831,9 @@ class NrrdImage(
            and the byte order of the base, gzip and little-endian by
            default, and with the type of the data. An image whose shape
            is that of the base keeps the order of the axes in the file
-           and their `kinds`, and the axes of any other image are stored
-           in the order of the data.
+           and their `kinds`, except the kinds of the axes that hold
+           vectors or tensors, which are described below. The axes of any
+           other image are stored in the order of the data.
         2. The geometry comes from the preferred transformation. The
            geometry fields of the base (`space`, `space directions`,
            `space origin`, `space units`, `measurement frame` and the
@@ -716,6 +851,36 @@ class NrrdImage(
            the shape is that of the base, except `min` and `max` when the
            samples are new. The key/value pairs of the base are kept, and
            `keyvalue` is merged into them last.
+
+        The values of the axes that hold vectors, points or matrices are
+        written in the frame that the header states (see [`frames`][]).
+        An image whose frames are those of its own header, because none
+        were assigned, and whose geometry is kept, is written with its
+        values, its `kinds` and its measurement frame as they are.
+        Otherwise, each such axis gets the kind of its type, such as
+        `covariant-vector` for a vector of valence `"covector"` or
+        `3D-symmetric-matrix` for a symmetric tensor, and the values are
+        recorded rather than converted. The measurement frame
+        `M = D A · (D F)⁻¹` relates the frame `F` of the values to the
+        world space of the preferred transformation `A`, so that the values
+        in `F` are written as they are. A lazily applied rotation, for
+        example, becomes part of the measurement frame. NRRD has a single
+        measurement frame, so the values of another axis whose frame
+        gives another matrix are re-expressed in the frame of the first
+        one, which is exact when both frames are affine. A header without
+        a world space has no measurement frame, and its values are
+        re-expressed in the physical space of its spacings. A symmetric
+        matrix that is stored in another order is reordered as the
+        specification orders it, and the components that a layout such as
+        `"diagonal"` leaves out are written as zeros.
+
+        NRRD has no kind for a covector index of a matrix, nor for a
+        vector whose length is not the dimension of the world space, and
+        it cannot hold a foreign frame. The coordinates of points cannot
+        be re-expressed, and a frame that is not affine can be changed
+        only by finite differences. These values are written as they are,
+        or approximately, and only with `lossy=True`, and an axis without
+        a kind is written as a `list`.
 
         The data files of the base are kept, and a writer sets those of the
         files that it writes. When this encoding gives the header of the
@@ -752,6 +917,13 @@ class NrrdImage(
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do with the metadata that the record cannot hold. By
             default, the policy in effect.
+        lossy : bool, default=False
+            Whether the values of a component axis may be written
+            although NRRD loses information about them: values that NRRD
+            has no kind for, values in a foreign frame, points that are
+            not in the measurement frame, or a change of frame through a
+            map that is not affine, which is computed by finite
+            differences.
         **fields : Any
             Fields of the metadata to override.
 
@@ -764,6 +936,9 @@ class NrrdImage(
         ------
         TypeError
             If a keyword names no field of the metadata.
+        LossyConversionError
+            If NRRD loses information about the values of a component
+            axis and `lossy` is false.
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
@@ -794,6 +969,7 @@ class NrrdImage(
         )
         if (
             self._data is None
+            and not self._frames
             and kept
             and all(value is None for value in options.values())
             and not requested
@@ -804,7 +980,10 @@ class NrrdImage(
                 return replace(self, transformations=None)
             self.transformations = None
             return self
-        record, raw = _encoded(self, options, None)
+        image, plan = self, None
+        if self._data is not None or self.rawdata is not None:
+            image, plan = _values_to_write(self, space, lossy)
+        record, raw = _encoded(image, options, None, plan)
         if (
             self.metadata is not None
             and record is self.metadata.raw
@@ -822,11 +1001,13 @@ class NrrdImage(
                 transformations=None,
                 rawdata=raw,
                 metadata=metadata,
+                frames=(),
             )
         self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
+        self.frames = ()
         return self
 
     def to_bytes(self, **kwargs) -> bytes:
@@ -955,9 +1136,9 @@ _OPTIONS = ("encoding", "endian", "datatype", "space", "keyvalue")
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
-    The options of the writer, `on_loss` and the fields of the metadata,
-    which go to the consolidation of the metadata, are known. `space` is
-    the option of the writer.
+    The options of the writer, `on_loss`, `lossy` and the fields of the
+    metadata, which go to the consolidation of the metadata, are known.
+    `space` is the option of the writer.
 
     Raises
     ------
@@ -967,7 +1148,9 @@ def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     unknown = [
         name
         for name in kwargs
-        if name not in _OPTIONS and name not in FIELDS and name != "on_loss"
+        if name not in _OPTIONS
+        and name not in FIELDS
+        and name not in ("on_loss", "lossy")
     ]
     if unknown:
         raise TypeError(f"Unknown NRRD writer option(s): {', '.join(unknown)}")
@@ -976,6 +1159,209 @@ def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
         {name: v for name, v in kwargs.items() if name not in _OPTIONS}
     )
     return options
+
+
+class _FramePlan(tx.NamedTuple):
+    """How the writer stores the component axes of an image."""
+
+    kinds: tx.Dict[int, str]
+    """The kind of each component axis, by its index in the image."""
+
+    measurement: tx.Optional[np.ndarray]
+    """The measurement frame to write, or `None` to write none.
+
+    It is a square matrix over the outputs of the preferred
+    transformation.
+    """
+
+
+def _values_to_write(
+    image: NrrdImage, space: tx.Optional[str], lossy: bool
+) -> tx.Tuple[NrrdImage, tx.Optional[_FramePlan]]:
+    """Return the image whose values the writer encodes, and how.
+
+    The values of the component axes are stored in the frame that the
+    header states (see [`NrrdImage.frames`][]). An image whose frames are
+    those of its own header, because none were assigned, and whose
+    geometry is kept, already holds its values in that frame, and the
+    kinds and the measurement frame of the header are kept, so `None` is
+    returned as the plan.
+
+    Otherwise, the measurement frame `M = D A · (D F)⁻¹` relates the frame
+    `F` of the values of each axis to the world space of the preferred
+    transformation `A`. A header with a world space records the
+    measurement frame of the first component axis whose frame is affine,
+    and the values of that axis, and of any axis whose frame gives the
+    same matrix, are written as they are. The values of the other axes
+    are re-expressed in the frame `M⁻¹ ∘ A`, exactly when their frame is
+    affine. A header without a world space has no measurement frame, so
+    the values are re-expressed in the physical space of its spacings,
+    or kept in the array system for an image without transformations.
+
+    A component axis that NRRD has no kind for (see
+    [`written_kind`][brainhops.io.common.nrrd._frames.written_kind]), an
+    axis in a foreign frame, an axis whose frame is not affine, and the
+    coordinates of points that are not in the frame `M⁻¹ ∘ A` are written
+    only with `lossy=True`, as
+    [`values_in_format_frames`][brainhops.io.common._frames.values_in_format_frames]
+    describes. A symmetric matrix stored in another order is reordered,
+    as the specification orders its components.
+
+    Raises
+    ------
+    LossyConversionError
+        If NRRD loses information about the values of a component axis
+        and `lossy` is false.
+    """
+    axes = image._array_axes()
+    components = component_axes(axes)
+    if not components:
+        return image, None
+    held = None if image.metadata is None else image.metadata.raw
+    shape = tuple(int(n) for n in image.shape)
+    order, roles = _storage_order(image, held, shape)
+    sizes = [0] * len(shape)
+    for j, i in enumerate(order):
+        sizes[i] = shape[j]
+    if (
+        not image._frames
+        and _matches_base(held, order, sizes)
+        and _keeps_geometry(image, held, space)
+    ):
+        return image, None
+
+    world = image.transformation if image.transformations else None
+    geometry = None if world is None else _geometry(image, roles, space, held)
+    recorded = geometry is not None and geometry[0] == "space"
+    # The reader reads the components along the spatial axes of the world
+    # space of the header, or along the spatial axes of the array when the
+    # header has no world space.
+    expected = list(roles).count("space")
+    if recorded:
+        header = geometry[1]["fields"]
+        expected = 3 if "space" in header else int(header["space dimension"])
+    slots = image.frames
+    targets: tx.Dict[int, tx.Optional[Transformation]] = {}
+    kinds: tx.Dict[int, tx.Any] = {}
+    ndims: tx.Dict[int, tx.Optional[int]] = {}
+    measured: tx.Dict[int, tx.Optional[MeasuredFrame]] = {}
+    identities: tx.Dict[int, MeasuredFrame] = {}
+    for i in components:
+        size = shape[i]
+        target = None
+        if world is not None:
+            target = restricted_frame(world, axes, i, size)
+            if not isinstance(target, Transformation):
+                target = None
+        try:
+            if target is not None:
+                ndim = component_count(axes, i, size, [target])
+            else:
+                ndim = axes[i].frame_ndim(size)
+        except ValueError:
+            ndim = None
+        if ndim != expected:
+            ndim = None
+        kinds[i] = None if ndim is None else written_kind(axes[i], size, ndim)
+        ndims[i] = ndim
+        targets[i] = target
+        measured[i] = None
+        if target is None:
+            continue
+        try:
+            identities[i] = measured_frame(target, target, axes, i, size)
+            if not isinstance(slots[i], CoordinateSystem):
+                measured[i] = measured_frame(slots[i], target, axes, i, size)
+        except ValueError:
+            # The world maps fewer axes of the array onto the components
+            # than there are components, as for the vectors of a slice in a
+            # three-dimensional world, or the frame takes them from other
+            # axes, so no measurement frame relates the two and the values
+            # cannot be re-expressed. NRRD cannot describe this axis.
+            kinds[i] = None
+            measured[i] = None
+    # A header with a world space records the measurement frame of the first
+    # axis that is written with its kind and whose frame gives one, and any
+    # other header records none, so its frame is that of the preferred
+    # transformation.
+    common: tx.Optional[MeasuredFrame] = None
+    if recorded:
+        common = next(
+            (
+                m
+                for i, m in measured.items()
+                if m is not None and kinds[i] is not None
+            ),
+            None,
+        )
+    if common is None:
+        common = next(
+            (m for i, m in identities.items() if kinds[i] is not None),
+            next(iter(identities.values()), None),
+        )
+
+    def frame_of(index: int, axis: Axis) -> tx.Any:
+        if kinds[index] is None:
+            return None
+        if world is None:
+            return ARRAY_SYSTEM
+        target = targets[index]
+        if target is None or common is None:
+            return None
+        found = measured[index]
+        if found is not None and same_matrix(found.matrix, common.matrix):
+            slot = slots[index]
+            return ARRAY_SYSTEM if slot is None else slot
+        if axis.valences is None or ndims[index] != len(common.matrix):
+            # The coordinates of points are not re-expressed, and a frame
+            # of another dimension has no matrix in common.
+            return None
+        return measurement_change(target, common.matrix)
+
+    reframed = values_in_format_frames(image, frame_of, lossy)
+    if reframed is not None:
+        image = replace(image, data=reframed[0], frames=reframed[1])
+    gathers = {
+        i: kind.gather
+        for i, kind in kinds.items()
+        if kind is not None and kind.gather is not None
+    }
+    if gathers:
+        data = image.data
+        for i, gather in gathers.items():
+            data = gathered(data, i, gather)
+        image = replace(image, data=data, frames=())
+    written = {
+        i: "list" if kind is None else kind.kind for i, kind in kinds.items()
+    }
+    measurement = None
+    if recorded and common is not None:
+        noutputs = reduce_to_affine(world, "NRRD", "world").matrix.shape[0]
+        measurement = embedded(common, noutputs)
+    return image, _FramePlan(written, measurement)
+
+
+def _planned_kinds(
+    kinds: str,
+    order: tx.Sequence[int],
+    planned: tx.Mapping[int, str],
+    shape: tx.Sequence[int],
+) -> str:
+    """Return the `kinds` field with the kinds of the component axes.
+
+    `kinds` is the field that the writer would write otherwise, `order`
+    gives the file axis of each image axis, and `shape` is the shape of
+    the image. A kind of the field that the reader reads as the same axis
+    as the planned kind, with the number of entries of the axis, such as
+    `3-vector` for a `vector` of three entries, is kept as it is spelled.
+    """
+    words = kinds.split()
+    for j, kind in planned.items():
+        i = order[j]
+        if same_reading(words[i], kind, shape[j]):
+            continue
+        words[i] = kind
+    return " ".join(words)
 
 
 def _target_encoding(
@@ -1002,6 +1388,7 @@ def _encoded(
     image: NrrdImage,
     options: tx.Mapping[str, tx.Any],
     data_files: tx.Optional[tx.Tuple[str, ...]],
+    plan: tx.Optional["_FramePlan"] = None,
 ) -> tx.Tuple[NrrdRaw, ArrayProtocol]:
     """Return the record and the samples that consolidating an image stores.
 
@@ -1011,7 +1398,9 @@ def _encoded(
     converted to the stored type as the writer converts them, with
     `_stored_samples`. The `data_files` are those of the header: an empty
     tuple for attached samples, one name for a detached header, or `None`
-    to keep those of the base.
+    to keep those of the base. The `plan` gives the kinds of the component
+    axes and the measurement frame, as `_values_to_write` decides them,
+    and `None` keeps those of the base.
 
     Raises
     ------
@@ -1043,13 +1432,7 @@ def _encoded(
     sizes = [0] * ndim
     for j, i in enumerate(order):
         sizes[i] = shape[j]
-    # The shape is that of the base when the axes are stored in its order
-    # and with its sizes.
-    matched = (
-        held is not None
-        and list(image_order(held)) == list(order)
-        and tuple(held.sizes) == tuple(sizes)
-    )
+    matched = _matches_base(held, order, sizes)
     encoding = _target_encoding(held, options["encoding"])
     endian = options["endian"]
     if endian is not None and endian not in ("little", "big"):
@@ -1094,16 +1477,31 @@ def _encoded(
             fields[name] = value
     else:
         fields["kinds"] = " ".join(_kinds(roles, order))
+    if plan is not None:
+        fields["kinds"] = _planned_kinds(
+            fields["kinds"], order, plan.kinds, shape
+        )
 
     # --- geometry -------------------------------------------------
+    measurement = None if plan is None else plan.measurement
     if matched and _keeps_geometry(image, held, options["space"]):
         for name in _GEOMETRY + _PER_AXIS:
             if name in held.fields:
                 fields[name] = held.fields[name]
+        if measurement is not None:
+            # The world of the base is the world of the image, so the
+            # measurement frame is written as it is.
+            fields["measurement frame"] = _format_vectors(list(measurement.T))
     else:
         fields.update(
             _geometry_fields(
-                image, held, matched, roles, order, options["space"]
+                image,
+                held,
+                matched,
+                roles,
+                order,
+                options["space"],
+                measurement,
             )
         )
     if "space directions" not in fields:
@@ -1124,6 +1522,23 @@ def _encoded(
     if version < 4:
         record = replace(record, version=4)
     return record, _stored_samples(record, raw)
+
+
+def _matches_base(
+    held: tx.Optional[NrrdRaw],
+    order: tx.Sequence[int],
+    sizes: tx.Sequence[int],
+) -> bool:
+    """Tell whether the axes are stored in the order and sizes of the base.
+
+    `sizes` gives the size of each axis of the file, in file order. The
+    shape of the image is then that of the base.
+    """
+    return (
+        held is not None
+        and list(image_order(held)) == list(order)
+        and tuple(held.sizes) == tuple(sizes)
+    )
 
 
 def _storage_order(
@@ -1258,6 +1673,7 @@ def _geometry_fields(
     roles: tx.Sequence[str],
     order: tx.Sequence[int],
     space: tx.Optional[str],
+    measurement: tx.Optional[np.ndarray] = None,
 ) -> tx.Dict[str, str]:
     """Encode the preferred transformation into the geometry fields.
 
@@ -1268,7 +1684,8 @@ def _geometry_fields(
     geometry decodes to, has no geometry to write, so the spacings,
     positions and units of its spatial axes are dropped as well. The base
     also gives the space and the measurement frame of the result,
-    whatever its shape.
+    whatever its shape, unless `measurement` gives the measurement frame
+    over the outputs of the preferred transformation.
 
     Raises
     ------
@@ -1290,7 +1707,7 @@ def _geometry_fields(
             if len(values) == ndim:
                 per_axis[name] = values
     spatial = [order[j] for j, r in enumerate(roles) if r == "space"]
-    geometry = _geometry(image, roles, space, held)
+    geometry = _geometry(image, roles, space, held, measurement)
     if geometry is None:
         # The image is written as an image built from data alone, which
         # has none of these fields, rather than with the geometry of the
@@ -1455,10 +1872,12 @@ def _split_quoted(value: str) -> tx.List[str]:
 
 def _kinds(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[str]:
     """Return the kind of each file axis from the role of each image axis."""
+    # A channel is a `list`, since a `vector` is read as the components
+    # of a vector.
     names = {
         "space": "domain",
         "time": "time",
-        "channel": "vector",
+        "channel": "list",
         "other": "none",
     }
     kinds = ["none"] * len(perm)
@@ -1525,12 +1944,16 @@ def _geometry(
     roles: tx.Sequence[str],
     space: tx.Optional[str],
     source: tx.Optional[NrrdRaw],
+    measurement: tx.Optional[np.ndarray] = None,
 ) -> tx.Optional[tx.Tuple[str, tx.Any]]:
     """Return the geometry fields of the preferred transformation.
 
     The result is `None` when there is nothing to write, `("space", ...)`
     for space fields, or `("spacings", (spacings, positions, units))` for
     a scaling onto unoriented axes when the source had no space either.
+    The measurement frame is `measurement`, a square matrix over the
+    outputs of the preferred transformation, expressed in the space of
+    the header, or else that of the source.
 
     Raises
     ------
@@ -1580,9 +2003,16 @@ def _geometry(
         units = [_unit_symbol(a) for a in world_axes]
         if all(units):
             fields["space units"] = _format_strings(units)
-        frame = _measurement_frame(source, target)
-        if frame is not None:
-            fields["measurement frame"] = frame
+        if measurement is not None:
+            # The measurement frame maps the frame of the values to the
+            # world, so its columns change with the space, as the
+            # directions do.
+            matrix = convert @ measurement[np.ix_(rows, rows)]
+            fields["measurement frame"] = _format_vectors(list(matrix.T))
+        else:
+            frame = _measurement_frame(source, target)
+            if frame is not None:
+                fields["measurement frame"] = frame
         directions = list((convert @ linear).T)
         return "space", {"fields": fields, "directions": directions}
 
@@ -1608,6 +2038,9 @@ def _geometry(
     }
     if all(units):
         fields["space units"] = _format_strings(units)
+    if measurement is not None:
+        matrix = measurement[np.ix_(rows, rows)]
+        fields["measurement frame"] = _format_vectors(list(matrix.T))
     return "space", {"fields": fields, "directions": list(linear.T)}
 
 

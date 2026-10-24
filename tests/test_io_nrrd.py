@@ -216,11 +216,21 @@ def test_read_detached_gzip_ras_vector(tmp_path) -> None:  # noqa: ANN001
     assert image.data.shape == (2, 3, 4, 3)
     np.testing.assert_array_equal(image.data, values.transpose(1, 2, 3, 0))
     assert [a.name for a in image.system.axes] == ["x", "y", "z", "c"]
-    assert image.system.axes[3].type == "channel"
+    # A `vector` axis of three entries holds the components of vectors in
+    # the three-dimensional world space.
+    assert image.system.axes[3].type == "vector"
     world = image.transformation
     assert world.output.name == "RAS"
+    # The matrix has a column for each axis of the voxel system, and the
+    # vector axis has no effect on the position.
     np.testing.assert_allclose(
-        world.matrix, [[0, -1, 0, 1], [1, 0, 0, 2], [0, 0, 2, 3]]
+        world.matrix, [[0, -1, 0, 0, 1], [1, 0, 0, 0, 2], [0, 0, 2, 0, 3]]
+    )
+    # Indexing composes the map of the voxels with the world.
+    part = image[1:, :, ::2]
+    np.testing.assert_allclose(
+        part.transformation.compute().matrix,
+        [[0, -1, 0, 0, 1], [1, 0, 0, 0, 3], [0, 0, 4, 0, 3]],
     )
 
 

@@ -26,20 +26,12 @@ import typing_extensions as tx
 
 from brainhops.datamodel._frames import (
     FrameSlot,
-    _free_rows,
-    _structure,
     array_axes,
     component_axes,
-    component_count,
-    explicit_frame,
 )
-from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import (
-    Affine,
-    Projection,
-    Transformation,
-)
+from brainhops.datamodel.transformations import Affine, Transformation
+from brainhops.io.common._frames import restricted_frame
 
 from ._constants import _NIFTI_FSL_INTENTS, _NIFTI_INTENT_DISPVECT
 from ._header import _nifti_intent
@@ -134,67 +126,6 @@ def header_frames(
             i: restricted_frame(frame, axes, i, shape[i]) for i in components
         }
     return {i: frame for i in components}
-
-
-def restricted_frame(
-    frame: Transformation,
-    axes: tx.Sequence[Axis],
-    index: int,
-    size: int,
-) -> FrameSlot:
-    """Restrict a frame of NIfTI to the components of an axis.
-
-    The world of a NIfTI file has three spatial axes, which the
-    components of a vector follow, and may have a time axis, which they
-    do not. The frame is restricted to the spatial axes as
-    `SingleScaleImage.frames` restricts it, by composing a projection
-    that removes the other axes. A field of fewer components than spatial
-    axes, such as a two-dimensional field, holds the components along the
-    first spatial axes, as ITK reads it. A frame that has fewer axes than
-    there are components cannot hold them, and its output system is
-    returned instead, as a foreign frame.
-
-    Parameters
-    ----------
-    frame : Transformation
-        The map from the array system to the frame of the file.
-    axes : sequence of Axis
-        The axes of the array system.
-    index : int
-        The index of the component axis.
-    size : int
-        The number of entries along the component axis.
-
-    Returns
-    -------
-    Transformation or CoordinateSystem
-        The restricted frame, or the foreign frame.
-    """
-    try:
-        count = component_count(axes, index, size, [frame])
-        return explicit_frame(frame, axes, count)
-    except ValueError:
-        pass
-    structure = _structure(frame, len(axes))
-    outputs = None
-    if structure is not None:
-        outputs = array_axes(frame.output, structure.outputs.shape[0])
-    if outputs is None:
-        return frame.output
-    free = _free_rows(structure.outputs, component_axes(axes))
-    try:
-        count = axes[index].frame_ndim(size)
-    except ValueError:
-        return frame.output
-    if len(free) < count:
-        return frame.output
-    dropped = free[count:]
-    system = CoordinateSystem(
-        [axis for r, axis in enumerate(outputs) if r not in dropped],
-        name=getattr(frame.output, "name", None),
-    )
-    projection = Projection(dropped=dropped, input=frame.output, output=system)
-    return projection @ frame
 
 
 def _fsl_frame(
