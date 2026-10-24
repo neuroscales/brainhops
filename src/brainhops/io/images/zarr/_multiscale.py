@@ -1,17 +1,27 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import Inherit, replace
+from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core.properties import smartproperty
 from brainhops.backends import get_array_backend
+from brainhops.datamodel._frames import (
+    FrameSlot,
+    array_axes,
+    normalize_frames,
+)
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
     SpaceAxis,
     TimeAxis,
+    is_component_type,
 )
-from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.images import (
+    MultiScaleImage,
+    SingleScaleImage,
+    _always_unset,
+)
 from brainhops.datamodel.systems import (
     ArrayCoordinateSystem,
     AxisList,
@@ -22,9 +32,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+from brainhops.errors import LossyConversionError
 from brainhops.io.base import register_format
 from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.common._frames import values_in_format_frames
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
 from brainhops.io.common.zarr._data import (
     _ZarrProxy,
@@ -41,7 +53,9 @@ from brainhops.io.common.zarr._parsers import (
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map
+from brainhops.io.transformations.zarr._axes import axis_losses
 
+from ._frames import DecodedFrames, OmeFrames, level_frames
 from ._image import ZarrImage
 from ._ome import (
     OmeImageError,
@@ -77,7 +91,46 @@ class OmeZarrLevel(ZarrImage):
     when the pyramid is read. Opening a pyramid reads no array data, and a
     copy made with `replace` keeps the lazy array. Step 4b-ii of the
     fourth pass makes the level hold the record of its pyramid instead.
+
+    The values of a component axis, such as the vectors of a
+    displacement field, are in the frame that the store states for the
+    level (see [`frames`][]), which the reader records in `decoded`.
     """
+
+    _decoded: NoRepr[tx.Optional[DecodedFrames]] = None
+    """The geometry of the level and its frames, as they were read.
+
+    The reader records the map from the voxels of the level to the
+    system onto which the levels map, and the frame of each component
+    axis that this map implies. The writer keeps the values of an axis
+    as they are when the axis still has the frame that was read and
+    the level keeps the geometry that was read. `None` stands for a
+    level that was not read from a store.
+    """
+
+    @smartproperty(cache=True, unset=_always_unset)
+    def frames(self) -> tx.Tuple[FrameSlot, ...]:
+        """The frame of the values along each axis, from the store.
+
+        The frame of a component axis is the system onto which the
+        levels of the pyramid map, which OME-NGFF calls the intrinsic
+        system, with its axes in the order of the store. This holds for
+        vectors, tensors and points, and for the vectors of a
+        displacement field read as an image. The coordinates of a
+        coordinate field are in a foreign coordinate system without a
+        name. The section "Vectors and tensors" of
+        [`brainhops.io.images.zarr`][] explains these frames.
+
+        The values are never converted when they are read. Frames that
+        are assigned, or given to the constructor, take precedence over
+        those of the store, as
+        [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        describes them.
+        """
+        given = self._frames
+        if not given and self._decoded is not None:
+            given = self._decoded[1]
+        return normalize_frames(given, self._array_axes(), tuple(self.shape))
 
 
 # `kw_only=True` is repeated here because bagof takes each class option
@@ -325,6 +378,17 @@ class OmeZarrImage(
         intrinsic_system = system(intrinsic_name(multiscale))
         systems = {name: system(name) for name in declared}
 
+        # The components of a vector follow the axes of the intrinsic
+        # system in the stored order, so the frame of each level ends
+        # with the permutation into that order. The coordinates of a
+        # coordinate field are in a foreign system, which every level
+        # shares.
+        storage = [0] * ndim
+        for position, stored in enumerate(perm):
+            storage[stored] = position
+        foreign = CoordinateSystem()
+        voxel_axes = voxel_system.axes
+
         images: tx.List[OmeZarrLevel] = []
         for dataset in datasets:
             array = node[str(dataset.path)]
@@ -337,7 +401,11 @@ class OmeZarrImage(
                 output=intrinsic_system,
                 orders=orders,
             )
-            level = _level(array, perm, geometry)
+            shape = [int(array.shape[p]) for p in perm]
+            frames = level_frames(
+                geometry, voxel_axes, shape, storage, foreign
+            )
+            level = _level(array, perm, geometry, frames)
             images.append(level)
 
         commons = common_transformations(
@@ -373,6 +441,7 @@ class OmeZarrImage(
         node: tx.Any,
         chunks: tx.Any = None,
         version: tx.Optional[str] = None,
+        lossy: bool = False,
         **kwargs,
     ) -> None:
         """Write the pyramid into an opened Zarr group.
@@ -380,6 +449,22 @@ class OmeZarrImage(
         Each level becomes an array named after its index, and the
         placements of the pyramid become common transformations of the
         multiscale.
+
+        The values of a component axis, such as vectors, are written
+        in the frame that the store states for each level, which is
+        the system onto which the written levels map, with its axes in
+        the order of the store (see "Vectors and tensors" in
+        [`brainhops.io.images.zarr`][]). The values of a level in
+        another frame are re-expressed in that frame. The change is
+        exact when both frames are affine, as for values in the voxels
+        of the level. Values in the frame that the level read from its
+        store are written as they are, when the geometry of the level
+        is written unchanged. The valence of a vector, and the valence
+        and the named layout of a tensor, are written as custom fields
+        of their axis. Unless `lossy` is true, the writer refuses values
+        in a foreign frame, coordinates of points in another frame than
+        the frame of the store, a tensor whose layout is an explicit
+        tuple, and a change of frame through a map that is not affine.
 
         Parameters
         ----------
@@ -392,6 +477,13 @@ class OmeZarrImage(
             chooses the chunks of any other level.
         version : str, optional
             OME-NGFF version. By default, the source version or 0.6 is used.
+        lossy : bool, default=False
+            Whether the values of a component axis may be written
+            although OME-Zarr loses information about them. These are
+            values in a foreign frame, coordinates of points in another
+            frame than that of the store, a tensor with an explicit
+            layout, and values re-expressed through a map that is not
+            affine, which is computed by finite differences.
         **kwargs : Any
             Passed to the creation of each level array.
 
@@ -405,6 +497,9 @@ class OmeZarrImage(
             placements, since an OME-NGFF 0.6 dataset only holds a scale and
             a translation. The geometry of a single level becomes the
             placement of a pyramid that has none.
+        LossyConversionError
+            If OME-Zarr loses information about the values of a
+            component axis and `lossy` is false.
         """
         node = _as_node(node)
         if not isinstance(node, ZarrGroup):
@@ -456,12 +551,23 @@ class OmeZarrImage(
                 output = getattr(images[0].transformation, "output", None)
                 placements = [replace(linear, output=output)]
             moved_placement = True
+        # The levels are prepared before any array is written, so that
+        # a level whose values the format cannot hold leaves the group
+        # without arrays.
+        losses = axis_losses(axes) + _type_losses(images[0], axes)
+        if losses and not lossy:
+            raise LossyConversionError(
+                f"Writing this image loses information about its values: "
+                f"{'; '.join(losses)}. Pass lossy=True to write it anyway."
+            )
+        prepared = []  # type: tx.List[tx.Tuple[SingleScaleImage, tx.Any]]
         for index, image in enumerate(images):
             data = image.data
             if data is None:
                 raise WriterError(
                     f"Level {index} of this multiscale image has no data."
                 )
+            written = geometries[index]
             try:
                 entry = _map.to_dataset_ome(
                     geometries[index],
@@ -492,7 +598,25 @@ class OmeZarrImage(
                 placements.append(geometries[index])
                 entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
                 moved_placement = True
+                # The voxels of the level are then the intrinsic system.
+                system = getattr(written, "input", None)
+                written = Identity(input=system, output=system)
             rich = rich or _map.needs_rich_version(entry)
+            # The values of the component axes are re-expressed in the
+            # frame that the store states for this level.
+            frame_of = OmeFrames(
+                image,
+                written,
+                axes,
+                storage_perm,
+                getattr(image, "_decoded", None),
+            )
+            reframed = values_in_format_frames(image, frame_of, lossy)
+            if reframed is not None:
+                data = reframed[0]
+            prepared.append((image, data))
+            levels.append((str(index), entry))
+        for index, (image, data) in enumerate(prepared):
             xp = get_array_backend(data)
             stored = xp.transpose(data, storage_perm)
             options = dict(kwargs)
@@ -506,7 +630,6 @@ class OmeZarrImage(
                 if native is not None and len(native) == len(storage_perm):
                     options["chunks"] = tuple(native[p] for p in storage_perm)
             node.create_array(str(index), data=stored, **options)
-            levels.append((str(index), entry))
 
         # Placements are written once as common transformations instead of
         # being folded into the levels, so a round trip keeps them apart.
@@ -555,6 +678,7 @@ class OmeZarrImage(
         location: StoreLike,
         chunks: tx.Any = None,
         version: tx.Optional[str] = None,
+        lossy: bool = False,
         **kwargs,
     ) -> None:
         """Write the pyramid to a store location or an opened group.
@@ -576,7 +700,9 @@ class OmeZarrImage(
         """
         node = _as_node(location)
         if node is not None:
-            self.to_node(node, chunks=chunks, version=version, **kwargs)
+            self.to_node(
+                node, chunks=chunks, version=version, lossy=lossy, **kwargs
+            )
             return
         location = absolute_location(location)
         levels = [
@@ -584,7 +710,9 @@ class OmeZarrImage(
         ]
         if not any(reads_inside(raw, location) for raw in levels):
             node = open_group(location, mode="w")
-            self.to_node(node, chunks=chunks, version=version, **kwargs)
+            self.to_node(
+                node, chunks=chunks, version=version, lossy=lossy, **kwargs
+            )
             return
         if not is_local(location):
             raise WriterError(
@@ -599,6 +727,7 @@ class OmeZarrImage(
                 open_group(name, mode="w"),
                 chunks=chunks,
                 version=version,
+                lossy=lossy,
                 **kwargs,
             ),
         )
@@ -620,7 +749,47 @@ class OmeZarrImage(
             if len(store_axes) == ndim:
                 perm = _axisorder.to_canonical(store_axes)
                 return _axisorder.permute(store_axes, perm)
+        # Without axes of its own, the pyramid takes the axes of the
+        # system onto which its first level maps, when they are known
+        # and hold a component axis, so that this axis keeps its type.
+        images = self.images or []
+        if images:
+            output = getattr(images[0].transformation, "output", None)
+            known = array_axes(output, ndim)
+            if known is not None and any(
+                is_component_type(getattr(axis, "type", None))
+                for axis in known
+            ):
+                return list(known)
         return _default_canonical_axes(ndim)
+
+
+def _type_losses(
+    image: SingleScaleImage, axes: tx.Sequence[Axis]
+) -> tx.List[str]:
+    """Return the losses of component axes written as another type.
+
+    The axes that a pyramid is written under may be given, or read from
+    its store, and they may give a component axis of the level another
+    type, such as `channel`. The store then loses what the values of
+    that axis are.
+    """
+    array = image._array_axes()
+    if array is None or len(array) != len(axes):
+        return []
+    losses = []
+    for index, axis in enumerate(array):
+        kind = getattr(axis, "type", None)
+        if (
+            is_component_type(kind)
+            and getattr(axes[index], "type", None) != kind
+        ):
+            losses.append(
+                f"the axis {axis.name or index!r} holds components of type "
+                f"{kind!r}, which would be written as an axis of type "
+                f"{getattr(axes[index], 'type', None)!r}"
+            )
+    return losses
 
 
 def _default_canonical_axes(ndim: int) -> tx.List[Axis]:
@@ -661,13 +830,21 @@ def _shared_flip(
 
 
 def _level(
-    array: tx.Any, perm: tx.Sequence[int], geometry: Transformation
+    array: tx.Any,
+    perm: tx.Sequence[int],
+    geometry: Transformation,
+    frames: tx.Mapping[int, FrameSlot],
 ) -> OmeZarrLevel:
-    """Return the level of a dataset, which reads its array lazily."""
+    """Return the level of a dataset, which reads its array lazily.
+
+    The level records its geometry and the frames of its component axes
+    as the store states them.
+    """
     return OmeZarrLevel(
         transformations=[geometry],
         rawdata=_ZarrProxy(array, store_location(array), perm),
         metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
+        decoded=(geometry, dict(frames)),
     )
 
 

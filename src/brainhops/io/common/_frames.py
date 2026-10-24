@@ -18,6 +18,9 @@ the values in that frame before it encodes them. The rules are these:
 The last two cases lose information about the data, so they are refused
 unless `lossy=True` is given, as a lossy conversion of a transformation
 is. Readers never re-express values: they record the frame of the file.
+Values whose frame is the very frame in which the format stores them,
+even a foreign one that a reader decoded, are written as they are
+without a loss.
 """
 
 __all__ = ["values_in_format_frames"]
@@ -35,14 +38,15 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import LossyConversionError
 
-FormatFrame: tx.TypeAlias = tx.Callable[
-    [int, Axis], tx.Optional[Transformation]
-]
+FormatFrame: tx.TypeAlias = tx.Callable[[int, Axis], tx.Optional[FrameSlot]]
 """The frame in which a format stores the values along an axis.
 
 The callable receives the index of a component axis and the axis, and
 returns the transformation from the array system to the frame of the
 format, or `None` when the format cannot store these values in a frame.
+It may also return the very slot of the axis, even a foreign coordinate
+system, to say that the format stores the values in that frame as they
+are, as for values that a reader decoded in a frame of its own.
 """
 
 
@@ -104,13 +108,15 @@ def values_in_format_frames(
         name = repr(axes[i].name or i)
         slot = slots[i]
         target = frame_of(i, axes[i])
-        if target is None or isinstance(slot, CoordinateSystem):
+        if target is not None and slot is target:
+            continue
+        if not isinstance(target, Transformation) or isinstance(
+            slot, CoordinateSystem
+        ):
             losses.append(
                 f"the format cannot store the frame of the values along "
                 f"axis {name}, which would be written as they are"
             )
-            continue
-        if slot is target:
             continue
         note = None if caveat is None else caveat(i, slot)
         if note is not None:
