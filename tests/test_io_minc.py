@@ -264,6 +264,27 @@ def test_an_image_whose_transformations_are_emptied_has_no_geometry(
     )
 
 
+@pytest.mark.parametrize("inplace", [False, True])
+def test_consolidate_keeps_transformations_changed_in_place(
+    anyminc,  # noqa: ANN001
+    inplace,  # noqa: ANN001
+) -> None:
+    """A list changed in place survives a consolidation with a field.
+
+    The field replaces the metadata, which would otherwise make the
+    image decode its transformations from the record again.
+    """
+    _, filename = anyminc
+    image = io.images.load(filename)
+    image.transformations.append(Scaling([2.0, 2.0, 2.0]))
+    expected = list(image.transformations)
+    copy = image.consolidate(
+        inplace=inplace, on_loss="ignore", description="edited"
+    )
+    assert len(copy.transformations) == 3
+    assert all(a is b for a, b in zip(copy.transformations, expected))
+
+
 def test_dimensions_are_kept(anyminc) -> None:  # noqa: ANN001
     _, filename = anyminc
     image = io.images.load(filename)
