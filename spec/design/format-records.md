@@ -1127,8 +1127,8 @@ its status.
 43. Copying one LTA view into another shares the record and reads it
     again in the coordinate systems of the target, because the views
     are views of one file. Status: accepted and documented.
-44. The LTA writer keeps only 16 significant digits. The problem is
-    older than this work and is filed as #420. Status: open.
+44. ~~The LTA writer keeps only 16 significant digits. The problem is
+    older than this work and is filed as #420. Status: open.~~
 45. The conformance tests needed new hooks. `Exemplar.stored` reads data
     that lives in the record. The stream contract of check 12 applies
     to binary formats only, and a text format is checked for the read

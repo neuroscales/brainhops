@@ -169,6 +169,29 @@ def test_the_matrix_is_written_at_full_precision() -> None:
     assert back.affine.matrix == MATRIX
 
 
+def test_random_values_round_trip_exactly() -> None:
+    # A double needs 17 significant digits to survive a round trip.
+    # With 16, about a quarter of random values lose their last digit.
+    rng = np.random.default_rng(0)
+
+    def values(n: int) -> tuple:
+        return tuple(float(x) for x in rng.uniform(-100, 100, n))
+
+    matrix = tuple(values(4) for _ in range(3)) + ((0.0, 0.0, 0.0, 1.0),)
+    src = replace(
+        SRC,
+        voxelsize=values(3),
+        xras=values(3),
+        yras=values(3),
+        zras=values(3),
+        cras=values(3),
+    )
+    raw = replace(_raw(), affine=LtaRaw.Affine(matrix=matrix), src=src)
+    back = LtaRaw.from_text(raw.to_text())
+    assert back.affine.matrix == matrix
+    assert back.src == src
+
+
 def test_a_record_follows_the_parser_contract(tmp_path) -> None:  # noqa: ANN001
     raw = _raw()
     assert LtaRaw.from_bytes(raw.to_bytes()) == raw

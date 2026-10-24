@@ -144,7 +144,7 @@ class VolumeInfoReaderWriter(LtaReaderWriter):
     def to_lines(self, **kwargs) -> tx.Generator[str]:
         """Yield the lines of the block, including its header."""
         yield f"{self.NAME} volume info"
-        yield from super().to_lines(fmt={float: "{:.15e}"}, **kwargs)
+        yield from super().to_lines(fmt={float: "{:.16e}"}, **kwargs)
 
 
 class MatrixReaderWriter(LtaReaderWriter):
@@ -190,7 +190,7 @@ class MatrixReaderWriter(LtaReaderWriter):
         reads both precisions.
         """
         dtype = self.dtype
-        fmt = "{:+.15e} {:+.15e}   " if dtype is complex else "{:+.15e}  "
+        fmt = "{:+.16e} {:+.16e}   " if dtype is complex else "{:+.16e}  "
         yield _write_values((int(self.matrix_type), *self.shape))
         for row in self.matrix:
             yield _write_values(row, sep=0, fmt=fmt).rstrip()
