@@ -1,5 +1,7 @@
 [project]
 
+extra_css = ["stylesheets/extra.css"]
+
 nav = [
   {"Getting started" = [
     "index.md",
@@ -15,6 +17,8 @@ nav = [
   ]},
   {"Python API" = [
     "api/index.md",
+    "api/backends.md",
+    "api/errors.md",
     {"datamodel" = [
       "api/datamodel/index.md",
       "api/datamodel/base.md",
@@ -26,8 +30,10 @@ nav = [
       "api/datamodel/geometry.md",
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
-      "api/datamodel/metadata.md",
-      {"metadata (format authors)" = "api/datamodel/metadata-formats.md"},
+      {"metadata" = [
+        "api/datamodel/metadata.md",
+        "api/datamodel/metadata-formats.md",
+      ]},
       "api/datamodel/kinds.md",
     ]},
     {"io" = [
@@ -198,7 +204,7 @@ inventories = [
   "https://docs.python.org/3/objects.inv",
   "https://typing-extensions.readthedocs.io/en/latest/objects.inv",
   "https://numpy.org/doc/stable/objects.inv",
-  "https://docs.cupy.dev/en/stable/reference/objects.inv",
+  "https://docs.cupy.dev/en/stable/objects.inv",
   "https://docs.dask.org/en/stable/objects.inv",
   "https://bagofseeds.github.io/bagof-hints/objects.inv",
   "https://bagofseeds.github.io/bagof-magic/objects.inv",
