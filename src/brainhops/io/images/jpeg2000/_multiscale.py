@@ -483,8 +483,8 @@ class Jpeg2000MultiScaleImage(
         [`Jpeg2000Image.to_filename`][]. The content is encoded before
         the file is written, and a local file is replaced at once. A
         pyramid written over the file that it was read from is
-        consolidated in place, so that it holds what the file holds
-        (#426), and its lazy array reads the new file.
+        consolidated in place, so that it holds what the file holds, and
+        its lazy array reads the new file.
 
         Parameters
         ----------

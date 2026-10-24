@@ -592,11 +592,12 @@ For `nearest` and for a constant boundary, the prefilter of SciPy extends
 the values beyond the edges by reflection and by mirroring, respectively.
 The evaluation, however, clamps the coefficients for `nearest` and uses
 `cval` for a constant boundary. Because the two extensions differ, the
-filtered coefficients do not interpolate the values near the edges (#250).
+filtered coefficients do not interpolate the values near the edges.
 For `reflect`, the prefilter matches the evaluation, but it is only
 approximate near the edges of short axes, by up to 1e-4 at degree 5.
 """
 
+# The mismatch between the prefilter and the evaluation is issue #250.
 _EDGE = 48
 """Number of samples at each end of an axis that a boundary affects.
 

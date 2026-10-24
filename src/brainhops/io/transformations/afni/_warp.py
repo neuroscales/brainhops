@@ -561,7 +561,7 @@ class AfniBrikWarp(
         another suffix is removed. Each local file is replaced at once.
         When the lazy array of the warp reads a BRIK that is written or
         removed, the warp is consolidated in place instead, so that it
-        holds what the dataset holds (#426), and its lazy array reads
+        holds what the dataset holds, and its lazy array reads
         the new BRIK.
 
         Parameters

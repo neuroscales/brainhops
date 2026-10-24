@@ -6,8 +6,10 @@ matrix is transposed, the matrix is completed to homogeneous form, an inverse
 matrix is inverted, 1-based voxel indices are shifted to the 0-based indices
 of the data model, and a voxel endpoint that comes with an image is mapped to
 the world space of that image. In the 0-based indices of the data model, an
-integer index is the centre of a voxel (see #201).
+integer index is the centre of a voxel.
 """
+
+# The integer index at the centre of a voxel is discussed in issue #201.
 
 import numpy as np
 import typing_extensions as tx
@@ -344,8 +346,8 @@ def decode(record: tx.Any) -> np.ndarray:
     completion to homogeneous form, inversion, the shift of 1-based voxel
     indices to the 0-based indices of the data model, and the placement
     of voxel endpoints in the world spaces of images. In the 0-based
-    indices of the data model, an integer index is the centre of a voxel
-    (see #201).
+    indices of the data model, an integer index is the centre of a
+    voxel.
     """
     n = record.ndim
     homog = homogeneous(column_matrix(record.matrix, record.vector), n)

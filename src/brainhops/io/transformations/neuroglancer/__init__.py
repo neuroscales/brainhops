@@ -5,7 +5,7 @@ source of a layer with an affine coordinate transform, a JSON object
 written in the state of the viewer as the `transform` of the layer
 `source`. This package reads and writes that object on its own, so that
 an affine computed by brainhops can be pasted into the state of a
-viewer, or read back from it (#227).
+viewer, or read back from it.
 
 The JSON is short and is read in one pass. Its whole content is held as
 a [`NeuroglancerTransformRaw`][] record by
@@ -102,6 +102,8 @@ decoded and encoded without any change.
     text = NeuroglancerTransform.from_any(affine).to_text()
     ```
 """
+
+# The format is issue #227.
 
 __all__ = [
     "NeuroglancerTransform",

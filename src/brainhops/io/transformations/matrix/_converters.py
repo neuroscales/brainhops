@@ -4,7 +4,7 @@ Private converters into the plain matrix formats.
 A plain matrix file holds an affine in any coordinate systems, which the
 caller states when the file is read, so a plain matrix format has no
 system of its own to refuse. No exact conversion into these formats is
-written yet (#312), so each family with an affine form is relabelled as
+written yet, so each family with an affine form is relabelled as
 each of them by the converter
 [`relabelling`][brainhops.io.transformations.base._converters.relabelling],
 which this module registers. The relabelled transformation keeps the
@@ -14,6 +14,8 @@ rules of any affine, and one of another container is relabelled from its
 decoded matrix, since the record of one container means nothing to
 another.
 """
+
+# The exact converters of the formats are issue #312.
 
 import typing_extensions as tx
 

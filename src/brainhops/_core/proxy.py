@@ -3,8 +3,7 @@
 A proxy stands for an array whose values lie elsewhere, usually in a
 file, and reads them only when NumPy converts it with `np.asarray`.
 Indexing a proxy or transposing it returns another proxy, which reads
-only the values that it selects. The design is described in the memo
-`spec/design/array-proxies.md`.
+only the values that it selects.
 
 [`ArrayProxyProtocol`][] states what a consumer of a proxy may rely on,
 and [`ArrayProxy`][] is the base class of every proxy of brainhops. The
@@ -26,6 +25,8 @@ holds a stored proxy, so a chain of indexes never builds a chain of
 proxies. Each layer keeps the proxy below it as `base`, and the `root`
 of every proxy is the stored proxy at the bottom.
 """
+
+# The design is described in spec/design/array-proxies.md.
 
 __all__ = [
     "ArrayProxyProtocol",

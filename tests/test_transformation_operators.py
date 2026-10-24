@@ -1,8 +1,10 @@
-"""Tests for the unary operators of #47: square and principal root.
+"""Tests for the unary operators: square and principal root.
 
 The exponential and logarithm are encodings, tested in
 test_transformation_log.py.
 """
+
+# The unary operators are issue #47.
 
 from unittest import mock
 

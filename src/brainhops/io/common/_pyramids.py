@@ -7,9 +7,7 @@ metadata object, by identity. Each level is an image of the single-scale
 format of the same package, which holds the lazy array of its level in
 `rawdata` and the index `level` of the level in the record. The pyramid holds
 the tuple of the level arrays in `rawdata`, and it decodes its levels
-from `rawdata` and the record on first access. The memo
-`spec/design/format-records.md` describes this design in its section on
-pyramids.
+from `rawdata` and the record on first access.
 
 When a pyramid is consolidated or written, its format must tell which
 levels are still the levels of its file, so that it keeps their arrays
@@ -19,6 +17,9 @@ take what is specific to a format, the class of its levels and the
 function that decodes the transformations of a level, as arguments, so
 that each format calls them explicitly from its own `consolidate`.
 """
+
+# The design is described in the section on pyramids of
+# spec/design/format-records.md.
 
 __all__ = ["held_images", "own_level", "own_levels"]
 

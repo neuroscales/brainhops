@@ -1,9 +1,11 @@
 """Tests for the frames of the values of images, and `reframe`.
 
-The cases follow the worked example of
-`spec/design/vector-and-tensor-images.md`: a field of vectors in RAS
-(`X`), a transformation applied lazily (`U`) and a target geometry (`G`).
+The cases follow the worked example of the design of vector and tensor
+images, which has a field of vectors in RAS (`X`), a transformation
+applied lazily (`U`) and a target geometry (`G`).
 """
+
+# The design is recorded in spec/design/vector-and-tensor-images.md.
 
 import numpy as np
 import pytest
@@ -811,6 +813,21 @@ def test_an_unknown_method_is_refused(x: SingleScaleImage) -> None:
         x.reframe(None, method="shear")
 
 
+def test_an_equal_frame_is_not_the_same_frame(
+    x: SingleScaleImage, a: Affine
+) -> None:
+    # Transformations compare by identity, so another object with the same
+    # matrix is another frame. The values are re-expressed through the
+    # identity, and do not change.
+    copy = Affine(matrix=np.asarray(a.matrix), input=a.input, output=a.output)
+
+    out = x.reframe(copy)
+
+    assert out is not x
+    assert out.frames[3] is copy
+    assert np.allclose(np.asarray(out.data), np.asarray(x.data))
+
+
 # --- metadata ---------------------------------------------------------
 
 
@@ -818,7 +835,7 @@ def _with_metadata(image: SingleScaleImage, **fields: tx.Any) -> tx.Any:
     return SingleScaleImage(
         np.asarray(image.data),
         image.transformations,
-        frames=image._frames,
+        frames=image.frames,
         metadata=Metadata(**fields),
     )
 

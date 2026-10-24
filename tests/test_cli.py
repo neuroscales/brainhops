@@ -280,7 +280,7 @@ def test_unknown_format_hint_reports_available_hints() -> None:
         load_transform("affine.mat", hint="not-a-format")
 
 
-def test_unimplemented_operator_points_at_the_issue(monkeypatch) -> None:  # noqa: ANN001
+def test_unimplemented_operator_is_reported(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         "brainhops.cli._reslice.load_transform",
         lambda path: _FakeTransform(),  # noqa: ARG005
@@ -291,7 +291,7 @@ def test_unimplemented_operator_points_at_the_issue(monkeypatch) -> None:  # noq
 
     message = str(excinfo.value)
     assert "sqrt" in message
-    assert "#47" in message
+    assert "not implemented" in message
 
 
 def test_compose_reports_not_implemented(capsys) -> None:  # noqa: ANN001

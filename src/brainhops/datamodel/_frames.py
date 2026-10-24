@@ -2,13 +2,14 @@
 
 An image whose axes hold the components of points, vectors or tensors
 records, for each data axis, the frame in which these components are
-expressed (see `spec/design/vector-and-tensor-images.md`). This module
-holds the helpers that read, validate, compose and change these frames.
-The public interface is
+expressed. This module holds the helpers that read, validate, compose
+and change these frames. The public interface is
 [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
 and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe].
 """
+
+# The design is recorded in spec/design/vector-and-tensor-images.md.
 
 from collections.abc import Mapping
 
@@ -427,17 +428,28 @@ class _Structure(tx.NamedTuple):
         return self.select @ self.linear
 
 
+def _flattened(frame: Transformation) -> tx.List[Transformation]:
+    """Return the parts of a frame, with nested sequences expanded.
+
+    A frame that indexing or reslicing composes with the map of the
+    voxels holds the frame that it composes as a nested sequence, whose
+    final projections are then the final projections of the whole frame.
+    """
+    if not isinstance(frame, Sequence):
+        return [frame]
+    parts: tx.List[Transformation] = []
+    for part in frame.transformations or []:
+        parts.extend(_flattened(part))
+    return parts
+
+
 def _structure(frame: Transformation, ndim: int) -> tx.Optional[_Structure]:
     """Return the linear structure of a frame from an array of `ndim` axes.
 
     Every field of the frame is taken as the identity. `None` is
     returned when the frame is not affine even then.
     """
-    parts = (
-        list(frame.transformations or [])
-        if isinstance(frame, Sequence)
-        else [frame]
-    )
+    parts = _flattened(frame)
     tail: tx.List[Transformation] = []
     while parts and isinstance(parts[-1], (Projection, Permutation)):
         tail.insert(0, parts.pop())
