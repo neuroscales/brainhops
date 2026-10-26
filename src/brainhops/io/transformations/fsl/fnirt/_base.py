@@ -899,6 +899,48 @@ def _warp_chain(
     )
 
 
+def _vector_frame(metadata: NiftiMetadata) -> tx.Optional[np.ndarray]:
+    """Return the map from the grid of a FNIRT file to the frame of its values.
+
+    A NIfTI image read from a FNIRT file records in which coordinate
+    system the vectors of the file are expressed (see
+    [`NiftiImage`][brainhops.io.images.nifti.NiftiImage]). FSL adds these
+    vectors, in scaled millimetres, to the position of the reference after
+    the initial affine has moved that position (see `_warp_chain`), and
+    reads the sum as a position in the scaled millimetres of the moving
+    image. The components of the vectors therefore follow the axes of
+    the scaled millimetres of the reference, moved by the initial affine.
+    The initial affine is the identity for a deformation field, and the
+    inverse of the sform for a coefficient field.
+
+    The `(4, 4)` matrix that is returned maps the voxels of the grid of
+    the file to that frame. The header alone gives it, under the same
+    assumption as [`FnirtWarpField`][] read without a reference image: a
+    deformation field is stored on the grid of its reference, and the
+    knots of a coefficient field are placed from the scaled millimetres
+    of the reference, so that the geometry of the reference cancels out.
+
+    `None` is returned when the header does not give the frame: for a
+    field of DCT coefficients, which brainhops does not decode, and for a
+    coefficient field whose header has no usable knot spacing or voxel
+    sizes of its reference.
+    """
+    warp = FnirtWarpField(metadata=metadata)
+    intent = warp._intent()
+    if intent not in _FNIRT_INTENTS or intent == FSL_DCT_COEFFICIENTS:
+        return None
+    if not warp._has_spline_parameters():
+        return None
+    # The geometry of the reference cancels out, so that of the header of
+    # the file stands for it.
+    grid = _ImageGeometry(_header(warp))
+    grid_to_fsl = grid.vox2fsl @ np.linalg.inv(warp._ref_to_field(grid))
+    matrix = warp._ref_to_source() @ grid_to_fsl
+    if not np.all(np.isfinite(matrix)):
+        return None
+    return matrix
+
+
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------

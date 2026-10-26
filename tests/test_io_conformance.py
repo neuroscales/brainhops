@@ -1,4 +1,4 @@
-"""Conformance of the file formats to the design of format records (#415).
+"""Conformance of the file formats to the design of format records.
 
 A file format that follows the design has three layers. Its record class
 (`<X>Raw`) holds the header of a file as the format stores it. Its
@@ -36,6 +36,8 @@ P1 to P12 run on the pyramids and on the toy pyramid, a directory that
 holds a JSON document and one toy file per level, which shows the rules
 of directory stores without any optional dependency.
 """
+
+# The design of format records is issue #415.
 
 import gzip
 import importlib
@@ -1776,7 +1778,8 @@ class Exemplar(tx.NamedTuple):
     """Function that builds an object of another format from data.
 
     It is `None` for a format that refuses every conversion from another
-    format, as NiftyReg, ITK and FNIRT do until #312.
+    format, as NiftyReg, ITK and FNIRT do until they have exact
+    converters.
     """
 
     build: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None

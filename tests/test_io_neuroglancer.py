@@ -1,13 +1,15 @@
 """Tests for reading and writing Neuroglancer coordinate transforms.
 
 A Neuroglancer coordinate transform is the JSON object that places a data
-source of a layer in the viewer (#227). It is read from a `.json` file
+source of a layer in the viewer. It is read from a `.json` file
 whose keys are those of a transform, from any file with the hint
 `"neuroglancer.affine"`, and from a `.ngtransform.json` file, which
 `io.save` also writes, as it writes any name with the hint. The conventions
 of the matrix, the dimensions and the units are those of
 google/neuroglancer@abbdfc5ea97b81c0c0bf04a414f5c59f4d84d27f.
 """
+
+# The Neuroglancer transform is issue #227.
 
 import io as _io
 import json

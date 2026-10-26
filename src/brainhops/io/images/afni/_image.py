@@ -758,7 +758,7 @@ class AfniImage(
         or removed, for example when an image read from `x+orig.BRIK` is
         saved as `x+orig.BRIK.gz`. The image is then written over its own
         dataset, so it is consolidated in place with the options, and it
-        holds what the dataset holds (#426): its lazy array reads the new
+        holds what the dataset holds: its lazy array reads the new
         BRIK, and its data is decoded again from that file when it is next
         read.
 

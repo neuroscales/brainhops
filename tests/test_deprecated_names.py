@@ -1,4 +1,6 @@
-"""The old spellings of the coordinate fields still import (#547)."""
+"""The old spellings of the coordinate fields still import."""
+
+# The renaming of the coordinate fields is issue #547.
 
 import importlib
 

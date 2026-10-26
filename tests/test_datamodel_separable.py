@@ -1,4 +1,4 @@
-"""Tests for the separable reslice (#11).
+"""Tests for the separable reslice.
 
 The axis groups are read from the factored normal form of
 `compute(factor=True)` and executed by `separable`. The tests cover the
@@ -6,6 +6,8 @@ groups, the order of the steps, the strategy of each step (gather, weight
 matrix or pull) and equality with the monolithic pull, which is exact when
 nothing is separable.
 """
+
+# The separable reslice is issue #11.
 
 import numpy as np
 import pytest

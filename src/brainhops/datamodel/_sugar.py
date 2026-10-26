@@ -24,12 +24,16 @@ def get_axes(
         The stored axes.
         Missing systems and `axes=None` give a fresh `AxisList([...])`,
         without changing the stored value. An empty sequence stays empty.
+        Axes stored as a plain tuple or list, as the default of a system
+        class may be, are returned as an `AxisList` of the same axes.
     """
     if isinstance(system, AxisSequence):
         return system
     axes = getattr(system, "axes", None)
     if axes is None:
         return AxisList([...])
+    if not isinstance(axes, AxisSequence):
+        return AxisList(list(axes))
     return axes
 
 

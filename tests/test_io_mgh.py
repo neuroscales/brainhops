@@ -162,8 +162,9 @@ def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
 
 
 @pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz"])
+# The open header file was issue #262.
 def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
-    """Loading closes the header file (#262) while the voxels stay lazy."""
+    """Loading closes the header file while the voxels stay lazy."""
     data = _data()
     source = _write(tmp_path, name, data)
     with warnings.catch_warnings(record=True) as caught:

@@ -281,6 +281,17 @@ def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
     return meters / stored
 
 
+def _world_unit_scale(system: tx.Optional[CoordinateSystem]) -> float:
+    """Return the factor from the unit of a world to the unit NIfTI stores.
+
+    The writer scales the spatial rows of the matrices of a world by this
+    factor, and scales by it the vectors that it has re-expressed in that
+    world, so that both are in the unit of the header.
+    """
+    space, _ = _xyzt_labels(system)
+    return _unit_scale(system, space)
+
+
 def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     """Scale the spatial rows of a `(4, 4)` matrix by `factor`."""
     if factor == 1.0:
@@ -297,6 +308,7 @@ def _image_with_geometry(
     header: tx.Optional[nb.Nifti1Header] = None,
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
+    intent: tx.Optional[int] = None,
 ) -> _NiftiObject:
     """Build a NIfTI image from data and their voxel-to-world geometry.
 
@@ -306,7 +318,11 @@ def _image_with_geometry(
     extensions are kept. The header is changed in place, so the caller
     passes a copy. Without a header, the header starts empty. The geometry
     is then encoded over the header, header fields are copied from `like`,
-    and the `overrides` are applied last.
+    the `intent` is set when it is given, and the `overrides` are applied
+    last. A writer gives the intent that its values require, such as
+    DISPVECT for vectors that it has re-expressed in the world of the
+    preferred transformation, so that the intent of `like` or of the
+    header does not describe them wrongly.
 
     The preferred transformation provides the sform, the spacing of the
     later axes and the units, and the qform comes from
@@ -360,6 +376,8 @@ def _image_with_geometry(
     image = _new_nifti(data, sform, header)
     _set_other_axes(image, others, timed)
     _apply_like(image, like)
+    if intent is not None:
+        image.header.set_intent(intent)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)

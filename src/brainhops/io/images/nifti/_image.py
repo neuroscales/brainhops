@@ -13,8 +13,12 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+from brainhops.backends import get_array_backend
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
-from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel._frames import FrameSlot, normalize_frames
+from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.enums import IntentEnum, Valence
+from brainhops.datamodel.images import SingleScaleImage, _always_unset
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
@@ -28,6 +32,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
+from brainhops.errors import LossyConversionError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -36,19 +41,33 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     WriterError,
 )
+from brainhops.io.common._frames import values_in_format_frames
 from brainhops.io.common._geometry import (
     held_transformations,
+    ras_conversion,
     same_transformations,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
+    _NIFTI_FSL_COEFFICIENT_INTENTS,
+    _NIFTI_FSL_INTENTS,
+    _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
 )
-from brainhops.io.common.nifti._geometry import _image_with_geometry
+from brainhops.io.common.nifti._frames import (
+    FRAMED_INTENTS,
+    header_frames,
+    restricted_frame,
+)
+from brainhops.io.common.nifti._geometry import (
+    _image_with_geometry,
+    _world_unit_scale,
+)
 from brainhops.io.common.nifti._header import (
     _keep_given_fields,
+    _like_header,
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
@@ -149,17 +168,19 @@ class NiftiImage(
         "metadata", default=None
     )
 
-    metadata = smartproperty("metadata", invalidates="transformations")
+    metadata = smartproperty(
+        "metadata", invalidates=("transformations", "frames")
+    )
     """The metadata of the file, which holds its header, or `None`.
 
     An image built from data has no metadata. The header describes the
     file as it was read, or as the image was last consolidated. Assigning
-    other metadata drops the transformations decoded from the previous
-    header, so that they are decoded from the new one, and keeps the
-    transformations that were assigned.
+    other metadata drops the transformations and the frames decoded from
+    the previous header, so that they are decoded from the new one, and
+    keeps the transformations and the frames that were assigned.
     """
 
-    data = dataproperty()
+    data = dataproperty(invalidates="frames")
     """The image data, assigned or decoded from `rawdata`.
 
     An array assigned to the image is returned as it is, and stays
@@ -191,7 +212,7 @@ class NiftiImage(
             return None
         return _image_to_model(self.rawdata)
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidates="frames")
     def transformations(self) -> tx.List[Transformation]:
         """Voxel-to-world transformations, decoded from the header.
 
@@ -247,6 +268,87 @@ class NiftiImage(
         ]
         # In F order, the first axis changes fastest.
         return ArrayCoordinateSystem(axes=axes, name="voxel", order="F")
+
+    @smartproperty(cache=True, unset=_always_unset)
+    def frames(self) -> tx.Tuple[FrameSlot, ...]:
+        """The frame of the values along each axis, as the header states it.
+
+        A displacement field stores at each voxel the components of a
+        vector, and the intent of its header states in which coordinate
+        system, called the frame, these components are expressed:
+
+        | Code | Intent                  | Frame of the vectors               |
+        | ---- | ----------------------- | ---------------------------------- |
+        | 1006 | displacement vector     | the best affine, in RAS            |
+        | 2006 | fnirt disp field        | FSL scaled millimetres             |
+        | 2007 | fnirt cubic spline coef | the same, after the initial affine |
+        | 2009 | fnirt quad spline coef  | the same, after the initial affine |
+        | 2008 | fnirt dct coef          | a foreign `FslCoordinateSystem`    |
+
+        The frame of a DISPVECT file is its best affine, which is the
+        last transformation that the header decodes to, restricted to
+        its spatial axes. FSL scaled millimetres are the voxel indices
+        multiplied by the voxel sizes, with the first axis flipped when
+        the best affine has a positive determinant. The frame of an FSL
+        file is the map from its voxels to these coordinates, as
+        [`FnirtWarpField`][brainhops.io.transformations.fsl.FnirtWarpField]
+        computes it without a reference image. That reader takes the
+        scaled millimetres of the reference and of the moving image to
+        share their axes, and the values of a deformation field to be
+        displacements rather than absolute positions, which its header
+        does not tell apart; the image reader makes the same assumptions
+        (see
+        [`header_frames`][brainhops.io.common.nifti._frames.header_frames]).
+        Because of the first assumption, the vectors of an FSL field
+        re-expressed in RAS are the displacements of the map only when
+        the moving image has the same voxel-to-RAS map as the reference,
+        up to the voxel size: the same direction cosines, the same flip
+        of the first axis and the same position in RAS of the origin of
+        the scaled millimetres. Otherwise the displacements in RAS differ
+        by a linear term and by a constant offset that no change of frame
+        produces, so the writer re-expresses them only with
+        `lossy=True`. The sform of
+        an FSL coefficient file holds the inverse of the initial affine
+        rather than a map to a world, so re-expressing its coefficients
+        in the preferred transformation, as `reframe()` does by default,
+        has no meaning.
+
+        The values are never converted when they are read. The frames of
+        the header are built once and cached, and the same objects are
+        returned at every read, because transformations compare by
+        identity. Assigning other metadata, transformations or data drops
+        them, so that they are built again, and a consolidated image gets
+        the frames of its new header. Frames that are assigned, or given to
+        the constructor, take precedence over those of the header, as
+        [`SingleScaleImage.frames`][brainhops.datamodel.images.SingleScaleImage.frames]
+        describes them. Assigning `None` or an empty tuple assigns
+        nothing, so the frames of the header are read again; assigning
+        `(None,) * ndim` puts every axis in the array system.
+        """
+        given = self._frames or self._header_frames()
+        return normalize_frames(given, self._array_axes(), tuple(self.shape))
+
+    def _header_frames(self) -> tx.Dict[int, FrameSlot]:
+        """Return the frame of each component axis, as the header states it.
+
+        An image without a header, or whose intent states no frame, gives
+        an empty mapping, so that its frames are the array system. The
+        `frames` property caches what this method returns, so the frames
+        are built once, and are built again when other metadata, other
+        transformations or other data are assigned.
+        """
+        metadata = self.metadata
+        if metadata is None or metadata.raw is None:
+            return {}
+        if _nifti_intent(metadata.raw.header) not in FRAMED_INTENTS:
+            return {}
+        if self._transformations is None:
+            decoded = self.transformations
+        else:
+            decoded = _header_transformations(metadata)
+        preferred = decoded[-1] if decoded else None
+        system = self.system if preferred is None else preferred.input
+        return header_frames(metadata, preferred, system, tuple(self.shape))
 
     # --- reading ------------------------------------------------------
 
@@ -462,6 +564,7 @@ class NiftiImage(
         inplace: bool = False,
         like: tx.Any = None,
         on_loss: tx.Optional[OnLoss] = None,
+        lossy: bool = False,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -493,6 +596,31 @@ class NiftiImage(
         options, is left as it is: the copy shares `rawdata` and the metadata.
         Consolidating a consolidated image changes nothing.
 
+        The values of a component axis, such as the vectors of a
+        displacement field, are encoded in the frame that the intent of
+        the header states (see [`frames`][]). The intent is the one
+        given by keyword, or else that of the metadata, or else that of
+        `like`. An image whose frames are those of its own header,
+        because none were assigned, whose geometry is kept, and whose
+        intent does not change, is encoded with its values and its
+        intent as they are, including an FSL intent, and an FSL field
+        then keeps the 4-D layout of FSL. Otherwise, the vectors of a
+        displacement axis or of a vector axis of valence `"vector"` are
+        re-expressed in the world of the preferred transformation, which
+        becomes the best affine, and converted to RAS millimetres when
+        that world has another orientation or unit, and the header gets
+        the DISPVECT intent.
+        The change of frame is exact when both frames are affine.
+        Vectors in FSL scaled millimetres are re-expressed only with
+        `lossy=True`, because the result is the displacement of the map
+        in RAS only when the moving image has the same voxel-to-RAS map
+        as the reference, up to the voxel size. NIfTI has no frame for
+        covectors, tensors and the coordinates of points, it cannot re-
+        express the coefficients of an FSL spline field, and it cannot
+        re-express any value in the frame of an FSL intent given by
+        keyword, so these values are written as they are, and only with
+        `lossy=True`.
+
         The metadata is consolidated first (step 2 of the precedence on
         write), with the options that name its fields, so any field of
         the metadata can be overridden here, and its record is the base of
@@ -515,6 +643,12 @@ class NiftiImage(
             What to do with the metadata that the header cannot hold. By
             default, the policy in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        lossy : bool, default=False
+            Whether the values of a component axis may be written
+            although NIfTI loses information about them: values that
+            NIfTI cannot store in a frame, values in a foreign frame, or
+            a change of frame through a map that is not affine, which is
+            computed by finite differences.
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set
@@ -536,6 +670,9 @@ class NiftiImage(
         UnrepresentableTransformationError
             If the preferred transformation is not affine, as for a
             displacement field.
+        LossyConversionError
+            If NIfTI loses information about the values of a component
+            axis and `lossy` is false.
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         """
@@ -553,6 +690,7 @@ class NiftiImage(
         )
         if (
             self._data is None
+            and not self._frames
             and kept
             and like is None
             and not overrides
@@ -565,12 +703,63 @@ class NiftiImage(
                 return replace(self, transformations=None)
             self.transformations = None
             return self
+        # The values of component axes are encoded in the frame that the
+        # header states. An image whose frames are those of its own header,
+        # and whose geometry is kept, already holds its values
+        # in that frame, and the intent of the header is kept. The values
+        # of any other image are re-expressed in the world of the preferred
+        # transformation, and written with the DISPVECT intent. An image
+        # without data is refused when it is encoded.
+        # The intent of the header is the one that is given by keyword,
+        # or else that of the metadata, or else that of `like`, and the
+        # values must be in the frame that this intent states.
+        own_intent = None
+        if self.metadata is not None and self.metadata.raw is not None:
+            own_intent = _nifti_intent(self.metadata.raw.header)
+        forced = _forced_intent(fields, overrides)
+        if forced is not None:
+            intent = forced
+        else:
+            intent = _inherited_intent(metadata, like)
+        image = self
+        dispvect = False
+        # Transformations compare by identity, so the values are in the
+        # frames of the header when each slot is the very frame that the
+        # image decoded from its header.
+        own = (
+            not self._frames
+            and kept
+            and intent == own_intent
+            and own_intent in FRAMED_INTENTS
+            and any(slot is not None for slot in self.frames)
+        )
+        if not own and (self._data is not None or self.rawdata is not None):
+            frame_of = _NiftiFrames(
+                self, forced in (None, _NIFTI_INTENT_DISPVECT)
+            )
+            reframed = values_in_format_frames(
+                self, frame_of, lossy, caveat=_fsl_caveat
+            )
+            if reframed is not None:
+                image = replace(self, data=reframed[0], frames=reframed[1])
+            dispvect = frame_of.used
+        if dispvect:
+            image = _in_ras_millimetres(image, frame_of.indices, lossy)
+        fsl_layout = own and own_intent in _NIFTI_FSL_INTENTS
         raw, record = _nifti_encoded(
-            self, kept, like, overrides, metadata, fields
+            image,
+            kept,
+            like,
+            overrides,
+            metadata,
+            fields,
+            dispvect,
+            fsl_layout,
         )
         metadata = type(metadata or NiftiMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, on_loss, stacklevel=2)
+        # The frames of the values are now those that the header decodes.
         if not inplace:
             return replace(
                 self,
@@ -578,11 +767,13 @@ class NiftiImage(
                 transformations=None,
                 rawdata=raw,
                 metadata=metadata,
+                frames=(),
             )
         self.rawdata = raw
         self.metadata = metadata
         self.data = None
         self.transformations = None
+        self.frames = ()
         return self
 
     def to_nibabel(
@@ -626,7 +817,7 @@ class NiftiImage(
         image itself is not changed. A local file is replaced at once, so
         an image can be written over the file that it was read from. The
         image is then consolidated in place, so that it holds what the
-        file holds (#426): its lazy array reads the new file, and its
+        file holds: its lazy array reads the new file, and its
         record is the header of that file.
 
         Parameters
@@ -701,6 +892,217 @@ class NiftiImage(
             If the image cannot be encoded, as in [`consolidate`][].
         """
         return self.to_nibabel(**kwargs).to_bytes()
+
+
+def _in_ras_millimetres(
+    image: NiftiImage, indices: tx.Sequence[int], lossy: bool = False
+) -> NiftiImage:
+    """Return an image whose vectors are converted to RAS millimetres.
+
+    The vectors along the axes `indices` are expressed in the world of the
+    preferred transformation. NIfTI stores its world as RAS in
+    millimetres, and the writer converts the matrices of a world of other
+    orientations or another unit to it, such as LPS or centimetres, so it
+    converts the vectors by the same linear map.
+
+    A field with fewer components than spatial axes holds them along the
+    first axes of its world, and DISPVECT along the first axes of RAS.
+    When the conversion maps these axes of the world onto other axes of
+    RAS, as for a world whose first axis is inferior to superior, the
+    components cannot be held by the axes of RAS that DISPVECT gives
+    them. Such a field is refused unless `lossy` is true, and the
+    components are then converted by the block of the conversion between
+    these first axes.
+
+    Raises
+    ------
+    LossyConversionError
+        If the conversion moves the components of a field onto axes that
+        it does not hold, and `lossy` is false.
+    """
+    world = image.transformation.output
+    conversion = _world_unit_scale(world) * ras_conversion(world)[:3, :3]
+    if np.array_equal(conversion, np.eye(3)):
+        return image
+    data = image.data
+    backend = get_array_backend(data)
+    axes = image._array_axes()
+    for index in indices:
+        count = int(data.shape[index])
+        coupled = np.any(conversion[count:, :count]) or np.any(
+            conversion[:count, count:]
+        )
+        if coupled and not lossy:
+            raise LossyConversionError(
+                f"Writing this image loses information about its values: "
+                f"the {count} components along axis {index} follow the "
+                f"first axes of a world that RAS orders differently, and "
+                f"DISPVECT holds them along the first axes of RAS. Pass "
+                f"lossy=True to write them anyway."
+            )
+        matrix = backend.asarray(conversion[:count, :count])
+        data = axes[index].apply(data, matrix, index)
+    return replace(image, data=data)
+
+
+class _NiftiFrames:
+    """The frame in which NIfTI stores the values along each axis.
+
+    NIfTI states a frame for displacements only. A DISPVECT file holds
+    RAS vectors in the world of its best affine, which is the preferred
+    transformation of the image once it is written. A component axis
+    whose values are vectors of valence `"vector"`, which is a
+    displacement axis or a vector axis, is therefore written in that
+    frame, restricted to the components of the axis. NIfTI has no frame
+    for covectors, tensors and the coordinates of points. It cannot hold
+    the coefficients of an FSL spline field in another frame either,
+    because only a header with the parameters of their spline describes
+    them. These values are written as they are, and only with
+    `lossy=True`.
+
+    An instance is the callable that
+    [`values_in_format_frames`][brainhops.io.common._frames.values_in_format_frames]
+    receives. It records whether an axis is written in the frame of
+    DISPVECT, so that the writer sets that intent.
+
+    An intent other than DISPVECT, given by keyword, states another
+    frame, or none, so that no axis is then written in the frame of
+    DISPVECT.
+
+    Parameters
+    ----------
+    image : NiftiImage
+        The image to write.
+    dispvect : bool, default=True
+        Whether the header may get the DISPVECT intent.
+    """
+
+    def __init__(self, image: NiftiImage, dispvect: bool = True) -> None:
+        self.image = image
+        self.used = False
+        self.indices: tx.List[int] = []
+        self.dispvect = dispvect
+        self.coefficients = _holds_fsl_coefficients(image)
+
+    def __call__(self, index: int, axis: Axis) -> tx.Optional[Transformation]:
+        """Return the frame of the values along an axis, or `None`."""
+        if not self.dispvect or self.coefficients:
+            return None
+        if axis.valences != (Valence.vector,):
+            return None
+        image = self.image
+        frame = restricted_frame(
+            image.transformation,
+            image._array_axes(),
+            index,
+            image.shape[index],
+        )
+        if not isinstance(frame, Transformation):
+            return None
+        self.used = True
+        self.indices.append(index)
+        return frame
+
+
+def _fsl_caveat(index: int, slot: FrameSlot) -> tx.Optional[str]:
+    """Return what re-expressing FSL scaled millimetres assumes.
+
+    FSL adds a vector of a field to a position in the scaled millimetres
+    of the reference, and reads the sum in the scaled millimetres of the
+    moving image. If `L` is the linear part of the map from scaled
+    millimetres to RAS and `M` the whole map, the displacement in RAS at
+    `x` is `L_mov d + (M_mov - M_ref)(x)`, while the vector re-expressed
+    in RAS is `L_ref d`. The two agree only when `M_mov` and `M_ref` are
+    the same map, which holds when the moving image has the same
+    voxel-to-RAS map as its reference, up to the voxel size, and which
+    the field does not tell.
+    """
+    # The FSL formats read NIfTI files through this package, so they are
+    # imported when they are needed rather than when it is loaded.
+    from brainhops.io.transformations.fsl._systems import (
+        FslCoordinateSystem,
+    )
+
+    if not isinstance(getattr(slot, "output", None), FslCoordinateSystem):
+        return None
+    return (
+        "are in FSL scaled millimetres, which give the displacements of "
+        "the map in RAS only if the moving image of the field has the same "
+        "voxel-to-RAS map as its reference, up to the voxel size"
+    )
+
+
+def _forced_intent(
+    fields: tx.Mapping[str, tx.Any], overrides: tx.Mapping[str, tx.Any]
+) -> tx.Optional[int]:
+    """Return the intent code that a writer is given by keyword, if any.
+
+    The `intent` field of the metadata is written last, so it wins over
+    the header fields. An intent that nibabel does not know is returned
+    as -1, which states no frame.
+    """
+    for value in (
+        fields.get("intent"),
+        overrides.get("intent_code"),
+        overrides.get("intent"),
+    ):
+        if value is not None:
+            code = _intent_code(value)
+            return -1 if code is None else code
+    return None
+
+
+def _inherited_intent(metadata: tx.Any, like: tx.Any) -> int:
+    """Return the intent code that a header gets when none is given.
+
+    The intent is that of the metadata, or else that of `like`, which is
+    copied only onto a header without an intent.
+    """
+    code = _intent_code(getattr(metadata, "intent", None)) or 0
+    if code == 0 and like is not None:
+        header = _like_header(like)
+        if header is not None:
+            code = _nifti_intent(header)
+    return code
+
+
+def _intent_code(value: tx.Any) -> tx.Optional[int]:
+    """Return the NIfTI code of an intent name or code, or `None`."""
+    if value is None:
+        return None
+    for key in (str(value), value):
+        try:
+            return int(nb.nifti1.intent_codes.code[key])
+        except (KeyError, TypeError):
+            continue
+    try:
+        return int(nb.nifti1.intent_codes.code[int(value)])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _holds_fsl_coefficients(image: NiftiImage) -> bool:
+    """Return whether the values of an image are FSL spline coefficients.
+
+    The header of the image says so with its intent code. An image built
+    from another image keeps only its metadata, whose `intent` field says
+    so instead.
+    """
+    metadata = image.metadata
+    raw = getattr(metadata, "raw", None)
+    if raw is not None:
+        return _nifti_intent(raw.header) in _NIFTI_FSL_COEFFICIENT_INTENTS
+    return str(getattr(metadata, "intent", None)) in _FSL_COEFFICIENT_NAMES
+
+
+_FSL_COEFFICIENT_NAMES = frozenset(
+    {
+        IntentEnum.fnirt_cubic_spline_coef.value,
+        IntentEnum.fnirt_dct_coef.value,
+        IntentEnum.fnirt_quad_spline_coef.value,
+    }
+)
+"""The values of the `intent` field that name FSL coefficient fields."""
 
 
 def _nifti_to_transformations(
@@ -938,6 +1340,8 @@ def _nifti_encoded(
     overrides: tx.Mapping[str, tx.Any],
     metadata: tx.Optional[NiftiMetadata],
     fields: tx.Mapping[str, tx.Any],
+    dispvect: bool = False,
+    fsl_layout: bool = False,
 ) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
     """Encode the pending state of an image into `rawdata` and a new record.
 
@@ -952,7 +1356,11 @@ def _nifti_encoded(
     new header when the data have the shape that it records, so that they
     are kept as they are stored. When an override changes the data type
     or the scaling, `rawdata` is a proxy of the voxels as the file stores
-    them, as `_stored_parts` returns it.
+    them, as `_stored_parts` returns it. With `dispvect`, the header gets
+    the DISPVECT intent, because the writer has re-expressed the values
+    of the image in the world of the preferred transformation. With
+    `fsl_layout`, a field that keeps the FSL intent of its own header is
+    laid out as FSL writes it.
 
     Raises
     ------
@@ -985,12 +1393,35 @@ def _nifti_encoded(
         header=header,
         like=like,
         overrides=overrides,
+        intent=_NIFTI_INTENT_DISPVECT if dispvect else None,
     )
     _keep_given_fields(nifti, fields)
+    if fsl_layout:
+        nifti = _in_fsl_layout(nifti)
     stored = None if image.metadata is None else image.metadata.raw
     if kept and header is not None and stored is not None:
         _keep_geometry(nifti.header, stored.header, overrides)
     return _stored_parts(nifti)
+
+
+def _in_fsl_layout(nifti: _NiftiObject) -> _NiftiObject:
+    """Return a NIfTI image with an FSL intent in the layout of FSL.
+
+    FSL writes its fields as 4-D volumes whose fourth axis holds the
+    components, and it reads only the first volume of a 5-D file whose
+    fourth axis has one entry. The encoder places the components of an
+    image on the fifth axis, as the NIfTI standard does, so a field that
+    keeps an FSL intent is laid out again as FSL writes it.
+    """
+    shape = tuple(int(d) for d in nifti.shape)
+    intent = _nifti_intent(nifti.header)
+    if intent not in _NIFTI_FSL_INTENTS or len(shape) != 5 or shape[3] != 1:
+        return nifti
+    header = nifti.header.copy()
+    flat = (*shape[:3], shape[4])
+    header.set_data_shape(flat)
+    dataobj = nifti.dataobj.reshape(flat)
+    return type(nifti)(dataobj, None, header)
 
 
 def _nifti_written(

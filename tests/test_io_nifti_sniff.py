@@ -1,8 +1,10 @@
 """Tests of the NIfTI sniffer on NIfTI and other files.
 
 The sniffer checks the magic before nibabel, which would parse MGH, PNG or
-LTA files as a header and warn (#258).
+LTA files as a header and warn.
 """
+
+# The warning of nibabel is issue #258.
 
 import gzip
 import warnings

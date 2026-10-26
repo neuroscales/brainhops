@@ -752,7 +752,7 @@ class PillowImage(
         image that cannot be stored leaves no file behind, and a local file
         is replaced at once. When the lazy array of the image reads the
         file that is written, the image is consolidated in place instead,
-        so that it holds what the file holds (#426), and its lazy array
+        so that it holds what the file holds, and its lazy array
         reads the new file.
 
         Parameters

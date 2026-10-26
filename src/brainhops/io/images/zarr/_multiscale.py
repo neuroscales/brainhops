@@ -486,8 +486,8 @@ class OmeZarrImage(
                         "translate each axis, which an OME-NGFF 0.6 dataset "
                         "cannot hold. Give the levels a scale and a "
                         "translation, and the multiscale image the rest of "
-                        "the placement. Splitting it when writing is tracked "
-                        "in neuroscales/brainhops#447."
+                        "the placement. Splitting it when writing is not "
+                        "implemented."
                     )
                 placements.append(geometries[index])
                 entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
@@ -655,8 +655,7 @@ def _shared_flip(
             "The levels of this image flip different axes, so the flip "
             "cannot be moved to a placement that they share, and an "
             "OME-NGFF dataset only holds a positive scale. Splitting the "
-            "geometry of the levels when writing is tracked in "
-            "neuroscales/brainhops#447."
+            "geometry of the levels when writing is not implemented."
         )
     return signs[0]
 

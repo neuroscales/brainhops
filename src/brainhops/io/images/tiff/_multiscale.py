@@ -512,7 +512,7 @@ class TiffMultiScaleImage(
         bytes of its file, and any other pyramid is encoded by tifffile,
         as [`TiffImage.to_filename`][] describes. When the lazy arrays of
         the pyramid read the file that is written, the pyramid then holds
-        what the file holds (#426): its `rawdata` is a new tuple of lazy arrays
+        what the file holds: its `rawdata` is a new tuple of lazy arrays
         of the new file, and its record is read from it.
 
         Parameters

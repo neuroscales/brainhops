@@ -1,5 +1,5 @@
 """
-Exact conversions into the file formats, and their refusals (#343).
+Exact conversions into the file formats, and their refusals.
 
 The converters of the data model rebuild a transformation as whatever
 class they are asked for and keep its parameters, which is called
@@ -9,7 +9,7 @@ fields. Such a class checks that its endpoints are compatible with its
 systems, so a relabel between other systems fails with a
 `ConversionError` when the class is built. The exact converters of
 NIfTI and NiftyReg bridge the endpoints instead, so that an affine to
-LPS is flipped into RAS. A format without an exact converter (#312),
+LPS is flipped into RAS. A format without an exact converter,
 such as LTA or a NiftyReg field, registers for each family it holds one
 shared converter that relabels, and only when the systems of the
 transformation are not known or are compatible with those of the
@@ -21,6 +21,8 @@ one conversion. A format that is converted to its own class is changed
 by the rules of its family, as any other transformation of that family
 is.
 """
+
+# The exact conversions are issue #343.
 
 from pathlib import Path
 
@@ -417,6 +419,7 @@ def test_an_affine_without_systems_is_relabelled_as_an_lta() -> None:
         np.testing.assert_array_equal(lta.matrix, MATRIX[:-1])
 
 
+# These are the formats of issue #312.
 NO_EXACT_CONVERTER = [
     LtaTransformation,
     FnirtWarpField,
@@ -424,7 +427,7 @@ NO_EXACT_CONVERTER = [
     NiftyRegDisplacementField,
     M3zMorph,
 ]
-"""The formats of #312, whose converters refused every family."""
+"""The formats without an exact converter, which refuse every family."""
 
 
 @pytest.mark.parametrize(

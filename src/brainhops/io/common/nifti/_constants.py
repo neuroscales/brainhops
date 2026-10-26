@@ -43,6 +43,10 @@ _NIFTI_SPECIFIC_AXES = {
     2009: _AXES_DISP,  # FSL_QUADRATIC_SPLINE_COEFFICIENTS
 }
 
+# FSL writes its fields as 4-D volumes whose fourth axis holds the three
+# components, rather than on the fifth axis as the NIfTI standard does.
+_NIFTI_FSL_4D_AXES = {3: Axis("c", "displacement", unit=_INDEX)}
+
 
 _NIFTI_FIELD_INTENTS = frozenset(
     {
@@ -64,6 +68,14 @@ sniffer score itself instead of relying on an arbitrary precedence.
 _NIFTI_FSL_INTENTS = frozenset({2006, 2007, 2008, 2009})
 """FSL field intent codes, left to the FSL readers because the generic field
 reader does not decode FSL storage conventions.
+"""
+
+_NIFTI_FSL_COEFFICIENT_INTENTS = frozenset({2007, 2008, 2009})
+"""FSL intent codes of the spline and DCT coefficient fields.
+
+The array of such a file holds coefficients on a grid of knots, which only
+a header with the parameters of the spline describes, so a NIfTI image
+cannot write them in the frame of another intent.
 """
 
 _NIFTI_INTENT_NONE = 0
