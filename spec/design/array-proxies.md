@@ -315,30 +315,86 @@ from the first range to the last one and keeps only what the ranges
 select. Its `stored` description is the source and the byte range of
 the data, which a writer copies when the target stores the same layout.
 
-A `StridedProxy` takes a `cache` option, which is false by default.
-The cache holds only what the proxy computes to decode a compressed or
-encoded file, and never the values of a file that can be read in
-place. A local file that is not compressed is memory-mapped, and the
-operating system already caches its pages.
+#### The cache of a compressed source
 
-- For a codec that cannot seek, such as bzip2, xz, the text encodings
-  of NRRD or the packed bits of MRtrix, the cache holds the decoded
-  bytes, so that Dask does not decode the file once for each chunk.
-- For gzip read through indexed_gzip, the cache holds the index of
-  seek points that indexed_gzip builds, which is small. Without it,
-  each read builds the index again, which costs a decompression of the
-  file up to the values read.
+The root proxy holds the cache. Indexing or transposing a stored proxy
+wraps it in an `IndexedProxy`, so every view of a file shares the same
+root, and the root is the only proxy that reads bytes. Two loads of the
+same file build two roots, which have separate caches. The cache never
+holds the values of a file that can be read in place. A local file that
+is not compressed is memory-mapped, and the operating system already
+caches its pages.
 
-Because only compressed and encoded files are cached, and such files
-cannot be written in part (#479), a write through a proxy never makes
-a cache stale. A file written again by other code is detected by its
-size and its modification time, which the proxy checks before it uses
-the cache. The cache belongs to the source, so a proxy derived from
-another one by indexing shares the cache of its parent. The cache is
-dropped when the proxy is pickled, so each Dask worker process fills
-its own, and threads share one cache through a lock. The option breaks
-the rule that a proxy keeps nothing between reads, which is why it is
-off by default.
+For a gzip or zlib stream, the cache holds checkpoints. A checkpoint is
+the state of the decompressor at a given position of the decoded
+stream. Python's `zlib.decompressobj` gives this state: its
+`decompress` method accepts a `max_length` that stops at an exact
+decoded byte, and its `copy` method saves the state at that byte. The
+checkpoints are placed at the first byte of each block that the root
+gives Dask, because that is where a read usually starts. A read starts
+from the last checkpoint before its first byte, so a selection that
+does not start on a block boundary decompresses at most one extra
+block. A read records a checkpoint at each block boundary that it
+passes. The index of indexed_gzip is not used, because it places its
+checkpoints at a fixed spacing that cannot be aligned with the blocks.
+
+A checkpoint exists only after a read has passed its position. When
+Dask reads several blocks at once from its threads, the first reads
+therefore all start from the beginning of the stream. The root avoids
+this by building every checkpoint in a single pass, under a lock, the
+first time that a block other than the first one is read. The threads
+of one process share the checkpoints through the root.
+
+The state of a `zlib` decompressor cannot be pickled, so the
+checkpoints are dropped when the root is pickled, and each worker
+process builds its own. A checkpoint that can be sent to another
+process would hold a position in the compressed stream and the 32 KiB
+window of decoded bytes that precede it, as the `zran` example of zlib
+does. Python's `zlib` cannot resume decompression at a position that
+does not fall on a byte boundary, and most positions between two
+deflate blocks do not, so such checkpoints are left for later work.
+
+The decompressors of bzip2 and xz in the standard library cannot save
+their state, so these formats have no checkpoints. A codec that cannot
+seek, such as bzip2, xz, the text encodings of NRRD and the packed bits
+of MRtrix, either decodes the stream again for each read or keeps the
+decoded bytes. Keeping them costs the memory of the whole decoded
+array, so it is an option of the root, which is false by default.
+
+A stream that the caller passes and that cannot seek is read once into
+memory. When it holds gzip or zlib data, the root keeps the encoded
+bytes and builds checkpoints over them, which costs the compressed size
+rather than the decoded size. Otherwise, the root keeps the decoded
+bytes. A stream that is neither compressed nor seekable is kept as it
+is.
+
+Before it uses the cache, the root checks that the file has not been
+written again, by comparing its size and its modification time with the
+values that it recorded. Compressed files cannot be written in part
+(#479), so a write through a proxy never makes the cache stale.
+
+#### The blocks of a compressed source
+
+gzip, bzip2 and xz decompress strictly in order, so splitting a
+compressed array into several Dask blocks never decompresses it in
+parallel. Without checkpoints, block `k` decompresses every block
+before it, and the total work grows with the square of the number of
+blocks. With checkpoints, the total work is that of one read. Splitting
+the array still lowers the peak memory of a read, which matters for a
+large series, and lets the work that follows the read run on several
+blocks at once. A single read followed by `rechunk` gives the second
+benefit too, at the cost of holding the whole array in one task.
+
+A compressed source is therefore read as a single block by default.
+When its decoded size exceeds a threshold, the root gives slabs of the
+axis with the largest stride and relies on its checkpoints. The
+threshold is a multiple of the option `array.chunk-size` of Dask, or a
+value that the caller gives. A local file that is not compressed keeps
+its slabs, because it is memory-mapped and its blocks are cheap to read
+in parallel.
+
+The cache and the single block of a compressed source are not
+implemented yet. They are tracked in issues of their own.
 
 #### Remote sources
 
@@ -349,8 +405,9 @@ The stream that fsspec returns can seek, and each read after a seek
 becomes an HTTP request for a range of bytes, so `StridedProxy` reads
 the merged ranges of a selection without downloading the whole file. A
 remote file cannot be memory-mapped. A compressed remote file is read
-through the same decompressors, and gzip benefits most from the cached
-index, because each decompression downloads the file again.
+through the same decompressors, and gzip benefits most from the
+checkpoints of the cache, because each decompression downloads the file
+again.
 
 The proxy does not cache remote bytes itself. fsspec already provides
 caches, either on the stream (the `cache_type` option) or as a link of
@@ -470,11 +527,12 @@ range of bytes. An axis of length one is never that axis, because it
 holds a single slab. A NIfTI or MGH series is therefore split into
 whole volumes, and a NIfTI vector field of shape `(X, Y, Z, 1, C)` into
 whole components. It has no cache, so a compressed file is decompressed
-from its start for each block that Dask reads, which indexed_gzip makes
-cheap when it is installed. Its constructor is built from its fields,
-which convert their arguments to their types, and the MRtrix and AFNI
-proxies add the record of their file as a field and build themselves
-from it with `from_record`. Status: implemented.
+from its start for each block that Dask reads. indexed_gzip, when it is
+installed, makes seeking cheap only within one read, because its index
+is lost when the stream is closed. Its constructor is built from its
+fields, which convert their arguments to their types, and the MRtrix
+and AFNI proxies add the record of their file as a field and build
+themselves from it with `from_record`. Status: implemented.
 
 The NIfTI and MGH readers parse the header with nibabel and build the
 proxy from it with `from_header`: the shape, the stored type with its
