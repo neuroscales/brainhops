@@ -15,9 +15,6 @@ from brainhops._core.affines import to_homogeneous
 from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
 
-# io
-from brainhops.io.common.nifti._files import _read
-
 # ----------------------------------------------------------------------
 #   VECTOR FIELDS
 # ----------------------------------------------------------------------
@@ -34,7 +31,7 @@ def _field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     The singleton time axis of a five-dimensional array is dropped, and
     any other array is returned as it is.
     """
-    data = _read(raw)
+    data = raw
     shape = tuple(int(d) for d in data.shape)
     if len(shape) == 5 and shape[3] == 1:
         data = data[:, :, :, 0, :]

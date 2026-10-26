@@ -8,7 +8,6 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
-from nibabel.arrayproxy import ArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 from nibabel.volumeutils import array_from_file, array_to_file
 
@@ -26,7 +25,7 @@ from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import same_file, write_file
+from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -48,6 +47,7 @@ from brainhops.io.common.freesurfer import (
 from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
 from brainhops.io.common.mgh import MghMetadata, MghRaw
 from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
+from brainhops.io.common.mgh._data import _MghProxy, reads_mgh
 from brainhops.io.common.mgh._metadata import _encode as _encode_vocabulary
 from brainhops.io.common.mgh._raw import (
     _compressed_name,
@@ -101,8 +101,8 @@ class MghImage(
     An MGH image holds everything that its file stores beside the voxels
     as [`MghMetadata`][], whose record is an [`MghRaw`][], and the voxels
     as stored in `rawdata`. When the image is read from a file,
-    `rawdata` is a nibabel proxy, which reads the voxels only when they
-    are needed, and `data` is decoded from it on first access. The
+    `rawdata` is a lazy array, which reads the voxels only when they are
+    needed, and `data` is decoded from it on first access. The
     voxels are in Fortran order, and the data are indexed `(x, y, z)` or
     `(x, y, z, frames)`, where the frames form a time axis.
 
@@ -146,9 +146,9 @@ class MghImage(
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
-    After a read, `rawdata` is a nibabel proxy. `rawdata` describes the
-    file as it was read, or as the image was last consolidated, so
-    assigning `data` leaves it as it is.
+    After a read, `rawdata` is a lazy array of the voxels of the file.
+    `rawdata` describes the file as it was read, or as the image was
+    last consolidated, so assigning `data` leaves it as it is.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
@@ -328,17 +328,20 @@ class MghImage(
     ) -> "MghImage":
         """Read an image from the path of an MGH or MGZ file.
 
-        A local file whose name matches its content is handed to nibabel
-        by name, so that nibabel opens it whenever the voxels are read and
-        can memory-map them. Any other file is read into memory.
+        A local file is kept by its name, so that the lazy array of the
+        voxels opens it whenever they are read, and memory-maps them when
+        the file is not compressed. A remote file is read into memory.
 
         Parameters
         ----------
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of the nibabel proxy, which are `mmap` and
-            `keep_file_open`. Other options are refused.
+            The reader options, which nibabel's readers also take.
+            `mmap` tells whether the voxels of a local file that is not
+            compressed are memory-mapped. `keep_file_open` is accepted
+            and ignored, because the lazy array never keeps a file open.
+            Other options are refused.
 
         Returns
         -------
@@ -363,8 +366,8 @@ class MghImage(
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MghImage":
         """Read an image from an open MGH or MGZ stream.
 
-        The record is read at once, and the proxy reads the voxels from
-        the stream when they are needed, so the stream must stay open
+        The record is read at once, and the lazy array reads the voxels
+        from the stream when they are needed, so the stream must stay open
         while the data may be read. A stream that cannot seek is first
         read into memory.
 
@@ -373,8 +376,11 @@ class MghImage(
         file : BinaryIO
             The stream, which may be compressed with gzip.
         **kwargs : Any
-            Options of the nibabel proxy, which are `mmap` and
-            `keep_file_open`. Other options are refused.
+            The reader options, which nibabel's readers also take.
+            `mmap` tells whether the voxels of a local file that is not
+            compressed are memory-mapped. `keep_file_open` is accepted
+            and ignored, because the lazy array never keeps a file open.
+            Other options are refused.
 
         Returns
         -------
@@ -395,9 +401,12 @@ class MghImage(
     ) -> "MghImage":
         """Build an image from a nibabel MGH image or header.
 
-        The voxels of an image become `rawdata` as they are, and a copy of its
-        header becomes the record of the metadata, without tags. A header
-        alone gives an image without data.
+        The voxels of an image become `rawdata`, and a copy of its header
+        becomes the record of the metadata, without tags. A header alone
+        gives an image without data. The array proxy of an image that
+        nibabel read from a file is replaced by the lazy array that
+        [`from_filename`][] builds for that file, and any other array is
+        kept as it is.
 
         Parameters
         ----------
@@ -417,7 +426,7 @@ class MghImage(
             If `mgh` is neither an MGH image nor an MGH header.
         """
         if isinstance(mgh, _mgh.MGHImage):
-            raw, header = mgh.dataobj, mgh.header
+            raw, header = _MghProxy.from_nibabel(mgh.dataobj), mgh.header
         elif isinstance(mgh, _mgh.MGHHeader):
             raw, header = None, mgh
         else:
@@ -1122,7 +1131,7 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
 
 def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
     """Tell whether a lazy array of voxels reads a file by its name."""
-    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
+    return reads_mgh(raw, file)
 
 
 def _stored_voxels(data: ArrayProtocol, dtype: np.dtype) -> ArrayProtocol:

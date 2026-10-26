@@ -238,28 +238,39 @@ SPATIAL = (6, 5, 8)
 """The spatial shape of the NIfTI and MGH files."""
 
 
-def _slab_chunks(shape: tuple, itemsize: int, budget: int) -> tuple:
-    """Return whole slices along the third axis, as many as fit."""
-    slice_bytes = int(np.prod(shape[:2] + shape[3:])) * itemsize
-    slices = max(1, budget // slice_bytes)
-    return shape[:2] + (min(slices, shape[2]),) + shape[3:]
+@pytest.mark.parametrize("extension", [".nii", ".nii.gz"])
+def test_nifti_volume_is_read_in_whole_slices(
+    tmp_path: Path, extension: str
+) -> None:
+    # The last axis is stored slowest, so a block holds whole slices.
+    nb = pytest.importorskip("nibabel")
+    values = np.random.default_rng(0).random(SPATIAL).astype("float32")
+    path = tmp_path / f"image{extension}"
+    nb.save(nb.Nifti1Image(values, np.eye(4)), str(path))
+    budget = 3 * 6 * 5 * 4
+    with dask.config.set({"array.chunk-size": budget}), backend("dask"):
+        data = io.images.load(path).data
+    assert isinstance(data, da.Array)
+    assert data.chunksize == (6, 5, 3)
+    np.testing.assert_array_equal(data.compute(), values)
 
 
 @pytest.mark.parametrize("extension", [".nii", ".nii.gz"])
-def test_nifti_image_is_read_in_whole_slices(
+def test_nifti_series_is_read_in_whole_volumes(
     tmp_path: Path, extension: str
 ) -> None:
+    # The volumes are stored one after the other, so a block holds whole
+    # volumes and reads one contiguous range of bytes.
     nb = pytest.importorskip("nibabel")
-    values = np.random.default_rng(0).random(SPATIAL + (2,))
+    values = np.random.default_rng(0).random(SPATIAL + (4,))
     values = values.astype("float32")
     path = tmp_path / f"image{extension}"
     nb.save(nb.Nifti1Image(values, np.eye(4)), str(path))
-    budget = 3 * 6 * 5 * 2 * 4
+    budget = 2 * 6 * 5 * 8 * 4
     with dask.config.set({"array.chunk-size": budget}), backend("dask"):
-        image = io.images.load(path)
-        data = image.data
+        data = io.images.load(path).data
     assert isinstance(data, da.Array)
-    assert data.chunksize == _slab_chunks(values.shape, 4, budget)
+    assert data.chunksize == SPATIAL + (2,)
     np.testing.assert_array_equal(data.compute(), values)
 
 
@@ -276,7 +287,7 @@ def test_mgh_image_is_read_in_whole_slices(tmp_path: Path) -> None:
     np.testing.assert_array_equal(data.compute(), values)
 
 
-def test_nifti_field_is_read_in_whole_slices(tmp_path: Path) -> None:
+def test_nifti_field_is_read_in_whole_components(tmp_path: Path) -> None:
     nb = pytest.importorskip("nibabel")
     from brainhops.io.transformations.nifti import NiftiRASDisplacementField
 
@@ -286,16 +297,17 @@ def test_nifti_field_is_read_in_whole_slices(tmp_path: Path) -> None:
     image.header.set_intent(1006)
     path = tmp_path / "field.nii.gz"
     nb.save(image, str(path))
-    budget = 4 * 6 * 5 * 3 * 4
+    # The components are stored one after the other, so a block holds
+    # whole components.
+    budget = 2 * 6 * 5 * 8 * 4
     with dask.config.set({"array.chunk-size": budget}), backend("dask"):
         field = NiftiRASDisplacementField.from_filename(path)
         stored = field.data
         displacements = field.transformations[1].data
     assert isinstance(stored, da.Array)
-    assert stored.chunksize == (6, 5, 4, 3)
-    # The rotation into voxel units is applied block by block.
+    assert stored.chunksize == SPATIAL + (2,)
+    # The rotation into voxel units keeps the data lazy.
     assert isinstance(displacements, da.Array)
-    assert displacements.chunksize == (6, 5, 4, 3)
     expected = vectors[:, :, :, 0, :] / np.array([2.0, 3.0, 4.0])
     np.testing.assert_allclose(displacements.compute(), expected, rtol=1e-6)
 

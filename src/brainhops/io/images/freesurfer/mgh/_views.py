@@ -2,33 +2,25 @@
 stores, and encoded back.
 
 An MGH image stores its voxels as the data model holds them: three
-spatial axes and an optional axis of frames, in Fortran order. The pair
-of functions below is therefore the identity, except that a nibabel
-proxy, which reads the voxels of the file, is wrapped in a lazy array of
-brainhops. The two functions are pure and invert each other, so that
-`_image_to_model(_image_to_disk(data))` gives `data` back.
+spatial axes and an optional axis of frames, in Fortran order. The lazy
+array of a file already presents them in this order, so the pair of
+functions below is the identity. The two functions are pure and invert
+each other, so that `_image_to_model(_image_to_disk(data))` gives
+`data` back.
 """
-
-# dependencies
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.base._utils_proxies import NibabelProxy
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the file stores.
 
-    A nibabel proxy is wrapped in a lazy array (see
-    [`NibabelProxy`][brainhops.io.base._utils_proxies.NibabelProxy]),
-    which reads nothing until it is converted. The `data` of the image
-    reads it once, as the backend setting says. Any other array is
-    returned as it is.
+    The array is returned as it is, so that the lazy array of a file
+    stays lazy and reads nothing. The `data` of the image reads it once,
+    as the backend setting says.
     """
-    if not isinstance(raw, ArrayProxy):
-        return raw
-    return NibabelProxy(raw)
+    return raw
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:

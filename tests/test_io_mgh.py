@@ -22,6 +22,7 @@ from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
 from brainhops._core.backends import backend  # noqa: E402
+from brainhops._core.strided import StridedProxy  # noqa: E402
 from brainhops.datamodel.metadata import MetadataLossWarning  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem, RASmm  # noqa: E402
 from brainhops.datamodel.transformations import (  # noqa: E402
@@ -42,6 +43,7 @@ from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
     fs_vox2tkr,
     mat2orient,
 )
+from brainhops.io.common.mgh._data import _MghProxy  # noqa: E402
 from brainhops.io.common.nifti import NiftiMetadata  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghImage,
@@ -170,7 +172,7 @@ def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
         warnings.simplefilter("always", ResourceWarning)
         image = io.load(source)
         assert isinstance(image, MghImage)
-        assert nb.is_proxy(image.rawdata)
+        assert isinstance(image.rawdata, _MghProxy)
         assert np.array_equal(np.asarray(image.data), data)
         del image
         gc.collect()
@@ -707,7 +709,7 @@ def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: A
     back = MghImage.from_instance(nii)
     assert isinstance(back.metadata, MghMetadata)
     assert back.metadata.raw is None
-    assert not nb.is_proxy(back.rawdata)
+    assert not isinstance(back.rawdata, _MghProxy)
     # Within one format, the record and the proxy are still shared.
     copy = MghImage.from_instance(mgh)
     assert copy.metadata is mgh.metadata
@@ -933,25 +935,23 @@ def test_from_nibabel_keeps_the_header() -> None:
 
 
 class _CountedReads:
-    """Count the reads of the voxels of every nibabel proxy."""
+    """Count the reads of the voxels of every strided proxy."""
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
-        from nibabel.arrayproxy import ArrayProxy
-
         self.count = 0
-        unscaled = ArrayProxy._get_unscaled
-        array = ArrayProxy.__array__
+        read = StridedProxy._read
+        stored = StridedProxy.read_stored
 
-        def counted_unscaled(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        def counted_read(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
-            return unscaled(proxy, *args, **kwargs)
+            return read(proxy, *args, **kwargs)
 
-        def counted_array(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        def counted_stored(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
-            return array(proxy, *args, **kwargs)
+            return stored(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(ArrayProxy, "_get_unscaled", counted_unscaled)
-        monkeypatch.setattr(ArrayProxy, "__array__", counted_array)
+        monkeypatch.setattr(StridedProxy, "_read", counted_read)
+        monkeypatch.setattr(StridedProxy, "read_stored", counted_stored)
 
 
 @pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz", "vol.nii.gz"])

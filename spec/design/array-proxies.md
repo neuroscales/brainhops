@@ -6,13 +6,15 @@ also explains how the same design lets brainhops read NIfTI, MGH and
 MINC files without nibabel.
 
 The first two layers below are implemented in
-`brainhops._core.proxy`, and the fifteen proxies of brainhops
-derive from the base class. A first form of the third layer is
-implemented in `brainhops._core.strided` (see "What is implemented of
-the third layer" below), and the MRtrix, NRRD and AFNI proxies use it.
-The full third layer, the fourth layer, and the reading of NIfTI, MGH
-and MINC without nibabel, are not implemented yet. The steps are listed
-at the end of the memo.
+`brainhops._core.proxy`, and the proxies of brainhops derive from the
+base class. A first form of the third layer is implemented in
+`brainhops._core.strided` (see "What is implemented of the third layer"
+below), and the MRtrix, NRRD, AFNI, NIfTI and MGH proxies use it. The
+voxels of NIfTI and MGH files are therefore read without nibabel, but
+nibabel still parses and writes their headers. The full third layer,
+the fourth layer, the parsing of NIfTI and MGH headers without nibabel,
+and the reading of MINC without nibabel are not implemented yet. The
+steps are listed at the end of the memo.
 
 ## What a proxy is for
 
@@ -187,13 +189,16 @@ subclasses fall in three kinds, and each kind does one thing.
 - A `ScaledProxy` presents the values of another proxy multiplied by a
   factor and shifted by an offset, which broadcast against the shape,
   as in `slope * stored + inter`. It covers the single factor of
-  MRtrix and NIfTI, and the factor of each AFNI sub-brick. The stored
-  type alone decides the type of the scaled values, which is the
-  floating-point type that NumPy gives for the stored type and a
-  float32. The factors are cast to that type before they are applied,
-  because the type of a factor says how the header writes it, not how
-  precise the values are, and a float64 factor would otherwise make a
-  float64 copy of float32 values.
+  MRtrix and NIfTI, and the factor of each AFNI sub-brick. By default,
+  the stored type alone decides the type of the scaled values, which is
+  the floating-point type that NumPy gives for the stored type and a
+  float32. A format whose readers have always given another type passes
+  that type to the proxy. NIfTI does so, because nibabel scales NIfTI
+  values in float64, so that a scaled NIfTI image has type float64, or
+  complex128 for complex values. The factors are cast to the type of the
+  scaled values before they are applied, because the type of a factor
+  says how the header writes it, not how precise the values are, and a
+  float64 factor would otherwise make a float64 copy of float32 values.
 
 A fourth class, `PermutedProxy`, is a stored proxy that presents the
 axes of another stored proxy in another order. Transposing a stored
@@ -265,12 +270,9 @@ checks of the writers.
 The format views only index and transpose the proxy, so the `dataobj`
 of an object read from a file is a proxy in the layout of its `data`,
 and `data` reads it with the backend setting (see
-[Array backends](array-backends.md)). The NIfTI and MGH views wrap the
-proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
-The voxels of these files are stored contiguously, so that proxy
-prefers blocks of whole slices along the last spatial axis, with as
-many slices as fit in the block size of Dask (the option
-`array.chunk-size` of its configuration). This is implemented.
+[Array backends](array-backends.md)). The views of NIfTI and MGH images
+are the identity, because their proxies already present the voxels in
+the order of the data model. This is implemented.
 The views of TIFF and OpenSlide keep their own functions, because
 tifffile can give a memory map or a Dask array itself, and an
 OpenSlide level is kept as a Dask array when it is read lazily.
@@ -367,7 +369,7 @@ the second layer, applies a slope and an intercept that broadcast
 against the shape, which covers the single factor of NIfTI and MRtrix,
 the factor of each AFNI sub-brick and the slice-wise scaling of MINC.
 Because it scales only what it reads, a chunk costs only its own
-values. It is implemented, and MRtrix and AFNI use it.
+values. It is implemented, and MRtrix, AFNI and NIfTI use it.
 `ConcatenatedProxy` joins proxies along one axis. It covers NRRD data
 split into several files, AFNI sub-bricks of different types, and image
 stacks. Indexing a `ConcatenatedProxy` indexes only the proxies that the
@@ -423,8 +425,9 @@ function can do that check.
 
 ## Removing nibabel
 
-Once NIfTI, MGH and MINC read their data with the third layer, nibabel
-is used only to parse and write headers. The remaining work is the
+NIfTI and MGH read their data with the third layer, so nibabel parses
+and writes their headers only. Once MINC reads its data in the same
+way, nibabel is used only for headers. The remaining work is the
 following.
 
 - NIfTI-1 and NIfTI-2: the fixed header is a NumPy structured dtype
@@ -455,20 +458,44 @@ which may be negative, so the proxy holds a layout in its own fields
 rather than in a separate `Layout` class. Its constructor
 `StridedProxy.contiguous` builds the strides of an array stored in C or
 Fortran order and presented through an axis permutation and flips,
-which are the layouts of MRtrix, NRRD and AFNI. The proxy presents the
-stored values, and the MRtrix and AFNI readers wrap it in a
-`ScaledProxy` when their header scales them. A read gets the range of
+which are the layouts of MRtrix, NRRD, AFNI, NIfTI and MGH. The proxy
+presents the stored values, and the MRtrix, AFNI and NIfTI readers wrap
+it in a `ScaledProxy` when their header scales them. A read gets the range of
 bytes from the first value of the selected box to its last one, rather
 than a merged list of byte ranges, and a local file that is not
 compressed is memory-mapped. The blocks that it gives Dask are slabs of
 the axis with the largest stride, as many as fit in the option
 `array.chunk-size` of Dask, so that each block reads one contiguous
-range of bytes. It has no cache, so a compressed file is decompressed
+range of bytes. An axis of length one is never that axis, because it
+holds a single slab. A NIfTI or MGH series is therefore split into
+whole volumes, and a NIfTI vector field of shape `(X, Y, Z, 1, C)` into
+whole components. It has no cache, so a compressed file is decompressed
 from its start for each block that Dask reads, which indexed_gzip makes
 cheap when it is installed. Its constructor is built from its fields,
 which convert their arguments to their types, and the MRtrix and AFNI
 proxies add the record of their file as a field and build themselves
 from it with `from_record`. Status: implemented.
+
+The NIfTI and MGH readers parse the header with nibabel and build the
+proxy from it with `from_header`: the shape, the stored type with its
+byte order, and the offset of the voxels are those that nibabel reads,
+and the voxels are stored in Fortran order. The NIfTI proxy keeps the
+slope and the intercept of the header. They are read as nibabel reads
+them: a slope of zero or a slope that is not finite means that the
+voxels are not scaled, and the intercept is then ignored. When the
+slope and the intercept change the values, the reader wraps the proxy
+in a `ScaledProxy` of type float64, or complex128 for complex values,
+which gives the values and the type that nibabel gives. Structured
+values, such as RGB triplets, are never scaled. An MGH file is never
+scaled. A writer recognizes the lazy array of a whole NIfTI file, scaled
+by the factors of its header or not, with `whole_file`, and copies its
+stored voxels with the data type and the scaling of the header. A
+writer that writes over the file that a proxy reads finds the proxy as
+the `root` of the lazy array. An image built from a nibabel image whose
+`dataobj` is nibabel's array proxy gets the proxy of brainhops for the
+same file instead. The NIfTI proxy also reads the image file of a header
+and image pair, although the NIfTI reader reads single files only.
+Status: implemented.
 
 `ArrayProxy` is a `Magic` class of bagof without fields, and every proxy
 of brainhops declares its state as fields, so that its constructor is
@@ -490,9 +517,10 @@ shows its stored proxy and its selection. Status: implemented.
 The cases that do not fit a single block of fixed-size values are still
 decoded whole: packed `Bit` data of MRtrix, NRRD samples split between
 several files, encoded as text or preceded by skipped lines, and AFNI
-sub-bricks of several types. MINC keeps nibabel, which is now given the
+sub-bricks of several types. MINC keeps nibabel, which is given the
 selection, so a local MINC1 or MINC2 file that is not compressed is read
-in part.
+in part. Reading MINC1 with the third layer needs a reader of the NetCDF
+header that gives the offset of each variable.
 
 ## Order of the work
 
@@ -503,8 +531,9 @@ in part.
 2. Write `ByteSource`, `Layout` and `StridedProxy` in `brainhops._core`,
    without nibabel. A first `StridedProxy` is implemented, without
    `ByteSource`, `Layout`, the merged byte ranges and the cache.
-3. Move MRtrix, NRRD and AFNI onto the third layer. This step is
-   implemented for the cases that the first `StridedProxy` covers.
+3. Move MRtrix, NRRD, AFNI, NIfTI and MGH onto the third layer. This
+   step is implemented for the cases that the first `StridedProxy`
+   covers. NIfTI and MGH headers are still parsed by nibabel.
 4. Parse MGH headers without nibabel, which is the smallest header and
    tests the path from header to `StridedProxy`.
 5. Parse NIfTI headers without nibabel, then MINC1.

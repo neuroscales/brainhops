@@ -265,7 +265,9 @@ class AfniNiftiWarp(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of the nibabel readers, such as `mmap`.
+            Reader options, such as `mmap`, which tells whether the
+            array of a local file that is not compressed is
+            memory-mapped.
 
         Returns
         -------
@@ -288,7 +290,7 @@ class AfniNiftiWarp(
         file : BinaryIO
             The stream, which must stay open while the data may be read.
         **kwargs : Any
-            Options of the nibabel readers.
+            Reader options, which are ignored for a stream.
 
         Returns
         -------

@@ -56,6 +56,7 @@ from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ScaledProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._backends import dataproperty
@@ -263,8 +264,9 @@ from brainhops.io.transformations.trakem2._xform import (
 
 try:
     import nibabel as nb
-    from nibabel.arrayproxy import ArrayProxy
 
+    from brainhops.io.common.mgh._data import _MghProxy
+    from brainhops.io.common.nifti._data import _NiftiProxy
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
@@ -2136,7 +2138,7 @@ if nb is not None:
     _NIFTI = Exemplar(
         metadata=NiftiMetadata,
         suffix=".nii",
-        proxies=(ArrayProxy,),
+        proxies=(_NiftiProxy, ScaledProxy),
         to_model=_image_to_model,
         to_disk=_image_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -2999,6 +3001,7 @@ if nb is not None:
     EXEMPLARS[MghImage] = _NIFTI._replace(
         metadata=MghMetadata,
         suffix=".mgh",
+        proxies=(_MghProxy,),
         to_model=_mgh_to_model,
         to_disk=_mgh_to_disk,
         edit_record=_mgh_edit_record,
@@ -7094,7 +7097,7 @@ def test_an_untouched_nifti_keeps_its_extensions_and_description(
 def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
     source = _saved(NiftiImage, EXEMPLARS[NiftiImage], tmp_path)
     loaded = NiftiImage.load(source)
-    assert isinstance(loaded.rawdata, ArrayProxy)
+    assert isinstance(loaded.rawdata, _NiftiProxy)
     assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
     assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
     # Other metadata gives other transformations.

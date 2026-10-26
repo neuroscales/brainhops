@@ -1,7 +1,8 @@
 """A lazy array of fixed-size values laid out with strides in a file.
 
 Many formats store their voxels as fixed-size values at an offset of a
-file that may be compressed: MRtrix, NRRD and AFNI images, for example.
+file that may be compressed: NIfTI, MGH, MRtrix, NRRD and AFNI images,
+for example.
 [`StridedProxy`][] reads such values. It differs from a proxy that
 decodes the whole file because it reads only the bytes that a selection
 needs, and because it tells Dask to split the array into slabs of the
@@ -215,8 +216,9 @@ class StridedProxy(StoredProxy):
     def chunks(self) -> tx.Tuple[int, ...]:
         """The block shape: slabs of the axis with the largest stride.
 
-        A block holds every value of the other axes, and as many slabs as
-        fit in the block size of Dask, with at least one slab.
+        An axis of length one is not chosen, because it holds a single
+        slab. A block holds every value of the other axes, and as many
+        slabs as fit in the block size of Dask, with at least one slab.
         """
         shape = self._shape
         if not shape:
@@ -246,8 +248,14 @@ class StridedProxy(StoredProxy):
 
     @property
     def _slowest(self) -> int:
-        # The axis whose neighbours lie furthest apart in the stream.
-        return int(np.argmax([abs(s) for s in self.strides]))
+        # The axis whose neighbours lie furthest apart in the stream. An
+        # axis of length one has no neighbours, so its stride is ignored,
+        # unless every axis has length one.
+        reach = [
+            abs(stride) if size > 1 else -1
+            for size, stride in zip(self._shape, self.strides)
+        ]
+        return int(np.argmax(reach))
 
     # ------------------------------------------------------------------
     #   READING

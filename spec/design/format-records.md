@@ -145,9 +145,10 @@ For NIfTI, the first pass gives the classes the following bases.
 On a format object, `rawdata` is the only attribute that stores data. It
 holds the data as it is laid out in the file. After a read, `rawdata` is
 usually a lazy proxy, and once data has been assigned it is an array.
-The proxy types are nibabel's `ArrayProxy`, the existing
-`H5ArrayProxy` for HDF5, Zarr arrays, and a new proxy for raw binary
-blocks that knows their offset and compression.
+The proxy types are `StridedProxy`, which reads a block of fixed-size
+values at a known offset of a file that may be compressed, such as the
+voxels of NIfTI, MGH and MRtrix files, `H5ArrayProxy` for HDF5, and Zarr
+arrays.
 
 The public `data` attribute is a cached view of `rawdata`. Each format
 defines a pair of pure functions, `to_model` and `to_disk`, with
@@ -779,7 +780,8 @@ the ITK text and MATLAB formats and has no writer, and it moves with them
 in the fourth pass.
 
 The third pass moves MGH, AFNI, MRtrix, NRRD and MINC. MGH gets a
-record with its header and its tags, and uses nibabel's proxy. For the
+record with its header and its tags, and its voxels are read by
+`StridedProxy` (see [Lazy arrays of file data](array-proxies.md)). For the
 others, the private `_header` becomes the record, `dataobj` becomes
 `rawdata`, and the existing transpositions become `to_model` and
 `to_disk`. The transpositions that depend on the record live in the lazy

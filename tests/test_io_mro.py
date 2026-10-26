@@ -138,30 +138,32 @@ def test_the_generic_ladder_redispatches_through_cls() -> None:
 
 
 def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noqa: ANN001
-    """NiftiImage.from_file keeps the voxels lazy behind a nibabel proxy."""
+    """NiftiImage.from_file keeps the voxels lazy behind a NIfTI proxy."""
     import numpy as np
-    from nibabel.arrayproxy import ArrayProxy
+
+    from brainhops.io.common.nifti._data import _NiftiProxy
 
     img = nb.Nifti1Image(np.zeros((3, 4, 5), "float32"), np.eye(4))
     target = tmp_path / "scan.nii"
     nb.save(img, str(target))
 
     loaded = NiftiImage.from_file(target)
-    assert isinstance(loaded.rawdata, ArrayProxy), "the voxels were read"
+    assert isinstance(loaded.rawdata, _NiftiProxy), "the voxels were read"
     assert loaded.shape == (3, 4, 5)
 
 
 def test_loading_a_nifti_field_keeps_the_array_lazy(tmp_path) -> None:  # noqa: ANN001
-    """NiftiBasedTransformation.from_file keeps a nibabel proxy as well."""
+    """NiftiBasedTransformation.from_file keeps a NIfTI proxy as well."""
     import numpy as np
-    from nibabel.arrayproxy import ArrayProxy
+
+    from brainhops.io.common.nifti._data import _NiftiProxy
 
     field = NiftiRASCoordinateField(field=np.zeros((3, 4, 5, 3)))
     target = tmp_path / "field.nii"
     field.save(target)
 
     loaded = NiftiRASCoordinateField.from_file(target)
-    assert isinstance(loaded.rawdata, ArrayProxy), "the array was read"
+    assert isinstance(loaded.rawdata, _NiftiProxy), "the array was read"
     assert loaded.data.shape == (3, 4, 5, 3)
 
 
