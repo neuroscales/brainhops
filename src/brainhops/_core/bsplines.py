@@ -1,26 +1,31 @@
+# stdlib
 import functools
 import itertools
 import math
 from numbers import Real
 from types import ModuleType
 
+# dependencies
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 from bagof.hints.numpy import DTypeLike
 
-from brainhops._core.dependencies import da, np
-from brainhops._core.typing import Clip
-from brainhops.backends import (
+# brainhops
+from brainhops.datamodel.enums import BoundaryName
+
+# core
+from .backends import (
     _creation_options,
+    array_backend,
     backend,
     copy_array,
-    get_array_backend,
-    get_ndimage_backend,
+    ndimage_backend,
     promote_backends,
     to_backend,
     to_backend_of,
 )
-from brainhops.datamodel.enums import BoundaryName
+from .dependencies import da, np
+from .typing import Clip
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
@@ -203,8 +208,8 @@ def pull(
         The interpolated array, with shape `(*batch, *spatial_out)`.
     """
     backend = promote_backends(input, coords)
-    xp = get_array_backend(backend)
-    xd = get_ndimage_backend(xp)
+    xp = array_backend(backend)
+    xd = ndimage_backend(xp)
     input = to_backend(input, backend)
     coords = to_backend(coords, backend)
     if dtype is not None:
@@ -266,7 +271,7 @@ def _cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
     dtype = np.dtype(dtype)
     if values.dtype == dtype:
         return values
-    xp = get_array_backend(values)
+    xp = array_backend(values)
     if dtype.kind == "b":
         return xp.trunc(values).astype(dtype)
     if np.issubdtype(dtype, np.integer):
@@ -329,7 +334,7 @@ def pull_axes(
         come first, in their original order, and are followed by the
         spatial axes of the output.
     """
-    xp = get_array_backend(promote_backends(input, coords))
+    xp = array_backend(promote_backends(input, coords))
     axes = [int(a) % input.ndim for a in axes]
     ndim = len(axes)
     dest = list(range(input.ndim - ndim, input.ndim))
@@ -372,7 +377,7 @@ def spline_matrix(
     ArrayProtocol
         The matrix `W`, with shape `(n_out, n_in)`.
     """
-    xp = get_array_backend(coords_1d)
+    xp = array_backend(coords_1d)
     bound0 = bound if isinstance(bound, str) else 0.0
     basis = xp.eye(n_in)
     coords = xp.reshape(coords_1d, (-1, 1))
@@ -411,7 +416,7 @@ def pull_field(
         The interpolated field, with shape `(*batch, *spatial_out, ndim)`.
     """
     backend = promote_backends(field, coords)
-    xp = get_array_backend(backend)
+    xp = array_backend(backend)
     field = to_backend(field, backend)
     coords = to_backend(coords, backend)
     field = xp.moveaxis(field, -1, 0)
@@ -454,8 +459,8 @@ def coeff2value(
     # coefficients are the values.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
-    xp = get_array_backend(input)
-    xd = get_ndimage_backend(xp)
+    xp = array_backend(input)
+    xd = ndimage_backend(xp)
     # An ndim of 0 means that all axes are spatial, since zero spatial axes
     # would be meaningless for interpolation.
     ndim = ndim or input.ndim
@@ -509,7 +514,7 @@ def coeff2value_field(
     ArrayLike
         The values, with the same shape as `field`.
     """
-    xp = get_array_backend(field)
+    xp = array_backend(field)
     ndim = field.shape[-1]
     field = xp.moveaxis(field, -1, 0)
     field = coeff2value(field, degree, bound, inplace=inplace, ndim=ndim)
@@ -548,8 +553,8 @@ def value2coeff(
     # values are the coefficients.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
-    xp = get_array_backend(input)
-    xd = get_ndimage_backend(input)
+    xp = array_backend(input)
+    xd = ndimage_backend(input)
     # An ndim of 0 means that all axes are spatial, since zero spatial axes
     # would be meaningless for a spline filter.
     ndim = ndim or input.ndim
@@ -705,7 +710,7 @@ def _edge_terms(
     # backend of the slab, before anything is computed from them.
     u, v = (to_backend_of(factor, slab) for factor in pair)
     weights = xp.tensordot(v, slab, axes=([1], [axis]))
-    xp = get_array_backend(u)
+    xp = array_backend(u)
     shape = [1] * slab.ndim
     shape[axis] = -1
     terms = []
@@ -847,8 +852,8 @@ def _interpolating_coefficients(
     cval : float
         Value beyond the edges, used when `bound` is a number. The coefficients
     """
-    xp = get_array_backend(values)
-    xd = get_ndimage_backend(values)
+    xp = array_backend(values)
+    xd = ndimage_backend(values)
     lazy = da is not None and isinstance(values, da.Array)
     coeff = values
     all_ones = []
@@ -946,7 +951,7 @@ def value2coeff_field(
     ArrayLike
         The coefficients, with the same shape as `field`.
     """
-    xp = get_array_backend(field)
+    xp = array_backend(field)
     ndim = field.shape[-1]
     field = xp.moveaxis(field, -1, 0)
     field = value2coeff(field, degree, bound, inplace=inplace, ndim=ndim)

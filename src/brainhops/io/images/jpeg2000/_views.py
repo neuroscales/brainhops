@@ -10,13 +10,9 @@ lazy with Dask. The two functions are pure and invert each other, so
 that `_image_to_model(_image_to_disk(data))` gives `data` back.
 """
 
-# dependencies
-
-# internals
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
-
-# this format
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
@@ -35,4 +31,4 @@ def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     The rows come first, then the columns, then the samples.
     """
     perm = [1, 0] + list(range(2, len(data.shape)))
-    return get_array_backend(data).transpose(data, perm)
+    return array_backend(data).transpose(data, perm)

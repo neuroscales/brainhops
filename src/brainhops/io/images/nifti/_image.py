@@ -9,10 +9,12 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
-# internals
+# core
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
+
+# datamodel
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
@@ -28,13 +30,16 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
+
+# errors
+from brainhops.errors import ParserExistsError, WriterError
+
+# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
-    ParserExistsError,
-    WriterError,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
@@ -74,6 +79,11 @@ from brainhops.io.metadata._base import (
 
 # this format
 from ._views import _image_to_disk, _image_to_model
+
+# typing
+if tx.TYPE_CHECKING:
+    # import for mkdocstring cross ref
+    from brainhops.datamodel.metadata import metadata_loss_policy  # noqa: F401
 
 
 @register_format
@@ -513,8 +523,7 @@ class NiftiImage(
             always comes from this image.
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do with the metadata that the header cannot hold. By
-            default, the policy in effect (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+            default, the policy in effect (see [`metadata_loss_policy`][]).
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set

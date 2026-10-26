@@ -11,8 +11,7 @@ from abczarr import create
 from bagof.magic import NoRepr
 
 # core
-from brainhops import backends
-from brainhops._core import path
+from brainhops._core import backends, path
 from brainhops._core.dependencies import da
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, StoredProxy

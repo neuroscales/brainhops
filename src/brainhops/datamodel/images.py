@@ -8,10 +8,10 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import Forget, NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
+from brainhops._core.backends import BackendLike, DeviceLike
 from brainhops._core.magic import smart_replace
 from brainhops._core.properties import alias
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
-from brainhops.backends import BackendLike, DeviceLike
 
 from ._backends import (
     _BackendsMixin,

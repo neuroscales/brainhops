@@ -25,7 +25,7 @@ import typing_extensions as tx
 pytest.importorskip("tensorstore")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.transformations import Affine  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,

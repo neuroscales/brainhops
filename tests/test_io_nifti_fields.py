@@ -11,7 +11,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import available_backends, backend  # noqa: E402
+from brainhops._core.backends import backend, backends  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.datamodel._transformations import (  # noqa: E402
     tangents as _tangents,
@@ -169,7 +169,7 @@ def test_a_coordinates_field_drops_its_singleton_axis(tmp_path) -> None:  # noqa
         pytest.param(
             "dask",
             marks=pytest.mark.skipif(
-                "dask" not in available_backends(),
+                "dask" not in backends(),
                 reason="dask is not installed",
             ),
         ),

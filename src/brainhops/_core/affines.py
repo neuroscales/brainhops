@@ -20,15 +20,17 @@ __all__ = [
     "sqrtm",
 ]
 
+# stdlib
 from math import prod
 from types import ModuleType
 
+# dependencies
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 from numpy import broadcast_shapes
 
-from brainhops.backends import get_array_backend, promote_backends, to_backend
-
+# internal
+from .backends import array_backend, promote_backends, to_backend
 from .linalg import expm as _expm
 from .linalg import logm as _logm
 from .linalg import sqrtm as _sqrtm
@@ -44,7 +46,7 @@ def to_homogeneous(
     is then a tangent, that is, the generator of an affine transform, whose
     bottom row is zero.
     """
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     nd = matrix.shape[-1] - 1
     corner = 0 if tangent else 1
     pad = xp.asarray([[0] * nd + [corner]])
@@ -82,7 +84,7 @@ def inv(
     ArrayProtocol
         The compact inverses, with shape `(..., N, M+1)`.
     """
-    xp = get_array_backend(backend or A)
+    xp = array_backend(backend or A)
     A = xp.asarray(A)
     M, N = A.shape[-2:]
     N -= 1
@@ -121,7 +123,7 @@ def axis_scales(
     ArrayProtocol
         The scales, with shape `(..., N)`.
     """
-    xp = get_array_backend(backend or A)
+    xp = array_backend(backend or A)
     A = xp.asarray(A)
     linear = A[..., :-1]
     return (linear**2).sum(axis=-2) ** 0.5
@@ -169,7 +171,7 @@ def _matmul(
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     backend = backend or promote_backends(A, B)
-    xp = get_array_backend(backend)
+    xp = array_backend(backend)
     A = to_backend(A, backend)
     B = to_backend(B, backend)
 
@@ -242,7 +244,7 @@ def matvec(
     """
     backend = backend or promote_backends(A, b)
 
-    xp = get_array_backend(backend)
+    xp = array_backend(backend)
     A = xp.asarray(A, dtype=A.dtype)
     b = xp.asarray(b, dtype=A.dtype)
 
@@ -291,7 +293,7 @@ def lmdiv(
         # A system with a non-square linear part cannot be solved directly.
         return matmul(inv(A, backend=backend), B, backend=backend)
 
-    xp = get_array_backend(backend or A)
+    xp = array_backend(backend or A)
     A = xp.asarray(A, dtype=A.dtype)
     B = xp.asarray(B, dtype=A.dtype)
 
@@ -342,7 +344,7 @@ def rmdiv(
         # A system with a non-square linear part cannot be solved directly.
         return matmul(A, inv(B, backend=backend), backend=backend)
 
-    xp = get_array_backend(backend)
+    xp = array_backend(backend)
     A = xp.asarray(A, dtype=A.dtype)
     B = xp.asarray(B, dtype=A.dtype)
 

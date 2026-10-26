@@ -1147,7 +1147,7 @@ def test_a_selected_chain_is_encoded_as_the_only_chain(
 
 
 def test_decoded_fields_are_read_only(field_x5: Path) -> None:
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
 
     with backend("numpy"):
         vectors = io.load(field_x5)[0].displacement.data

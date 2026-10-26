@@ -13,8 +13,8 @@ holds them with shapes (X, Y, 2) and (X, Y, Z, 3).
 """
 
 # internals
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
 from brainhops.io.common.nifti._files import _read
 
 
@@ -52,5 +52,5 @@ def _itk_field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     if ndim not in (2, 3) or shape[-1] != ndim:
         return data
     singletons = (1,) * (4 - ndim)
-    xp = get_array_backend(data)
+    xp = array_backend(data)
     return xp.reshape(data, (*shape[:ndim], *singletons, ndim))

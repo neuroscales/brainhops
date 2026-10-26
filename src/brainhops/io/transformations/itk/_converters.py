@@ -46,16 +46,22 @@ A format that is converted to its own class is changed by the rules of
 any chain, which keep its type.
 """
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 
-from brainhops.backends import get_array_backend
+# core
+from brainhops._core.backends import array_backend
+
+# datamodel
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.errors import ConversionError
+
+# io
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
@@ -70,6 +76,7 @@ from brainhops.io.transformations.base._conversions import (
     world_pieces,
 )
 
+# this format
 from ._common import (
     ItkPrecision,
     ItkStruct,
@@ -255,7 +262,7 @@ def _displacement_block(parts: tx.Any, ndim: int) -> ItkStruct:
     direction = linear / spacing
     values = parts.field.values
     shape = tuple(int(n) for n in values.shape[:-1])
-    backend = get_array_backend(values)
+    backend = array_backend(values)
     rotate = backend.asarray(linear, dtype=values.dtype)
     world = backend.matmul(rotate, values[..., None])[..., 0]
     order = tuple(range(ndim - 1, -1, -1)) + (ndim,)

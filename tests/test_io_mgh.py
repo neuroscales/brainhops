@@ -21,7 +21,7 @@ from bagof.magic import replace  # noqa: E402
 from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.metadata import MetadataLossWarning  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem, RASmm  # noqa: E402
 from brainhops.datamodel.transformations import (  # noqa: E402

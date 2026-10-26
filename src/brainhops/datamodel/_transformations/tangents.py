@@ -1,20 +1,26 @@
+# stdlib
 import math
 from numbers import Integral, Real
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import InitVar, replace
 
+# core
 from brainhops._core.affines import expm as affine_expm
 from brainhops._core.affines import logm as affine_logm
 from brainhops._core.affines import to_compact, to_homogeneous
+from brainhops._core.backends import array_backend
 from brainhops._core.linalg import expm, logm, require_positive
 from brainhops._core.properties import alias, lazyproperty
 from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.errors import DomainError
 
+# transformations
 from .base import Transformation
 from .compute.compose import compose
 from .concrete import (
@@ -29,6 +35,7 @@ from .concrete import (
     require_endomorphism,
 )
 
+# typing
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 _TypeRef = tx.ClassVar[tx.Optional[tx.Type[Transformation]]]
 
@@ -378,7 +385,7 @@ class ScalingExponential(_TangentMixin, Scaling, on={"_log": True}):
         """
         if self.logscale is None:
             return None
-        xp = get_array_backend(self.logscale)
+        xp = array_backend(self.logscale)
         return xp.exp(self.logscale)
 
     @scale.setter
@@ -390,7 +397,7 @@ class ScalingExponential(_TangentMixin, Scaling, on={"_log": True}):
             # flips an axis has no tangent.
             what = f"The logarithm of this {self._tangentof.__name__}"
             require_positive(value, what)
-            xp = get_array_backend(value)
+            xp = array_backend(value)
             self.logscale = xp.log(value)
 
 
@@ -446,7 +453,7 @@ def _integrate_field(
 def _squaring_steps(velocity: ArrayProtocol) -> int:
     # Return the smallest number of squarings for which the first step moves
     # no point by more than `_FIRST_STEP` voxels.
-    xp = get_array_backend(velocity)
+    xp = array_backend(velocity)
     norm = float(xp.max(xp.sqrt((velocity**2).sum(axis=-1))))
     if not math.isfinite(norm):
         raise DomainError(

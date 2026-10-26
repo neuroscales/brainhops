@@ -8,8 +8,8 @@ from scipy.ndimage import map_coordinates
 
 from brainhops import io
 from brainhops._core import bsplines
+from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, pull_axes
-from brainhops.backends import backend
 from brainhops.cli import main
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.images import MultiScaleImage

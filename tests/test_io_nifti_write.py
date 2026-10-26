@@ -1159,7 +1159,7 @@ def test_a_nifti2_file_is_written_back_as_nifti2(tmp_path) -> None:  # noqa: ANN
 def test_read_data_is_read_only_and_assigned_data_is_written(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
 
     source = _write_image(tmp_path, "source.nii", np.zeros((3, 4, 5), "f4"))
     target = tmp_path / "copy.nii"

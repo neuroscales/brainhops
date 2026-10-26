@@ -45,7 +45,7 @@
 import numpy as np
 import typing_extensions as _tx
 
-from brainhops.backends import get_array_backend, get_ndimage_backend
+from brainhops._core.backends import array_backend, ndimage_backend
 
 
 def inverse3d(disp: np.ndarray) -> np.ndarray:
@@ -73,8 +73,8 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
     ValueError
         If the last dimension of `disp` does not have length 3.
     """
-    xp = get_array_backend(disp)
-    ndi = get_ndimage_backend(xp)
+    xp = array_backend(disp)
+    xd = ndimage_backend(xp)
     disp = xp.asanyarray(disp)
     out = xp.full_like(disp, np.nan)
 
@@ -105,8 +105,8 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
         wgt = msk.astype(np.float64)
         sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM of one voxel
         sigma = (sigma, sigma, sigma, 0)
-        smo = ndi.gaussian_filter(out, sigma=sigma, mode="nearest")
-        wgt = ndi.gaussian_filter(wgt, sigma=sigma, mode="nearest")
+        smo = xd.gaussian_filter(out, sigma=sigma, mode="nearest")
+        wgt = xd.gaussian_filter(wgt, sigma=sigma, mode="nearest")
         smo /= wgt
         out[~msk0] = smo[~msk0]
         msk = xp.isfinite(out)
@@ -130,7 +130,7 @@ def _process_tetrahedron(
     the tetrahedra in the source and target domains, and `out` is written
     in place.
     """
-    xp = get_array_backend(src)
+    xp = array_backend(src)
     idx = xp.argsort(dst[:, :, Z : Z + 1], axis=VERTEX_AXIS)
     ttr = xp.take_along_axis(dst, idx, axis=VERTEX_AXIS)
 
@@ -191,7 +191,7 @@ def _process_triangle(
     the vertices of the triangles in the target domain. The other arguments
     are the same as in `_process_tetrahedron`.
     """
-    xp = get_array_backend(src)
+    xp = array_backend(src)
 
     idx = xp.argsort(tri[:, :, Y : Y + 1], axis=VERTEX_AXIS)
     tri = xp.take_along_axis(tri, idx, axis=VERTEX_AXIS)
@@ -241,7 +241,7 @@ def _process_segment(
     endpoints in the target domain. The other arguments are the same as in
     `_process_triangle`.
     """
-    xp = get_array_backend(src)
+    xp = array_backend(src)
 
     idx = xp.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
     seg = xp.take_along_axis(seg, idx, axis=VERTEX_AXIS)
@@ -271,7 +271,7 @@ def _barycoord(x: np.ndarray, tetra: np.ndarray) -> np.ndarray:
     # Return the barycentric coordinates, of shape (N, 4), of the points
     # `x`, of shape (N, 3), with respect to the tetrahedra `tetra`, of
     # shape (N, 4, 3).
-    xp = get_array_backend(x)
+    xp = array_backend(x)
 
     v0 = tetra[:, 0]
     v1 = tetra[:, 1]
@@ -293,7 +293,7 @@ def _barycoord(x: np.ndarray, tetra: np.ndarray) -> np.ndarray:
 
 
 def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
-    xp = get_array_backend(tri)
+    xp = array_backend(tri)
     out = xp.empty_like(tri, shape=(len(tri), 2, 1))
 
     p1x, p1y = tri[:, 0].T
@@ -309,7 +309,7 @@ def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
-    xp = get_array_backend(dst)
+    xp = array_backend(dst)
     # Return the triangle in which the plane `z` cuts each tetrahedron,
     # when the plane lies between the lowest vertex and the next one. The
     # corners of the triangle lie on the three edges that leave the lowest
@@ -336,7 +336,7 @@ def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
 
 
 def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
-    xp = get_array_backend(dst)
+    xp = array_backend(dst)
     # This function is the counterpart of `_find_lower_triangle` for a
     # plane that lies between the two highest vertices. The corners of
     # the triangle lie on the three edges that leave the highest vertex.
@@ -362,7 +362,7 @@ def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
 
 
 def _find_quadrilateral(tetra: np.ndarray, z: np.ndarray) -> np.ndarray:
-    xp = get_array_backend(tetra)
+    xp = array_backend(tetra)
 
     out = xp.empty_like(tetra, shape=(len(tetra), 4, 2))
 
@@ -395,7 +395,7 @@ def _truncate_and_stack3d(
     Each input has shape (Nx, Ny, Nz, 3). The result has shape (N, 4, 3),
     where N is the number of voxels in the truncated shape.
     """
-    xp = get_array_backend(a)
+    xp = array_backend(a)
     vertices = (a, b, c, d)
     nx, ny, nz = (min(x.shape[i] for x in vertices) for i in range(3))
     vertices = (vertex[:nx, :ny, :nz].reshape(-1, 3) for vertex in vertices)

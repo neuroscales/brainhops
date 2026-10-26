@@ -1,5 +1,6 @@
 __all__ = [
     "AxisSequence",
+    "AxisSequenceLike",
     "AxisTuple",
     "AxisList",
 ]
@@ -11,7 +12,7 @@ from numbers import Integral
 import typing_extensions as tx
 from bagof.magic import fields
 
-from .base import Axis
+from .base import Axis, AxisLike
 
 if tx.TYPE_CHECKING:
     from types import EllipsisType as _Ellipsis
@@ -598,6 +599,15 @@ class AxisList(AxisSequence[AXIS], list):
     count = list.count
     _entry = list.__getitem__
 
+
+AXIS_LIKE = tx.Union[AXIS, AxisLike, tx.Literal[...]]
+
+AxisSequenceLike: tx.TypeAlias = tx.Union[
+    AxisSequence[AXIS], tx.Sequence[AXIS_LIKE]
+]
+"""
+A value that is a [`AxisSequence`][] or that can be converted to one.
+"""
 
 # ---- private helpers -------------------------------------------------
 

@@ -9,12 +9,20 @@ interpreting its layout. They return the array as stored and its axes as
 axes as they need.
 """
 
+# dependencies
 import typing_extensions as tx
 
-from brainhops.backends import to_backend
+# core
+from brainhops._core.backends import to_backend
+
+# datamodel
 from brainhops.datamodel.axes import Axis
+
+# io
 from brainhops.io.common.zarr._data import _ZarrProxy, store_location
-from brainhops.io.transformations.zarr._axes import _to_axis
+
+# this format
+from ._axes import _to_axis
 
 # These axis types carry the components of a field's vectors.
 _VECTOR_TYPES = ("displacement", "coordinate")

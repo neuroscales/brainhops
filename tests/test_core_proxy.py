@@ -424,7 +424,7 @@ def test_to_backend_follows_the_setting() -> None:
     # Under the default setting, a small proxy is read with NumPy and a
     # large one becomes a Dask array; an explicit setting is obeyed.
     da = pytest.importorskip("dask.array")
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
 
     proxy = _Recording(_array(), chunks=(2, 3, 7))
     assert isinstance(proxy.to_backend(), np.ndarray)

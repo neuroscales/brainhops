@@ -20,10 +20,21 @@ axes, within interpolation tolerance. It is bit-identical when nothing is
 separable, because the monolithic pull is then used unchanged.
 """
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 
+# core
+from brainhops._core.backends import (
+    _creation_options,
+    array_backend,
+    backend,
+    copy_array,
+    may_share_memory,
+    resolve_backend,
+    to_backend_of,
+)
 from brainhops._core.bsplines import (
     _cast_output,
     _clip_mask,
@@ -34,25 +45,20 @@ from brainhops._core.bsplines import (
     spline_matrix,
 )
 from brainhops._core.typing import ArrayProtocol, Clip
-from brainhops.backends import (
-    _creation_options,
-    backend,
-    copy_array,
-    get_array_backend,
-    may_share_memory,
-    resolve_backend,
-    to_backend_of,
-)
+
+# api
 from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import CompositionError, ConversionError
 
+# transformations
 from ..base import Transformation
 from ..concrete import Affine, CartesianField, Permutation
 from ..meta import SubspaceTransformation
 from ..sequence import Sequence, _interpolates
 from .utils import axis_list
 
+# typing
 _AxisLabels = tx.List[tx.Tuple[tx.Literal["data", "grid"], int]]
 _StepResult = tx.Tuple[ArrayProtocol, _AxisLabels, tx.Optional[ArrayProtocol]]
 _StepRunner = tx.Callable[[ArrayProtocol, _AxisLabels], _StepResult]
@@ -137,7 +143,7 @@ def pull_separable(
     # The steps work in floating point so that an integer input is not
     # rounded between them. The gather and pull steps preserve the dtype that
     # they are given, so an integer input is converted to float once here.
-    xp = get_array_backend(data)
+    xp = array_backend(data)
     inp_dtype = np.dtype(data.dtype)
     out_dtype = np.dtype(inp_dtype if dtype is None else dtype)
     tmp_dtype = _sampling_dtype(inp_dtype, dtype)
@@ -532,7 +538,7 @@ def _make_gather(
     bound0 = bound if isinstance(bound, str) else 0.0
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
-        xp = get_array_backend(arr)
+        xp = array_backend(arr)
         axis = labels.index(("data", d))
         coords = np.arange(n_out) * scale + shift
         # Degree-0 weights map each output coordinate to the input sample
@@ -582,7 +588,7 @@ def _make_matrix(
     n_out = shape[g]
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
-        xp = get_array_backend(arr)
+        xp = array_backend(arr)
         axis = labels.index(("data", d))
         # The coordinates are created in the backend of the data, with
         # CuPy chunks when its chunks are CuPy arrays, so that the weights
@@ -677,7 +683,7 @@ def _apply_clip_masks(
     bringing clipped samples back. Masks stay lazy and only span the axes
     of their independent group.
     """
-    xp = get_array_backend(arr)
+    xp = array_backend(arr)
     for mask, axes in masks:
         order = sorted(range(len(axes)), key=lambda index: axes[index])
         mask = xp.transpose(xp.asarray(to_backend_of(mask, arr)), order)

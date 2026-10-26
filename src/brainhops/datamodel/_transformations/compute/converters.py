@@ -1,9 +1,13 @@
+# stdlib
 import numpy as np
 import typing_extensions as tx
 
+# core
+from brainhops._core.backends import _creation_options, array_backend
 from brainhops._core.magic import replace, stores
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import _creation_options, get_array_backend
+
+# api
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import (
     CompositionError,
@@ -11,6 +15,7 @@ from brainhops.errors import (
     LossyConversionError,
 )
 
+# transformations
 from ..base import Transformation
 from ..concrete import (
     Affine,
@@ -39,6 +44,7 @@ from ..tangents import (
 from .convert import convert, converter
 from .utils import get_ndim
 
+# typing
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 DISP = tx.TypeVar("DISP", bound=DisplacementField)
 COORD = tx.TypeVar("COORD", bound=CoordinateField)
@@ -433,7 +439,7 @@ def _(t: Linear, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
     if "matrix" not in kwargs:
         # Append a zero translation column. The result does not depend on
         # the endpoints, which may be unspecified.
-        xp = get_array_backend(t.matrix)
+        xp = array_backend(t.matrix)
         zeros = xp.zeros((*t.matrix.shape[:-1], 1), dtype=t.matrix.dtype)
         kwargs["matrix"] = xp.concatenate([t.matrix, zeros], axis=-1)
     return _convert_withdata(t, cls, **kwargs)
@@ -475,7 +481,7 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
                 "affine"
             )
         inner_matrix = inner_affine.matrix
-        xp = get_array_backend(inner_matrix)
+        xp = array_backend(inner_matrix)
     matrix = xp.zeros((n_out, n_in + 1))
     acted_in = set(input_axes)
     acted_out = set(output_axes)
@@ -535,7 +541,7 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
         if matrix is None:
             matrix = block
             continue
-        xp = get_array_backend(block)
+        xp = array_backend(block)
         product = xp.empty_like(block, shape=(block.shape[0], matrix.shape[1]))
         product[:, :-1] = block[:, :-1] @ matrix[:, :-1]
         product[:, -1:] = block[:, :-1] @ matrix[:, -1:] + block[:, -1:]
@@ -587,7 +593,7 @@ def _(t: CoordinateField, cls: tx.Type[SVF], **kwargs) -> SVF:
 def _encoded_grid(t: TransformationField) -> ArrayProtocol:
     """Return the identity grid of the nodes of `t`, encoded like its data."""
     data = t.data
-    xp = get_array_backend(data)
+    xp = array_backend(data)
     # The grid is created in the backend of the data, with CuPy chunks when
     # its chunks are CuPy arrays.
     options = _creation_options(data)
@@ -617,7 +623,7 @@ def _(t: Transformation, cls: tx.Type[IDENTITY], **kwargs) -> IDENTITY:
 def _(t: Linear, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
     if t.is_identity():
         return convert(convert(t, Identity), Permutation, **kwargs)
-    xp = get_array_backend(t.matrix)
+    xp = array_backend(t.matrix)
     matrix = xp.round(xp.abs(t.matrix))
     permutation = xp.argmax(matrix, axis=1)
     kwargs.setdefault("permutation", permutation)
@@ -631,7 +637,7 @@ def _(t: Linear, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
 def _(t: Linear, cls: tx.Type[SCALING], **kwargs) -> SCALING:
     if t.is_identity():
         return convert(convert(t, Identity), Scaling, **kwargs)
-    xp = get_array_backend(t.matrix)
+    xp = array_backend(t.matrix)
     scale = xp.diagonal(t.matrix)  # TODO: use SVD instead?
     kwargs.setdefault("scale", scale)
     u = _convert_withdata(t, cls, **kwargs)
