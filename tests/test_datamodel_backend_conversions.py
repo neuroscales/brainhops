@@ -162,29 +162,27 @@ def test_objects_read_from_files(tmp_path) -> None:  # noqa: ANN001
     np.testing.assert_allclose(np.asarray(back.data), np.asarray(field.data))
 
 
-def test_data_follows_the_setting_at_each_read(tmp_path) -> None:  # noqa: ANN001
-    # data converts what the object holds with the setting in effect, and
-    # the object keeps holding the same array.
+def test_data_is_the_stored_array_whatever_the_setting(tmp_path) -> None:  # noqa: ANN001
+    # data returns what the object holds under every setting, and the
+    # setting applies to the conversions and to the computations.
     image = SingleScaleImage(VOLUME)
     with backend("dask"):
-        assert isinstance(image.data, da.Array)
-    assert image.data is VOLUME
+        assert image.data is VOLUME
+        assert isinstance(image.to_backend(), da.Array)
     field = DisplacementField(FIELD)
     with backend("dask"):
-        assert isinstance(field.data, da.Array)
-    assert field.data is FIELD
+        assert field.data is FIELD
+        assert isinstance(field.to_backend(), da.Array)
 
-    # An image read from a file caches its data on first access, and a
-    # later setting still applies to each read.
+    # An image read from a file holds the lazy array of its file, and a
+    # computation on it follows the setting in effect.
     nb.save(nb.Nifti1Image(VOLUME, np.eye(4)), tmp_path / "image.nii.gz")
     image = io.images.load(tmp_path / "image.nii.gz")
-    cached = image.data
-    assert isinstance(cached, np.ndarray)
+    assert isinstance(image.data + 0, np.ndarray)
     with backend("dask"):
-        lazy = image.data
+        lazy = image.data + 0
     assert isinstance(lazy, da.Array)
-    np.testing.assert_array_equal(lazy.compute(), cached)
-    assert image.data is cached
+    np.testing.assert_array_equal(lazy.compute(), VOLUME)
 
 
 def test_conversions_read_what_the_object_holds() -> None:
@@ -254,18 +252,17 @@ class _CountingArray:
         return np.asarray(self.values, dtype=dtype)
 
 
-def test_an_assigned_lazy_array_is_loaded_once() -> None:
-    # `dataobj` keeps the array as it was assigned, and `data` loads it at
-    # the first read and returns the same loaded array afterwards.
+def test_an_assigned_lazy_array_is_kept() -> None:
+    # `data` and `dataobj` return the array as it was assigned, and a
+    # conversion reads it each time.
     lazy = _CountingArray(VOLUME)
     image = SingleScaleImage(lazy)
     assert image.dataobj is lazy
+    assert image.data is lazy
     assert lazy.reads == 0
-    first = image.data
-    assert isinstance(first, np.ndarray)
-    assert image.data is first
-    assert lazy.reads == 1
-    np.testing.assert_array_equal(first, VOLUME)
+    np.testing.assert_array_equal(image.to_numpy(), VOLUME)
+    np.testing.assert_array_equal(image.to_numpy(), VOLUME)
+    assert lazy.reads == 2
 
 
 def test_a_loaded_array_is_data_itself() -> None:
@@ -278,7 +275,7 @@ def test_a_loaded_array_is_data_itself() -> None:
 
 
 def test_assigning_dataobj_is_assigning_data() -> None:
-    # Both store the array and clear the loaded array that `data` caches.
+    # Both store the array, which `data` and `dataobj` then return.
     image = SingleScaleImage(_CountingArray(VOLUME))
     image.data  # noqa: B018
     lazy = _CountingArray(VOLUME + 1)

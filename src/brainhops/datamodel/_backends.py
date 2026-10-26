@@ -12,7 +12,6 @@ need more than the default conversion overrides `to_backend` or
 """
 
 # dependencies
-import numpy as np
 import typing_extensions as tx
 
 # internals
@@ -22,8 +21,6 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import (
     BackendLike,
     DeviceLike,
-    _is_loaded,
-    backend,
     to_backend,
 )
 
@@ -41,9 +38,10 @@ class _BackendsMixin:
 
         By default, it is the data that the object holds. An object read
         from a file returns instead a lazy array of the file, in the
-        layout of `data`, which reads nothing until it is converted, so
-        that a part of a large file can be read alone. The shape and the
-        type of the values are read from it without reading the file.
+        layout of `data`, which reads nothing until a computation needs
+        its values, so that a part of a large file can be read alone.
+        The shape and the type of the values are read from it without
+        reading the file.
         """
         return _stored_data(self)
 
@@ -263,23 +261,18 @@ class _MetaBackendMixin(_BackendsMixin):
 
 
 def dataproperty(**kwargs: tx.Any) -> property:
-    """Declare the `data` of an image or a field, a view of its `dataobj`.
+    """Declare the `data` of an image or a field, the array that it stores.
 
-    An object stores its array in `dataobj`, and `data` is the same
-    array, loaded and in the backend of the setting in effect. Assigning
-    `data` stores the new array in `dataobj`.
-
-    A NumPy, CuPy or Dask array in `dataobj` is read as it is. Any other
-    array, such as the lazy array of a file or a zarr array that was
-    assigned, is loaded at the first read with the setting in effect, and
-    the result is cached: under the default setting, a small array is
-    read with NumPy and a large one is kept lazy as a Dask array, and
-    under `with backend("dask"):` the array is kept lazy whatever its
-    size. Each read then converts the loaded array with the setting in
-    effect at that read, as [`to_backend`][] does, and the loaded array
-    does not change. An object that should hold another backend for good
-    is converted with an `as_*` method, or its backend is chosen before
-    its first read. Assigning `data` or `dataobj` clears the cache.
+    `data` returns the array that the object stores, as it is stored,
+    whatever the backend setting. An object read from a file returns the
+    lazy array of its file, which reads nothing until a computation
+    needs its values (see [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]),
+    so that the shape of the data, or a part of them, can be had without
+    reading the whole file. An array that was assigned as `data` or
+    `dataobj` is returned instead. The backend setting applies when a
+    computation reads the array, and the `to_*` and `as_*` methods
+    convert it on request. `data` returns the same array as `dataobj`,
+    and assigning either of them stores the new array.
 
     Parameters
     ----------
@@ -292,19 +285,13 @@ def dataproperty(**kwargs: tx.Any) -> property:
         The property `data`, stored in `_data`.
     """
 
-    # The getter runs when `_data` holds nothing or an array that is not
-    # loaded, so `dataobj` is then the lazy array of a file or the array
-    # that was assigned. The property is named after its getter, so the
-    # getter is `data`.
+    # The getter runs when `_data` holds nothing, and `dataobj` is then
+    # the lazy array of a file, or `None`. The property is named after
+    # its getter, so the getter is `data`.
     def data(self: tx.Any) -> tx.Any:
-        dataobj = self.dataobj
-        if dataobj is None:
-            return None
-        return _load(dataobj)
+        return self.dataobj
 
-    return smartproperty(
-        data, cache=True, convert=to_backend, unset=_not_loaded, **kwargs
-    )
+    return smartproperty(data, **kwargs)
 
 
 def dataobjproperty(
@@ -350,12 +337,6 @@ def dataobjproperty(
     return property(fget, dataobj, doc=fget.__doc__)
 
 
-def _not_loaded(value: tx.Any) -> bool:
-    # A stored value that is not a NumPy, CuPy or Dask array reads as
-    # unset, so that `data` loads it once and caches the result.
-    return value is None or not _is_loaded(value)
-
-
 def _as_backend_data(
     obj: _T,
     backend: tx.Optional[BackendLike],
@@ -394,37 +375,9 @@ def _as_backend_data(
 
 
 def _stored_data(obj: tx.Any) -> tx.Any:
-    """Return the `data` of an object as it is stored, without converting it.
+    """Return the `data` of an object, which the conversion methods convert.
 
-    The `data` of an image or a field follows the backend setting in
-    effect when it is read (see [`dataproperty`][]). The conversion
-    methods read it under the setting `"native"`, which returns the stored or
-    cached array itself, so that they convert it once, from what the
-    object holds.
+    The `data` of an image or a field is the array that it stores,
+    without any conversion (see [`dataproperty`][]).
     """
-    with backend("native"):
-        return obj.data
-
-
-def _load(dataobj: tx.Any) -> tx.Any:
-    """Read the values of a lazy array as the setting in effect says.
-
-    Under the default setting, a lazy array of a file is read with NumPy
-    when it is small and kept lazy as a Dask array when it is large, and
-    an explicit setting chooses the backend (see [`to_backend`][]). A
-    NumPy array that is read from a file is made read-only, because the
-    writers encode what the object holds, not this array, so a change
-    made to it in place would be lost. A loaded array is returned as it is.
-    """
-    if _is_loaded(dataobj):
-        return dataobj
-    return _read_only(to_backend(dataobj), dataobj)
-
-
-def _read_only(data: tx.Any, dataobj: tx.Any) -> tx.Any:
-    # A NumPy array read from a lazy array of a file is made read-only,
-    # as `_load` explains. A loaded array is the array itself, or a view
-    # of it, so its flag is left as it is.
-    if isinstance(data, np.ndarray) and not _is_loaded(dataobj):
-        data.flags.writeable = False
-    return data
+    return obj.data

@@ -264,12 +264,14 @@ def test_an_empty_selection_reads_nothing(tmp_path: tx.Any) -> None:
 
 def test_decoded_data_are_read_only(tmp_path: tx.Any) -> None:
     write_dataset(tmp_path / "d", sample(), (2, 2, 3))
+    image = N5Image.load(tmp_path / "d")
+    with pytest.raises(TypeError):
+        image.data[(0,) * image.ndim] = 1
     with backend("numpy"):
-        data = N5Image.load(tmp_path / "d").data
+        data = image.to_backend()
         assert isinstance(data, np.ndarray)
-        assert not data.flags.writeable
     with backend("dask"):
-        data = N5Image.load(tmp_path / "d").data
+        data = N5Image.load(tmp_path / "d").to_backend()
         assert not isinstance(data, np.ndarray)
         assert np.array_equal(np.asarray(data), sample())
 

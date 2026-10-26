@@ -303,7 +303,7 @@ def test_the_dask_backend_keeps_the_array_lazy(tmp_path: Path) -> None:
     previous = get_backend()
     set_backend("dask")
     try:
-        data = ZarrImage.load(path).data
+        data = ZarrImage.load(path).to_backend()
     finally:
         set_backend(previous)
     assert isinstance(data, da.Array)

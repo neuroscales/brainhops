@@ -212,7 +212,7 @@ def test_an_mrtrix_image_reads_slabs(tmp_path) -> None:  # noqa: ANN001
     MrtrixImage(data=values).save(path)
     with dask.config.set({"array.chunk-size": f"{8 * 9 * 4 * 3}B"}):
         with backend("dask"):
-            data = io.load(path).data
+            data = io.load(path).to_backend()
     assert data.chunks[2] == (3, 3, 3, 1)
     np.testing.assert_allclose(np.asarray(data), values)
 
@@ -232,6 +232,6 @@ def test_an_image_gives_dask_blocks_of_its_storage(
     io.save(SingleScaleImage(data=values), path)
     with dask.config.set({"array.chunk-size": f"{8 * 9 * 4 * 3}B"}):
         with backend("dask"):
-            data = io.load(path).data
+            data = io.load(path).to_backend()
     assert max(len(chunks) for chunks in data.chunks) > 1
     np.testing.assert_allclose(np.asarray(data), values, rtol=1e-6)

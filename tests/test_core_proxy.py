@@ -452,3 +452,148 @@ def test_gpu_conversions_need_cupy() -> None:
         proxy.to_dask(device="cuda")
     with pytest.raises(ImportError):
         proxy.to_backend("dask+cupy")
+
+
+def test_describing_a_proxy_reads_nothing() -> None:
+    # The shape, the type, the transposition and the names of the methods
+    # are had without reading, through the proxy or through NumPy.
+    proxy = _Recording(_array())
+    assert np.shape(proxy) == (5, 6, 7)
+    assert np.ndim(proxy) == 3
+    assert proxy.itemsize == 4
+    assert isinstance(np.transpose(proxy), PermutedProxy)
+    assert isinstance(np.transpose(proxy, (1, 0, 2)), PermutedProxy)
+    assert hasattr(proxy, "sum")
+    assert proxy.reads == []
+
+
+@pytest.mark.parametrize(
+    "compute",
+    [
+        lambda x: x + 1,
+        lambda x: 1 - x,
+        lambda x: -x,
+        lambda x: abs(x - 50),
+        lambda x: x * x,
+        lambda x: x[1] / x[2],
+        lambda x: x == 3,
+        lambda x: x > 3,
+        lambda x: np.exp(x / 100),
+        lambda x: np.mean(x, axis=0),
+        lambda x: np.concatenate([x[0], x[1]]),
+        lambda x: np.where(x > 3, x, 0),
+        lambda x: x.sum(),
+        lambda x: x.reshape(-1),
+        lambda x: x.astype(np.int16),
+        lambda x: x.real,
+    ],
+)
+def test_computations_read_the_values(compute) -> None:  # noqa: ANN001
+    # Operators, functions of NumPy and methods of NumPy arrays give what
+    # they give for the values.
+    proxy = _Recording(_array())
+    expected = compute(_array())
+    result = compute(proxy)
+    assert not isinstance(result, StoredProxy)
+    np.testing.assert_array_equal(result, expected)
+    assert proxy.reads != []
+
+
+def test_a_computation_reads_only_its_selection() -> None:
+    # A computation on a part of a proxy reads that part, and a second
+    # computation reads it again.
+    proxy = _Recording(_array())
+    assert float(proxy[1].sum()) == float(_array()[1].sum())
+    assert float(proxy[1].sum()) == float(_array()[1].sum())
+    assert proxy.reads == [(1, slice(0, 6, 1), slice(0, 7, 1))] * 2
+
+
+def test_scalar_conversions_read_the_value() -> None:
+    proxy = _Recording(_array())
+    assert float(proxy[0, 0, 1]) == 1.0
+    assert int(proxy[0, 0, 2]) == 2
+    assert complex(proxy[0, 0, 3]) == 3.0
+    assert not bool(proxy[0, 0, 0])
+    assert [10, 11, 12][_Recording(np.array(1))] == 11
+    with pytest.raises(ValueError):
+        bool(proxy)
+
+
+def test_a_proxy_is_read_only() -> None:
+    # Values cannot be assigned into a proxy, a proxy cannot receive the
+    # result of a computation, and the methods that change an array in
+    # place, or that describe its memory, are not given.
+    proxy = _Recording(_array())
+    with pytest.raises(TypeError):
+        proxy[0] = 1
+    with pytest.raises(TypeError):
+        proxy += 1
+    with pytest.raises(TypeError):
+        np.add(_array(), 1, out=proxy)
+    with pytest.raises(AttributeError):
+        proxy.sort()
+    with pytest.raises(AttributeError):
+        proxy.strides  # noqa: B018
+    with pytest.raises(TypeError):
+        hash(proxy)
+    assert proxy.reads == []
+
+
+def test_an_output_array_decides_the_backend() -> None:
+    # A computation that writes into an array runs in its backend.
+    proxy = _Recording(_array())
+    out = np.zeros(_array().shape, dtype=np.float32)
+    np.add(proxy, 1, out=out)
+    np.testing.assert_array_equal(out, _array() + 1)
+    out += proxy
+    np.testing.assert_array_equal(out, 2 * _array() + 1)
+
+
+def test_an_unknown_operand_is_given_the_computation() -> None:
+    # An operand of a type that the proxy does not know computes the
+    # result itself.
+    class Other:
+        __array_ufunc__ = None
+
+        def __radd__(self, other: object) -> str:
+            return "other"
+
+    assert _Recording(_array()) + Other() == "other"
+
+
+def test_a_dask_operand_keeps_the_computation_lazy() -> None:
+    # Next to a Dask array, a proxy becomes a Dask array that reads its
+    # blocks when the result is computed.
+    da = pytest.importorskip("dask.array")
+    array = _array()
+    proxy = _Recording(array, chunks=(5, 3, 7))
+    lazy = da.ones(array.shape, chunks=3)
+    for result, expected in [
+        (lazy * proxy, array),
+        (proxy * lazy, array),
+        (np.multiply(lazy, proxy), array),
+        (np.where(lazy > 0, proxy, 0), array),
+        (np.concatenate([lazy, proxy]), np.concatenate([lazy, array])),
+    ]:
+        assert isinstance(result, da.Array)
+        assert proxy.reads == []
+        np.testing.assert_array_equal(
+            result.compute(scheduler="sync"), expected
+        )
+        proxy.reads.clear()
+
+
+def test_a_computation_follows_an_explicit_setting() -> None:
+    # Under the Dask setting, a computation on a proxy is lazy.
+    da = pytest.importorskip("dask.array")
+    from brainhops.backends import backend
+
+    proxy = _Recording(_array())
+    with backend("dask"):
+        total = proxy.sum()
+        shifted = proxy + 1
+        assert np.shape(proxy) == (5, 6, 7)
+    assert isinstance(total, da.Array)
+    assert isinstance(shifted, da.Array)
+    assert proxy.reads == []
+    assert float(total.compute(scheduler="sync")) == float(_array().sum())

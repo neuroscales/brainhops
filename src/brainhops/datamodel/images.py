@@ -242,21 +242,22 @@ class SingleScaleImage(Image):
     # This mirrors `Affine.matrix`, which is optional for the same reason.
 
     data = dataproperty()
-    """The image data, in the backend of the setting in effect.
+    """The image data, as the image stores them.
 
-    Under the default setting, the stored array is returned as it is.
-    Under any other setting, such as `with backend("dask"):`, a new array
-    of that backend is returned, and the stored array does not change.
+    An image built from an array returns that array, whatever the
+    backend setting. An image read from a file returns a lazy array of
+    the file (see [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]),
+    which reads nothing until a computation needs its values, unless an
+    array was assigned as `data` or `dataobj`. Its shape, and a part of
+    it, such as `image.data[0]`, are therefore had without reading the
+    whole file. The backend setting applies when a computation reads
+    the array, and the `to_*` and `as_*` methods convert it on request.
     """
 
     dataobj = dataobjproperty()
-    """The array of the image, without reading it.
+    """The array of the image, the same array as `data`.
 
-    An image built from an array returns that array. An image read
-    from a file returns a lazy array of the file in the layout of
-    `data`, which reads nothing until it is converted, unless an array
-    was assigned as `data` or `dataobj`. Assigning `dataobj` is the same
-    as assigning `data`.
+    Assigning `dataobj` is the same as assigning `data`.
     """
 
     transformations: NotKwOnly[tx.List[Transformation]] = ()

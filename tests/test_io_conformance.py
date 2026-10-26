@@ -1822,10 +1822,11 @@ class Exemplar(tx.NamedTuple):
     """
 
     view: str = "data"
-    """Name of the cached view that is decoded from the stored data.
+    """Name of the view that is decoded from the stored data.
 
-    A format whose model is a chain, such as X5, decodes and caches its
-    `transformations` instead of a `data` array.
+    The `data` of an image or a field is the lazy array of the file, and
+    it is not cached. A format whose model is a chain, such as X5,
+    decodes and caches its `transformations` instead of a `data` array.
     """
 
     data: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
@@ -5069,6 +5070,16 @@ def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
     return exemplar.stored(obj)
 
 
+def _caches(obj: tx.Any, name: str) -> bool:
+    """Tell whether an object caches a view.
+
+    The `data` of an image or a field returns the lazy array of the file
+    and caches nothing, whereas the views decoded from a record, such as
+    the matrix of an affine, are cached.
+    """
+    return getattr(getattr(type(obj), name, None), "cache", True)
+
+
 def _data(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
     """Return the data of an object."""
     if exemplar.data is None:
@@ -5358,8 +5369,12 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
     assert isinstance(loaded.metadata, exemplar.metadata)
     data = _data(exemplar, loaded)
     assert np.array_equal(np.asarray(data), exemplar.sample())
-    # The view is decoded once, and reading it leaves the proxy in place.
-    assert _data(exemplar, loaded) is data
+    # A cached view is decoded once, whereas the `data` of an image or a
+    # field is not cached, and reading either leaves the proxy in place.
+    if _caches(loaded, exemplar.view):
+        assert _data(exemplar, loaded) is data
+    else:
+        assert "_cache_" + exemplar.view not in vars(loaded)
     assert isinstance(_stored(exemplar, loaded), exemplar.proxies)
 
 
@@ -5373,7 +5388,7 @@ def test_03_assigned_data_is_pending(
     views = (exemplar.view,) + exemplar.derived
     for name in views:
         getattr(loaded, name)
-        assert "_cache_" + name in vars(loaded)
+        assert ("_cache_" + name in vars(loaded)) == _caches(loaded, name)
     before = np.asarray(_stored(exemplar, loaded))
     metadata = loaded.metadata
     value = exemplar.sample() + 1

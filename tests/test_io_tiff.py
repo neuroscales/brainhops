@@ -91,22 +91,23 @@ def test_read_plain_is_a_transposed_memory_map(tmp_path: Path) -> None:
     assert image.metadata.raw.dialect is None
     np.testing.assert_array_equal(image.data, GREY.T)
     # An F-ordered view of the memory map; nothing is copied.
-    assert isinstance(image.data.base, np.memmap)
-    assert image.data.flags.f_contiguous
+    values = image.to_numpy()
+    assert isinstance(values.base, np.memmap)
+    assert values.flags.f_contiguous
     assert _names(image) == ["x", "y"]
     assert image.transformation.input.name == "pixel"
-    # The decoded view is read-only, and the file is unchanged.
-    assert not image.data.flags.writeable
-    with pytest.raises(ValueError):
+    # The data are read-only, and the file is unchanged.
+    with pytest.raises(TypeError):
         image.data[0, 0] = 1
     np.testing.assert_array_equal(tifffile.imread(tmp_path / "a.tif"), GREY)
 
 
 def test_read_is_lazy(tmp_path: Path) -> None:
+    # The data are the lazy array of the file, which is not cached.
     image = load(_write(tmp_path, "a.tif", GREY))
+    assert not isinstance(image.data, np.ndarray)
+    np.testing.assert_array_equal(image.data, GREY.T)
     assert not hasattr(image, "_cache_data")
-    _ = image.data
-    assert hasattr(image, "_cache_data")
 
 
 def test_read_compressed_is_decoded(tmp_path: Path) -> None:
@@ -115,13 +116,13 @@ def test_read_compressed_is_decoded(tmp_path: Path) -> None:
     )
     # With a dask backend, the pixels would be a dask array without `base`.
     image = load(path, lazy=False)
-    assert not isinstance(image.data.base, np.memmap)
+    assert not isinstance(image.to_numpy().base, np.memmap)
     np.testing.assert_array_equal(image.data, STACK.transpose(3, 2, 0, 1))
 
 
 def test_read_without_mmap(tmp_path: Path) -> None:
     image = load(_write(tmp_path, "a.tif", GREY), mmap=False, lazy=False)
-    assert not isinstance(image.data.base, np.memmap)
+    assert not isinstance(image.to_numpy().base, np.memmap)
     np.testing.assert_array_equal(image.data, GREY.T)
 
 

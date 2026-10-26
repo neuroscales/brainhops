@@ -58,26 +58,51 @@ def test_a_file_is_described_without_reading(tmp_path, reads) -> None:  # noqa: 
     assert len(reads) == 1
 
 
-def test_data_reads_dataobj_once(tmp_path, reads) -> None:  # noqa: ANN001
-    # The first read of data reads the file and caches the values.
+def test_data_is_the_lazy_array_of_the_file(tmp_path, reads) -> None:  # noqa: ANN001
+    # data returns the lazy array of the file, which reads only what an
+    # index selects, and reads again at each computation.
     image = _nifti(tmp_path)
-    data = image.data
-    np.testing.assert_array_equal(data, VOLUME)
-    assert not data.flags.writeable
-    assert image.data is data
+    assert isinstance(image.data, NibabelProxy)
+    assert image.data.shape == VOLUME.shape
+    part = image.data[1:3, :, 0]
+    assert reads == []
+    np.testing.assert_array_equal(part, VOLUME[1:3, :, 0])
+    assert len(reads) == 1
+    assert float(image.data.sum()) == float(VOLUME.sum())
+    assert float(image.data.sum()) == float(VOLUME.sum())
+    assert len(reads) == 3
+
+
+def test_as_numpy_inplace_keeps_the_values(tmp_path, reads) -> None:  # noqa: ANN001
+    # as_numpy(inplace=True) reads the file once and keeps its values.
+    image = _nifti(tmp_path)
+    image.as_numpy(inplace=True)
+    assert isinstance(image.data, np.ndarray)
+    np.testing.assert_array_equal(image.data, VOLUME)
+    np.testing.assert_array_equal(image.data, VOLUME)
     assert len(reads) == 1
 
 
-def test_a_first_read_under_dask_reads_nothing(tmp_path, reads) -> None:  # noqa: ANN001
-    # Under the Dask setting, the first read keeps the file lazy and
-    # caches the Dask array, which later reads return.
+def test_a_computation_under_dask_reads_nothing(tmp_path, reads) -> None:  # noqa: ANN001
+    # Under the Dask setting, data is still the lazy array of the file, and
+    # a computation on it gives a Dask array without reading the file.
     image = _nifti(tmp_path)
     with backend("dask"):
-        lazy = image.data
+        assert isinstance(image.data, NibabelProxy)
+        lazy = image.data + 1
     assert isinstance(lazy, da.Array)
     assert reads == []
-    assert image.data is lazy
-    np.testing.assert_array_equal(lazy.compute(), VOLUME)
+    np.testing.assert_array_equal(lazy.compute(), VOLUME + 1)
+
+
+def test_an_index_of_an_image_reads_nothing(tmp_path, reads) -> None:  # noqa: ANN001
+    # Indexing an image indexes the lazy array of its file.
+    image = _nifti(tmp_path)
+    part = image[1:3, :, 0]
+    assert reads == []
+    assert part.shape == (2, 5)
+    np.testing.assert_array_equal(part.data, VOLUME[1:3, :, 0])
+    assert len(reads) == 1
 
 
 def test_assigned_data_is_the_dataobj(tmp_path) -> None:  # noqa: ANN001
@@ -120,13 +145,13 @@ def test_an_itk_field_drops_its_singleton_axis_lazily(tmp_path) -> None:  # noqa
     )
 
 
-def test_a_compressed_tiff_is_decoded_once(
+def test_a_compressed_tiff_is_decoded_at_each_read(
     tmp_path,  # noqa: ANN001
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A compressed TIFF level must be decoded in full, which describing
-    # the image or reading its dataobj does not do, and which the first
-    # read of data does once.
+    # the image or reading its dataobj does not do. Each computation on
+    # data decodes it, and as_numpy(inplace=True) decodes it once.
     tifffile = pytest.importorskip("tifffile")
     from brainhops.io.images.tiff import _data as tiff_data
 
@@ -146,5 +171,8 @@ def test_a_compressed_tiff_is_decoded_once(
     assert image.dataobj.shape == (32, 64)
     assert decodes == []
     np.testing.assert_array_equal(image.data, pixels.T)
-    np.testing.assert_array_equal(image.data, pixels.T)
     assert len(decodes) == 1
+    image.as_numpy(inplace=True)
+    np.testing.assert_array_equal(image.data, pixels.T)
+    np.testing.assert_array_equal(image.data, pixels.T)
+    assert len(decodes) == 2

@@ -22,8 +22,9 @@ object, called a proxy, that knows where the voxels lie and how they are
 stored. The proxy behaves like a read-only array: it has a `shape` and a
 `dtype`, and NumPy converts it with `np.asarray`. The proxy is stored as
 the `rawdata` of the format object (see [Format
-records](format-records.md)). The `data` property turns it into a NumPy
-array or a Dask array, depending on the array backend.
+records](format-records.md)). The `data` property of the object
+returns the proxy itself, and a computation on it reads the values in
+the backend of the computation (see "Computing with a proxy" below).
 
 A proxy keeps no file open between reads. It opens the file each time
 its values are needed, so that it can be pickled, sent to Dask workers
@@ -251,7 +252,15 @@ open store, is opened once and shared by every index of it.
 `to_dask()` calls `da.from_array` with the `chunks` of the proxy, which
 an indexed proxy carries through its selection, with `asarray=True`,
 with `fancy=False`, and with a `meta` argument, so that Dask does not
-index the proxy to learn the type.
+index the proxy to learn the type. Dask does not receive the proxy
+itself but a small view of it, which has a shape, a type, blocks and an
+index that reads a block into a NumPy array. `da.from_array` copies an
+argument that behaves as an array and has a `copy` method, which would
+read the whole proxy, and Dask keeps a block that behaves as an array
+as it is, which would pass unread proxies to the computation. A function
+of Dask that receives a proxy, such as `dask.array.transpose`, asks it
+for a Dask array through its method `to_dask_array`, which returns what
+`to_dask()` returns.
 
 Status: implemented, in `brainhops._core.proxy`.
 
@@ -264,8 +273,8 @@ checks of the writers.
 
 The format views only index and transpose the proxy, so the `dataobj`
 of an object read from a file is a proxy in the layout of its `data`,
-and `data` reads it with the backend setting (see
-[Array backends](array-backends.md)). The NIfTI and MGH views wrap the
+and `data` returns the same proxy (see "Computing with a proxy"
+below). The NIfTI and MGH views wrap the
 proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
 The voxels of these files are stored contiguously, so that proxy
 prefers blocks of whole slices along the last spatial axis, with as
@@ -274,6 +283,63 @@ many slices as fit in the block size of Dask (the option
 The views of TIFF and OpenSlide keep their own functions, because
 tifffile can give a memory map or a Dask array itself, and an
 OpenSlide level is kept as a Dask array when it is read lazily.
+
+### Computing with a proxy
+
+The `data` of an image or of a field returns the array that the object
+stores, whatever the backend setting, and the `data` of an object read
+from a file is therefore a proxy. Asking for the shape of the data, or
+indexing them, reads nothing, so that `image.data[0]` reads one slice
+even when Dask is not installed. If `data` read the proxy with the
+backend setting instead, `image.data.shape` and `image.data[0]` would
+read the whole file whenever the setting chose NumPy, which it always
+does when Dask is not installed.
+
+A proxy behaves as a read-only array in computations, and it is read
+when a computation needs its values. The classes of NumPy give the
+means:
+
+- `NDArrayOperatorsMixin` gives the operators of Python, such as
+  `proxy + 1` and `proxy == 0`, which call `__array_ufunc__`;
+- `__array_ufunc__` applies the universal functions of NumPy;
+- `__array_function__` applies the other functions of NumPy;
+- `__getattr__` gives the methods of NumPy arrays, such as `sum` and
+  `reshape`, and the attributes that are computed from the values,
+  such as `real`. It does not give the methods that change an array
+  in place, such as `sort`, nor the attributes that describe memory,
+  such as `strides`;
+- the conversions to a number, such as `float(proxy)`, read the
+  values.
+
+A computation runs in the backend that `promote_backends` chooses for
+its operands, and the proxies and the arrays of other backends are
+converted to it. Next to a CuPy array, a proxy is read onto the GPU, and
+next to a Dask array, it becomes a Dask array that reads nothing yet.
+CuPy and Dask hand the computation to an operand that defines
+`__array_ufunc__` when they do not know its type, so this holds when
+the proxy is the second operand too, as in `cupy_array * proxy`. When a
+function of NumPy runs in NumPy, the implementation of NumPy receives
+the proxies themselves, so that `np.shape(proxy)` reads nothing and
+`np.transpose(proxy)` returns a proxy.
+
+A proxy is read-only, so assigning values into it and using it as the
+`out` argument of a computation raise a `TypeError`. A proxy compares
+its values with `==`, as a NumPy array does, so it cannot be hashed.
+
+The values that a computation reads are not kept, so a second
+computation reads them again. Caching was left out for now: a cache in
+the proxy would keep the memory of a large file without the user
+knowing, and a cache in the image would make `data` change type after
+the first computation. The `as_*` methods with `inplace=True` keep the
+values on request. The views that a field caches, such as its `values`
+and its `coefficients`, are derived from the values of its `data`
+rather than from the proxy, so that a field read from a file keeps its
+values once it has computed them.
+
+Status: implemented, in `brainhops._core.proxy` and
+`brainhops.datamodel._backends`. The behavior next to CuPy arrays was
+checked against the source of CuPy, but not run, because the tests run
+without a GPU.
 
 ### Third layer: strided data behind a file
 

@@ -1167,7 +1167,7 @@ def test_read_data_is_read_only_and_assigned_data_is_written(
     target = tmp_path / "copy.nii"
     with backend("numpy"):
         image = NiftiImage.load(source)
-        with pytest.raises(ValueError, match="read-only"):
+        with pytest.raises(TypeError):
             image.data[0, 0, 0] = 7.0
         edited = np.array(image.data)
         edited[0, 0, 0] = 7.0

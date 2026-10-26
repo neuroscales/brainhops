@@ -51,13 +51,16 @@ wrp = io.transformations.load("warp.nii.gz", hint="spm")
 ```
 
 !!! tip "Lazy loading"
-    Reading a file does not read its voxels. An image keeps a lazy array
-    of its file, and reading `data` converts that array with the backend
-    setting the first time it is read. Under the default setting, a
-    small array is read into a NumPy array, and an array larger than 64
-    MiB is mapped lazily to a `dask.array.Array`. Another backend can be
-    selected within a context manager, or as the setting of the whole
-    session.
+    Reading a file does not read its voxels. The `data` of an image read
+    from a file is a lazy array of the file, which reads its values only
+    when a computation needs them. Its shape and the type of its values
+    come from the header, and indexing it reads only the part that the
+    index selects. A computation runs in the backend that the setting
+    chooses. Under the default setting, a small array is read into a
+    NumPy array, and an array larger than 64 MiB becomes a
+    `dask.array.Array` that reads its values block by block. Another
+    backend can be selected within a context manager, or as the setting
+    of the whole session, and `to_backend` converts the data on request.
 
     === "context manager"
 
@@ -65,8 +68,9 @@ wrp = io.transformations.load("warp.nii.gz", hint="spm")
         from brainhops.backends import backend
 
         src = io.images.load("source.nii.gz")
+        shape = src.data.shape  # the file is not read
         with backend("cupy"):
-            data = src.data  # a CuPy array
+            total = src.data[..., 0].sum()  # the first volume, on the GPU
         ```
 
     === "session setting"
@@ -75,7 +79,7 @@ wrp = io.transformations.load("warp.nii.gz", hint="spm")
         from brainhops.backends import set_backend
 
         set_backend("cupy")
-        data = io.images.load("source.nii.gz").data  # a CuPy array
+        data = io.images.load("source.nii.gz").to_backend()  # a CuPy array
         ```
 
 ## Save data to files
@@ -200,7 +204,7 @@ with the transformations that place its voxels in world space.
 
 | Name              | Type                   | Description                                                                                                                                         |
 | ----------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `data`            | `ArrayProtocol`        | The content of the image, F-ordered (e.g. {x, y, z, t, c, ...}). A file is mapped to a `dask.array.Array` by default.                                |
+| `data`            | `ArrayProtocol`        | The content of the image, F-ordered (e.g. {x, y, z, t, c, ...}). A file is a lazy array that reads its values when a computation needs them.         |
 | `transformations` | `list[Transformation]` | Transformations from the voxel space to different world spaces. The last transformation in the list is the preferred one.                         |
 | `transformation`  | `Transformation`       | The preferred voxel-to-world transformation, which is the last element of `transformations`.                                                       |
 | `geometry`        | `Geometry`             | The preferred transformation, preceded by a `CartesianField` whose shape matches the shape of the data. It defines the grid on which the image lives. |

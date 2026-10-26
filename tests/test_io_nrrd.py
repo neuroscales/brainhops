@@ -1016,9 +1016,10 @@ def test_nothing_but_the_data_reads_the_samples(
     AttachedNrrdImage.from_bytes(source.read_bytes())
     assert reads.count == 0
     assert "_cache_data" not in vars(image)
+    with pytest.raises(TypeError):
+        image.data[(0,) * image.ndim] = 1
     with backend("numpy"):
-        data = image.data
-    assert not data.flags.writeable
+        data = image.to_backend()
     np.testing.assert_array_equal(data, values)
     assert reads.count == 1
     image.data = np.zeros((2, 3))
@@ -1032,7 +1033,7 @@ def test_dask_reads_the_samples_once(tmp_path, monkeypatch) -> None:  # noqa: AN
     source, values = _foreign(tmp_path, "gzip")
     reads = _CountedReads(monkeypatch)
     with backend("dask"):
-        data = io.load(source).data
+        data = io.load(source).to_backend()
     assert reads.count == 0
     np.testing.assert_array_equal(np.asarray(data), values)
     assert reads.count == 1

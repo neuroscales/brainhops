@@ -119,11 +119,11 @@ def test_a_reslice_follows_an_explicit_setting() -> None:
 
 
 def test_field_views_follow_the_setting() -> None:
-    # The values and coefficients of a field are returned in the package
-    # of its data, which follows the setting.
+    # The values and coefficients of a field follow the setting, whereas
+    # its data is the array that it stores.
     field = DisplacementField(FIELD)
     with backend("dask"):
-        assert isinstance(field.data, da.Array)
+        assert field.data is FIELD
         assert isinstance(field.field, da.Array)
         assert isinstance(field.coefficients, da.Array)
     assert isinstance(field.field, np.ndarray)

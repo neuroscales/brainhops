@@ -634,7 +634,7 @@ def test_a_missing_slice_reads_no_file(
     assert (np.asarray(image.rawdata[4]) == 0).all()
     assert reads == []
     with backend("dask"):
-        data = StackImage.load(folder).data
+        data = StackImage.load(folder).to_backend()
     assert np.array_equal(data[:, :, 3:6].compute(), VOLUME[3:6].T * [1, 0, 1])
     # Dask may read the chunks in any order.
     assert sorted(reads) == ["z3.tif", "z5.tif"]
@@ -676,7 +676,7 @@ def test_dask_reads_one_file_per_chunk(
     folder = _tiffs(tmp_path / "slices")
     reads = _count_reads(monkeypatch)
     with backend("dask"):
-        data = StackImage.load(folder).data
+        data = StackImage.load(folder).to_backend()
     assert isinstance(data, da.Array)
     assert data.chunks == ((2,), (3,), (1,) * 12)
     assert reads == []
@@ -687,10 +687,12 @@ def test_dask_reads_one_file_per_chunk(
 
 def test_numpy_data_are_read_only(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
+    image = StackImage.load(folder)
+    with pytest.raises(TypeError):
+        image.data[(0,) * image.ndim] = 1
     with backend("numpy"):
-        data = StackImage.load(folder).data
+        data = image.to_backend()
     assert isinstance(data, np.ndarray)
-    assert not data.flags.writeable
 
 
 def test_a_file_changed_after_loading_is_refused(tmp_path: Path) -> None:

@@ -191,13 +191,14 @@ def test_full_resolution_is_exact_f_ordered_and_read_only(
 ) -> None:
     with backend("numpy"):
         image = load(_write(tmp_path, "a.jp2", RAMP), level=0)
-        data = image.data
+        data = image.to_backend()
     assert data.dtype == np.uint16
     np.testing.assert_array_equal(data, RAMP.T)
-    # A transposed view of what Pillow decodes, which cannot be edited in
-    # place, since the writer would not see the edit.
+    # A transposed view of what Pillow decodes. The data cannot be edited
+    # in place, since the writer would not see the edit.
     assert data.flags.f_contiguous and not data.flags.c_contiguous
-    assert not data.flags.writeable
+    with pytest.raises(TypeError):
+        image.data[0, 0] = 1
     assert isinstance(image.rawdata, _Jpeg2000Proxy)
 
 
@@ -205,7 +206,7 @@ def test_data_stays_lazy_with_dask(tmp_path: Path) -> None:
     da = pytest.importorskip("dask.array")
     with backend("dask"):
         image = load(_write(tmp_path, "a.jp2", RAMP), level=1)
-        data = image.data
+        data = image.to_backend()
     assert isinstance(data, da.Array)
     np.testing.assert_array_equal(
         np.asarray(data), np.asarray(image.rawdata).T
@@ -268,9 +269,12 @@ def test_levels_are_decoded_lazily(
         assert image._images is None
         assert image.shape == (COLUMNS, ROWS)
         assert calls == []
-        _ = image.images[2].data
-        _ = image.images[2].data
-    assert calls == [2]
+        _ = image.images[2].to_backend()
+        assert calls == [2]
+        # The values are not kept, so a second read decodes the level
+        # again.
+        _ = image.images[2].to_backend()
+    assert calls == [2, 2]
 
 
 def test_an_empty_selection_reads_nothing(

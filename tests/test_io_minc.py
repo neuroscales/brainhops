@@ -391,7 +391,7 @@ def test_header_only_until_data(anyminc) -> None:  # noqa: ANN001
         assert "_cache_data" not in vars(image)
         assert image.shape == (6, 5, 4)
         image.data  # noqa: B018
-        assert "_cache_data" in vars(image)
+        assert "_cache_data" not in vars(image)
 
 
 def test_convert_to_nifti(tmp_path, anyminc) -> None:  # noqa: ANN001
@@ -631,9 +631,10 @@ def test_nothing_but_the_data_reads_the_voxels(
     MincImage.from_bytes(filename.read_bytes())
     assert reads.count == 0
     assert "_cache_data" not in vars(image)
+    with pytest.raises(TypeError):
+        image.data[0, 0, 0] = 1
     with backend("numpy"):
-        data = image.data
-    assert not data.flags.writeable
+        data = image.to_backend()
     expected = expected_voxels(("zspace", "yspace", "xspace")).T
     np.testing.assert_allclose(data, expected)
     assert reads.count == 1
@@ -654,7 +655,7 @@ def test_dask_reads_the_voxels_once(anyminc, monkeypatch) -> None:  # noqa: ANN0
     _, filename = anyminc
     reads = _CountedReads(monkeypatch)
     with backend("dask"):
-        data = io.load(filename).data
+        data = io.load(filename).to_backend()
     assert reads.count == 0
     expected = expected_voxels(("zspace", "yspace", "xspace")).T
     np.testing.assert_allclose(np.asarray(data), expected)

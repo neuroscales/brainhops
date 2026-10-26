@@ -38,6 +38,7 @@ from brainhops._core.typing import (
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.backends import (
     _creation_options,
+    _is_loaded,
     backend,
     get_array_backend,
     resolve_backend,
@@ -83,6 +84,21 @@ def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
+
+
+def _read_data(obj: tx.Any) -> tx.Optional[ArrayProtocol]:
+    """Return the values of the stored `data` of a field.
+
+    A lazy array, such as the array of a file, is read as the setting in
+    effect says (see [`to_backend`][brainhops.backends.to_backend]), so
+    that the views that a field caches, such as its values, hold values
+    rather than a lazy array that each read would read again. A NumPy,
+    CuPy or Dask array is returned as it is.
+    """
+    data = _stored_data(obj)
+    if data is None or _is_loaded(data):
+        return data
+    return to_backend(data)
 
 
 def _invalidating_dataproperty(*args, **kwargs) -> property:
@@ -340,7 +356,7 @@ class TransformationField(ConcreteTransformation):
     @smartproperty(cache=True, convert=to_backend)
     def values(self) -> tx.Optional[ArrayProtocol]:
         return _data2values(
-            _stored_data(self), self.store, self.degree, self.bound
+            _read_data(self), self.store, self.degree, self.bound
         )
 
     @values.setter
@@ -356,7 +372,7 @@ class TransformationField(ConcreteTransformation):
     @smartproperty(cache=True, convert=to_backend)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
         return _data2coeffs(
-            _stored_data(self), self.store, self.degree, self.bound
+            _read_data(self), self.store, self.degree, self.bound
         )
 
     @coefficients.setter

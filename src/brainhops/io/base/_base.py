@@ -815,9 +815,10 @@ def _takes_over(cls: type, name: str) -> bool:
     MRO that is a data model but not a parser, declares the field under
     the name `name`. An image format that takes `data` over is an example.
     The image model declares its data as `_data` with the public name
-    `data`, so that `data` follows the backend setting, and it counts as
-    declaring `data`. A transformation model declares `_data` itself, and
-    its own `from_instance` converts the data of another class, so a
+    `data`, so that `data` can return the lazy array of a file when no
+    array was assigned, and it counts as declaring `data`. A
+    transformation model declares `_data` itself, and its own
+    `from_instance` converts the data of another class, so a
     transformation format does not take `data` over.
     """
     if not any(

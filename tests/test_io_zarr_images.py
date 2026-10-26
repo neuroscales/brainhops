@@ -934,19 +934,31 @@ def test_multiscale_to_node_writes_into_a_group(tmp_path: Path) -> None:
 # ---- laziness --------------------------------------------------------
 
 
-def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
+def test_opening_a_pyramid_does_not_read_its_levels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from brainhops.io.common.zarr._data import _ZarrProxy
+
     path = str(tmp_path / "lazy.zarr")
     _small_pyramid().save(path)
+    reads = []
+    read = _ZarrProxy._read
 
+    def recording(self, index):  # noqa: ANN001, ANN202
+        values = read(self, index)
+        reads.append(values.size)
+        return values
+
+    monkeypatch.setattr(_ZarrProxy, "_read", recording)
     back = OmeZarrImage.from_store(path)
 
-    # No level is read yet: each holds an array handle.
+    # No level is read yet: the data of each level is a lazy array.
     for level in back.images:
-        assert getattr(level, "_cache_data", None) is None
-    # Accessing one level reads only that level.
+        assert not isinstance(level.data, np.ndarray)
+    assert reads == []
+    # Reading one level reads only that level.
     _ = np.asarray(back.images[0].data)
-    assert getattr(back.images[0], "_cache_data", None) is not None
-    assert getattr(back.images[1], "_cache_data", None) is None
+    assert reads == [back.images[0].data.size]
 
 
 def _placed_pyramid(path: str) -> OmeZarrImage:

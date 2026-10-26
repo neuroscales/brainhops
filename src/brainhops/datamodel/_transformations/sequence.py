@@ -497,7 +497,7 @@ class DerivedSequence(ImmutableSequence):
     """
 
     data = dataproperty(invalidates="transformations")
-    """The stored array, loaded and in the backend of the setting.
+    """The stored array, as it is stored.
 
     Assigning it drops the members derived from the previous array.
     """
