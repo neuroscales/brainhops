@@ -37,7 +37,7 @@ def _multiscale() -> MultiscaleField:
 
 
 CASES = {
-    "projection": lambda: Projection(dropped=[2]),
+    "projection": lambda: Projection(created=[2]),
     "inverse": lambda: Inverse(forward=_affine()),
     "multiscale": _multiscale,
 }
@@ -66,10 +66,15 @@ def test_a_sequence_holding_it_inverts(name, kwargs) -> None:  # noqa: ANN001
     assert len(inverse) == 1
 
 
-def test_the_projection_inverse_swaps_dropped_and_created() -> None:
-    inverse = Projection(dropped=[2]).inverse(compute=True)
-    assert list(inverse.created) == [2]
-    assert len(inverse.dropped) == 0
+def test_the_inverse_of_an_embedding_drops_its_axes() -> None:
+    inverse = Projection(created=[2]).inverse(compute=True)
+    assert list(inverse.dropped) == [2]
+    assert len(inverse.created) == 0
+
+
+def test_a_projection_that_drops_axes_has_no_inverse() -> None:
+    with pytest.raises(ValueError, match="no inverse"):
+        Projection(dropped=[2]).inverse()
 
 
 @pytest.mark.parametrize("compute", [False, True])

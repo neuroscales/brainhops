@@ -966,11 +966,20 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
         output=world,
     )
     assert np.allclose(bare.to(Affine).matrix, expected)
-    # A sequence of non-subspace elements has no affine form.
+    # A projection is linear, so it composes with an affine into the
+    # affine that drops the last axis.
+    dropped = Sequence(
+        transformations=[
+            Affine(matrix=np.eye(4, 5)),
+            Projection(dropped=[3]),
+        ]
+    ).to(Affine)
+    assert np.allclose(dropped.matrix, np.eye(3, 5))
+    # A sequence that holds a field has no affine form.
     with pytest.raises(ConversionError):
         Sequence(
             transformations=[
-                Affine(matrix=np.eye(4, 5)),
-                Projection(dropped=[3]),
+                Affine(matrix=np.eye(3, 4)),
+                DisplacementField(field=np.zeros((2, 2, 2, 3))),
             ]
         ).to(Affine)

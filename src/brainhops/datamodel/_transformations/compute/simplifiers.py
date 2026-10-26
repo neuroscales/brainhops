@@ -56,6 +56,7 @@ from ..sequence import Sequence, _unnest
 from .check import is_kind
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
+from .utils import axis_list
 from .utils import with_endpoints as _with_endpoints
 
 NONE = SimplifyPolicy.none
@@ -302,6 +303,67 @@ def _(
     if second.output is None or second.output == first.output:
         return first
     return replace(first, output=second.output)
+
+
+# --- Projections ------------------------------------------------------
+# Two consecutive projections are one projection, because each keeps the
+# order of the axes that it does not drop. Merging them reads only the
+# positions of the axes, so it costs nothing. An embedding followed by the
+# projection that drops the same axes merges into the identity, while the
+# reverse order merges into a projection that sets these axes to zero.
+
+
+@simplifier
+def _(
+    first: Projection, second: Projection, policy: SimplifyTable
+) -> tx.Optional[Transformation]:
+    merged = _merge_projections(first, second)
+    if merged is None:
+        return None
+    dropped, created = merged
+    if not dropped and not created:
+        return Identity(input=first.input, output=second.output)
+    return Projection(
+        dropped=dropped,
+        created=created,
+        input=first.input,
+        output=second.output,
+    )
+
+
+def _merge_projections(
+    first: Projection, second: Projection
+) -> tx.Optional[tx.Tuple[tx.List[int], tx.List[int]]]:
+    """Return the axes that two consecutive projections drop and create.
+
+    The axes after the last position that either projection names pass
+    through both unchanged, so the merge is computed in a space just wide
+    enough to hold every position, and holds in any wider space. `None`
+    is returned when a position is negative.
+    """
+    d1, c1 = axis_list(first.dropped), axis_list(first.created)
+    d2, c2 = axis_list(second.dropped), axis_list(second.created)
+    if any(i < 0 for i in d1 + c1 + d2 + c2):
+        return None
+    width = 1 + max(d1 + c1 + d2 + c2, default=-1) + len(d1) + len(d2)
+
+    def sources(
+        inputs: tx.List[tx.Optional[int]],
+        dropped: tx.List[int],
+        created: tx.List[int],
+    ) -> tx.List[tx.Optional[int]]:
+        # Each output holds the input that it comes from, or None for a
+        # created axis.
+        kept = iter(x for i, x in enumerate(inputs) if i not in dropped)
+        size = len(inputs) - len(dropped) + len(created)
+        return [None if o in created else next(kept) for o in range(size)]
+
+    middle = sources(list(range(width)), d1, c1)
+    outputs = sources(middle, d2, c2)
+    reached = set(o for o in outputs if o is not None)
+    dropped = [i for i in range(width) if i not in reached]
+    created = [o for o, source in enumerate(outputs) if source is None]
+    return dropped, created
 
 
 # --- Cancellation -----------------------------------------------------
