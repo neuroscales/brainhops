@@ -8,9 +8,9 @@ from .backends import (
     array_backend,
     is_dask,
     like,
-    promote_backends,
     promote_dtypes,
     to_numpy,
+    to_promoted_backend,
 )
 
 if tx.TYPE_CHECKING:
@@ -144,7 +144,7 @@ def matmul(left: ArrayProtocol, right: ArrayProtocol) -> ArrayProtocol:
     The last two axes of each array are treated as matrices, and the other
     axes are broadcast.
     """
-    left, right = promote_backends(left, right)
+    left, right = to_promoted_backend(left, right)
     xp = array_backend(left)
     return xp.matmul(left, right)
 
@@ -156,7 +156,7 @@ def matvec(matrix: ArrayProtocol, vector: ArrayProtocol) -> ArrayProtocol:
     last axis of the second array is treated as a vector. The other axes
     are broadcast.
     """
-    matrix, vector = promote_backends(matrix, vector)
+    matrix, vector = to_promoted_backend(matrix, vector)
     xp = array_backend(matrix)
     return xp.matmul(matrix, vector[..., None])[..., 0]
 
@@ -178,7 +178,6 @@ def _polar_u(matrix: ArrayProtocol) -> ArrayProtocol:
 def _polar_p(matrix: ArrayProtocol) -> ArrayProtocol:
     xp = array_backend(matrix)
     u, s, vt = xp.linalg.svd(matrix)
-    s = xp.diag(s)
     v = vt.swapaxes(-1, -2) * s[..., None, :]
     return xp.matmul(v, vt)
 
@@ -204,7 +203,6 @@ def polar(
     if any("U" in _ for _ in which):
         u = xp.matmul(u, vt)
     if any("P" in _ for _ in which):
-        s = xp.diag(s)
         v = vt.swapaxes(-1, -2) * s[..., None, :]
         p = xp.matmul(v, vt)
     if which == "U":
