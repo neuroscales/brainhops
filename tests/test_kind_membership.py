@@ -339,7 +339,10 @@ def test_projection_membership() -> None:
     assert _M(Projection(), "IdentityTransformation")
     assert _M(Projection(dropped=[2]), "SurjectiveTransformation")
     assert not _M(Projection(dropped=[2]), "InjectiveTransformation")
-    assert not _M(Projection(dropped=[2]), "AffineTransformation")
+    assert _M(Projection(dropped=[2]), "LinearTransformation")
+    assert _M(Projection(dropped=[2]), "AffineTransformation")
+    assert not _M(Projection(dropped=[2]), "InvertibleAffineTransformation")
+    assert _M(Projection(dropped=[2], created=[0]), "LinearTransformation")
     assert _M(Projection(created=[2]), "InjectiveTransformation")
     assert not _M(
         Projection(dropped=[2], created=[0]), "InjectiveTransformation"

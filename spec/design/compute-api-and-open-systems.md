@@ -2,7 +2,9 @@
 
 Part B of this memo, on open coordinate systems, is implemented in #112
 and #115. Part A, on the public operations `compute`, `simplify`,
-`factor`, `restrict` and `project`, is agreed but not implemented yet.
+`factor`, `restrict` and `project`, is agreed. Its first part, which
+lets `compute` read, compose and cancel projections, is implemented in
+#570, and the rest is not implemented yet.
 
 Part A defines a small set of public operations on transformations. Part B
 lets a coordinate system state that some of its axes are unknown, which
@@ -387,18 +389,38 @@ the cached values named by `invalidates=` after it runs.
 
 ## Remaining work
 
-Part A will land in one pull request. It gives `Projection` coordinate
-systems and creation at `0`; replaces the restrictors of #104 with pair
-rewrite rules; adds `Transformation.restrict` and `project` and removes
-the transformation-level `embed`; makes `factor` a public pure rewrite and
-`compute` a single pass; makes reslice ask for `simplify="numeric"`; and
-adds the multi-block `SubspaceTransformation` and axis references by name.
-It will be checked by the parity sweep, the idempotence test and reslice
-timings.
+Part A lands in several pull requests. The first one, #570, wires
+`Projection` into `compute`:
+
+- created axes are `0`, and a projection that drops axes has no
+  inverse;
+- a projection derives the system on one side from a closed system on
+  the other side;
+- a projection whose number of axes is known converts to `Linear` and
+  `Affine`, so its kind is linear, as well as surjective or injective;
+- composers combine a projection with an affine-like neighbour, or with
+  a subspace that wraps an affine, and take the number of axes from that
+  neighbour when the projection does not state it;
+- a pair rule merges two adjacent projections into one, so that a drop
+  after the creation of the same axes cancels.
+
+Until the commutation rules exist, a composing `compute` multiplies a
+projection into its affine neighbours, and the factor pass still leaves
+unfactored a chain whose two ends have different numbers of axes.
+
+The remaining pull requests replace the restrictors of #104 with pair
+rewrite rules, including the commutation `π ∘ T → T' ∘ π'`; add
+`Transformation.restrict` and `project` and remove the
+transformation-level `embed`; make `factor` a public pure rewrite and
+`compute` a single pass; make reslice ask for `simplify="numeric"`; and
+add the multi-block `SubspaceTransformation` and axis references by name.
+They will be checked by the parity sweep, the idempotence test and
+reslice timings.
 
 ## Decisions
 
-Part A, agreed and not yet implemented:
+Part A, agreed. Decisions 4 and 7 are implemented in #570, and the
+others are not implemented yet:
 
 1. Restriction takes no `policy`; the policy belongs to `compute` and
    `simplify`.
