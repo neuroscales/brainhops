@@ -28,11 +28,15 @@ __all__ = [
     "split_spatial",
 ]
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import cached_value
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.orientations import Orientation
@@ -42,8 +46,10 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.errors import ConversionError
-from brainhops.io.base.parsers import (
+
+# errors
+from brainhops.errors import (
+    ConversionError,
     UnrepresentableTransformationError,
     WriterError,
 )
@@ -371,9 +377,9 @@ class AxisLayout(tx.NamedTuple):
         operations return views, so lazy arrays such as dask arrays stay lazy.
         """
         if self.order != sorted(self.order):
-            data = get_array_backend(data).transpose(data, self.order)
+            data = array_backend(data).transpose(data, self.order)
         for position in self.inserted:
-            data = get_array_backend(data).expand_dims(data, axis=position)
+            data = array_backend(data).expand_dims(data, axis=position)
         return data
 
 

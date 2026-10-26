@@ -1,3 +1,5 @@
+import warnings
+
 import typing_extensions as tx
 
 if tx.TYPE_CHECKING:
@@ -212,3 +214,94 @@ class UnrepresentableTransformationError(WriterError):
     """
 
     pass
+
+
+OnError: tx.TypeAlias = tx.Union[
+    tx.Literal["raise", "warn", "ignore"],
+    tx.Type[Exception],
+    tx.Type[Warning],
+    Exception,
+    Warning,
+    None,
+    tx.Any,
+]
+
+_ExceptionOrWarning: tx.TypeAlias = tx.Union[
+    tx.Type[Exception],
+    tx.Type[Warning],
+]
+_DefaultError: tx.TypeAlias = tx.Union[
+    _ExceptionOrWarning,
+    tx.Sequence[_ExceptionOrWarning],
+]
+
+
+def raise_or_warn(
+    msg: str,
+    on_error: OnError = "raise",
+    default: _DefaultError = (RuntimeError, UserWarning),
+) -> tx.Any:
+    """
+    Raise an error or warn based on the specified error handling strategy.
+
+    Parameters
+    ----------
+    msg : str
+        The error or warning message.
+    on_error : OnError, optional
+        The error handling strategy. It can be one of the following:
+        - "raise": Raise an exception (default).
+        - "warn": Issue a warning.
+        - "ignore": Do nothing.
+        - Exception class or instance: Raise the specified exception.
+        - Warning class or instance: Issue the specified warning.
+        - Anything else: return as is
+    default : _DefaultError, optional
+        The default exception or warning to use if `on_error` is not specified.
+
+    Returns
+    -------
+    Any
+        If `on_error` is not an excpetion or warning, return the value
+        of `on_error`.
+
+    Raises
+    ------
+    Exception
+        If `on_error` is "raise" or an exception class/instance, raise
+        the specified exception with the provided message.
+    """
+    if on_error == "ignore":
+        return
+    if on_error == "raise":
+        on_error = _get_default_exception(default)
+    if on_error == "warn":
+        on_error = _get_default_warning(default)
+    if isinstance(on_error, type):
+        if issubclass(on_error, Warning):
+            return warnings.warn(msg, on_error, stacklevel=2)
+        elif issubclass(on_error, Exception):
+            on_error = on_error(msg)
+    if isinstance(on_error, Exception):
+        raise on_error
+    return on_error
+
+
+def _get_default_exception(default: _DefaultError) -> tx.Type[Exception]:
+    if isinstance(default, type):
+        return default
+    if isinstance(default, (list, tuple)):
+        for cls in default:
+            if issubclass(cls, Exception):
+                return cls
+    return RuntimeError
+
+
+def _get_default_warning(default: _DefaultError) -> tx.Type[Warning]:
+    if isinstance(default, type):
+        return default
+    if isinstance(default, (list, tuple)):
+        for cls in default:
+            if issubclass(cls, Warning):
+                return cls
+    return UserWarning

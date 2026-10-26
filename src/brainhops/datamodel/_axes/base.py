@@ -1,4 +1,4 @@
-__all__ = ["Axis"]
+__all__ = ["Axis", "AxisLike"]
 
 import typing_extensions as tx
 from bagof.magic import HideIfDefault, NotKwOnly, fields
@@ -169,6 +169,12 @@ class Axis(DataModelBase, polymorphic=True, eq=True, repr=HideIfDefault):
                 f"other, so no class holds what both describe."
             )
         return cls(**_merge_with(first, second))
+
+
+AxisLike: tx.TypeAlias = tx.Union[Axis, str]
+"""
+A value that is a [`Axis`][] or that can be converted to one.
+"""
 
 
 # --- Helpers ----------------------------------------------------------

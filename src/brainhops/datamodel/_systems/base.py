@@ -10,7 +10,7 @@ import typing_extensions as tx
 from bagof.magic import HideIfDefault, NotKwOnly, replace
 
 from .._sugar import get_axes
-from ..axes import Axis, AxisList, AxisSequence, AxisTuple
+from ..axes import Axis, AxisList, AxisSequence, AxisSequenceLike, AxisTuple
 from ..base import DataModelBase
 
 if tx.TYPE_CHECKING:
@@ -272,3 +272,11 @@ class CoordinateSystem(
                 f"CoordinateSystem or None, not with {type(other).__name__}."
             )
         return get_axes(self).compatible_with(get_axes(other))
+
+
+CoordinateSystemLike: tx.TypeAlias = tx.Union[
+    CoordinateSystem, AxisSequenceLike, None
+]
+"""
+A value that is a [`CoordinateSystem`][], or that can be converted to one.
+"""

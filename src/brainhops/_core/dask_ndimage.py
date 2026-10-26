@@ -154,7 +154,7 @@ def _take(
     cval: float,
 ) -> ArrayProtocol:
     """Return `array[np.ix_(*positions)]`, where -1 reads `cval`."""
-    xp = backends.get_array_backend(array)
+    xp = backends.array_backend(array)
     mask = None
     for axis, pos in enumerate(positions):
         array = xp.take(array, xp.asarray(np.maximum(pos, 0)), axis=axis)
@@ -227,7 +227,7 @@ def _map_coordinates_1block(
     dtype = input.dtype
     if mode not in _LOCAL_MODES:
         whole = input.compute() if hasattr(input, "compute") else input
-        return backends.get_ndimage_backend(whole).map_coordinates(
+        return backends.ndimage_backend(whole).map_coordinates(
             whole,
             coords,
             order=degree,
@@ -236,7 +236,7 @@ def _map_coordinates_1block(
             prefilter=prefilter,
         )
 
-    xp = backends.get_array_backend(coords)
+    xp = backends.array_backend(coords)
     count = int(coords.shape[1])
     finite = xp.all(xp.isfinite(coords), axis=0)
     if not bool(xp.all(finite)):
@@ -266,7 +266,7 @@ def _map_coordinates_1block(
     window = _gather(input, signals, cval)
     if window is None:
         return xp.full((count,), cval, dtype=dtype)
-    xd = backends.get_ndimage_backend(window)
+    xd = backends.ndimage_backend(window)
     if prefilter:
         window = xd.spline_filter(
             window, degree, output=np.float64, mode="mirror"
@@ -342,7 +342,7 @@ def map_coordinates(
     # The blocks of the result are on a GPU when the input or the
     # coordinates are, and Dask must know it to choose the right package.
     on_gpu = backends.get_device(input) or backends.get_device(coordinates)
-    xp = backends.get_array_backend("cupy" if on_gpu else "numpy")
+    xp = backends.array_backend("cupy" if on_gpu else "numpy")
     meta = xp.empty((0,) * (coords.ndim - 1), dtype=input.dtype)
     return da.map_blocks(
         _map_coordinates_block,
@@ -378,7 +378,7 @@ def _spline_filter1d_block(
     block: ArrayProtocol, degree: int, dim: int
 ) -> ArrayProtocol:
     """Prefilter one concrete block along one axis, in float64."""
-    xd = backends.get_ndimage_backend(block)
+    xd = backends.ndimage_backend(block)
     return xd.spline_filter1d(
         block, degree, axis=dim, output=np.float64, mode="mirror"
     )

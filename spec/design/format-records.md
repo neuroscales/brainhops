@@ -1127,8 +1127,8 @@ its status.
 43. Copying one LTA view into another shares the record and reads it
     again in the coordinate systems of the target, because the views
     are views of one file. Status: accepted and documented.
-44. The LTA writer keeps only 16 significant digits. The problem is
-    older than this work and is filed as #420. Status: open.
+44. ~~The LTA writer keeps only 16 significant digits. The problem is
+    older than this work and is filed as #420. Status: open.~~
 45. The conformance tests needed new hooks. `Exemplar.stored` reads data
     that lives in the record. The stream contract of check 12 applies
     to binary formats only, and a text format is checked for the read
@@ -2191,11 +2191,12 @@ registrations of its views back into the XML file.
      which the file cannot say. Status: accepted and documented.
 235. An axis without a unit is written as a dimension without a unit, and
      a dimension without a unit is read as an axis without a unit, so an
-     unknown unit and the absence of a unit are not told apart. pint
+     unknown unit and the absence of a unit are not told apart. ~~pint
      treats the radian as dimensionless, so a unit is written as `rad/s`
      rather than `Hz` when its name contains `radian`
-     (`_scale_and_unit`). Status: accepted for now by the maintainer, with
-     a follow-up issue to tell the two units apart by their dimensions.
+     (`_scale_and_unit`).~~ Status: accepted for now by the maintainer,
+     ~~with a follow-up issue to tell the two units apart by their
+     dimensions~~.
 236. The coefficients are converted between the SI prefixes of the input
      and output axes with decimal arithmetic on the shortest
      representation of each number. When the two prefixes are equal,
@@ -2456,7 +2457,7 @@ pyramid of the conformance test and the checks P1 to P12.
      writing, and a `.npz` or `.mat` file of several arrays would have to
      keep its other arrays. Status: open, for the maintainer to decide
      whether these formats should write.
-302. The plain matrix formats give the coordinate systems of their record
+302. ~~The plain matrix formats give the coordinate systems of their record
      to the transformation as its own `input` and `output`, instead of
      decoding them as properties as LTA does, and a system counts as
      assigned only when it is not the very object of the record
@@ -2467,7 +2468,7 @@ pyramid of the conformance test and the checks P1 to P12.
      `LtaTransformation.to(Affine).input` is `None` for a file of the RAS
      type, on `main` as well. Status: open, for the maintainer to decide
      whether the data model should copy the decoded systems of another
-     class, which would let the plain matrix formats decode them too.
+     class, which would let the plain matrix formats decode them too.~~
 303. `NiftyRegAffine` holds a `NiftyRegAffineRaw` record that keeps the
      text of the file, as `C3dAffineRaw` does in item 170, so an untouched
      file keeps its `%.7g` numbers, and a matrix that is encoded is

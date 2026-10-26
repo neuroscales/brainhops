@@ -9,11 +9,13 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
-# internals
+# core
 from brainhops._core import path
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel._frames import FrameSlot, normalize_frames
 from brainhops.datamodel.axes import Axis
@@ -32,14 +34,20 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
-from brainhops.errors import LossyConversionError
+
+# errors
+from brainhops.errors import (
+    LossyConversionError,
+    ParserExistsError,
+    WriterError,
+)
+
+# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
-    ParserExistsError,
-    WriterError,
 )
 from brainhops.io.common._frames import values_in_format_frames
 from brainhops.io.common._geometry import (
@@ -93,6 +101,11 @@ from brainhops.io.metadata._base import (
 
 # this format
 from ._views import _image_to_disk, _image_to_model
+
+# typing
+if tx.TYPE_CHECKING:
+    # import for mkdocstring cross ref
+    from brainhops.datamodel.metadata import metadata_loss_policy  # noqa: F401
 
 
 @register_format
@@ -641,8 +654,7 @@ class NiftiImage(
             always comes from this image.
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do with the metadata that the header cannot hold. By
-            default, the policy in effect (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+            default, the policy in effect (see [`metadata_loss_policy`][]).
         lossy : bool, default=False
             Whether the values of a component axis may be written
             although NIfTI loses information about them: values that
@@ -925,7 +937,7 @@ def _in_ras_millimetres(
     if np.array_equal(conversion, np.eye(3)):
         return image
     data = image.data
-    backend = get_array_backend(data)
+    backend = array_backend(data)
     axes = image._array_axes()
     for index in indices:
         count = int(data.shape[index])
@@ -1131,6 +1143,11 @@ def _nifti_to_transformations(
     that scales by `pixdim[4]` and translates by `toffset`. Other axes pass
     through, and a time axis without a valid spacing stays a frame index
     in every space. An image with only spatial axes gets a plain `Affine`.
+
+    Only spatial axes receive an anatomical orientation. Under a flat
+    intent, such as a time series, a shape or a point set, the axes named
+    x, y and z are not spatial. An image without spatial axes has no
+    voxel-to-RAS transformation, so the list holds only the first entry.
     """
 
     xforms = []
@@ -1186,6 +1203,9 @@ def _nifti_to_transformations(
     ]
     phys_space = CoordinateSystem(name="physical", axes=phys_axes)
 
+    # Only spatial axes have an anatomical orientation. Under a flat intent,
+    # such as a time series or a point set, the axes named x, y and z are
+    # plain indices and keep their type.
     ras_axes = [
         replace(
             axis,
@@ -1193,7 +1213,7 @@ def _nifti_to_transformations(
                 type="anatomical", value=orientation[axis.name]
             ),
         )
-        if axis.name in orientation
+        if axis.type == "space" and axis.name in orientation
         else axis
         for axis in phys_axes
     ]
@@ -1283,6 +1303,11 @@ def _nifti_to_transformations(
                 )
             )
         return Sequence(transformations=steps, input=voxel_space, output=world)
+
+    # The qform and the sform map the spatial axes. An image without
+    # spatial axes, such as one with a flat intent, has no world space.
+    if not keep_dims:
+        return xforms
 
     # --- qform --------------------------------------------------------
     # get_qform and get_sform return None for a form whose code is 0, and

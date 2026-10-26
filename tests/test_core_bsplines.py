@@ -85,14 +85,14 @@ ALL_DEGREES = [2, 3, 4, 5]
 
 
 def _backends() -> list:
-    from brainhops.backends import available_backends
+    from brainhops._core.backends import backends
 
     return [
         "numpy",
         pytest.param(
             "dask",
             marks=pytest.mark.skipif(
-                "dask" not in available_backends(),
+                "dask" not in backends(),
                 reason="dask is not installed",
             ),
         ),

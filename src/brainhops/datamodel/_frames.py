@@ -17,8 +17,8 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
+from brainhops._core.backends import array_backend, backend, resolve_backend
 from brainhops._core.typing import ArrayProtocol, Shape
-from brainhops.backends import backend, get_array_backend, resolve_backend
 
 from ._axes.components import _batched, _inv, is_component_type
 from ._sugar import get_axes
@@ -772,7 +772,7 @@ def jacobian(
     )
     with backend(resolve_backend(like, "native")):
         coords = Sequence(transformations=[grid, head]).compute().field
-    xp = get_array_backend(coords)
+    xp = array_backend(coords)
     columns = []
     for c in cols:
         if shape[c] > 1:
@@ -803,7 +803,7 @@ def change_matrix(
         matrix = target
     else:
         inverse = _batched(_inv, source)
-        xp = get_array_backend(inverse)
+        xp = array_backend(inverse)
         matrix = xp.matmul(_backend_of(target, inverse), inverse)
     if method == ReframeMethod.jacobian:
         return matrix
@@ -824,7 +824,7 @@ def _backend_of(
     if isinstance(matrix, np.ndarray) and not isinstance(
         reference, np.ndarray
     ):
-        return get_array_backend(reference).asarray(matrix)
+        return array_backend(reference).asarray(matrix)
     return matrix
 
 
@@ -835,7 +835,7 @@ def _rotation(matrix: ArrayProtocol) -> ArrayProtocol:
     `R = U Vᵀ`. `R` is orthogonal, and it includes a reflection when `J`
     has a negative determinant.
     """
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     u, _, vt = xp.linalg.svd(matrix)
     return xp.matmul(u, vt)
 

@@ -14,6 +14,9 @@ __all__ = [
     "ArrayProtocol",
     "ArrayLike",
     "DTypeLike",
+    "Shape",
+    "ShapeLike",
+    "NativeNumber",
     "safe_get_origin",
     "npscalar",
     "npvector",
@@ -38,8 +41,6 @@ from bagof.hints.array import ArrayLike, ArrayProtocol, DTypeLike
 from bagof.hints.numpy import dtype, ndarray
 from bagof.magic import Default, Frozen, NoInit, NoRepr
 
-from brainhops import backends
-
 if sys.version_info >= (3, 10):
     from types import EllipsisType
 else:
@@ -62,13 +63,15 @@ def is_instance_or_subclass(
     return isinstance(obj, cls)
 
 
-Const = tx.Annotated[T, Frozen(), NoInit()]
+Const: tx.TypeAlias = tx.Annotated[T, Frozen(), NoInit()]
 """Field that is frozen and cannot be set through the constructor."""
 
-HiddenConst = tx.Annotated[Const[T], NoRepr()]
+HiddenConst: tx.TypeAlias = tx.Annotated[Const[T], NoRepr()]
 """Constant field that is also hidden from the generated `__repr__`."""
 
-Internal = tx.Annotated[tx.Optional[T], NoRepr(), NoInit(), Default(None)]
+Internal: tx.TypeAlias = tx.Annotated[
+    tx.Optional[T], NoRepr(), NoInit(), Default(None)
+]
 """Internal attribute that is not exposed to the user."""
 
 
@@ -104,25 +107,34 @@ class ToNumpyParameter(Converter):
         np.ndarray
             The NumPy array.
         """
-        if backends._is_loaded(value):
-            value = backends.to_backend(value, "numpy")
+        if isinstance(value, dkt.Array):
+            value = value.compute()
+        if isinstance(value, cpt.ndarray):
+            value = value.get()
         return Converter.get(self.hint)(value)
 
 
-npscalar = tx.Union[
+npscalar: tx.TypeAlias = tx.Union[
     T, tx.Annotated[ndarray[tx.Tuple[()], dtype[T]], ToNumpyParameter]
 ]
 """Scalar, given either as a plain value or as a 0-d array."""
 
-npvector = tx.Annotated[ndarray[tx.Tuple[int], dtype[T]], ToNumpyParameter]
+npvector: tx.TypeAlias = tx.Annotated[
+    ndarray[tx.Tuple[int], dtype[T]], ToNumpyParameter
+]
 """One-dimensional NumPy array, converted from an array of any backend."""
 
-npmatrix = tx.Annotated[
+npmatrix: tx.TypeAlias = tx.Annotated[
     ndarray[tx.Tuple[int, int], dtype[T]], ToNumpyParameter
 ]
 """Two-dimensional NumPy array, converted from an array of any backend."""
 
-Clip = tx.Optional[
+nparray: tx.TypeAlias = tx.Annotated[
+    ndarray[tx.Tuple[int, ...], dtype[T]], ToNumpyParameter
+]
+"""NumPy array of any shape, converted from an array of any backend."""
+
+Clip: tx.TypeAlias = tx.Optional[
     tx.Union[
         float,
         tx.Tuple[float, float],
@@ -146,3 +158,15 @@ Cartesian index, which can be a single index or a tuple of indices.
 """
 
 Shape: tx.TypeAlias = tx.Tuple[int, ...]
+"""Any shape."""
+
+ShapeLike: tx.TypeAlias = tx.Iterable[int]
+"""Any shape-like object, such as a list or a tuple."""
+
+NativeNumberType: tx.TypeAlias = tx.Union[
+    tx.Type[bool], tx.Type[int], tx.Type[float], tx.Type[complex]
+]
+"""Native number types."""
+
+NativeNumber: tx.TypeAlias = tx.Union[bool, int, float, complex]
+"""Native number values."""

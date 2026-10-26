@@ -12,14 +12,24 @@ __all__ = [
     "Identity",
 ]
 
+# stdlib
 from numbers import Integral, Real
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
+# core
 from brainhops._core.affines import inv as affine_inv
 from brainhops._core.affines import sqrtm as affine_sqrtm
 from brainhops._core.affines import to_compact, to_homogeneous
+from brainhops._core.backends import (
+    _creation_options,
+    array_backend,
+    backend,
+    resolve_backend,
+    to_backend,
+)
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._core.linalg import inv as invm
 from brainhops._core.linalg import require_positive, sqrtm
@@ -36,13 +46,8 @@ from brainhops._core.typing import (
     npvector,
 )
 from brainhops._ext.invfield import inverse as inverse_disp
-from brainhops.backends import (
-    _creation_options,
-    backend,
-    get_array_backend,
-    resolve_backend,
-    to_backend,
-)
+
+# datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _FrozenBackendMixin,
@@ -610,7 +615,7 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
             return None
         # The grid is created in the backend of the setting in effect,
         # which a computation sets to the backend of its result.
-        xp = get_array_backend()
+        xp = array_backend()
         options = _creation_options()
         grid = [xp.arange(s, dtype=float, **options) for s in self.shape]
         return xp.stack(xp.meshgrid(*grid, indexing="ij"), -1)
@@ -946,7 +951,7 @@ class Permutation(_CompactTransformation):
         perm = self.permutation
         if perm is None:
             return None
-        xp = get_array_backend(perm)
+        xp = array_backend(perm)
         inverse_permutation = [0] * len(perm)
         for i, p in enumerate(perm):
             inverse_permutation[p] = i
@@ -1038,14 +1043,14 @@ class Scaling(_CompactTransformation, polymorphic=True):
             return None
         what = f"The square root of this {type(self).__name__}"
         require_positive(self.scale, what)
-        xp = get_array_backend(self.scale)
+        xp = array_backend(self.scale)
         return xp.sqrt(self.scale)
 
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
         if self.scale is None:
             return None
-        xp = get_array_backend(self.scale)
+        xp = array_backend(self.scale)
         return xp.reciprocal(self.scale)
 
 

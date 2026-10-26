@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 
 import brainhops.backends as backends
+from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, spline_matrix
-from brainhops.backends import backend
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations.compute import factor as fac
 from brainhops.datamodel._transformations.compute import separable as sep

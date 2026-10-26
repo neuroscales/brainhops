@@ -10,10 +10,12 @@ store a field as a NIfTI vector image, such as the NiftyReg, SPM and FSL
 fields.
 """
 
-# internals
+# core
 from brainhops._core.affines import to_homogeneous
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# io
 from brainhops.io.common.nifti._files import _read
 
 # ----------------------------------------------------------------------
@@ -47,7 +49,7 @@ def _field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     components, and any other array is returned as it is.
     """
     if len(data.shape) == 4:
-        return get_array_backend(data).expand_dims(data, axis=3)
+        return array_backend(data).expand_dims(data, axis=3)
     return data
 
 
@@ -66,4 +68,4 @@ def _affine_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
 def _affine_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the homogeneous matrix of an affine from its compact matrix."""
-    return to_homogeneous(get_array_backend(data).asarray(data))
+    return to_homogeneous(array_backend(data).asarray(data))

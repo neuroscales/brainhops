@@ -204,7 +204,7 @@ def test_strides_that_reach_before_the_stream_are_refused() -> None:
 def test_an_mrtrix_image_reads_slabs(tmp_path) -> None:  # noqa: ANN001
     dask = pytest.importorskip("dask")
     from brainhops import io
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
     from brainhops.io.images.mrtrix import MrtrixImage
 
     values = np.random.default_rng(1).normal(size=(8, 9, 10)).astype("f4")
@@ -224,7 +224,7 @@ def test_an_image_gives_dask_blocks_of_its_storage(
 ) -> None:
     dask = pytest.importorskip("dask")
     from brainhops import io
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
     from brainhops.datamodel.images import SingleScaleImage
 
     values = np.random.default_rng(2).normal(size=(8, 9, 10)).astype("f4")

@@ -1,11 +1,16 @@
+# stdlib
 from collections.abc import MutableSequence as AbcMutableSequence
 from collections.abc import Sequence as AbcSequence
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
 
+# core
+from brainhops._core.backends import BackendLike, DeviceLike
 from brainhops._core.properties import smartproperty
-from brainhops.backends import BackendLike, DeviceLike
+
+# datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _BackendsMixin,
@@ -15,6 +20,7 @@ from brainhops.datamodel._backends import (
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
+# transformations
 from . import nocycles
 from .base import Transformation, _copied
 from .compute.check import is_kind

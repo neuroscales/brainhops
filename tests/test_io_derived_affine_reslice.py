@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.datamodel.transformations import Affine
 
 
