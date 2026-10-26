@@ -394,7 +394,8 @@ its slabs, because it is memory-mapped and its blocks are cheap to read
 in parallel.
 
 The cache and the single block of a compressed source are not
-implemented yet. They are tracked in issues of their own.
+implemented yet. The cache is tracked in #580 and the single block in
+#579.
 
 #### Remote sources
 
