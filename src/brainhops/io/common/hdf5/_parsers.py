@@ -14,6 +14,7 @@ from brainhops._core import path
 from brainhops._core.streams import preserve_position
 
 # io
+from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -408,6 +409,13 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
     def to_filename(self, filename: tx.Union[str, PathLike], **kwargs) -> None:
         """Write to the file at a path, replacing it.
 
+        A local file is written beside its target, which it then replaces
+        at once. A lazy array that reads the old file, such as a field of
+        an object that was loaded from that same file, therefore reads
+        the old content while the new file is written, and an error
+        while the content is written leaves the target as it was. Other
+        paths are written in place.
+
         Parameters
         ----------
         filename : path-like
@@ -416,8 +424,16 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             The options of the writer.
         """
         writer = self._h5_writer(**kwargs)
-        with h5py.File(str(filename), "w") as f:
-            writer(f)
+
+        def write(name: str) -> None:
+            with h5py.File(name, "w-") as f:
+                writer(f)
+
+        if is_local(filename):
+            replace_file(filename, write)
+        else:
+            with h5py.File(str(filename), "w") as f:
+                writer(f)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write to a binary stream open for writing.

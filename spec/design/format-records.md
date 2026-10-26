@@ -1442,12 +1442,12 @@ its status.
      17 therefore compares the files that a save and a save of the
      consolidated copy write by reading them back, and not by their
      bytes. Status: accepted.
-106. An X5 file is written with h5py in mode `"w"`, which truncates the
+106. ~~An X5 file is written with h5py in mode `"w"`, which truncates the
      file, while the lazy fields of an X5 record read the file by its
      name, so an X5 transformation saved over its own file loses its
      fields. X5 keeps its fields in its record and has no `rawdata`, so
      check 18 does not cover it. The problem is older than this work.
-     Status: open.
+     Status: open.~~
 107. A writer option that changes how the data is stored, such as
      `dtype=` for NIfTI or `datatype=` for AFNI, was recorded in the
      header of the consolidated copy, while `rawdata` held the values
