@@ -7,7 +7,7 @@ geometry with more than its two elements.
 import numpy as np
 import pytest
 
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.geometry import Geometry, _index2transform
 from brainhops.datamodel.images import SingleScaleImage

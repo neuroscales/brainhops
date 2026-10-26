@@ -16,16 +16,16 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core.magic import smart_replace
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import (
+from brainhops._core.backends import (
     BackendLike,
     DeviceLike,
     _is_loaded,
     backend,
     to_backend,
 )
+from brainhops._core.magic import smart_replace
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import ArrayProtocol
 
 _T = tx.TypeVar("_T")
 

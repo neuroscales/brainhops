@@ -11,22 +11,34 @@ and
 
 # The design is recorded in spec/design/vector-and-tensor-images.md.
 
+import itertools
+import math
 from collections.abc import Mapping
 
 import numpy as np
 import typing_extensions as tx
+from bagof.dispatchers import dispatch
 from bagof.magic import replace
 
-from brainhops._core.typing import ArrayProtocol, Shape
-from brainhops.backends import backend, get_array_backend, resolve_backend
+from brainhops._core.backends import array_backend, backend, resolve_backend
+from brainhops._core.linalg import inv, matmul, polar
+from brainhops._core.typing import ArrayProtocol, Shape, nparray, npmatrix
 
-from ._axes.components import _batched, _inv, is_component_type
-from ._sugar import get_axes
+from ._axes.components import (
+    ComponentAxis,
+    TensorAxis,
+)
+from ._sugar import (
+    axis_index,
+    enum_component_axes,
+    get_axes,
+    is_point_axis,
+)
 from ._transformations.compute.multiscale import (
     _as_affine,
     _as_affine_ignoring_fields,
 )
-from .axes import Axis, AxisSequence
+from .axes import Axis
 from .enums import ReframeMethod, ReframeMethodLike
 from .systems import CoordinateSystem
 from .transformations import (
@@ -67,39 +79,6 @@ A [`ReframeMethod`][brainhops.datamodel.enums.ReframeMethod] or its
 name, or a callable that receives the Jacobian of the change of frame
 and returns the matrix to apply.
 """
-
-
-# ----------------------------------------------------------------------
-#   AXES OF THE ARRAY SYSTEM
-# ----------------------------------------------------------------------
-
-
-def array_axes(
-    system: tx.Optional[CoordinateSystem], ndim: int
-) -> tx.Optional[AxisSequence]:
-    """Return the `ndim` axes of an array system, or `None` if unknown."""
-    axes = get_axes(system)
-    if axes.is_variadic:
-        if axes == [...]:
-            return None
-        axes = axes.expand(ndim)
-    if len(axes) != ndim:
-        return None
-    return axes
-
-
-def component_axes(axes: tx.Optional[tx.Sequence[Axis]]) -> tx.List[int]:
-    """Return the indices of the component axes among `axes`."""
-    return [
-        i
-        for i, axis in enumerate(axes or ())
-        if is_component_type(getattr(axis, "type", None))
-    ]
-
-
-def is_point_axis(axis: Axis) -> bool:
-    """Return whether the entries of an axis are coordinates of points."""
-    return getattr(axis, "valences", None) is None
 
 
 # ----------------------------------------------------------------------
@@ -148,19 +127,22 @@ def normalize_frames(
     ndim = len(shape)
     if raw is None or (not isinstance(raw, Mapping) and len(raw) == 0):
         return (None,) * ndim
+
     if isinstance(raw, Mapping):
-        slots: tx.List[FrameSlot] = [None] * ndim
+        frames: tx.List[FrameSlot] = [None] * ndim
         for key, value in raw.items():
-            slots[axis_index(key, axes, ndim)] = value
+            frames[axis_index(axes, key, ndim)] = value
+
     else:
-        slots = list(raw)
-        if len(slots) != ndim:
+        frames = list(raw)
+        if len(frames) != ndim:
             raise ValueError(
                 f"The image has {ndim} axes, so its frames must have one "
-                f"slot per axis, not {len(slots)}."
+                f"slot per axis, not {len(frames)}."
             )
-    components = set(component_axes(axes))
-    for i, slot in enumerate(slots):
+
+    components = {i for i, _ in enum_component_axes(axes)}
+    for i, slot in enumerate(frames):
         if slot is None:
             continue
         if not isinstance(slot, (Transformation, CoordinateSystem)):
@@ -176,29 +158,8 @@ def normalize_frames(
             )
         if isinstance(slot, Transformation):
             ncomponents = component_count(axes, i, shape[i], [slot])
-            slots[i] = explicit_frame(slot, axes, ncomponents)
-    return tuple(slots)
-
-
-def axis_index(
-    key: tx.Union[int, str], axes: tx.Optional[tx.Sequence[Axis]], ndim: int
-) -> int:
-    """Return the index of an axis given by its index or its name.
-
-    Raises
-    ------
-    KeyError
-        If no axis has that name or index.
-    """
-    if isinstance(key, str):
-        names = [getattr(axis, "name", None) for axis in axes or ()]
-        if key not in names:
-            raise KeyError(f"The image has no axis named {key!r}.")
-        return names.index(key)
-    index = int(key)
-    if not -ndim <= index < ndim:
-        raise KeyError(f"The image has no axis {index}.")
-    return index % ndim
+            frames[i] = explicit_frame(slot, axes, ncomponents)
+    return tuple(frames)
 
 
 def resolve_target(
@@ -278,11 +239,11 @@ def with_components(
     one. When `system` is unknown, `source` is used instead. The system
     is returned as it is when no axis changes.
     """
-    axes = array_axes(system, ndim)
+    axes = get_axes(system, ndim, on_error=None)
     if axes is None:
         return source
     new_axes = list(axes)
-    for i in component_axes(source_axes):
+    for i, _ in enum_component_axes(source_axes):
         axis = source_axes[i]
         name = getattr(new_axes[i], "name", None)
         if name is not None and name != axis.name:
@@ -332,7 +293,7 @@ def compose_frames(
         axes that the components follow when the types of its axes tell
         them.
     """
-    components = set(component_axes(new_axes))
+    components = set(i for i, _ in enum_component_axes(new_axes))
     unchanged: tx.Dict[bool, bool] = {}
     out: tx.List[FrameSlot] = []
     for i, old in enumerate(keep):
@@ -378,15 +339,15 @@ def _keeps_values(voxel_map: Transformation, points: bool) -> bool:
         return False
     matrix = np.asarray(affine.matrix, dtype=float)
     linear = matrix[:, :-1]
-    inputs = array_axes(voxel_map.input, linear.shape[1])
-    outputs = array_axes(voxel_map.output, linear.shape[0])
+    inputs = get_axes(voxel_map.input, linear.shape[1], on_error=None)
+    outputs = get_axes(voxel_map.output, linear.shape[0], on_error=None)
     if inputs is None or outputs is None:
         return False
-    cols = [
-        c for c in range(linear.shape[1]) if c not in component_axes(inputs)
-    ]
+    ind_input_components = tuple(i for i, _ in enum_component_axes(inputs))
+    cols = [c for c in range(linear.shape[1]) if c not in ind_input_components]
+    ind_output_components = tuple(i for i, _ in enum_component_axes(outputs))
     rows = [
-        r for r in range(linear.shape[0]) if r not in component_axes(outputs)
+        r for r in range(linear.shape[0]) if r not in ind_output_components
     ]
     if len(rows) != len(cols):
         return False
@@ -532,7 +493,7 @@ def component_count(
         entries alone does not tell the size of the frame.
     """
     axis = axes[index]
-    components = component_axes(axes)
+    components = [i for i, _ in enum_component_axes(axes)]
     for frame in frames:
         if not isinstance(frame, Transformation):
             continue
@@ -541,10 +502,10 @@ def component_count(
             continue
         ndim = len(_free_rows(structure.outputs, components))
         try:
-            return axis.frame_ndim(size, ndim)
+            return get_frame_ndim(axis, size, ndim)
         except ValueError:
             continue
-    return axis.frame_ndim(size)
+    return get_frame_ndim(axis, size)
 
 
 def explicit_frame(
@@ -572,11 +533,11 @@ def explicit_frame(
     if structure is None:
         return frame
     final = structure.outputs
-    candidates = _free_rows(final, component_axes(axes))
+    candidates = _free_rows(final, [i for i, _ in enum_component_axes(axes)])
     if len(candidates) == ncomponents:
         return frame
     if len(candidates) > ncomponents:
-        outputs = array_axes(frame.output, final.shape[0])
+        outputs = get_axes(frame.output, final.shape[0], on_error=None)
         groups: tx.Dict[tx.Any, tx.List[int]] = {}
         for r in candidates:
             kind = getattr(outputs[r], "type", None) if outputs else None
@@ -654,7 +615,7 @@ def frame_axes(
             "the axes that the components of the values follow cannot be "
             "read from it."
         )
-    components = component_axes(axes)
+    components = [i for i, _ in enum_component_axes(axes)]
     final = _free_rows(structure.outputs, components)
     if len(final) != ncomponents:
         raise ValueError(
@@ -772,7 +733,7 @@ def jacobian(
     )
     with backend(resolve_backend(like, "native")):
         coords = Sequence(transformations=[grid, head]).compute().field
-    xp = get_array_backend(coords)
+    xp = array_backend(coords)
     columns = []
     for c in cols:
         if shape[c] > 1:
@@ -785,59 +746,56 @@ def jacobian(
     return xp.stack(columns, axis=-1)
 
 
-def change_matrix(
+def reframe_matrix(
     source: tx.Optional[ArrayProtocol],
     target: tx.Optional[ArrayProtocol],
-    method: ReframeMethodOrCallable,
-    ndim: int,
-) -> ArrayProtocol:
+    method: ReframeMethodOrCallable = ReframeMethod.jacobian,
+) -> tx.Optional[ArrayProtocol]:
     """Return the matrix that re-expresses values from one frame in another.
 
-    The Jacobian of the change of frame is `D F′ · (D F)⁻¹`, where
-    `source` is `D F` and `target` is `D F′`. The method decides what is
+    The Jacobian of the change of frame is `D F' · (D F)⁻¹`, where
+    `source` is `D F` and `target` is `D F'`. The method decides what is
     applied: the Jacobian, its rotation, or the result of a callable.
+
+    Parameters
+    ----------
+    source : (*, n, n) array, optional
+        The Jacobian of the frame that the values are expressed in, or
+        `None` for the identity.
+    target : (*, n, n) array, optional
+        The Jacobian of the frame that the values are re-expressed in, or
+        `None` for the identity.
+    method : {"jacobian", "rotation"} | callable, default="jacobian"
+        The method to use for the re-expression.
+
+        * If `"jacobian"`, the Jacobian of the change of frame is used.
+        * If `"rotation"`, the rotation of the Jacobian is used.
+        * If a callable, it is called with the Jacobian of the change of
+          frame as an argument.
+
+    Returns
+    -------
+    (*, n, n) array, optional
+        The matrix that re-expresses the values, or `None` for the identity.
     """
-    eye = np.eye(ndim)
-    target = eye if target is None else target
-    if source is None:
+    if source is None and target is None:
+        return None
+    elif source is None:
         matrix = target
+    elif target is None:
+        matrix = inv(source)
     else:
-        inverse = _batched(_inv, source)
-        xp = get_array_backend(inverse)
-        matrix = xp.matmul(_backend_of(target, inverse), inverse)
+        matrix = matmul(target, inv(source))
     if method == ReframeMethod.jacobian:
         return matrix
     if method == ReframeMethod.rotation:
-        return _batched(_rotation, matrix)
+        return polar(matrix, "U")
     if callable(method):
         return method(matrix)
     raise ValueError(
         f"The method of a change of frame is 'jacobian', 'rotation' or a "
         f"callable, not {method!r}."
     )
-
-
-def _backend_of(
-    matrix: ArrayProtocol, reference: ArrayProtocol
-) -> ArrayProtocol:
-    """Return a NumPy matrix in the backend of `reference`."""
-    if isinstance(matrix, np.ndarray) and not isinstance(
-        reference, np.ndarray
-    ):
-        return get_array_backend(reference).asarray(matrix)
-    return matrix
-
-
-def _rotation(matrix: ArrayProtocol) -> ArrayProtocol:
-    """Return the rotation of the polar decomposition of stacked matrices.
-
-    A matrix `J = U S Vᵀ` has the polar decomposition `J = R P` with
-    `R = U Vᵀ`. `R` is orthogonal, and it includes a reflection when `J`
-    has a negative determinant.
-    """
-    xp = get_array_backend(matrix)
-    u, _, vt = xp.linalg.svd(matrix)
-    return xp.matmul(u, vt)
 
 
 def squeeze_axis(matrix: ArrayProtocol, axis: int, ndim: int) -> ArrayProtocol:
@@ -849,3 +807,269 @@ def squeeze_axis(matrix: ArrayProtocol, axis: int, ndim: int) -> ArrayProtocol:
         return matrix
     index = tuple(0 if i == axis else slice(None) for i in range(ndim))
     return matrix[index]
+
+
+@dispatch
+def get_frame_ndim(
+    axis: ComponentAxis, axis_length: int, expected: tx.Optional[int] = None
+) -> int:
+    """Return the dimensionality of the vector space.
+
+    Parameters
+    ----------
+    axis : ComponentAxis
+        The [`Axis`][] that describes the point or vector.
+    axis_length : int
+        The number of entries along the axis.
+    expected : int, optional
+        The expected dimensionality, when it is known from elsewhere.
+        It is checked against the computed `ndim`.
+
+    Returns
+    -------
+    ndim : tuple[int, ...]
+        The dimensionality of the vector space.
+
+    Raises
+    ------
+    ValueError
+        If the axis length does not match the expected dimensionality.
+    """
+    if expected is not None:
+        if axis_length != expected:
+            raise ValueError(
+                f"{axis_length} entries are not the components "
+                f"of a point or a vector of length {expected}."
+            )
+    return axis_length
+
+
+@dispatch
+def get_frame_ndim(  # noqa: F811
+    axis: TensorAxis, axis_length: int, expected: tx.Optional[int] = None
+) -> int:
+    """Return the dimensionality of the vector space on which the tensor acts.
+
+    Parameters
+    ----------
+    axis : TensorAxis
+        The [`Axis`][] that describes the compact flattened tensor.
+    axis_length : int
+        The number of entries along the axis.
+    expected : int, optional
+        The expected dimensionality, when it is known from elsewhere.
+        It is checked against the computed `ndim`.
+
+    Returns
+    -------
+    ndim : tuple[int, ...]
+        The dimensionality of the vector space.
+
+    Raises
+    ------
+    ValueError
+        If no frame, or more than one, gives `packed_size` entries, or
+        if the estimated dimensionality does not match the computed one.
+    """
+    layout = axis.layout  # hint for the tensor's compact layout
+    rank = axis.rank  # tensor rank
+    found = set()  # possible frame dimensionalities
+
+    if layout is not None and not isinstance(layout, str):
+        # An explicit layout needs at least the axes that it names, and
+        # it may leave the last axes of a larger frame out.
+        least = 1 + int(np.max(layout))
+        if axis_length == len(layout):
+            found = {least}
+            if expected is not None and expected >= least:
+                found.add(expected)
+
+    else:
+        if layout is not None:
+            possible_layouts = [layout]
+        elif len(set(axis.variance)) > 1:
+            # all axes do not have the same variance -> cannot be symmetric
+            possible_layouts = ["C"]
+        else:
+            possible_layouts = ["C", "symmetric"]
+        for possible_layout in possible_layouts:
+            for n in range(1, axis_length + 1):
+                if _layout_size(possible_layout, n, rank) == axis_length:
+                    found.add(n)
+
+    if expected is not None:
+        if expected not in found:
+            raise ValueError(
+                f"{axis_length} entries cannot hold a tensor of rank "
+                f"{rank} in a frame of {expected} axes with the layout "
+                f"{layout!r}."
+            )
+        return expected
+
+    if len(found) != 1:
+        raise ValueError(
+            f"{axis_length} entries hold a tensor of rank {rank} with "
+            f"the layout {layout!r} in frames of {sorted(found)} axes, "
+            f"so the dimensionality of the frame is not known."
+        )
+    return found.pop()
+
+
+# --- tensors ----------------------------------------------------------
+
+
+def _tensor_sub2ind(
+    axis: TensorAxis, ndim: int, size: tx.Optional[int]
+) -> nparray[int]:
+    """Return the entry of each component, in row-major order.
+
+    A component that is zero by construction has the entry `-1`.
+
+    Parameters
+    ----------
+    axis : TensorAxis
+        The [`Axis`][] that describes the tensor.
+    ndim : int
+        The dimensionality of the vector space on which the tensor acts.
+    size : int, optional
+        The length of the compact flattened tensor.
+
+    Returns
+    -------
+    indices : np.ndarray
+        A nd array with shape `(ndim,) * rank`, where `rank` is the rank
+        of the tensor and `ndim` the dimensionality of the vector space.
+
+        It is a mapping from each nd-index of the full tensor to the
+        corresponding linear index of the compact tensor, or -1 if the
+        component is zero by construction.
+    """
+    rank = axis.rank
+    entries = [tuple(e) for e in _tensor_ind2sub(axis, ndim, size).tolist()]
+    position = {entry: k for k, entry in enumerate(entries)}
+    permuted = {tuple(sorted(entry)): k for k, entry in enumerate(entries)}
+    is_symmetric = len(set(axis.variance)) == 1
+    unpack = []
+    for multi in itertools.product(range(ndim), repeat=rank):
+        if multi in position:
+            unpack.append(position[multi])
+        elif is_symmetric:
+            unpack.append(permuted.get(tuple(sorted(multi)), -1))
+        else:
+            unpack.append(-1)
+    return np.array(unpack, dtype=int)
+
+
+def _tensor_ind2sub(
+    axis: TensorAxis, ndim: int, size: tx.Optional[int] = None
+) -> npmatrix[int]:
+    """Return the frame axis of each index, for each entry.
+
+    Parameters
+    ----------
+    axis : TensorAxis
+        The axis that describes the tensor.
+    ndim : int
+        The dimensionality of the underlying vector space.
+    size : int, optional
+        The length of the compact flattened tensor.
+
+    Returns
+    -------
+    np.ndarray
+        A nd array with shape `(size, rank)`, where `rank` is the rank
+        of the tensor and `size` the number of entries along the axis.
+        For each entry, the frame axis of each index of the tensor.
+
+    Raises
+    ------
+    ValueError
+        If an explicit layout names a frame axis that does not exist.
+    """
+    layout = _resolve_layout(axis, ndim, size)
+    rank = axis.rank
+    if isinstance(layout, str):
+        return _layout_entries(layout, ndim, rank)
+    entries = tuple(tuple(int(i) for i in entry) for entry in layout)
+    if any(not 0 <= i < ndim for entry in entries for i in entry):
+        raise ValueError(
+            f"The layout {entries} names an axis that a frame of "
+            f"{ndim} axes does not have."
+        )
+    return _as_entries(entries)
+
+
+def _resolve_layout(
+    axis: TensorAxis, ndim: int, size: tx.Optional[int] = None
+) -> tx.Union[str, npmatrix[int]]:
+    """Return the layout, read from the number of entries if needed.
+
+    Parameters
+    ----------
+    axis : TensorAxis
+        The [`Axis`][] that describes the tensor.
+    ndim : int
+        The dimensionality of the vector space.
+    size : int, optional
+        The number of entries along the axis, which reads a layout
+        that is `None`.
+
+    Returns
+    -------
+    str or tuple of tuple of int
+        The layout, never `None`.
+
+    Raises
+    ------
+    ValueError
+        If the layout is `None` and `size` is neither `n**k` nor
+        `C(n + k - 1, k)`.
+    """
+    if axis.layout is not None:
+        return axis.layout
+    rank = axis.rank
+    for name in ("C", "symmetric"):
+        if size is not None and _layout_size(name, ndim, rank) == size:
+            if name == "symmetric" and len(set(axis.variance)) > 1:
+                break
+            return name
+    raise ValueError(
+        f"{size} entries are neither all the components nor the "
+        f"symmetric components of a tensor of rank {rank} in a frame "
+        f"of {ndim} axes, so the layout must be given."
+    )
+
+
+def _layout_size(name: str, ndim: int, rank: int) -> int:
+    """Return the number of entries of a named layout."""
+    if name in ("C", "F"):
+        return ndim**rank
+    if name == "diagonal":
+        return ndim
+    return math.comb(ndim + rank - 1, rank)
+
+
+def _as_entries(x: tx.Any) -> npmatrix[int]:
+    return np.asarray(tuple(x), dtype=int)
+
+
+def _layout_entries(name: str, ndim: int, rank: int) -> npmatrix[int]:
+    """Return the entries of a named layout, in their order."""
+    if name == "C":
+        return _as_entries(itertools.product(range(ndim), repeat=rank))
+    if name == "F":
+        return _as_entries(
+            entry[::-1]
+            for entry in itertools.product(range(ndim), repeat=rank)
+        )
+    if name == "diagonal":
+        return _as_entries((i,) * rank for i in range(ndim))
+    upper = tuple(itertools.combinations_with_replacement(range(ndim), rank))
+    if name == "symmetric":
+        return _as_entries(upper)
+    if name == "symmetric-lower":
+        return _as_entries(sorted(entry[::-1] for entry in upper))
+    # "symmetric-diagonal-first", which is only defined for rank 2.
+    diagonal = tuple(entry for entry in upper if entry[0] == entry[1])
+    offdiag = tuple(entry for entry in upper if entry[0] != entry[1])
+    return _as_entries(diagonal + offdiag)

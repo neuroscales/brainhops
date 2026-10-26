@@ -10,10 +10,10 @@ to the interpolated field.
 import numpy as np
 import pytest
 
-from brainhops.backends import (
-    available_backends,
+from brainhops._core.backends import (
+    array_backend,
     backend,
-    get_array_backend,
+    backends,
 )
 from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel._transformations.sequence import (
@@ -69,7 +69,7 @@ ARRAY_BACKENDS = [
     pytest.param(
         "dask",
         marks=pytest.mark.skipif(
-            "dask" not in available_backends(),
+            "dask" not in backends(),
             reason="dask is not installed",
         ),
     ),
@@ -231,7 +231,7 @@ def test_subspace_coords_preserves_interpolation_settings() -> None:
 
 def test_subspace_coords_promotes_an_integer_domain() -> None:
     # An integer coordinate field is promoted to float.
-    xp = get_array_backend()
+    xp = array_backend()
     field = xp.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
     Ti = CoordinateField(field=field, output=_full4("in"))
     To = _subspace_affine([0, 1, 2])

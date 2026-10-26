@@ -50,49 +50,65 @@ change under a linear map `J` of the frame:
 | `displacement` | `DisplacementAxis` | `v ↦ J v`                        |
 | `tensor`       | `TensorAxis`       | `J` or `J⁻ᵀ` on each index       |
 
-The valence of a vector or a tensor says, for each index of the object,
-whether the index changes with `J` (a `"vector"` index) or with `J⁻ᵀ` (a
-`"covector"` index). A vector axis has a field `valence`, which is
-`"vector"` by default and `"covector"` for an object such as the
-gradient of an image, whose pairing with a vector does not depend on the
-frame. A covector is therefore a vector axis rather than a type of its
-own, so that vectors and tensors describe the valences of their indices
-in the same way, and one rule applies the map to both: each vector index is
-multiplied by `J` and each covector index by `J⁻ᵀ`. A displacement axis
-has no `valence` field, because a displacement is always of valence
-`"vector"`, and a point has no valence.
+The variance of a vector or a tensor says, for each index of the
+object, whether the index changes with `J` (a contravariant index) or
+with `J⁻ᵀ` (a covariant index). A vector axis has a field `variance`,
+which is `"contravariant"` by default and `"covariant"` for an object
+such as the gradient of an image, whose pairing with a vector does not
+depend on the frame. Such an object is also called a covector. A
+covector is a vector axis rather than a type of its own, so that vectors
+and tensors describe the variances of their indices in the same way, and
+one rule applies the map to both: each contravariant index is multiplied
+by `J` and each covariant index by `J⁻ᵀ`. The variance of a displacement
+axis is pinned to `"contravariant"`, because a displacement always
+changes with `J`, and a point has no variance.
 
 The type is used, rather than a separate field of the axis, because the
 entries of an axis are either independent values or the components of
 one object, never both, so a single field states it without allowing
 contradictory combinations. OME-NGFF already describes the components of
 its fields with axis types. `displacement` and `coordinate` are kept so
-that the fields of OME-NGFF keep their types. A subclass of `Axis` cannot
-pin a different type than its parent, so `DisplacementAxis` and
-`VectorAxis` are siblings, and so are `CoordinateAxis` and `PointAxis`.
-Each class gives the valence of its axis, and `ComponentAxis` applies
-the map from the valence, so the siblings behave in the same way. The
-function `is_component_type` tells whether a type is a component type,
-and the readers and the writers use it to store component axes with the
+that the fields of OME-NGFF keep their types. `VectorAxis` accepts the
+types `vector` and `displacement`, and `DisplacementAxis` is its
+subclass that pins the type `displacement`. In the same way,
+`PointAxis` accepts `point` and `coordinate`, and `CoordinateAxis` is
+its subclass that pins `coordinate`. A displacement axis therefore is a
+vector axis, and a coordinate axis is a point axis. The function
+`is_component_type` tells whether a type is a component type, and the
+readers and the writers use it to store component axes with the
 channels.
+
+The axis classes only describe the entries. The computations live in
+functions outside the classes for now: `apply_linear_map` in
+`brainhops.datamodel._reframe` applies a map to the entries of an axis,
+and `get_frame_ndim` and the layout helpers of
+`brainhops.datamodel._frames` read the size of the frame and the order
+of the components of a tensor. `apply_linear_map` dispatches on the
+class of the axis, so that a vector and a tensor axis share the rule of
+the variances.
 
 The entries of a vector axis follow axes of the system of the frame, in
 order. This is also the rule that OME-NGFF RFC-3 states
 for vector axes, and section 5 explains how these axes are found.
 
-The valences are the members of the enumeration `Valence`, and a field
-also accepts their names as strings. A tensor axis has two fields of its
-own.
+The variances are the members of the enumeration `IndexVariance`,
+`contravariant` and `covariant`, which have the aliases `contra` and
+`vector`, and `co` and `covector`. A field also accepts their names as
+strings. A tensor axis has two fields of its own.
 
-- `valence` lists the valence of each index of the tensor, `"vector"`
-  or `"covector"`, so that its length is the rank `k` of the tensor. The
-  default is `("vector", "vector")`.
+- `variance` lists the variance of each index of the tensor, so that its
+  length is the rank `k` of the tensor. A single variance applies to
+  every index. The tensor then has rank 2, unless an explicit layout
+  gives the rank. The default is `"contravariant"`.
 - `layout` says which components the axis stores, and in which order,
-  for a frame of `n` axes. It is a name or an explicit tuple that gives,
+  for a frame of `n` axes. It is a name or an explicit list that gives,
   for each entry, the frame axis of each index. A single field holds
   both, because a named layout is only a short way to write a common
-  tuple, and because software stores a symmetric matrix in different
-  orders.
+  list, and because software stores a symmetric matrix in different
+  orders. An explicit list is stored as an integer array with one row
+  per entry and one column per index. The comparison that the data model
+  generates for the fields of an axis needs one boolean per field, which
+  an array does not give, so `TensorAxis` compares its layout itself.
 
 The names are the values of the enumeration `TensorLayout`, which a
 field also accepts as strings. They are generic rather than the names of
@@ -117,17 +133,18 @@ not increase, in lexicographic order, which is defined for every rank.
 is refused for other ranks. `"diagonal"` stores the `n` components whose
 indices are all equal, and the other components are zero.
 
-An explicit tuple lists each stored component once. The listed
-components are independent, so a full tensor can be stored in any
-order. A component that the tuple does not list takes the value of the
-listed component whose indices are a permutation of its own, if there
-is one, and is zero otherwise. A tuple that leaves out a component with
-several listed permutations is refused, because their values may
-differ. Taking a value from a permutation makes the tensor symmetric,
-which needs all its indices to be of the same valence, because the
-symmetry of a tensor whose indices have different valences depends on the
-frame. The symmetric layouts, and the tuples that take a value from a
-permutation, are therefore refused for a mixed valence.
+An explicit list gives each stored component once. A list that gives a
+component twice, or whose entries do not give one frame axis per index,
+is refused. The listed components are
+independent, so a full tensor can be stored in any order. When all the
+indices of the tensor have the same variance, a component that the list
+does not give takes the value of a listed component whose indices are a
+permutation of its own, and the last such component when there are
+several. Otherwise, and when no permutation is listed, the component is
+zero. A tensor whose indices have different variances takes no value
+from a permutation, because its symmetry depends on the frame. A
+symmetric layout therefore stores only one triangle of such a tensor,
+and its other components are zero.
 
 `None`, the default, reads the layout from the number of entries once
 `n` is known: `n**k` entries are `"C"` and `C(n + k - 1, k)` entries are
@@ -136,29 +153,29 @@ permutation, are therefore refused for a mixed valence.
 inferred. The operations take `n` from the frames of the axis: it is
 the number of outputs of a frame that no component axis feeds, when
 that number agrees with the number of entries. A number of entries that
-two frames could give, such as 36 for a matrix, and an explicit tuple
+two frames could give, such as 36 for a matrix, and an explicit list
 that leaves the last axes of the frame out, are therefore read
 correctly. Only when no frame is known is `n` read from the number of
 entries alone, and an ambiguous number is then refused.
 
 A layout with components that are zero by construction, such as
-`"diagonal"` or an explicit tuple that leaves components out without a
+`"diagonal"` or an explicit list that leaves components out without a
 permutation to take them from, cannot hold the tensor after a general
 change of frame. `reframe` then stores the result in the smallest layout
 that can hold it, `"symmetric"` when all the indices have the same
-valence and the layout stores no two components whose indices are
+variance and the layout stores no two components whose indices are
 permutations of each other, and `"C"` otherwise. The axis changes its
 layout and its length, and the transformations and the frames of the
 image get the new axis in their input system.
 
-When the frame changes by `J`, each vector index is multiplied by `J`
-and each covector index by `J⁻ᵀ`. A diffusion tensor, with two vector
-indices, becomes `J T Jᵀ`, a Hessian, with two covector indices, becomes
-`J⁻ᵀ H J⁻¹`, and a linear map, with one index of each valence, becomes
-`J A J⁻¹`. A two-point tensor, such as the Jacobian of a warp between
-two spaces, has indices in two different frames, so it is stored as two
-vector axes, one of valence `"vector"` and one of valence `"covector"`,
-each with its own frame.
+When the frame changes by `J`, each contravariant index is multiplied
+by `J` and each covariant index by `J⁻ᵀ`. A diffusion tensor, with two
+contravariant indices, becomes `J T Jᵀ`, a Hessian, with two covariant
+indices, becomes `J⁻ᵀ H J⁻¹`, and a linear map, with one index of each
+variance, becomes `J A J⁻¹`. A two-point tensor, such as the Jacobian of
+a warp between two spaces, has indices in two different frames, so it
+is stored as two vector axes, one contravariant and one covariant, each
+with its own frame.
 
 The coordinates of a point change with the map itself rather than with
 its Jacobian. A point axis can have a frame, which records the space of
@@ -350,7 +367,7 @@ because their entries described the components in the old frame, and
 because the axis of a tensor stored with only some of its components
 becomes longer. No field of the vocabulary runs along a component axis
 today. The descriptions of the channels run along the axes of type
-`channel` only (`Along(AxisType.channel)`): the type, the valence, the
+`channel` only (`Along(AxisType.channel)`): the type, the variance, the
 layout and the frame of a component axis already describe its entries,
 and a channel axis is never re-expressed, so `reframe` keeps these
 descriptions (see section 9). The rule of the `AXIS` scope applies to
@@ -402,9 +419,9 @@ here. A vector axis of an OME-Zarr image is a `vector` axis whose frame
 is the transformation from the array to the intrinsic coordinate system.
 The Zarr reader maps the types `point`, `vector` and `tensor` to their
 classes, and a vector or a tensor axis that it reads has the default
-`valence` and `layout`, since OME-NGFF does not state them. The reverse
-is lossy: NGFF has no standard way to store the valence of a vector, the
-valence and the layout of a tensor, a two-point tensor or a foreign
+`variance` and `layout`, since OME-NGFF does not state them. The reverse
+is lossy: NGFF has no standard way to store the variance of a vector,
+the variance and the layout of a tensor, a two-point tensor or a foreign
 frame, so a writer would store them as custom axis types and report the
 loss.
 
@@ -525,8 +542,8 @@ frame that this intent states.
   the objects that the header gave, and their values are re-expressed.
   A field that keeps the FSL intent of its own header is laid out as
   FSL writes it.
-- Otherwise, the vectors of a displacement axis, or of a vector axis of
-  valence `"vector"`, are re-expressed in the world of the preferred
+- Otherwise, the vectors of a displacement axis, or of a contravariant
+  vector axis, are re-expressed in the world of the preferred
   transformation, which the writer stores as the best affine, and the
   header gets the DISPVECT intent. A vector axis therefore reads back as
   a displacement axis. A field read from an FSL file whose geometry has
@@ -563,11 +580,16 @@ Implemented:
 
 - the component types of `AxisType` and their classes `ComponentAxis`,
   `PointAxis`, `CoordinateAxis`, `VectorAxis`, `DisplacementAxis` and
-  `TensorAxis` (`brainhops.datamodel.axes`), with the `valence` of
+  `TensorAxis` (`brainhops.datamodel.axes`), with the `variance` of
   vectors and tensors and the `layout` of tensors, and the predicate
   `is_component_type`, which the code that places the axes of an image
   in the order of a file format uses to store these axes with the
   channels;
+- the functions that apply a map to the entries of a component axis
+  (`apply_linear_map` in `brainhops.datamodel._reframe`) and that read
+  the size of the frame and the layout of a tensor
+  (`brainhops.datamodel._frames`), which are kept outside the axis
+  classes for now;
 - the `frames` field of single-scale images, the restriction of the
   frames that a user gives, and the way lazy transformations, indexing
   and reslicing keep the frames;

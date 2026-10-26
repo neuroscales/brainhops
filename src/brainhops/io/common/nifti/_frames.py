@@ -28,11 +28,11 @@ from brainhops.datamodel._frames import (
     FrameSlot,
     _free_rows,
     _structure,
-    array_axes,
-    component_axes,
     component_count,
     explicit_frame,
+    get_frame_ndim,
 )
+from brainhops.datamodel._sugar import enum_component_axes, get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -119,8 +119,8 @@ def header_frames(
     """
     header = metadata.raw.header
     intent = _nifti_intent(header)
-    axes = array_axes(system, len(shape))
-    components = component_axes(axes)
+    axes = get_axes(system, len(shape), on_error=None)
+    components = [i for i, _ in enum_component_axes(axes)]
     if intent not in FRAMED_INTENTS or not components:
         return {}
     if intent == _NIFTI_INTENT_DISPVECT:
@@ -178,12 +178,14 @@ def restricted_frame(
     structure = _structure(frame, len(axes))
     outputs = None
     if structure is not None:
-        outputs = array_axes(frame.output, structure.outputs.shape[0])
+        outputs = get_axes(frame.output, structure.outputs.shape[0], None)
     if outputs is None:
         return frame.output
-    free = _free_rows(structure.outputs, component_axes(axes))
+    free = _free_rows(
+        structure.outputs, [i for i, _ in enum_component_axes(axes)]
+    )
     try:
-        count = axes[index].frame_ndim(size)
+        count = get_frame_ndim(axes[index], size)
     except ValueError:
         return frame.output
     if len(free) < count:

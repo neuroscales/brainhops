@@ -27,8 +27,8 @@ import typing_extensions as tx
 from brainhops.datamodel._frames import (
     FrameSlot,
     _structure,
-    component_axes,
 )
+from brainhops.datamodel._sugar import enum_component_axes, get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
@@ -93,8 +93,8 @@ def values_in_format_frames(
         If the format cannot store the frame of some values, or stores
         them only approximately, and `lossy` is false.
     """
-    axes = image._array_axes()
-    components = component_axes(axes)
+    axes = get_axes(image.transformation.input, image.ndim, on_error=None)
+    components = [i for i, _ in enum_component_axes(axes)]
     if not components:
         return None
     slots = image.frames

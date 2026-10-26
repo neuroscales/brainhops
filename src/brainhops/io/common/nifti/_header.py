@@ -100,6 +100,11 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 # ----------------------------------------------------------------------
 
 
+# The integer types that nibabel 5 refuses when it chooses the stored
+# data type from the array.
+_REFUSED_DTYPES = (np.dtype("int64"), np.dtype("uint64"))
+
+
 def _new_nifti(
     data: ArrayProtocol,
     affine: tx.Optional[np.ndarray],
@@ -109,15 +114,28 @@ def _new_nifti(
 
     The array is stored as given, so lazy and device arrays are not
     materialised. nibabel chooses the stored data type from the array and
-    refuses the types that NIfTI cannot store. When a header is given, the
-    image is then built again over that header, which receives the chosen
-    data type. A NIfTI-2 header gives a NIfTI-2 image whatever the extents.
+    refuses the types that NIfTI cannot store. Arrays of 64-bit integers
+    are refused as well, because many tools cannot read them. When a
+    header is given, the image is then built again over that header,
+    which receives the chosen data type. A NIfTI-2 header gives a NIfTI-2
+    image whatever the extents.
 
     Raises
     ------
     WriterError
-        If NIfTI cannot store the data type of the array.
+        If NIfTI cannot store the data type of the array, or if the array
+        holds 64-bit integers.
     """
+    dtype = getattr(data, "dtype", None)
+    # nibabel 5 refuses 64-bit integers here, but nibabel 4 only warns and
+    # writes them. The check is made here so that the outcome does not
+    # depend on the version of nibabel.
+    if dtype is not None and np.dtype(dtype) in _REFUSED_DTYPES:
+        raise WriterError(
+            f"NIfTI images of type {np.dtype(dtype)} are not written, "
+            f"because many tools cannot read them. Store the data with "
+            f"a narrower type, such as int32."
+        )
     shape = tuple(int(d) for d in getattr(data, "shape", ()) or ())
     image_cls = nb.Nifti1Image
     if isinstance(header, nb.Nifti2Header) or any(

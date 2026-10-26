@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import DisplacementField
 from brainhops.io.base._utils_proxies import NibabelProxy

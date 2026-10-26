@@ -93,8 +93,8 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # core
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
@@ -111,6 +111,7 @@ from brainhops.errors import (
     LossyConversionError,
 )
 
+# typing
 _Field = tx.Union[_xforms.DisplacementField, _xforms.CoordinateField]
 
 AFFINE_SOURCES: tx.Tuple[type, ...] = (
@@ -440,7 +441,7 @@ def apply_affine(matrix: np.ndarray, values: ArrayProtocol) -> ArrayProtocol:
         Each vector `x` mapped to `matrix @ [x, 1]`. The array keeps the
         backend of `values`.
     """
-    xp = get_array_backend(values)
+    xp = array_backend(values)
     ndim = matrix.shape[0] - 1
     linear = xp.asarray(matrix[:ndim, :ndim])
     offset = xp.asarray(matrix[:ndim, ndim])
@@ -1042,7 +1043,7 @@ def _node_data(
 def _grid_like(values: ArrayProtocol) -> ArrayProtocol:
     # The voxel coordinates of the nodes of a grid, shaped and placed as an
     # array of vectors `values` on that grid, in the backend of `values`.
-    backend = get_array_backend(values)
+    backend = array_backend(values)
     shape = tuple(int(n) for n in values.shape[:-1])
     axes = [backend.arange(n, dtype=values.dtype) for n in shape]
     return backend.stack(backend.meshgrid(*axes, indexing="ij"), axis=-1)

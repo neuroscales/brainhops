@@ -7,7 +7,7 @@ import re
 import pytest
 from bagof.converters import ConversionError
 
-from brainhops.datamodel._sugar import vector_axis
+from brainhops.datamodel._sugar import get_vector_axis
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -55,22 +55,22 @@ def test_coordinate_axis_has_a_fixed_type() -> None:
 
 def test_a_single_displacement_axis_is_classified_and_located() -> None:
     axes = [Axis(type="space"), Axis(type="space"), Axis(type="displacement")]
-    assert vector_axis(axes) == ("displacement", 2)
+    assert get_vector_axis(axes) == ("displacement", 2)
 
 
 def test_a_single_coordinate_axis_is_classified_and_located() -> None:
     axes = [Axis(type="space"), Axis(type="space"), Axis(type="coordinate")]
-    assert vector_axis(axes) == ("coordinate", 2)
+    assert get_vector_axis(axes) == ("coordinate", 2)
 
 
 def test_the_vector_axis_need_not_be_last() -> None:
     axes = [Axis(type="displacement"), Axis(type="space"), Axis(type="space")]
-    assert vector_axis(axes) == ("displacement", 0)
+    assert get_vector_axis(axes) == ("displacement", 0)
 
 
 def test_axis_subclasses_are_recognized_by_type() -> None:
     axes = [Axis(type="space"), Axis(type="space"), DisplacementAxis()]
-    assert vector_axis(axes) == ("displacement", 2)
+    assert get_vector_axis(axes) == ("displacement", 2)
 
 
 def test_mixed_displacement_and_coordinate_axes_are_refused() -> None:
@@ -80,12 +80,12 @@ def test_mixed_displacement_and_coordinate_axes_are_refused() -> None:
         Axis(type="coordinate"),
     ]
     with pytest.raises(AxisError):
-        vector_axis(axes)
+        get_vector_axis(axes)
 
 
 def test_axes_with_no_vector_axis_are_refused() -> None:
     with pytest.raises(AxisError):
-        vector_axis([Axis(type="space"), Axis(type="space")])
+        get_vector_axis([Axis(type="space"), Axis(type="space")])
 
 
 def test_repeated_vector_axes_are_refused() -> None:
@@ -95,7 +95,7 @@ def test_repeated_vector_axes_are_refused() -> None:
         Axis(type="displacement"),
     ]
     with pytest.raises(AxisError):
-        vector_axis(axes)
+        get_vector_axis(axes)
 
 
 def test_ellipsis_is_not_an_axis() -> None:

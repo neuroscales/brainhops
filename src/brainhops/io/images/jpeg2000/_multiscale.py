@@ -579,10 +579,13 @@ def _base_level(
 ) -> Jpeg2000Image:
     """Return the full-resolution level of a pyramid, as it is written.
 
-    A level of another class is copied with the metadata of the pyramid,
-    whose record is then the base of the new file. The preferred
-    placement of the pyramid is composed with the transformation of the
-    level.
+    The metadata of the pyramid is the metadata that is written, as for
+    the other pyramid formats. A level of another class is copied with
+    the metadata of the pyramid, whose record is then the base of the
+    new file. A JPEG 2000 level that holds other metadata is given the
+    metadata of the pyramid in the same way, and it keeps its pixels and
+    the transformation that it had. The preferred placement of the
+    pyramid is composed with the transformation of the level.
 
     Only the first level is written. The coarser levels are taken to be
     downsampled versions of it, which the codec derives again, so
@@ -602,6 +605,15 @@ def _base_level(
     base = images[0]
     if not isinstance(base, Jpeg2000Image):
         base = Jpeg2000Image.from_instance(base, metadata=pyramid.metadata)
+    elif base.metadata is not pyramid.metadata:
+        # The transformation is read from the record of the level before
+        # that record is replaced by the record of the pyramid.
+        held = _preferred(base)
+        base = replace(
+            base,
+            metadata=pyramid.metadata,
+            transformations=None if held is None else [held],
+        )
     first = _preferred(base)
     if held_transformations(pyramid):
         xform = pyramid.transformation

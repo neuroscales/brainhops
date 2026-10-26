@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel._frames import explicit_frame, frame_axes
+from brainhops.datamodel._frames import (
+    _tensor_ind2sub,
+    explicit_frame,
+    frame_axes,
+)
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -317,7 +321,7 @@ def test_reframe_skips_a_foreign_frame(values: np.ndarray, a: Affine) -> None:
 
 
 def test_reframe_a_gradient(values: np.ndarray, a: Affine) -> None:
-    gradient = VectorAxis("c", valence="covector")
+    gradient = VectorAxis("c", variance="covariant")
     voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], gradient])
     image = SingleScaleImage(values, [a.to(input=voxel)])
 
@@ -686,7 +690,7 @@ def test_reframe_a_diffusion_tensor(a: Affine) -> None:
     full = np.random.default_rng(0).random((*_SHAPE, 3, 3))
     full = full + np.swapaxes(full, -1, -2)
     axis = TensorAxis("c", layout="symmetric")
-    pairs = axis.entries(3)
+    pairs = _tensor_ind2sub(axis, 3)
     packed = np.stack([full[..., i, j] for i, j in pairs], -1)
     voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], axis])
     image = SingleScaleImage(packed, [a.to(input=voxel)])
@@ -737,7 +741,7 @@ def test_reframe_expands_a_diagonal_tensor(a: Affine) -> None:
     assert out.frames[3] is not None
     assert out.frames[3].input.axes[3] == new_axis
     expected = _LA @ (diagonal[..., None] * np.eye(3)) @ _LA.T
-    pairs = new_axis.entries(3)
+    pairs = _tensor_ind2sub(new_axis, 3)
     assert np.allclose(
         np.asarray(out.data),
         np.stack([expected[..., i, j] for i, j in pairs], -1),
@@ -785,7 +789,7 @@ def test_reframe_expands_a_layout_that_leaves_the_last_axis_out(
 
     diagonal = np.concatenate([values, np.zeros((*_SHAPE, 1))], -1)
     expected = _LA @ (diagonal[..., None] * np.eye(3)) @ _LA.T
-    pairs = out.transformation.input.axes[3].entries(3)
+    pairs = _tensor_ind2sub(out.transformation.input.axes[3], 3)
     assert out.shape == (*_SHAPE, 6)
     assert np.allclose(
         np.asarray(out.data),

@@ -169,6 +169,29 @@ def test_the_matrix_is_written_at_full_precision() -> None:
     assert back.affine.matrix == MATRIX
 
 
+def test_random_values_round_trip_exactly() -> None:
+    # A double needs 17 significant digits to survive a round trip.
+    # With 16, about a quarter of random values lose their last digit.
+    rng = np.random.default_rng(0)
+
+    def values(n: int) -> tuple:
+        return tuple(float(x) for x in rng.uniform(-100, 100, n))
+
+    matrix = tuple(values(4) for _ in range(3)) + ((0.0, 0.0, 0.0, 1.0),)
+    src = replace(
+        SRC,
+        voxelsize=values(3),
+        xras=values(3),
+        yras=values(3),
+        zras=values(3),
+        cras=values(3),
+    )
+    raw = replace(_raw(), affine=LtaRaw.Affine(matrix=matrix), src=src)
+    back = LtaRaw.from_text(raw.to_text())
+    assert back.affine.matrix == matrix
+    assert back.src == src
+
+
 def test_a_record_follows_the_parser_contract(tmp_path) -> None:  # noqa: ANN001
     raw = _raw()
     assert LtaRaw.from_bytes(raw.to_bytes()) == raw
@@ -616,6 +639,36 @@ def test_a_view_of_the_record_is_one_conversion(tmp_path) -> None:  # noqa: ANN0
         assert type(view) is LtaTransformationVoxToVox
         assert view.metadata is xform.metadata
         np.testing.assert_allclose(view.matrix, views[0].matrix)
+
+
+@pytest.mark.parametrize("lta_type", [t for t, _ in TYPES], ids=TYPE_IDS)
+def test_a_plain_affine_keeps_the_systems_of_the_record(
+    tmp_path,  # noqa: ANN001
+    lta_type: LtaType,
+) -> None:
+    # The systems of a loaded transformation are decoded from its record,
+    # and a conversion to the data model keeps them with the matrix.
+    xform = io.load(_write(tmp_path, _raw(lta_type)))
+    affine = xform.to(Affine)
+    assert type(affine) is Affine
+    assert affine.input == xform.input is not None
+    assert affine.output == xform.output is not None
+    np.testing.assert_array_equal(affine.matrix, xform.matrix)
+    # A system given to the conversion replaces the decoded one.
+    other = xform.to(Affine, input=_systems.LPSmm())
+    assert other.input == _systems.LPSmm()
+    assert other.output == xform.output
+
+
+def test_a_saved_transformation_converts_with_its_systems(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    matrix = np.asarray(MATRIX)[:-1]
+    ras = _systems.RASmm()
+    LtaTransformation(matrix, input=ras, output=ras).save(tmp_path / "s.lta")
+    affine = io.load(tmp_path / "s.lta").to(Affine)
+    assert (affine.input, affine.output) == (ras, ras)
+    np.testing.assert_allclose(affine.matrix, matrix)
 
 
 def test_a_record_builds_a_transformation() -> None:

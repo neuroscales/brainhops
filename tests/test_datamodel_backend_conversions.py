@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.transformations import (
     Affine,
@@ -229,7 +229,7 @@ def test_nested_conversions_forward_the_device(
 def test_explicit_cpu_conversion_keeps_dask_lazy() -> None:
     from dask.callbacks import Callback
 
-    from brainhops import backends
+    from brainhops._core import backends
 
     lazy = da.from_array(VOLUME, chunks=2)
     executed = []

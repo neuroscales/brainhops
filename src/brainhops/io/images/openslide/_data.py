@@ -21,12 +21,14 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-# internals
+# core
 from brainhops._core import path
+from brainhops._core.backends import has_dask, is_lazy
 from brainhops._core.dependencies import openslide
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import _is_lazy, da
+
+# io
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import ParserContentError
 
@@ -317,10 +319,10 @@ class _SlideArray(StoredProxy):
             The data of the level.
         """
         lazy = self.lazy
-        if da is None:
+        if not has_dask():
             return self
         if lazy is None:
-            lazy = _is_lazy(self.nbytes)
+            lazy = is_lazy(self.nbytes)
         if not lazy:
             return self
         return self.to_dask(lock=False)

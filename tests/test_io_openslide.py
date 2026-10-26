@@ -609,6 +609,26 @@ def test_a_pyramid_consolidates_its_data_only(svs: Path) -> None:
         pyramid.consolidate()
 
 
+@pytest.mark.parametrize("inplace", [False, True])
+def test_kept_levels_hold_the_consolidated_metadata(
+    svs: Path, inplace: bool
+) -> None:
+    # A field set on a pyramid whose levels are kept gives the levels the
+    # metadata of the copy, so that the copy can be consolidated again.
+    pyramid = load(svs)
+    metadata = pyramid.metadata
+    pyramid.images[2].transformations = [Scaling([3.0, 3.0, 1.0])]
+    copy = pyramid.consolidate(
+        inplace=inplace, on_loss="ignore", name="renamed"
+    )
+    assert copy._images is not None
+    assert copy.metadata is not None
+    assert copy.metadata is not metadata
+    assert all(level.metadata is copy.metadata for level in copy.images)
+    twice = copy.consolidate()
+    np.testing.assert_allclose(_scale(twice.images[2]), [3, 3, 1])
+
+
 def test_consolidate_keeps_a_list_changed_in_place(svs: Path) -> None:
     # A slide cannot be written, so a list decoded and then changed in
     # place is given to the copy as an assigned list.

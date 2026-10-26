@@ -13,8 +13,8 @@ import pytest
 from bagof.magic import replace
 
 import brainhops.io as io
+from brainhops._core.backends import backend
 from brainhops._core.proxy import ArrayProxy
-from brainhops.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 
 VOLUME = np.arange(4 * 5 * 6, dtype=np.float32).reshape(4, 5, 6)

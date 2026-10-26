@@ -1,0 +1,12 @@
+/* Target secure external links, excluding internal assets or pages */
+.md-content
+a[href^="http"]
+:not([href*="neuroscales.github.io/brainhops"])
+:not(:has(img))::after {
+    content: " \2197"; /* Unicode for an upper-right arrow (↗) */
+    font-size: 0.85em; /* Slightly smaller than body text */
+    margin-left: 0.25em; /* Breathing room from the text */
+    display: inline-block;
+    color: inherit; /* Matches your theme's default link colour */
+    opacity: 0.8; /* Makes the icon look subtle */
+}
