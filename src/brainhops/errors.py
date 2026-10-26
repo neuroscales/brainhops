@@ -262,7 +262,7 @@ def raise_or_warn(
     Returns
     -------
     Any
-        If `on_error` is not an excpetion or warning, return the value
+        If `on_error` is not an exception or warning, return the value
         of `on_error`.
 
     Raises
