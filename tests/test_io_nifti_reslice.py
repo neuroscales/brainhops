@@ -11,7 +11,7 @@ nb = pytest.importorskip("nibabel")
 ndi = pytest.importorskip("scipy.ndimage")
 
 import brainhops.io as io  # noqa: E402
-from brainhops import backends  # noqa: E402
+from brainhops._core import backends  # noqa: E402
 from brainhops.datamodel._transformations.compute import (  # noqa: E402
     separable,
 )

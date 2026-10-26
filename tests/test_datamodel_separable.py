@@ -12,7 +12,7 @@ nothing is separable.
 import numpy as np
 import pytest
 
-import brainhops.backends as backends
+from brainhops._core import backends
 from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.datamodel import kinds

@@ -122,7 +122,7 @@ class _TiffProxy(StoredProxy):
         dask.array.Array
             The lazy array.
         """
-        from brainhops import backends
+        from brainhops._core import backends
 
         if backends.da is None:
             return super().to_dask(device=device, **kwargs)
