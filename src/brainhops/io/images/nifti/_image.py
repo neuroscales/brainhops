@@ -18,6 +18,7 @@ from brainhops._core.typing import ArrayProtocol
 # datamodel
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel._frames import FrameSlot, normalize_frames
+from brainhops.datamodel._reframe import apply_linear_map
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import IndexVariance, IntentEnum
@@ -955,7 +956,7 @@ def _in_ras_millimetres(
                 f"lossy=True to write them anyway."
             )
         matrix = backend.asarray(conversion[:count, :count])
-        data = axes[index].apply(data, matrix, index)
+        data = apply_linear_map(data, matrix, axes[index], index)
     return replace(image, data=data)
 
 

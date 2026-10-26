@@ -220,13 +220,6 @@ def enum_component_axes(
     )
 
 
-def component_axes(
-    axes: tx.Optional["CoordinateSystemLike"],
-) -> tx.List[int]:
-    """Return the indices of the component axes among `axes`."""
-    return [i for i, _ in enum_component_axes(axes)]
-
-
 def is_component_type(value: tx.Any) -> bool:
     """Return whether an axis type describes a component axis.
 

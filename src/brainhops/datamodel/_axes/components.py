@@ -43,16 +43,14 @@ __all__ = [
     "TensorAxis",
 ]
 
-# stdlib
-import itertools
-
 # dependencies
+import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import NoEq, NoRepr
 
 # brainhops
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core.typing import npmatrix
 
 # internals
 from ..enums import AxisType, IndexVariance, TensorLayout
@@ -162,66 +160,6 @@ class ComponentAxis(
             return 1
         return len(self.variances)
 
-    def ndim(self, size: int, expected: tx.Optional[int] = None) -> int:
-        """Return the number of axes of the frame that the entries follow.
-
-        Parameters
-        ----------
-        size : int
-            The number of entries along the axis.
-        expected : int, optional
-            The number of axes of the frame, when it is known from
-            elsewhere. It is checked against `size`.
-
-        Returns
-        -------
-        int
-            The number of axes of the frame that the entries follow.
-
-        Raises
-        ------
-        ValueError
-            If no frame, or more than one, gives `size` entries, or if
-            `expected` does not agree with `size`.
-        """
-        from .._frames import get_frame_ndim
-
-        return get_frame_ndim(self, size, expected)
-
-    def apply(
-        self, values: ArrayProtocol, matrix: ArrayProtocol, axis: int
-    ) -> ArrayProtocol:
-        """Apply a linear map of the frame to the entries along an axis.
-
-        Each index of the object is multiplied by the map `J` when it is
-        contravariant and by `J⁻ᵀ` when it is covariant, so that a vector
-        becomes `J v` and a covector becomes `J⁻ᵀ g`.
-
-        Parameters
-        ----------
-        values : ArrayProtocol
-            The values of the image.
-        matrix : ArrayProtocol
-            The linear map `J`, of shape `(*batch, n, n)`, where `batch`
-            broadcasts against the shape of `values` without `axis`.
-        axis : int
-            The axis of `values` whose entries are transformed.
-
-        Returns
-        -------
-        ArrayProtocol
-            The transformed values.
-
-        Raises
-        ------
-        NotImplementedError
-            If the entries are the coordinates of points, which the
-            Jacobian of a map does not re-express.
-        """
-        from .._reframe import apply_linear_map
-
-        return apply_linear_map(values, matrix, self, axis)
-
 
 class PointAxis(ComponentAxis, on={"type": {"point", "coordinate"}}):
     """Axis whose entries are the coordinates of points.
@@ -229,7 +167,8 @@ class PointAxis(ComponentAxis, on={"type": {"point", "coordinate"}}):
     An image of points holds, at each voxel, the position of a point in
     some space, such as the position that a voxel maps to. Moving these
     points into another frame needs the map itself rather than its
-    Jacobian, so [`apply`][brainhops.datamodel.axes.ComponentAxis.apply]
+    Jacobian, so
+    `apply_linear_map`
     and
     [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe]
     raise `NotImplementedError` on such an axis. The axis can still have
@@ -354,7 +293,7 @@ class DisplacementAxis(
     variance: NoRepr[...]
 
 
-class TensorAxis(ComponentAxis, on={"type": "tensor"}):
+class TensorAxis(ComponentAxis, on={"type": "tensor"}, eq="_eq_fields"):
     """Axis whose entries are the components of tensors.
 
     A diffusion tensor, the Hessian of an image and the Jacobian of a
@@ -427,10 +366,10 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     A layout with components that are zero by construction, such as
     `"diagonal"` or an explicit tuple that leaves components out without
     a permutation to take their value from, cannot hold the tensor after
-    a general change of frame. [`apply`][] then returns the tensor in the
-    smallest layout that can, which is `"symmetric"` when the stored
-    tensor is symmetric with indices of the same variance and `"C"`
-    otherwise, and [`reframed`][] gives the axis that describes it. The
+    a general change of frame. `apply_linear_map` then returns the tensor
+    in the smallest layout that can, which is `"symmetric"` when the
+    stored tensor is symmetric with indices of the same variance and `"C"`
+    otherwise, and `_reframed_axis` gives the axis that describes it. The
     length of the axis changes.
 
     Parameters
@@ -459,10 +398,8 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     ValueError
         If the tensor has fewer than two indices, if the layout is an
         unknown name or a name that is not defined for the rank of the
-        tensor, if a symmetric layout has indices of different variances,
-        or if an explicit layout lists a component twice, has entries of
-        the wrong length, or fills a component from several listed
-        permutations or from a permutation with a mixed variance.
+        tensor, or if an explicit layout lists a component twice or has
+        entries of the wrong length.
     """
 
     type: NoRepr[...]
@@ -476,7 +413,9 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
     variance: tx.Tuple[IndexVariance, ...] = (IndexVariance.contravariant,)
     """The variance of each index of the tensor, one per index."""
 
-    layout: tx.Optional[tx.Union[TensorLayout, Entries]] = None
+    # An array cannot take part in the generated comparison, which needs a
+    # single boolean per field, so `__eq__` compares the layout itself.
+    layout: NoEq[tx.Optional[tx.Union[TensorLayout, npmatrix[int]]]] = None
     """Which components the axis stores, and in which order."""
 
     @smartproperty
@@ -491,7 +430,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
             return self._rank
         layout = self.layout
         if layout is not None and not isinstance(layout, str):
-            return len(layout[0]) if layout else 0
+            return layout.shape[-1]
         if len(self.variance) == 1:
             return 2
         return len(self.variance)
@@ -508,7 +447,6 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
                 f"A tensor axis has at least two indices, not {rank}. A "
                 f"tensor with one index is a vector."
             )
-        mixed = len(set(self.variance)) > 1
 
         layout = self.layout
         if isinstance(layout, str):
@@ -518,165 +456,35 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
                     f"The layout 'symmetric-diagonal-first' is defined for "
                     f"tensors of rank 2, not {rank}."
                 )
-            if layout.startswith("symmetric") and mixed:
-                raise ValueError(
-                    f"A symmetric tensor has indices of the same variance, "
-                    f"but its variance is {self.variance}. Use the layout "
-                    f"'C' instead."
-                )
             return
         if layout is None:
             return
 
         # explicit layout - must match rank
+        if layout.shape[-1] != len(self.variance):
+            raise ValueError(
+                f"Each entry of the layout of a tensor of rank {rank} "
+                f"gives {rank} frame axes, but the layout has shape "
+                f"{layout.shape}."
+            )
+
+        # explicit layout - must be injective
         listed: tx.Set[tx.Tuple[int, ...]] = set()
         for entry in layout:
-            if len(entry) != len(self.variance):
-                raise ValueError(
-                    f"Each entry of the layout of a tensor of rank {rank} "
-                    f"gives {rank} frame axes, but {entry} gives "
-                    f"{len(entry)}."
-                )
-            # explicit layout - must be injective
+            entry = tuple(entry.tolist())
             if entry in listed:
                 raise ValueError(
                     f"The layout lists the component {entry} twice."
                 )
             listed.add(entry)
 
-        # The components that the layout leaves out take the value of a
-        # listed permutation of their indices, which must be unique and
-        # needs indices of the same variance.
-        for key, group in _permutation_groups(layout).items():
-            missing = set(itertools.permutations(key)) - listed
-            if not missing:
-                continue
-            if len(group) > 1:
-                raise ValueError(
-                    f"The layout leaves out {sorted(missing)[0]}, whose "
-                    f"value could be taken from any of {group}."
-                )
-            if mixed:
-                raise ValueError(
-                    f"The layout takes the value of {sorted(missing)[0]} "
-                    f"from {group[0]}, which needs indices of the same "
-                    f"variance, but the variance is {self.variance}."
-                )
-
-    # --- delegates ----------------------------------------------------
-    # The layouts are computed in datamodel._frames and the change of
-    # frame in datamodel._reframe, which both import this module, so the
-    # methods import them when they are called.
-
-    def resolved_layout(
-        self, ndim: int, size: tx.Optional[int] = None
-    ) -> tx.Union[str, Entries]:
-        """Return the layout, read from the number of entries if needed.
-
-        Parameters
-        ----------
-        ndim : int
-            The number of axes of the frame.
-        size : int, optional
-            The number of entries along the axis, which reads a layout
-            that is `None`.
-
-        Returns
-        -------
-        str or tuple of tuple of int
-            The layout, never `None`.
-
-        Raises
-        ------
-        ValueError
-            If the layout is `None` and `size` is neither `n**k` nor
-            `C(n + k - 1, k)`.
-        """
-        from .._frames import _resolve_layout
-
-        return _resolve_layout(self, ndim, size)
-
-    def entries(self, ndim: int, size: tx.Optional[int] = None) -> Entries:
-        """Return the frame axis of each index, for each entry.
-
-        Parameters
-        ----------
-        ndim : int
-            The number of axes of the frame.
-        size : int, optional
-            The number of entries along the axis, which reads a layout
-            that is `None`.
-
-        Returns
-        -------
-        tuple of tuple of int
-            For each entry, the frame axis of each index of the tensor.
-
-        Raises
-        ------
-        ValueError
-            If an explicit layout names a frame axis that does not exist.
-        """
-        from .._frames import _tensor_ind2sub
-
-        entries = _tensor_ind2sub(self, ndim, size)
-        return tuple(tuple(int(i) for i in entry) for entry in entries)
-
-    def closed(self, ndim: int, size: tx.Optional[int] = None) -> bool:
-        """Return whether the layout holds the tensor in any frame.
-
-        A layout is closed when every component of the tensor is either
-        stored or taken from a stored component, so that no component is
-        zero by construction.
-
-        Parameters
-        ----------
-        ndim : int
-            The number of axes of the frame.
-        size : int, optional
-            The number of entries along the axis, which reads a layout
-            that is `None`.
-
-        Returns
-        -------
-        bool
-            Whether a change of frame keeps the tensor in this layout.
-        """
-        from .._frames import _tensor_sub2ind
-
-        return -1 not in _tensor_sub2ind(self, ndim, size)
-
-    def reframed(
-        self, ndim: int, size: tx.Optional[int] = None
-    ) -> "TensorAxis":
-        """Return the axis that describes the tensor after [`apply`][].
-
-        Parameters
-        ----------
-        ndim : int
-            The number of axes of the frame.
-        size : int, optional
-            The number of entries along the axis, which reads a layout
-            that is `None`.
-
-        Returns
-        -------
-        TensorAxis
-            This axis when its layout is closed, and otherwise a copy in
-            the layout `"symmetric"` when all the indices have the same
-            variance, and `"C"` otherwise.
-        """
-        from .._reframe import _reframed_axis
-
-        return _reframed_axis(self, ndim, size)
-
-
-def _permutation_groups(
-    layout: Entries,
-) -> tx.Dict[tx.Tuple[int, ...], tx.List[tx.Tuple[int, ...]]]:
-    """Group the entries of an explicit layout by their sorted indices."""
-    groups: tx.Dict[tx.Tuple[int, ...], tx.List[tx.Tuple[int, ...]]] = {}
-    for entry in layout:
-        entry = tuple(int(i) for i in entry)
-        groups.setdefault(tuple(sorted(entry)), []).append(entry)
-    return groups
+    def __eq__(self, other: tx.Any) -> bool:
+        same = self._eq_fields(other)
+        if same is not True:
+            return same
+        mine, theirs = self.layout, other.layout
+        if isinstance(mine, str) or isinstance(theirs, str):
+            return mine == theirs
+        if mine is None or theirs is None:
+            return mine is theirs
+        return bool(np.array_equal(mine, theirs))

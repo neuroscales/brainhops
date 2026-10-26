@@ -36,8 +36,8 @@ from ._frames import (
     squeeze_axis,
     with_components,
 )
-from ._reframe import apply_linear_map
-from ._sugar import axis_index, component_axes, get_axes
+from ._reframe import _reframed_axis, apply_linear_map
+from ._sugar import axis_index, enum_component_axes, get_axes
 from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
     _nearest_resolution_index,
@@ -556,7 +556,7 @@ class SingleScaleImage(Image):
         target = geometry.transformation
         frames = ()
         source_axes = get_axes(self.transformation.input, self.ndim, None)
-        if component_axes(source_axes):
+        if any(enum_component_axes(source_axes)):
             system = with_components(
                 target.input, self.transformation.input, source_axes, self.ndim
             )
@@ -705,7 +705,7 @@ class SingleScaleImage(Image):
 
         data = self.data
         shape = tuple(data.shape)
-        components = component_axes(axes)
+        components = [i for i, _ in enum_component_axes(axes)]
         # The frames do not depend on the position along a component axis,
         # so their Jacobians are computed with these axes reduced to one
         # entry.
@@ -745,7 +745,7 @@ class SingleScaleImage(Image):
             if isinstance(axis, TensorAxis):
                 # A layout with components that are zero by construction is
                 # replaced by a layout that holds the tensor in any frame.
-                new_axes[i] = axis.reframed(ncomponents, shape[i])
+                new_axes[i] = _reframed_axis(axis, ncomponents, shape[i])
         transformations = self.transformations
         if any(new is not old for new, old in zip(new_axes, axes)):
             transformations = [
@@ -834,7 +834,7 @@ class SingleScaleImage(Image):
             )
         frames = ()
         array_axes = get_axes(self.transformation.input, self.ndim, None)
-        if component_axes(array_axes):
+        if any(enum_component_axes(array_axes)):
             sub2full, shape = _index2transform(index, self.shape, grid.input)
             frames = compose_frames(
                 self.frames,
@@ -1117,7 +1117,7 @@ def _frame_targets(
     """
     transformations = list(image.transformations or [])
     shape = tuple(image.shape)
-    components = component_axes(axes)
+    components = [i for i, _ in enum_component_axes(axes)]
     if not isinstance(frame, Mapping):
         target = resolve_target(frame, transformations)
         chosen = {

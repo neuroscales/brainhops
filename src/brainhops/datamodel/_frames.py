@@ -30,7 +30,6 @@ from ._axes.components import (
 )
 from ._sugar import (
     axis_index,
-    component_axes,
     enum_component_axes,
     get_axes,
     is_point_axis,
@@ -142,7 +141,7 @@ def normalize_frames(
                 f"slot per axis, not {len(frames)}."
             )
 
-    components = set(component_axes(axes))
+    components = {i for i, _ in enum_component_axes(axes)}
     for i, slot in enumerate(frames):
         if slot is None:
             continue
@@ -494,7 +493,7 @@ def component_count(
         entries alone does not tell the size of the frame.
     """
     axis = axes[index]
-    components = component_axes(axes)
+    components = [i for i, _ in enum_component_axes(axes)]
     for frame in frames:
         if not isinstance(frame, Transformation):
             continue
@@ -534,7 +533,7 @@ def explicit_frame(
     if structure is None:
         return frame
     final = structure.outputs
-    candidates = _free_rows(final, component_axes(axes))
+    candidates = _free_rows(final, [i for i, _ in enum_component_axes(axes)])
     if len(candidates) == ncomponents:
         return frame
     if len(candidates) > ncomponents:
@@ -616,7 +615,7 @@ def frame_axes(
             "the axes that the components of the values follow cannot be "
             "read from it."
         )
-    components = component_axes(axes)
+    components = [i for i, _ in enum_component_axes(axes)]
     final = _free_rows(structure.outputs, components)
     if len(final) != ncomponents:
         raise ValueError(
@@ -876,10 +875,10 @@ def get_frame_ndim(  # noqa: F811
     rank = axis.rank  # tensor rank
     found = set()  # possible frame dimensionalities
 
-    if isinstance(layout, tuple):
+    if layout is not None and not isinstance(layout, str):
         # An explicit layout needs at least the axes that it names, and
         # it may leave the last axes of a larger frame out.
-        least = 1 + max(max(entry) for entry in layout)
+        least = 1 + int(np.max(layout))
         if axis_length == len(layout):
             found = {least}
             if expected is not None and expected >= least:
@@ -946,7 +945,7 @@ def _tensor_sub2ind(
         component is zero by construction.
     """
     rank = axis.rank
-    entries = axis.entries(ndim, size)
+    entries = [tuple(e) for e in _tensor_ind2sub(axis, ndim, size).tolist()]
     position = {entry: k for k, entry in enumerate(entries)}
     permuted = {tuple(sorted(entry)): k for k, entry in enumerate(entries)}
     is_symmetric = len(set(axis.variance)) == 1
@@ -997,7 +996,7 @@ def _tensor_ind2sub(
             f"The layout {entries} names an axis that a frame of "
             f"{ndim} axes does not have."
         )
-    return entries
+    return _as_entries(entries)
 
 
 def _resolve_layout(

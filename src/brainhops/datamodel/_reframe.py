@@ -11,7 +11,7 @@ from brainhops._core.linalg import batchT, inv, matvec
 from brainhops._core.typing import ArrayProtocol, npmatrix
 
 # datamodel
-from ._frames import _tensor_sub2ind, get_frame_ndim
+from ._frames import _tensor_ind2sub, _tensor_sub2ind, get_frame_ndim
 from .axes import ComponentAxis, TensorAxis
 from .enums import IndexVariance
 
@@ -31,7 +31,7 @@ def _apply_to_vector(
     The entries are unpacked into a full tensor, each of its indices
     is multiplied by `J` or by `J⁻ᵀ` according to its variance, and the
     result is packed again in the same layout, or in the layout of
-    [`reframed`][] when this layout is not closed.
+    `_reframed_axis` when this layout is not closed.
 
     Parameters
     ----------
@@ -83,7 +83,7 @@ def _apply_to_compact_tensor(
     The entries are unpacked into a full tensor, each of its indices
     is multiplied by `J` or by `J⁻ᵀ` according to its variance, and the
     result is packed again in the same layout, or in the layout of
-    [`reframed`][] when this layout is not closed.
+    `_reframed_axis` when this layout is not closed.
 
     Parameters
     ----------
@@ -130,7 +130,7 @@ def _apply_to_compact_tensor(
     pack = np.array(
         [
             np.ravel_multi_index(entry, (ndim,) * rank)
-            for entry in out.entries(ndim, size)
+            for entry in _tensor_ind2sub(out, ndim, size)
         ]
     )
     flat = full.reshape(tuple(full.shape[:-rank]) + (ndim**rank,))
@@ -187,7 +187,7 @@ def _apply_to_full_tensor(
 def _reframed_axis(
     axis: ComponentAxis, ndim: int, size: tx.Optional[int] = None
 ) -> ComponentAxis:
-    """Return the axis that describes the tensor after [`apply`][].
+    """Return the axis that describes the tensor after `apply_linear_map`.
 
     Parameters
     ----------
@@ -221,7 +221,8 @@ def _reframed_layout(axis: TensorAxis) -> str:
     frame.
     """
     maybe_symmetric = len(set(axis.variance)) == 1
-    if maybe_symmetric and isinstance(axis.layout, tuple):
+    explicit = axis.layout is not None and not isinstance(axis.layout, str)
+    if maybe_symmetric and explicit:
         groups = _permutation_groups(axis.layout)
         is_symmetric = all(len(group) == 1 for group in groups.values())
     else:
