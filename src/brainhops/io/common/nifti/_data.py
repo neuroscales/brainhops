@@ -150,33 +150,18 @@ class _NiftiProxy(StridedProxy):
             return False
         return (self.slope, self.inter) != (1.0, 0.0)
 
-    @property
-    def scaled_dtype(self) -> np.dtype:
-        """The type of the values once the scaling of the header applies.
-
-        nibabel scales the values with factors of type float64, so a
-        scaled array has type float64, or complex128 when the stored
-        values are complex. The type can be wider when the stored type
-        is wider, such as a long double. An array that is not scaled
-        keeps the stored type.
-        """
-        if not self.is_scaled:
-            return self.dtype
-        return np.result_type(self.dtype, np.float64)
-
     def scaled(self) -> ArrayProxy:
         """Return the lazy array of the values once the header scales them.
 
         The proxy itself is returned when its scaling does not change the
         values. Otherwise, the result is a
-        [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] of type
-        [`scaled_dtype`][].
+        [`ScaledProxy`][brainhops._core.proxy.ScaledProxy]. A stored
+        floating-point type is kept, and a stored integer type gives a
+        floating-point type that holds its values.
         """
         if not self.is_scaled:
             return self
-        return ScaledProxy(
-            self, self.slope, self.inter, dtype=self.scaled_dtype
-        )
+        return ScaledProxy(self, self.slope, self.inter)
 
 
 def whole_file(raw: tx.Any) -> tx.Optional[_NiftiProxy]:

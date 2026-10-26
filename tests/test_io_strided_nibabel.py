@@ -102,21 +102,36 @@ def _write(path, content: bytes):  # noqa: ANN001, ANN202
 
 
 def _check(proxy, reference) -> None:  # noqa: ANN001
-    """Check a proxy against nibabel's proxy of the same voxels."""
+    """Check a proxy against nibabel's proxy of the same voxels.
+
+    nibabel scales the values in float64. brainhops keeps a stored
+    floating-point type and scales an integer type in the floating-point
+    type that NumPy gives for it and a float32. The values are therefore
+    compared to the precision of that type when the file is scaled.
+    """
     expected = np.asanyarray(reference)
+    stored = np.dtype(reference.dtype)
+    scaled = expected.dtype != stored
+    want = np.result_type(stored, np.float32) if scaled else stored
+    rtol = np.finfo(want).eps * 4 if scaled else 0
+
+    def compare(values, target) -> None:  # noqa: ANN001
+        if scaled:
+            np.testing.assert_allclose(values, target, rtol=rtol)
+        else:
+            np.testing.assert_array_equal(values, target)
+
     assert tuple(proxy.shape) == tuple(reference.shape)
-    assert proxy.dtype == expected.dtype
+    assert proxy.dtype == want
     values = np.asarray(proxy)
-    assert values.dtype == expected.dtype
-    np.testing.assert_array_equal(values, expected)
+    assert values.dtype == want
+    compare(values, expected)
     for index in INDICES:
         if len([i for i in index if i is not Ellipsis]) > proxy.ndim:
             continue
         part = np.asarray(proxy[index])
-        # nibabel gives a scalar of native byte order for a single value.
-        native = np.asarray(expected[index]).dtype.newbyteorder("=")
-        assert part.dtype.newbyteorder("=") == native
-        np.testing.assert_array_equal(part, expected[index])
+        assert part.dtype.newbyteorder("=") == want.newbyteorder("=")
+        compare(part, expected[index])
 
 
 # ----------------------------------------------------------------------
@@ -257,7 +272,7 @@ def test_dask_blocks_hold_what_nibabel_reads(tmp_path, suffix: str) -> None:  # 
         _, proxy = read_nifti(path)
         lazy = proxy.to_dask()
     assert lazy.chunks[-1] == (1, 1)
-    assert lazy.dtype == np.float64
+    assert lazy.dtype == np.float32
     np.testing.assert_array_equal(lazy.compute(), reference.get_fdata())
     np.testing.assert_array_equal(
         lazy[1:4, :, ::-1, 1].compute(), reference.get_fdata()[1:4, :, ::-1, 1]
@@ -309,10 +324,10 @@ def test_a_scaled_file_saved_over_itself_keeps_its_bytes(tmp_path) -> None:  # n
 def test_the_type_of_scaled_values_survives_indexing(tmp_path) -> None:  # noqa: ANN001
     path = _write(tmp_path / "image.nii", _nifti_bytes(_values("u1"), 2, 1))
     _, proxy = read_nifti(path)
-    assert proxy.dtype == np.float64
-    assert proxy[1:3].dtype == np.float64
-    assert proxy.T.dtype == np.float64
-    assert np.asarray(proxy.T[0]).dtype == np.float64
+    assert proxy.dtype == np.float32
+    assert proxy[1:3].dtype == np.float32
+    assert proxy.T.dtype == np.float32
+    assert np.asarray(proxy.T[0]).dtype == np.float32
 
 
 # ----------------------------------------------------------------------

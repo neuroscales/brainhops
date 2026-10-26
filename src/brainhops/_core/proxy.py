@@ -882,9 +882,8 @@ class ScaledProxy(ArrayProxy):
     only. It is the floating-point type that NumPy gives for the stored
     type and a float32, so that integers of 8 or 16 bits and float32
     values give float32, and other integers and float64 values give
-    float64. A format whose readers have always given another type, such
-    as NIfTI, whose values nibabel scales in float64, passes that type
-    as `dtype=`. The factors are cast to the type of the scaled values
+    float64. A reader that needs another type passes it as `dtype=`.
+    The factors are cast to the type of the scaled values
     before they are applied, so a factor of a wider type neither widens
     the result nor makes a wider copy of the values.
     """
