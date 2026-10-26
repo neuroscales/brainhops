@@ -30,6 +30,10 @@ from brainhops.datamodel.units import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
+from brainhops.io.common._geometry import (
+    held_transformations,
+    same_transformations,
+)
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
 from brainhops.io.common.minc._data import read_minc
 from brainhops.io.common.minc._raw import _no_options, sniff_minc
@@ -281,16 +285,35 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         apply_loss_policy(report, on_loss, stacklevel=2)
         if not requested:
             metadata = self.metadata
+        # The record cannot be encoded, so a copy is given the list that
+        # the image holds when it is not the list that the record decodes
+        # to, as a list decoded and then changed in place would otherwise
+        # be decoded again and lost.
+        held = held_transformations(self)
+        if held is None or same_transformations(
+            held, _record_transformations(self.metadata)
+        ):
+            held = self._transformations
         if self._data is None and not requested:
-            return self if inplace else replace(self)
+            if inplace:
+                return self
+            return replace(self, transformations=held)
         raw = (
             self.rawdata if self._data is None else _image_to_disk(self._data)
         )
         if not inplace:
-            return replace(self, data=None, rawdata=raw, metadata=metadata)
+            return replace(
+                self,
+                data=None,
+                rawdata=raw,
+                transformations=held,
+                metadata=metadata,
+            )
         self.rawdata = raw
         self.data = None
-        self.metadata = metadata
+        if requested:
+            self.transformations = held
+            self.metadata = metadata
         return self
 
     # --- reading ------------------------------------------------------
