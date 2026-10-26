@@ -229,7 +229,7 @@ def test_nested_conversions_forward_the_device(
 def test_explicit_cpu_conversion_keeps_dask_lazy() -> None:
     from dask.callbacks import Callback
 
-    from brainhops import backends
+    from brainhops._core import backends
 
     lazy = da.from_array(VOLUME, chunks=2)
     executed = []

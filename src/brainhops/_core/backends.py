@@ -577,7 +577,12 @@ def to_promoted_backend(
         The arrays, in the same order.
     """
     if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
-        return tuple(to_backend(x, "native", **kwargs) for x in arrays)
+        # A value without a shape, such as `None` or a number, is not an
+        # array and is kept as it is.
+        return tuple(
+            to_backend(x, "native", **kwargs) if hasattr(x, "shape") else x
+            for x in arrays
+        )
     return tuple(to_device(x, "cuda", **kwargs) for x in arrays)
 
 
@@ -671,7 +676,12 @@ def _to_dtype_or_scalar(
         dtype_or_scalar = array_or_dtype_or_scalar.dtype
     else:
         dtype_or_scalar = array_or_dtype_or_scalar
-    if dtype_or_scalar in _NATIVE_NUMBER_TYPES:
+    # A NumPy dtype compares equal to the Python type of its kind, so the
+    # value is checked to be a type before it is looked up.
+    if (
+        isinstance(dtype_or_scalar, type)
+        and dtype_or_scalar in _NATIVE_NUMBER_TYPES
+    ):
         dtype_or_scalar = dtype_or_scalar(1)
     if type(dtype_or_scalar) not in _NATIVE_NUMBER_TYPES:
         dtype_or_scalar = np.dtype(dtype_or_scalar)

@@ -26,10 +26,10 @@ import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
-# brainhops.backends imports this module while it is itself being
-# imported, so the functions of brainhops.backends are looked up when they
-# are called.
-from brainhops import backends
+# brainhops._core.backends imports this module while it is itself being
+# imported, so the functions of brainhops._core.backends are looked up
+# when they are called.
+from brainhops._core import backends
 
 __all__ = ["map_coordinates", "spline_filter", "spline_filter1d"]
 
