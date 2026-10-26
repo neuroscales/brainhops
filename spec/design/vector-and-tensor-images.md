@@ -185,23 +185,26 @@ things.
 A slot may be set only on a component axis. The constructor and the
 setter also accept a mapping from axis names or indices to slots.
 
-A stored transformation corresponds exactly to the components: the
-outputs of the transformation that no component axis of the array feeds
-are as many as the components, and the components follow them in
-order. Nothing else is guessed when a stored slot is read, and in
-particular the types of the output axes are not consulted. A
-transformation that is given to the constructor, to the setter, or as
-the `frame` argument of `reframe` and `reslice` may have more such
-outputs, as a map to a world that also has a time axis does. The
-components then follow the outputs that share one axis type, provided
-that exactly one type has as many outputs as there are components, and
-a `Projection` that removes the other outputs is composed onto the
-transformation before it is stored. The guess is limited to these
-arguments because it serves the common case of a time axis carried
-along, and storing its result keeps every slot unambiguous for the
-operations that follow. A frame may end with projections and
-permutations, which select and reorder the outputs of the map before
-them, so a user can also restrict a frame explicitly.
+A transformation is stored as it is given, and the outputs that the
+components follow are chosen only when the values are re-expressed
+(section 5). The components follow, in order, the outputs of the
+transformation that no component axis of the array feeds. A
+transformation may have more such outputs than components, as a map to
+a world that also has a time axis does. The components then follow the
+outputs that share one axis type, provided that exactly one type has as
+many outputs as there are components, and a frame that does not tell
+which outputs the components follow is refused when it is used. A frame
+may also end with projections and permutations, which select and
+reorder the outputs of the map before them, so a user can restrict a
+frame explicitly.
+
+Storing the transformation as it is given keeps it the same object as
+the entry of `transformations` that it often is, so that `reframe` with
+the default target recognises that nothing changes. The choice does not
+depend on when it is made. It reads only the types of the outputs and
+which outputs the component axes feed, and indexing and reslicing
+compose a frame on its input side with a map that keeps the component
+axes, which changes neither.
 
 The frames are never found by searching `transformations` for a system
 name. Neuroimaging formats give the same names to different spaces, for
@@ -228,9 +231,8 @@ already computed by these operations. A `None` slot stays `None` when the
 linear part of `sub2full` or `ψ` is the identity on the axes that are not
 component axes, because the voxel components of a vector do not change
 then. The voxel coordinates of a point also need the map to have no
-translation. Otherwise the slot becomes `sub2full` or `ψ`, restricted as
-in section 3 when the types of its axes tell which axes the components
-follow. A foreign slot is never changed.
+translation. Otherwise the slot becomes `sub2full` or `ψ`. A foreign
+slot is never changed.
 
 Indexing a component axis with anything else than its full range in
 order turns it into a `channel` axis, because the remaining entries are
@@ -267,14 +269,15 @@ the identity, followed by the matrix that selects the outputs. An output
 is coupled to an input when the entry between them is not negligible.
 
 - The components follow the outputs of the frame that no component axis
-  of the array feeds, in order. A stored frame has exactly as many of
-  them as there are components (section 3).
+  of the array feeds, in order. When there are more of them than
+  components, the components follow those that share one axis type, as
+  section 3 describes.
 - The Jacobian is taken along the axes of the array, other than
   component axes, that are coupled to these outputs and to no other
-  output that no component axis feeds. The outputs that the final
-  projections remove count among these other outputs, so a time axis
-  that the frame carries along is left out, even when a motion changes
-  with time.
+  output that no component axis feeds. The outputs that are not chosen,
+  and those that the final projections remove, count among these other
+  outputs, so a time axis that the frame carries along is left out, even
+  when a motion changes with time.
 - The two frames of a change must take the components from the same axes
   of the array, since their Jacobians are only comparable in the same
   basis. The array system has no structure of its own, so it takes the
@@ -295,13 +298,13 @@ The `frame` argument accepts:
 - a transformation from the array system;
 - a mapping from axis names or indices to any of the above.
 
-A transformation that the argument selects is restricted as in section
-3 before it is used. A single value applies to every component axis
-whose frame is not foreign. A mapping applies to the axes that it names,
-and the other axes keep their frame. Naming an axis that is not a
-component axis, or an axis in a foreign frame, raises an error. A list
-is not accepted, because it would be unclear whether it follows all the
-data axes or only the component axes, and because a string and a
+A transformation that the argument selects is used as it is, and its
+outputs are chosen as in section 3. A single value applies to every
+component axis whose frame is not foreign. A mapping applies to the axes
+that it names, and the other axes keep their frame. Naming an axis that
+is not a component axis, or an axis in a foreign frame, raises an error.
+A list is not accepted, because it would be unclear whether it follows
+all the data axes or only the component axes, and because a string and a
 `Sequence` transformation are both Python sequences.
 
 The `method` argument chooses what is applied. It is a member of the
@@ -418,9 +421,9 @@ Implemented:
   `is_component_type`, which the code that places the axes of an image
   in the order of a file format uses to store these axes with the
   channels;
-- the `frames` field of single-scale images, the restriction of the
-  frames that a user gives, and the way lazy transformations, indexing
-  and reslicing keep the frames;
+- the `frames` field of single-scale images, the choice of the outputs
+  that the components follow (#572), and the way lazy transformations,
+  indexing and reslicing keep the frames;
 - `reframe`, and the `reframe` and `frame` arguments of `reslice`, on
   single-scale and multi-scale images;
 - the `Reframed` record and the `VALUES` scope of the metadata (#540).

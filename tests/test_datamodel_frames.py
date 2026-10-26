@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel._frames import explicit_frame, frame_axes
+from brainhops.datamodel._frames import frame_axes
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -27,7 +27,6 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Permutation,
     Projection,
-    Sequence,
 )
 
 _LA = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 3.0]])
@@ -553,10 +552,10 @@ def test_frames_on_different_axes_cannot_be_compared() -> None:
         image.reframe(frame(1))
 
 
-# --- frames that correspond exactly to the components -----------------
+# --- frames with more outputs than components -------------------------
 
 
-def test_a_given_frame_is_restricted_by_a_projection() -> None:
+def test_a_given_frame_is_kept_as_it_is() -> None:
     values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
     voxel, world = _series("time")
     linear = np.eye(5)
@@ -564,36 +563,51 @@ def test_a_given_frame_is_restricted_by_a_projection() -> None:
     a = Affine(matrix=_matrix(linear), input=voxel, output=world)
     image = SingleScaleImage(values, [a], frames={"c": a})
 
-    slot = image.frames[4]
-
-    assert isinstance(slot, Sequence)
-    assert isinstance(slot.transformations[-1], Projection)
-    assert [axis.name for axis in slot.output.axes] == ["x", "y", "z", "c"]
-    # The restricted frame is stored, so that every read returns it.
-    assert image.frames[4] is slot
-
-
-def test_a_stored_frame_must_correspond_exactly() -> None:
-    _, world = _series("time")
-    voxel = _system_of(
-        [*[Axis(n, "space") for n in "ijk"], Axis("t", "time")]
-        + [Axis("c", "vector")],
-        "voxel",
+    assert image.frames[4] is a
+    # The values are already in the frame of the preferred
+    # transformation, so nothing changes.
+    assert image.reframe() is image
+    out = image.reframe(None)
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values)
     )
+
+
+def test_the_components_follow_the_outputs_of_one_type() -> None:
+    voxel, world = _series("time")
     linear = np.eye(5)
     linear[:3, :3] = _LA
     a = Affine(matrix=_matrix(linear), input=voxel, output=world)
 
-    # The type of the outputs is not consulted for a stored frame.
-    with pytest.raises(ValueError):
+    axes = frame_axes(a, voxel.axes, 3)
+
+    assert axes.rows == [0, 1, 2]
+    assert axes.cols == [0, 1, 2]
+
+
+def test_the_outputs_are_chosen_the_same_after_indexing() -> None:
+    values = np.random.default_rng(0).random((*_SHAPE, 2, 3))
+    voxel, world = _series("time")
+    linear = np.eye(5)
+    linear[:3, :3] = _LA
+    a = Affine(matrix=_matrix(linear), input=voxel, output=world)
+    image = SingleScaleImage(values, [a], frames={"c": a})
+
+    # Indexing the time axis composes the frame with the map of the
+    # voxels, which keeps the time output of the frame.
+    out = image[:, :, :, 1].reframe(None)
+
+    assert np.allclose(
+        np.asarray(out.data), _apply(np.linalg.inv(_LA), values[:, :, :, 1])
+    )
+
+
+def test_a_frame_with_untyped_extra_outputs_is_ambiguous() -> None:
+    voxel, world = _series(None)
+    a = Affine(matrix=_matrix(np.eye(5)), input=voxel, output=world)
+
+    with pytest.raises(ValueError, match="nothing tells"):
         frame_axes(a, voxel.axes, 3)
-    assert frame_axes(
-        explicit_frame(a, voxel.axes, 3), voxel.axes, 3
-    ).cols == [
-        0,
-        1,
-        2,
-    ]
 
 
 def test_a_given_frame_with_too_few_axes_is_refused(
@@ -607,8 +621,10 @@ def test_a_given_frame_with_too_few_axes_is_refused(
     identity = Affine(matrix=np.eye(5)[:-1], input=voxel, output=voxel)
     image = SingleScaleImage(values, [identity], frames={"c": frame})
 
+    # The frame is stored as it is given, and refused when it is used.
+    assert image.frames[3] is frame
     with pytest.raises(ValueError):
-        _ = image.frames
+        image.reframe(None)
 
 
 def test_a_frame_may_end_with_a_projection(

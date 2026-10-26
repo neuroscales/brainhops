@@ -111,10 +111,10 @@ def normalize_frames(
 ) -> tx.Tuple[FrameSlot, ...]:
     """Return one frame slot per data axis.
 
-    A transformation that has more axes than the components of the
-    values is restricted to the axes that the components follow, as
-    [`explicit_frame`][] does, so that every slot that is returned
-    corresponds exactly to its components.
+    The slots are returned as they were given. A transformation may have
+    more outputs than the components of the values, and the outputs that
+    the components follow are chosen only when the values are
+    re-expressed (see [`frame_axes`][]).
 
     Parameters
     ----------
@@ -137,10 +137,8 @@ def normalize_frames(
         If a slot is neither a transformation, a coordinate system nor
         `None`.
     ValueError
-        If the tuple does not have one slot per data axis, if a slot is
-        set on an axis that is not a component axis, or if a
-        transformation does not tell which of its axes the components
-        follow.
+        If the tuple does not have one slot per data axis, or if a slot
+        is set on an axis that is not a component axis.
     KeyError
         If a mapping names an axis that does not exist.
     """
@@ -173,9 +171,6 @@ def normalize_frames(
                 f"frame. Give the axis a type such as 'vector' before "
                 f"setting its frame."
             )
-        if isinstance(slot, Transformation):
-            ncomponents = component_count(axes, i, shape[i], [slot])
-            slots[i] = explicit_frame(slot, axes, ncomponents)
     return tuple(slots)
 
 
@@ -303,7 +298,6 @@ def compose_frames(
     keep: tx.Sequence[tx.Optional[int]],
     voxel_map: Transformation,
     new_axes: tx.Optional[tx.Sequence[Axis]],
-    shape: Shape,
 ) -> tx.Tuple[FrameSlot, ...]:
     """Return the frames after the voxels are mapped by `voxel_map`.
 
@@ -318,8 +312,6 @@ def compose_frames(
         The map from the voxels of the new image to those of the original.
     new_axes : sequence of Axis, optional
         The axes of the array system of the new image.
-    shape : tuple of int
-        The shape of the new image.
 
     Returns
     -------
@@ -327,9 +319,7 @@ def compose_frames(
         One slot per axis of the new image. A transformation is composed
         with `voxel_map`, and a foreign frame is kept. The array system
         stays the array system when `voxel_map` does not change the
-        components, and becomes `voxel_map` otherwise, restricted to the
-        axes that the components follow when the types of its axes tell
-        them.
+        components, and becomes `voxel_map` otherwise.
     """
     components = set(component_axes(new_axes))
     unchanged: tx.Dict[bool, bool] = {}
@@ -344,19 +334,7 @@ def compose_frames(
             points = is_point_axis(new_axes[i])
             if points not in unchanged:
                 unchanged[points] = _keeps_values(voxel_map, points)
-            if unchanged[points]:
-                out.append(None)
-                continue
-            # The components of the array system follow the axes that the
-            # other frame of a change selects, so the map is restricted
-            # only when the types of its axes tell these axes.
-            try:
-                ncomponents = component_count(
-                    new_axes, i, shape[i], [voxel_map]
-                )
-                out.append(explicit_frame(voxel_map, new_axes, ncomponents))
-            except ValueError:
-                out.append(voxel_map)
+            out.append(None if unchanged[points] else voxel_map)
         else:
             out.append(slot)
     return tuple(out)
@@ -509,9 +487,11 @@ def component_count(
     tensor, as when 36 entries are a full matrix of six axes or a
     symmetric matrix of eight axes, or when an explicit layout leaves
     the last axes of the frame out. The frames that are given are tried
-    in order: the number of their outputs that no component axis feeds
-    is the size of the frame when it agrees with the number of entries.
-    The number of entries alone decides when no frame agrees.
+    in order. The number of their outputs that no component axis feeds
+    is the size of the frame when it agrees with the number of entries,
+    and otherwise the number of these outputs that share one axis type,
+    as in [`frame_axes`][]. The number of entries alone decides when no
+    frame agrees.
 
     Raises
     ------
@@ -527,66 +507,69 @@ def component_count(
         structure = _structure(frame, len(axes))
         if structure is None:
             continue
-        ndim = len(_free_rows(structure.outputs, components))
-        try:
-            return axis.frame_ndim(size, ndim)
-        except ValueError:
-            continue
+        free = _free_rows(structure.outputs, components)
+        groups = _type_groups(frame, free, structure.outputs.shape[0])
+        for ndim in [len(free)] + [len(group) for group in groups]:
+            try:
+                return axis.frame_ndim(size, ndim)
+            except ValueError:
+                continue
     return axis.frame_ndim(size)
 
 
-def explicit_frame(
-    frame: Transformation, axes: tx.Sequence[Axis], ncomponents: int
-) -> Transformation:
-    """Restrict a frame to the axes that the components follow.
+def _type_groups(
+    frame: Transformation, rows: tx.List[int], noutputs: int
+) -> tx.List[tx.List[int]]:
+    """Return the outputs of a frame among `rows`, grouped by axis type.
 
-    A frame that is given by a user, such as the preferred transformation
-    of an image whose system also has a time axis, may have more outputs
-    than the components of the values, besides the outputs that the
-    component axes of the array feed. The components then follow the
-    outputs that share one axis type, provided that exactly one type has
-    as many outputs as there are components. A projection that removes
-    the other outputs is composed onto the frame, so that the slot that
-    is stored corresponds exactly to the components. A frame that already
-    corresponds, or whose structure cannot be read, is returned as it is.
+    Outputs whose type is unknown belong to no group.
+    """
+    outputs = array_axes(frame.output, noutputs)
+    groups: tx.Dict[tx.Any, tx.List[int]] = {}
+    for r in rows:
+        kind = getattr(outputs[r], "type", None) if outputs else None
+        if kind is not None:
+            groups.setdefault(kind, []).append(r)
+    return list(groups.values())
+
+
+def _component_rows(
+    frame: Transformation,
+    structure: _Structure,
+    axes: tx.Sequence[Axis],
+    ncomponents: int,
+) -> tx.List[int]:
+    """Return the outputs of a frame that the components follow, in order.
+
+    These are the outputs of the frame that no component axis of the
+    array feeds, when there are as many of them as there are components.
+    A frame may have more such outputs, as the preferred transformation of
+    an image whose system also has a time axis does. The components then
+    follow the outputs that share one axis type, provided that exactly one
+    type has as many outputs as there are components.
 
     Raises
     ------
     ValueError
-        If the frame has fewer outputs than components, or if the types
-        of its outputs do not tell which of them the components follow.
+        If the frame has fewer such outputs than components, or if the
+        types of its outputs do not tell which of them the components
+        follow.
     """
-    structure = _structure(frame, len(axes))
-    if structure is None:
-        return frame
     final = structure.outputs
     candidates = _free_rows(final, component_axes(axes))
     if len(candidates) == ncomponents:
-        return frame
+        return candidates
     if len(candidates) > ncomponents:
-        outputs = array_axes(frame.output, final.shape[0])
-        groups: tx.Dict[tx.Any, tx.List[int]] = {}
-        for r in candidates:
-            kind = getattr(outputs[r], "type", None) if outputs else None
-            if kind is not None:
-                groups.setdefault(kind, []).append(r)
-        matching = [g for g in groups.values() if len(g) == ncomponents]
+        groups = _type_groups(frame, candidates, final.shape[0])
+        matching = [g for g in groups if len(g) == ncomponents]
         if len(matching) == 1:
-            dropped = [r for r in candidates if r not in matching[0]]
-            system = CoordinateSystem(
-                [a for r, a in enumerate(outputs) if r not in dropped],
-                name=getattr(frame.output, "name", None),
-            )
-            projection = Projection(
-                dropped=dropped, input=frame.output, output=system
-            )
-            return projection @ frame
+            return matching[0]
     raise ValueError(
         f"The frame has {len(candidates)} axes that no component axis of "
         f"the array feeds, and nothing tells which {ncomponents} of them "
         f"the components of the values follow. A frame whose system has "
-        f"exactly {ncomponents} such axes, for example one that ends with "
-        f"a projection, removes the ambiguity."
+        f"exactly {ncomponents} such axes, or exactly {ncomponents} such "
+        f"axes of one type, removes the ambiguity."
     )
 
 
@@ -619,21 +602,22 @@ def frame_axes(
     identity. An output of the frame is coupled to an input when the
     entry between them is not zero.
 
-    - The outputs of the frame that no component axis of the array feeds
-      must be exactly as many as the components, which follow them in
-      order. No axis type is consulted.
+    - The components follow, in order, the outputs of the frame that no
+      component axis of the array feeds. When the frame has more such
+      outputs than components, the components follow the outputs that
+      share one axis type, if exactly one type has as many outputs as
+      there are components.
     - The axes of the array that the frame maps onto them are the inputs,
       other than component axes, that are coupled to these outputs and to
-      no other output that no component axis feeds. When the frame ends
-      with projections and permutations, the outputs that the projections
-      remove count among these other outputs, so that a time axis that
-      the frame carries along is left out.
+      no other output that no component axis feeds. A time axis that the
+      frame carries along, or that its final projections remove, is
+      therefore left out.
 
     Raises
     ------
     ValueError
         If the frame is not affine even when its fields are ignored, or if
-        it does not correspond exactly to the components.
+        it does not tell which of its outputs the components follow.
     """
     structure = _structure(frame, len(axes))
     if structure is None:
@@ -643,14 +627,7 @@ def frame_axes(
             "read from it."
         )
     components = component_axes(axes)
-    final = _free_rows(structure.outputs, components)
-    if len(final) != ncomponents:
-        raise ValueError(
-            f"The frame has {len(final)} axes that no component axis of the "
-            f"array feeds, but the values have {ncomponents} components. "
-            f"The frame of the values must have exactly one such axis per "
-            f"component."
-        )
+    final = _component_rows(frame, structure, axes, ncomponents)
     rows = []
     for r in final:
         source = np.flatnonzero(structure.select[r])

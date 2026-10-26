@@ -30,7 +30,6 @@ from ._frames import (
     component_axes,
     component_count,
     compose_frames,
-    explicit_frame,
     frames_as_backend,
     jacobian,
     normalize_frames,
@@ -326,14 +325,14 @@ class SingleScaleImage(Image):
         setter also accept a mapping from axis names or indices to slots,
         and an empty tuple, which leaves every slot `None`.
 
-        A stored transformation corresponds exactly to the components:
-        the outputs that no component axis of the array feeds are as
-        many as the components, which follow them in order. A
-        transformation that is given with more such outputs, such as a
-        map that also carries a time axis along, is restricted to the
-        outputs that share one axis type, when exactly one type has as
-        many outputs as there are components. A projection that removes
-        the other outputs is then composed onto the transformation.
+        A transformation is kept as it is given. Its outputs that no
+        component axis of the array feeds may be more than the
+        components, as for a map that also carries a time axis along.
+        The components then follow the outputs that share one axis type,
+        when exactly one type has as many outputs as there are
+        components. [`reframe`][] makes this choice when it re-expresses
+        the values, and refuses a frame that does not tell which outputs
+        the components follow.
 
         Lazily applying a transformation keeps the frames, because the
         values do not change. Indexing and reslicing compose each frame
@@ -348,21 +347,14 @@ class SingleScaleImage(Image):
             If a slot is neither a transformation, a coordinate system nor
             `None`.
         ValueError
-            If there is not one slot per axis, if an axis that is not a
-            component axis has a frame, or if a transformation does not
-            tell which of its axes the components follow.
+            If there is not one slot per axis, or if an axis that is not a
+            component axis has a frame.
         KeyError
             If a mapping names an axis that does not exist.
         """
-        raw = self._frames
-        slots = normalize_frames(raw, self._array_axes(), tuple(self.shape))
-        if isinstance(raw, Mapping) or any(
-            new is not old for new, old in zip(slots, raw)
-        ):
-            # The slots are stored once they are explicit, so that a frame
-            # restricted by a projection is the same object at every read.
-            self._frames = slots
-        return slots
+        return normalize_frames(
+            self._frames, self._array_axes(), tuple(self.shape)
+        )
 
     @frames.setter
     def frames(self, value: tx.Any) -> None:
@@ -568,7 +560,6 @@ class SingleScaleImage(Image):
                 list(range(self.ndim)),
                 vox2vox,
                 array_axes(system, self.ndim),
-                tuple(new_data.shape),
             )
         resliced = SingleScaleImage(
             data=new_data,
@@ -618,17 +609,15 @@ class SingleScaleImage(Image):
         be re-expressed this way.
 
         The components follow some axes of the system of their frame, in
-        order, and these axes are read from the structure of the frame,
-        not from the types of the axes. They are the outputs of the frame
-        that no component axis of the array feeds, and a stored frame has
-        exactly one such output per component. A frame given as `frame`
-        that has more of them is first restricted to the outputs that
-        share one axis type, as the setter of
-        [`frames`][brainhops.datamodel.images.SingleScaleImage.frames]
-        does. The Jacobian is taken along the axes of the array that the
-        frame maps onto these outputs, and the two frames of a change
-        must map the same axes of the array. The array system takes the
-        axes of the other frame.
+        order, and these axes are read from the structure of the frame.
+        They are the outputs of the frame that no component axis of the
+        array feeds. When a frame has more such outputs than components,
+        as the map to a world with a time axis does, the components
+        follow the outputs that share one axis type, if exactly one type
+        has as many outputs as there are components. The Jacobian is
+        taken along the axes of the array that the frame maps onto these
+        outputs, and the two frames of a change must map the same axes of
+        the array. The array system takes the axes of the other frame.
 
         The Jacobian of a map that is not affine is computed by finite
         differences between the voxels: central inside the image and
@@ -837,7 +826,6 @@ class SingleScaleImage(Image):
                 _source_axes(sub2full),
                 sub2full,
                 array_axes(sub2full.input, len(shape)),
-                tuple(shape),
             )
         return SingleScaleImage(
             data=data,
@@ -1100,19 +1088,16 @@ def _frame_targets(
     """Return the new frame of each axis whose values change frame.
 
     A single frame applies to every component axis whose frame is not
-    foreign. A mapping applies to the axes that it names. Each frame is
-    restricted to the axes that the components follow, as
-    `explicit_frame` does.
+    foreign. A mapping applies to the axes that it names. The frames are
+    returned as they are given.
 
     Raises
     ------
     ValueError
         If a mapping names an axis that is not a component axis or that
-        has a foreign frame, or if a frame does not tell which of its
-        axes the components follow.
+        has a foreign frame.
     """
     transformations = list(image.transformations or [])
-    shape = tuple(image.shape)
     components = component_axes(axes)
     if not isinstance(frame, Mapping):
         target = resolve_target(frame, transformations)
@@ -1136,21 +1121,7 @@ def _frame_targets(
                     f"which no transformation of the image reaches."
                 )
             chosen[i] = resolve_target(value, transformations)
-    # A frame that is restricted to the same number of components is the
-    # same projection, so it is built once for all the axes that share it.
-    restricted: tx.Dict[tx.Any, tx.Optional[Transformation]] = {}
-    targets = {}
-    for i, target in chosen.items():
-        if target is None:
-            targets[i] = None
-            continue
-        known = [target, slots[i]]
-        ncomponents = component_count(axes, i, shape[i], known)
-        key = (id(target), ncomponents)
-        if key not in restricted:
-            restricted[key] = explicit_frame(target, axes, ncomponents)
-        targets[i] = restricted[key]
-    return targets
+    return chosen
 
 
 def _with_input_axes(
