@@ -14,7 +14,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import available_backends, backend  # noqa: E402
+from brainhops._core.backends import backend, backends  # noqa: E402
 from brainhops.datamodel import systems  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
@@ -354,7 +354,7 @@ def _clamped_voxels(points_lps: np.ndarray) -> np.ndarray:
         pytest.param(
             "dask",
             marks=pytest.mark.skipif(
-                "dask" not in available_backends(),
+                "dask" not in backends(),
                 reason="dask is not installed",
             ),
         ),

@@ -26,7 +26,7 @@ if not features.check("jpg_2000"):  # pragma: no cover
     pytest.skip("Pillow was built without OpenJPEG", allow_module_level=True)
 
 import brainhops.io as bio  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.images import (  # noqa: E402
     MultiScaleImage,
     SingleScaleImage,

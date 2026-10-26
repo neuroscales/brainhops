@@ -1,13 +1,18 @@
+# stdlib
 import os
 
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Alias, Inherit, KwOnly, NoRepr, fields_dict, replace
 
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._backends import (
     _stored_data,
@@ -19,6 +24,8 @@ from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.errors import ConversionError, LossyConversionError
+
+# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -46,13 +53,12 @@ from brainhops.io.metadata._base import (
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base.fields import (
-    voxel_grid_coordinates,
-)
+from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import _field_to_model
 
+# this format
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
 from .._formats import FslTransformationFormat
@@ -656,7 +662,7 @@ class FnirtWarpField(
         relative. The array backend is preserved.
         """
         field = self._raw_field()
-        xp = get_array_backend(field)
+        xp = array_backend(field)
         if self._is_coeff():
             return field
 
@@ -877,7 +883,7 @@ def _warp_chain(
     # initial affine applies to the base position.
     combined = src_lin @ grid_to_fsl_lin
     prescale = np.linalg.inv(combined)
-    backend = get_array_backend(field)
+    backend = array_backend(field)
     prescaled = backend.asarray(field) @ backend.asarray(prescale.T)
 
     ras_to_grid = ref_to_field @ ref.ras2vox
@@ -1070,7 +1076,7 @@ def _detect_deformation_type(field: tx.Any, ref_scaled: tx.Any) -> str:
     taken as absolute when it spreads more than its difference from the voxel
     coordinates.
     """
-    backend = get_array_backend(field)
+    backend = array_backend(field)
     axes = (0, 1, 2)
     std_absolute = float(backend.sum(backend.std(field, axis=axes)))
     std_relative = float(

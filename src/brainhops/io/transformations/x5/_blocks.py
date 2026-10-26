@@ -11,13 +11,17 @@ __all__ = [
     "transformation_to_nodes",
 ]
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
+# core
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend, to_backend, to_numpy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend, to_backend, to_numpy
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
@@ -35,6 +39,7 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
 )
 
+# this format
 from ._raw import X5Domain, X5Node
 
 _NDIM = 3
@@ -232,7 +237,7 @@ def _read(stored: tx.Any) -> ArrayProtocol:
     if isinstance(stored, H5ArrayProxy):
         array = to_backend(stored)
     else:
-        array = get_array_backend(stored).asarray(stored)
+        array = array_backend(stored).asarray(stored)
     if isinstance(array, np.ndarray):
         array = array.view()
         array.flags.writeable = False
@@ -423,7 +428,7 @@ def _field_to_model(
     if kinds and len(kinds) == field.ndim and "vector" in kinds:
         axis = list(kinds).index("vector")
         if axis != field.ndim - 1:
-            field = get_array_backend(field).moveaxis(field, axis, -1)
+            field = array_backend(field).moveaxis(field, axis, -1)
     return field
 
 

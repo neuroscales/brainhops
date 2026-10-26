@@ -47,9 +47,9 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import HideIfDefault, Magic
 
-# internals
-from brainhops import backends
-from brainhops._core.linalg import ArrayProtocol
+# core
+from . import backends
+from .linalg import ArrayProtocol
 
 _Box: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 """The box that [`StoredProxy._read`][brainhops._core.proxy.StoredProxy._read]

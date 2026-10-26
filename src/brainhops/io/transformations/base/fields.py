@@ -16,13 +16,16 @@ import typing_extensions as tx
 from bagof.magic import KwOnly
 
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.io.base.parsers import WriterError
+from brainhops.errors import WriterError
 
+# this format
 from .affines import (
     _LPS,
     _RAS,
@@ -146,7 +149,7 @@ def ras_displacement_chain(
     vox2ras = np.asarray(vox2ras, dtype=np.float64)
     ndim = vox2ras.shape[0] - 1
     compact = vox2ras[:ndim]
-    xp = get_array_backend(vectors)
+    xp = array_backend(vectors)
     ras2vox = np.linalg.inv(vox2ras[:ndim, :ndim])
     # The matrix is cast by NumPy, because Dask ignores the `dtype` of
     # `asarray` and would compute a single-precision field in double
@@ -251,7 +254,7 @@ def split_ras_displacement_chain(
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
     field = displacement.data
-    xp = get_array_backend(field)
+    xp = array_backend(field)
     field = xp.asarray(field)
     if field.ndim != ndim + 1 or field.shape[-1] != ndim:
         raise WriterError(

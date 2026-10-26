@@ -14,7 +14,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import available_backends, backend  # noqa: E402
+from brainhops._core.backends import backend, backends  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
@@ -452,11 +452,11 @@ def test_fnirt_deformation_field_is_a_first_degree_displacement() -> None:
 
 
 def test_fnirt_detects_absolute_and_relative() -> None:
-    from brainhops.backends import get_array_backend
+    from brainhops._core.backends import array_backend
 
     _, absolute, relative = _fnirt_setup()
     ref_v2f = _fsl_vox2scaled(REF_AFFINE, REF_SHAPE, [2.0, 2.0, 2.5])
-    xp = get_array_backend()
+    xp = array_backend()
     ref_scaled = _voxel_grid_in_scaled_mm(REF_SHAPE, ref_v2f, xp)
     assert (
         _detect_deformation_type(xp.asarray(absolute), ref_scaled)
@@ -706,7 +706,7 @@ ARRAY_BACKENDS = [
     pytest.param(
         "dask",
         marks=pytest.mark.skipif(
-            "dask" not in available_backends(),
+            "dask" not in backends(),
             reason="dask is not installed",
         ),
     ),

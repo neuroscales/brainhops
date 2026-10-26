@@ -19,7 +19,7 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 import brainhops.io as io
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem

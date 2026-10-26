@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from scipy.ndimage import map_coordinates
 
+from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, pull_axes
-from brainhops.backends import backend
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.transformations import Affine, CartesianField
 

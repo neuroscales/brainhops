@@ -5,15 +5,19 @@ The encoding and the way these files are told apart from RAS NIfTI fields are
 described in [`brainhops.io.transformations.itk.nifti`][].
 """
 
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
+# core
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._backends import (
@@ -25,12 +29,11 @@ from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.errors import ParserContentError, WriterError
+
+# io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
-    WriterError,
-)
+from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
@@ -68,6 +71,7 @@ from brainhops.io.transformations.base.fields import (
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
+# this_format
 from .._systems import _make_system
 from ._views import _itk_field_to_disk, _itk_field_to_model
 
@@ -319,7 +323,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
-        xp = get_array_backend(data)
+        xp = array_backend(data)
         shape = tuple(int(d) for d in data.shape)
         if len(shape) != ndim + 1:
             data = xp.reshape(data, (*shape[:ndim], ndim))
@@ -509,7 +513,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         header, and its fields that describe the layout and the geometry are
         encoded again.
         """
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         vectors = xp.asarray(vectors)
         ndim = int(vectors.shape[-1])
         if ndim not in _NDIMS or vectors.ndim != ndim + 1:
@@ -617,7 +621,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         # of the
         # world-to-voxel affine.
         vectors = self._lps_vectors(ndim)
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         lps2vox = np.linalg.inv(vox2lps[:, :ndim])
         rotate = xp.asarray(lps2vox, dtype=vectors.dtype)
         field = xp.matmul(rotate, vectors[..., None])[..., 0]
@@ -697,7 +701,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         vox2lps = _homogeneous(chain[2])
         ndim = vox2lps.shape[0] - 1
         field = displacement.data
-        xp = get_array_backend(field)
+        xp = array_backend(field)
         field = xp.asarray(field)
         rotate = xp.asarray(vox2lps[:ndim, :ndim], dtype=field.dtype)
         vectors = xp.matmul(rotate, field[..., None])[..., 0]

@@ -1,21 +1,23 @@
 """Tests of the backend settings of brainhops.backends."""
 
+# dependencies
 import numpy as np
 import pytest
 
-from brainhops import backends
-from brainhops._core.proxy import StoredProxy
-from brainhops.backends import (
-    _is_lazy,
+# core
+from brainhops._core import backends
+from brainhops._core.backends import (
+    array_backend,
     backend,
-    get_array_backend,
     get_auto_threshold,
     get_backend,
-    get_ndimage_backend,
+    is_lazy,
+    ndimage_backend,
     resolve_backend,
     set_backend,
     to_backend,
 )
+from brainhops._core.proxy import StoredProxy
 
 da = pytest.importorskip("dask.array")
 
@@ -46,8 +48,8 @@ SMALL = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
 def test_the_default_setting_is_native() -> None:
     # The setting no longer depends on whether Dask is installed.
     assert get_backend() == "native"
-    assert get_array_backend() is np
-    assert get_ndimage_backend().__name__ == "scipy.ndimage"
+    assert array_backend() is np
+    assert ndimage_backend().__name__ == "scipy.ndimage"
 
 
 def test_none_keeps_loaded_arrays() -> None:
@@ -103,7 +105,7 @@ def test_none_differs_from_the_current_setting() -> None:
         assert isinstance(to_backend(SMALL), da.Array)
         assert isinstance(to_backend(SMALL, None), da.Array)
         assert to_backend(SMALL, "native") is SMALL
-        assert get_array_backend() is da
+        assert array_backend() is da
 
 
 def test_the_context_manager_restores_the_setting() -> None:
@@ -145,7 +147,7 @@ def test_unknown_settings_are_refused() -> None:
     with pytest.raises(ValueError):
         to_backend(SMALL, "gpu")
     with pytest.raises(ValueError):
-        get_array_backend("torch")
+        array_backend("torch")
 
 
 @pytest.mark.skipif(backends.cp is not None, reason="CuPy is installed")
@@ -158,9 +160,9 @@ def test_gpu_settings_need_cupy() -> None:
 
 def test_is_lazy() -> None:
     # A reader asks whether an array of a given size stays lazy.
-    assert not _is_lazy(10)
-    assert _is_lazy(get_auto_threshold() + 1)
-    assert _is_lazy(10, "dask")
-    assert not _is_lazy(10**12, "numpy")
+    assert not is_lazy(10)
+    assert is_lazy(get_auto_threshold() + 1)
+    assert is_lazy(10, "dask")
+    assert not is_lazy(10**12, "numpy")
     with backend(threshold=4):
-        assert _is_lazy(10)
+        assert is_lazy(10)

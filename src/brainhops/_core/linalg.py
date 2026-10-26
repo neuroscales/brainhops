@@ -2,8 +2,16 @@ import numpy as np
 import scipy.linalg
 import typing_extensions as tx
 
-from brainhops.backends import get_array_backend, to_numpy
 from brainhops.errors import DomainError
+
+from .backends import (
+    array_backend,
+    is_dask,
+    like,
+    promote_backends,
+    promote_dtypes,
+    to_numpy,
+)
 
 if tx.TYPE_CHECKING:
     from brainhops._core.typing import ArrayProtocol as _ArrayProtocol
@@ -21,15 +29,61 @@ error of the boundary are refused rather than given an inaccurate answer.
 """
 
 
+# --- batching ---------------------------------------------------------
+
+
+def batch(
+    function: tx.Callable[[ArrayProtocol], ArrayProtocol],
+    array: ArrayProtocol,
+    dims: tx.Union[int, tx.Sequence[int]],
+) -> ArrayProtocol:
+    """Apply a batched function to an array of any backend.
+
+    The function receives a NumPy or CuPy array. Dask has no linear
+    algebra on batches of matrices, so the function is applied to each
+    block, with the last two axes in a single block.
+    """
+    if isinstance(dims, int):
+        dims = (dims,)
+    dims = tuple(sorted(dims))
+    if is_dask(array):
+        whole = array.rechunk({dim: -1 for dim in dims})
+        return whole.map_blocks(function, dtype=array.dtype)
+    return function(array)
+
+
+def batched(dims: tx.Union[int, tx.Sequence[int]]) -> tx.Callable:
+    """Return a decorator that applies a function to each batch of an array.
+
+    The decorated function receives a NumPy or CuPy array. Dask has no linear
+    algebra on batches of matrices, so the function is applied to each block,
+    with the last two axes in a single block.
+    """
+
+    def decorator(function: tx.Callable) -> tx.Callable:
+        def wrapper(array: ArrayProtocol, *a, **k) -> ArrayProtocol:
+            return batch(function, array, dims=dims)
+
+        return wrapper
+
+    return decorator
+
+
+batchedvector = batched(-1)
+batchedmatrix = batched((-2, -1))
+
+
 # --- linalg -----------------------------------------------------------
 
 
+@batchedmatrix
 def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
     """Return the inverse of a square matrix."""
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return xp.linalg.inv(matrix)
 
 
+@batchedmatrix
 def sqrtm(
     matrix: "ArrayProtocol", what: str = "The square root of this matrix"
 ) -> "ArrayProtocol":
@@ -40,13 +94,14 @@ def sqrtm(
     [`DomainError`][] raised when the matrix is not square or has no real
     principal root.
     """
-    host = to_host(matrix, dtype=np.float64)
-    dtype = dtype_or_float64(matrix)
+    host = to_numpy(matrix, dtype=np.float64)
+    dtype = promote_dtypes(matrix, float)
     require_square(host, what)
     require_principal(host, what)
-    return to(ensure_real(scipy.linalg.sqrtm(host)), matrix, dtype=dtype)
+    return like(_ensure_real(scipy.linalg.sqrtm(host)), matrix, dtype=dtype)
 
 
+@batchedmatrix
 def expm(
     tangent: ArrayProtocol, what: str = "The exponential of this matrix"
 ) -> ArrayProtocol:
@@ -54,11 +109,12 @@ def expm(
 
     The `what` argument names the operation in error messages.
     """
-    host = to_host(tangent)
+    host = to_numpy(tangent)
     require_square(host, what)
-    return to(scipy.linalg.expm(host), tangent)
+    return like(scipy.linalg.expm(host), tangent)
 
 
+@batchedmatrix
 def logm(
     matrix: ArrayProtocol, what: str = "The logarithm of this matrix"
 ) -> ArrayProtocol:
@@ -69,11 +125,93 @@ def logm(
     [`DomainError`][] raised when the matrix is not square or has no real
     principal logarithm.
     """
-    host = to_host(matrix, dtype=np.float64)
-    dtype = dtype_or_float64(matrix)
+    host = to_numpy(matrix, dtype=np.float64)
+    dtype = promote_dtypes(matrix, float)
     require_square(host, what)
     require_principal(host, what)
-    return to(ensure_real(scipy.linalg.logm(host)), matrix, dtype=dtype)
+    return like(_ensure_real(scipy.linalg.logm(host)), matrix, dtype=dtype)
+
+
+def batchT(x: ArrayProtocol) -> ArrayProtocol:
+    """Return the transpose of each matrix in a batch of matrices."""
+    xp = array_backend(x)
+    return xp.swapaxes(x, -1, -2)
+
+
+def matmul(left: ArrayProtocol, right: ArrayProtocol) -> ArrayProtocol:
+    """Return the matrix product of two arrays.
+
+    The last two axes of each array are treated as matrices, and the other
+    axes are broadcast.
+    """
+    left, right = promote_backends(left, right)
+    xp = array_backend(left)
+    return xp.matmul(left, right)
+
+
+def matvec(matrix: ArrayProtocol, vector: ArrayProtocol) -> ArrayProtocol:
+    """Return the matrix-vector product of a matrix and a vector.
+
+    The last two axes of the first array are treated as matrices, and the
+    last axis of the second array is treated as a vector. The other axes
+    are broadcast.
+    """
+    matrix, vector = promote_backends(matrix, vector)
+    xp = array_backend(matrix)
+    return xp.matmul(matrix, vector[..., None])[..., 0]
+
+
+_PolarMatrix: tx.TypeAlias = tx.Literal["U", "P"]
+_PolarWhich: tx.TypeAlias = tx.Union[
+    _PolarMatrix, tx.Tuple[_PolarMatrix, _PolarMatrix]
+]
+
+
+@batchedmatrix
+def _polar_u(matrix: ArrayProtocol) -> ArrayProtocol:
+    xp = array_backend(matrix)
+    u, _, vt = xp.linalg.svd(matrix)
+    return xp.matmul(u, vt)
+
+
+@batchedmatrix
+def _polar_p(matrix: ArrayProtocol) -> ArrayProtocol:
+    xp = array_backend(matrix)
+    u, s, vt = xp.linalg.svd(matrix)
+    s = xp.diag(s)
+    v = vt.swapaxes(-1, -2) * s[..., None, :]
+    return xp.matmul(v, vt)
+
+
+def polar(
+    matrix: ArrayProtocol, which: _PolarWhich = ("U", "P")
+) -> ArrayProtocol:
+    """Return the rotation of the polar decomposition of stacked matrices.
+
+    A matrix `J = U S Vᵀ` has the polar decomposition `J = R P` with
+    `R = U Vᵀ`. `R` is orthogonal, and it includes a reflection when `J`
+    has a negative determinant.
+    """
+    if is_dask(matrix):
+        if which == "U":
+            return _polar_u(matrix)
+        if which == "P":
+            return _polar_p(matrix)
+        return ({"U": _polar_u, "P": _polar_p}[each](matrix) for each in which)
+
+    xp = array_backend(matrix)
+    u, s, vt = xp.linalg.svd(matrix)
+    if any("U" in _ for _ in which):
+        u = xp.matmul(u, vt)
+    if any("P" in _ for _ in which):
+        s = xp.diag(s)
+        v = vt.swapaxes(-1, -2) * s[..., None, :]
+        p = xp.matmul(v, vt)
+    if which == "U":
+        return u
+    if which == "P":
+        return p
+    return ({"U": u, "P": p}[each] for each in which)
 
 
 # --- checks utils -----------------------------------------------------
@@ -103,7 +241,7 @@ class _BoolWithMessage:
 
 def is_positive(array: ArrayProtocol) -> bool:
     """Return whether all the values of an array are strictly positive."""
-    xp = get_array_backend(array)
+    xp = array_backend(array)
     return not bool(xp.any(array <= 0))
 
 
@@ -112,7 +250,7 @@ def require_positive(array: ArrayProtocol, what: str = "This") -> None:
     if not is_positive(array):
         raise DomainError(
             f"{what} is not defined: its values must all be positive, "
-            f"but they are {to_host(array).tolist()}."
+            f"but they are {to_numpy(array).tolist()}."
         )
 
 
@@ -151,7 +289,7 @@ def is_principal(linear: ArrayProtocol, return_reason: bool = False):
     rejected too. With `return_reason=True`, the result is a boolean-like
     object whose string gives the reason, for use in error messages.
     """
-    xp = get_array_backend(linear)
+    xp = array_backend(linear)
     if not bool(xp.isfinite(linear).all()):
         return _BoolWithMessage(False, "is not finite", return_reason)
     eigenvalues = xp.linalg.eigvals(linear)
@@ -183,36 +321,14 @@ def require_principal(linear: np.ndarray, what: str = "This") -> None:
 # --- backend utils ----------------------------------------------------
 
 
-def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:
-    # The matrix functions run on the host, on NumPy arrays, whatever the
-    # backend of the input.
-    # A Dask array is computed, and its chunks are copied from the GPU when
-    # they are CuPy arrays.
-    return np.asarray(to_numpy(array), **kwargs)
-
-
-def to(result: np.ndarray, like: ArrayProtocol, **kwargs) -> ArrayProtocol:
-    """Convert a NumPy result to the array backend of `like`."""
-    return get_array_backend(like).asarray(result, **kwargs)
-
-
-def dtype_or_float64(like: ArrayProtocol) -> np.dtype:
-    """Return the dtype of `like` if it is floating, and float64 otherwise."""
-    xp = get_array_backend(like)
-    dtype = xp.dtype(getattr(like, "dtype", xp.float64))
-    if not xp.issubdtype(dtype, xp.floating):
-        dtype = xp.dtype(xp.float64)
-    return dtype
-
-
-def ensure_real(result: ArrayProtocol) -> ArrayProtocol:
+def _ensure_real(result: ArrayProtocol) -> ArrayProtocol:
     """Return the real part of an array whose imaginary part is negligible.
 
     The imaginary part counts as negligible when it is below `_RTOL` times
     the larger of one and the largest magnitude in the array. Otherwise, a
     [`DomainError`][] is raised.
     """
-    xp = get_array_backend(result)
+    xp = array_backend(result)
     if xp.iscomplexobj(result):
         scale = max(1.0, float(xp.abs(result).max(initial=0.0)))
         if float(xp.abs(result.imag).max(initial=0.0)) > _RTOL * scale:

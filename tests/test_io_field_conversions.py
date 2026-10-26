@@ -457,7 +457,7 @@ def test_minc_writes_its_displacement_volume(tmp_path: Path) -> None:
 
 def test_a_dask_field_stays_lazy(files: dict) -> None:
     da = pytest.importorskip("dask.array")
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
 
     with backend("dask"):
         loaded = _load(files["nifti"], None)

@@ -8,17 +8,22 @@ are compatible, which the `adaptors` module ensures. They also assume
 that both transformations are fully defined, with no unset parameters.
 """
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import replace
 
-from brainhops._core.bsplines import pull_field
-from brainhops.backends import (
-    get_array_backend,
+# core
+from brainhops._core.backends import (
+    array_backend,
     to_promoted_backend,
 )
+from brainhops._core.bsplines import pull_field
+
+# api
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import CompositionError
 
+# transformations
 from ..base import Transformation
 from ..concrete import (
     Affine,
@@ -76,7 +81,7 @@ def _(To: Sequence, Ti: Sequence) -> Transformation:
 
 @composer
 def _(To: Affine, Ti: Affine) -> Affine:
-    xp = get_array_backend(To.matrix)
+    xp = array_backend(To.matrix)
     No = To.matrix.shape[0]
     Ni = Ti.matrix.shape[1] - 1
     A = xp.empty_like(To.matrix, shape=(No, Ni + 1))
@@ -412,7 +417,7 @@ def _(To: SubspaceTransformation, Ti: CoordinateField) -> CoordinateField:
     # it acts on, so the other axes are never tiled to the full size.
     Ti = Ti.compute()
     x = Ti.field
-    xp = get_array_backend(x)
+    xp = array_backend(x)
     if To.input_axes is None or To.output_axes is None:
         raise CompositionError(
             "A subspace transform composes with a field only when it names "

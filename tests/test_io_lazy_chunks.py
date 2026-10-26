@@ -18,7 +18,7 @@ da = pytest.importorskip("dask.array")
 dask = pytest.importorskip("dask")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 
 # ----------------------------------------------------------------------
 #   OME-ZARR FIELDS

@@ -51,8 +51,8 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
+from brainhops._core.backends import array_backend, is_dask
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import _is_dask, get_array_backend
 
 from ..enums import AxisType, TensorLayout, Valence
 from .base import Axis
@@ -208,7 +208,7 @@ class ComponentAxis(Axis):
                 f"with its Jacobian, so they cannot be re-expressed in "
                 f"another frame."
             )
-        xp = get_array_backend(values)
+        xp = array_backend(values)
         moved = xp.moveaxis(values, axis, -1)
         out = _multilinear(moved, matrix, valences, values)
         return xp.moveaxis(out, -1, axis)
@@ -741,7 +741,7 @@ class TensorAxis(ComponentAxis, on={"type": "tensor"}):
             If the number of entries does not match the layout and the
             size of `matrix`.
         """
-        xp = get_array_backend(values)
+        xp = array_backend(values)
         rank = len(self.valence)
         size = values.shape[axis]
         ndim = self.frame_ndim(size, int(matrix.shape[-1]))
@@ -849,9 +849,9 @@ def _layout_entries(name: str, ndim: int, rank: int) -> Entries:
 
 def _like(matrix: ArrayProtocol, values: ArrayProtocol) -> ArrayProtocol:
     """Return `matrix` in the backend of `values`, in a floating type."""
-    xp = get_array_backend(values)
+    xp = array_backend(values)
     dtype = np.result_type(values.dtype, np.float32)
-    if isinstance(matrix, np.ndarray) and not _is_dask(values):
+    if isinstance(matrix, np.ndarray) and not is_dask(values):
         return xp.asarray(matrix.astype(dtype))
     return matrix.astype(dtype)
 
@@ -887,7 +887,7 @@ def _contract(
     The last `rank` axes of `tensor` are its indices, and the batch of
     `matrix` broadcasts against the other axes.
     """
-    xp = get_array_backend(tensor)
+    xp = array_backend(tensor)
     position = tensor.ndim - rank + index
     moved = xp.moveaxis(tensor, position, -1)
     if matrix.ndim > 2:
@@ -902,7 +902,7 @@ def _contract(
 
 def _swap_last(matrix: ArrayProtocol) -> ArrayProtocol:
     """Transpose the last two axes of a stack of matrices."""
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return xp.swapaxes(matrix, -1, -2)
 
 
@@ -916,7 +916,7 @@ def _batched(
     algebra on stacks of matrices, so the function is applied to each
     block, with the last two axes in a single block.
     """
-    if _is_dask(matrix):
+    if is_dask(matrix):
         whole = matrix.rechunk({matrix.ndim - 2: -1, matrix.ndim - 1: -1})
         return whole.map_blocks(function, dtype=matrix.dtype)
     return function(matrix)
@@ -924,4 +924,4 @@ def _batched(
 
 def _inv(matrix: ArrayProtocol) -> ArrayProtocol:
     """Invert a stack of matrices."""
-    return get_array_backend(matrix).linalg.inv(matrix)
+    return array_backend(matrix).linalg.inv(matrix)

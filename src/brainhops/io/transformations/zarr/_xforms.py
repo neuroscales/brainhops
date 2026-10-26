@@ -8,14 +8,18 @@ metadata are kept exactly as read, so that writing an unchanged field
 re-emits its OME metadata unchanged.
 """
 
+# dependencies
 import abczarr
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
+# core
 from brainhops._core.affines import inv as _affine_inv
-from brainhops.backends import get_array_backend, to_backend, to_numpy
+from brainhops._core.backends import array_backend, to_backend, to_numpy
+
+# datamodel
 from brainhops.datamodel._sugar import vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
@@ -32,13 +36,12 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
+from brainhops.errors import ParserTypeError, WriterError
+
+# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import is_local, replace_directory
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserTypeError,
-    WriterError,
-)
+from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike
 from brainhops.io.common.zarr._data import (
     _ZarrProxy,
@@ -54,6 +57,7 @@ from brainhops.io.common.zarr._parsers import (
 )
 from brainhops.io.transformations.base import TransformationFormat
 
+# this format
 from . import _map, _node
 from ._errors import OmeFieldError
 
@@ -466,7 +470,7 @@ def _vector_axis_last(
     ndim = len(raw.shape)
     if vector_axis in (-1, ndim - 1):
         return raw
-    xp = get_array_backend(raw)
+    xp = array_backend(raw)
     return xp.moveaxis(raw, vector_axis, -1)
 
 
@@ -479,7 +483,7 @@ def _to_voxel_displacement(
     # converted block by block rather than read into memory.
     matrix = _as_affine(voxel2world).matrix
     inverse = to_numpy(_affine_inv(matrix))
-    ab = get_array_backend(raw)
+    ab = array_backend(raw)
     return raw @ ab.asarray(inverse[:, :-1].T)
 
 

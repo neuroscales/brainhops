@@ -1,6 +1,7 @@
 """HDF5 datasets that can still be read after their file was closed."""
 
 # stdlib
+import os.path as op
 from os import PathLike
 
 # dependencies
@@ -10,6 +11,7 @@ import typing_extensions as tx
 from bagof.magic import NoInit, NoRepr
 
 # core
+from brainhops._core.backends import has_dask
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import ArrayProtocol
 
@@ -149,7 +151,7 @@ class H5ArrayProxy(StoredProxy):
         return self._chunks
 
 
-def delayed_dataset(
+def to_proxy(
     h5file: h5py.File, key: str, keep_open: bool
 ) -> tx.Union[H5ArrayProxy, ArrayProtocol]:
     """
@@ -159,16 +161,13 @@ def delayed_dataset(
     is reopened by name on each read. The dataset is wrapped in a dask
     array if dask is installed.
     """
-    from brainhops.backends import da
 
     if keep_open:
         fileish = h5file
     else:
-        import os.path as op
-
         fileish = h5file.filename
         fileish = op.abspath(fileish) if fileish else None
     array = H5ArrayProxy(fileish, key)
-    if da:
+    if has_dask():
         array = array.to_dask(keep_open=keep_open)
     return array

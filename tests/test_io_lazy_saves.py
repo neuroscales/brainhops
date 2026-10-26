@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.nrrd import (

@@ -14,21 +14,38 @@ import os
 import numpy as np
 import typing_extensions as tx
 
-# internals
+# core
 from brainhops._core import path
+from brainhops._core.backends import to_backend
 from brainhops._core.typing import ArrayProtocol
+
+# datamodel
+from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
     StoreEnum,
 )
+
+# io
 from brainhops.io.base._utils_files import sibling
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserError,
     ParserExistsError,
     ParserNotImplementedError,
+)
+from brainhops.io.transformations.base._conversions import (
+    affine_between,
+    displacement_parts,
+    split_field_chain,
+    undoes,
+    world_pieces,
+)
+from brainhops.io.transformations.base.affines import (
+    RASToVoxel,
+    VoxelToRAS,
 )
 from brainhops.io.transformations.base.fields import ras_displacement_chain
 
@@ -50,7 +67,7 @@ class XfmGridTransform(_xforms.ImmutableSequence):
     are the displacements along the world axes x, y and z, in
     millimetres. The transform is read as a chain of three
     transformations, as a NIfTI displacement field is (see
-    [`ras_displacement_chain`][brainhops.io.transformations.base.fields.ras_displacement_chain]).
+    [`ras_displacement_chain`][]).
 
     | Slot           | Transformation                                |
     | -------------- | --------------------------------------------- |
@@ -318,8 +335,6 @@ def write_volume(filename: path.FilenameLike, volume: PendingVolume) -> None:
     """
     import h5py
 
-    from brainhops.backends import to_backend
-
     vox2ras = volume.vox2ras
     linear = vox2ras[:3, :3]
     steps = np.linalg.norm(linear, axis=0)
@@ -418,19 +433,6 @@ def grid_chain(
     loss : str or None
         What the transforms lose, or `None` when they are the map `t` is.
     """
-    from brainhops.datamodel import systems as _systems
-    from brainhops.io.transformations.base._conversions import (
-        affine_between,
-        displacement_parts,
-        split_field_chain,
-        undoes,
-        world_pieces,
-    )
-    from brainhops.io.transformations.base.affines import (
-        RASToVoxel,
-        VoxelToRAS,
-    )
-
     ras = _systems.RASmm()
     voxel = _systems.VoxelCoordinateSystem()
     transforms: tx.List[_xforms.Transformation] = []
