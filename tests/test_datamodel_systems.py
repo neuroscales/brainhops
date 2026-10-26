@@ -13,12 +13,15 @@ from brainhops.datamodel._systems import dispatch
 from brainhops.datamodel.axes import (
     A,
     Axis,
+    ComponentAxis,
+    DisplacementAxis,
     L,
     P,
     R,
     S,
     SpaceAxis,
     TimeAxis,
+    VectorAxis,
 )
 from brainhops.datamodel.systems import (
     ArrayCoordinateSystem,
@@ -64,6 +67,13 @@ OPEN_LAYOUTS = {
 
 # The same two axes, closed or with `...` anywhere.
 ANY_LAYOUTS = {"closed": [X, T], **OPEN_LAYOUTS}
+
+
+def _signed(entries: tx.Sequence, entry: int) -> int:
+    # The index that `index` returns for an entry: counted from the end
+    # after `...`, so that it is both an entry and a position.
+    return entry - len(entries) if ... in entries[:entry] else entry
+
 
 # Every exported coordinate system class.
 SYSTEM_CLASSES = [
@@ -448,7 +458,8 @@ def test_a_shared_name_is_ambiguous(any_layout: str) -> None:
     with pytest.raises(ValueError, match="2 axes"):
         axes["x"]
     # Both `index` and `in` find the first match, as they do for lists.
-    assert axes.index("x") == ANY_LAYOUTS[any_layout].index(X)
+    entries = list(axes)
+    assert axes.index("x") == _signed(entries, entries.index(X))
     assert "x" in axes
 
 
@@ -476,9 +487,11 @@ def test_an_integer_indexes_the_entries(any_layout: str) -> None:
 
 def test_entries_and_axes_differ_in_an_open_list() -> None:
     # Entry 2 is T, but the axis at position 2 is one that `...` stands for.
+    # `index` counts T from the end, which is both an entry and a position.
     axes = AxisList([X, ..., T])
     assert len(axes) == 3 and axes.ndim is None
-    assert axes[2] is T and axes.index("t") == 2
+    assert axes[2] is T and axes.index("t") == -1
+    assert axes[-1] is T and axes.at(-1) is T
     assert axes.restrict([2]) == [Axis()]
     assert axes.restrict([-1]) == [T]
     # Iterating over the entries yields `...` itself.
@@ -488,20 +501,25 @@ def test_entries_and_axes_differ_in_an_open_list() -> None:
 def test_index_of_a_name(any_layout: str) -> None:
     entries = ANY_LAYOUTS[any_layout]
     axes = AxisList(entries)
-    assert axes.index("x") == entries.index(X)
-    assert axes.index("t") == entries.index(T)
+    assert axes.index("x") == _signed(entries, entries.index(X))
+    assert axes.index("t") == _signed(entries, entries.index(T))
 
 
 def test_index_of_an_axis(any_layout: str) -> None:
     entries = ANY_LAYOUTS[any_layout]
     axes = AxisList(entries)
     # An axis matches itself and any query that sets fewer fields.
-    assert axes.index(T) == entries.index(T)
-    assert axes.index(TimeAxis()) == entries.index(T)
-    assert axes.index(Axis(unit="second")) == entries.index(T)
-    assert axes.index(Axis(name="x")) == entries.index(X)
+    t, x = (
+        _signed(entries, entries.index(T)),
+        _signed(entries, entries.index(X)),
+    )
+    assert axes.index(T) == t
+    assert axes.index(TimeAxis()) == t
+    assert axes.index(Axis(unit="second")) == t
+    assert axes.index(Axis(name="x")) == x
     # An empty query matches the first axis.
-    assert axes.index(Axis()) == (1 if any_layout == "start" else 0)
+    first = 1 if any_layout == "start" else 0
+    assert axes.index(Axis()) == _signed(entries, first)
 
 
 def test_index_compares_only_the_fields_the_query_sets() -> None:
@@ -545,9 +563,11 @@ def test_index_of_a_missing_axis(any_layout: str) -> None:
 def test_index_between_start_and_stop() -> None:
     axes = AxisList([X, ..., X, T])
     assert axes.index("x") == 0
-    assert axes.index("x", 1) == 2
-    assert axes.index("x", -2) == 2
-    assert axes.index("t", 0, 4) == 3
+    # The window counts entries, and the result counts from the end after
+    # `...`.
+    assert axes.index("x", 1) == -2
+    assert axes.index("x", -2) == -2
+    assert axes.index("t", 0, 4) == -1
     with pytest.raises(ValueError):
         axes.index("t", 0, 3)
     with pytest.raises(ValueError):
@@ -558,6 +578,73 @@ def test_index_between_start_and_stop() -> None:
 def test_index_refuses_other_queries(query: object) -> None:
     with pytest.raises(TypeError):
         AxisList([X, Y]).index(query)  # type: ignore[arg-type]
+
+
+# ----------------------------------------------------------------------
+#   QUERIES
+# ----------------------------------------------------------------------
+
+
+def test_a_query_may_be_a_dict_a_class_or_a_function() -> None:
+    axes = AxisList([SpaceAxis(name="x"), T])
+    for query in (
+        {"type": "time"},
+        {"name": "t", "unit": "second"},
+        TimeAxis,
+        lambda axis: axis.name == "t",
+    ):
+        assert axes.index(query) == 1
+    with pytest.raises(ValueError, match="TimeAxis is not in list"):
+        AxisList([X]).index(TimeAxis)
+
+
+def test_an_axis_class_matches_its_subclasses() -> None:
+    vector = VectorAxis(name="v")
+    displacement = DisplacementAxis(name="d")
+    axes = AxisList([X, vector, T, displacement])
+    assert axes.indices(ComponentAxis) == [1, 3]
+    assert axes.indices(VectorAxis) == [1]
+    # A dict builds a template of the class that its type selects.
+    assert axes.indices({"type": "vector"}) == [1]
+
+
+def test_indices_lists_every_match_in_order() -> None:
+    axes = AxisList([SpaceAxis(name="x"), T, SpaceAxis(name="y")])
+    assert axes.indices(SpaceAxis) == [0, 2]
+    assert axes.indices("t") == [1]
+    assert axes.indices(Axis(unit="mm")) == []
+
+
+def test_indices_count_from_the_end_after_the_ellipsis() -> None:
+    x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+    axes = AxisList([x, ..., y, T])
+    assert axes.indices(SpaceAxis) == [0, -2]
+    # Each index is both an entry and a position in the space.
+    for i in axes.indices(Axis()):
+        assert axes[i] is axes.at(i)
+
+
+@pytest.mark.parametrize("query", [0, None, b"x", ["x"]])
+def test_indices_refuses_other_queries(query: object) -> None:
+    with pytest.raises(TypeError):
+        AxisList([X, Y]).indices(query)  # type: ignore[arg-type]
+
+
+def test_restrict_reads_a_query() -> None:
+    x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+    system = CS(axes=[x, T, y])
+    assert list(system.restrict(SpaceAxis).axes) == [x, y]
+    assert list(system.restrict({"type": "time"}).axes) == [T]
+    # A query selects every axis that it matches, among other references.
+    assert list(system.restrict(["t", SpaceAxis]).axes) == [T, x, y]
+    with pytest.raises(ValueError, match="more than once"):
+        system.restrict([SpaceAxis, "x"])
+
+
+def test_restrict_reads_a_query_in_an_open_system() -> None:
+    x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+    axes = AxisList([x, ..., y])
+    assert axes.restrict(SpaceAxis) == [x, y]
 
 
 # ----------------------------------------------------------------------
@@ -765,9 +852,10 @@ def test_restrict_refuses_a_repeated_axis() -> None:
             CS(axes=[X, Y]).restrict(refs)
 
 
-def test_restrict_refuses_a_string() -> None:
+def test_restrict_reads_a_single_name() -> None:
+    assert list(CS(axes=[X, Y]).restrict("x").axes) == [X]
     with pytest.raises(TypeError, match="single string"):
-        CS(axes=[X, Y]).restrict("x")  # type: ignore[arg-type]
+        CS(axes=[X, Y]).restrict(b"x")  # type: ignore[arg-type]
 
 
 def test_restrict_refuses_an_unknown_reference() -> None:
@@ -1316,7 +1404,7 @@ def test_the_shared_api(cls: type) -> None:
     axes = cls([X, ..., T])
     assert axes["x"] is X and "t" in axes and "y" not in axes
     assert X in axes and ... in axes
-    assert axes.index("t") == 2 and axes.index(TimeAxis()) == 2
+    assert axes.index("t") == -1 and axes.index(TimeAxis()) == -1
     assert axes.names == ("x", ..., "t")
     assert axes.ndim is None and axes.is_variadic
     assert axes[2] is T and axes.at(-1) is T and axes.at(2) == Axis()

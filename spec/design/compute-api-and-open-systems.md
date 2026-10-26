@@ -285,13 +285,21 @@ concrete containers share this interface: the immutable `AxisTuple`,
 typed per position and used by fixed-dimension systems, and the mutable
 `AxisList`, used by systems that may be open.
 
-Entries and positions are kept distinct. `len()`, iteration, `==`, `[i]`
-and `index` are about entries, including `...`, whereas `ndim`,
+Entries and positions are kept distinct. `len()`, iteration, `==` and
+`[i]` are about entries, including `...`, whereas `ndim`,
 `at(position)`, `expand`, `restrict`, `embed` and `compatible_with` are
 about positions in the space. In `[x, ..., t]`, entry 2 is `t`, while
 position 2 is one of the axes that `...` stands for, which `at` returns as
 an unknown `Axis()`. Lookup by name (`axes["x"]`, `"x" in axes`) reads only
 the explicit axes.
+
+`index` and `indices` find the axes that match a query, which is a name, a
+template axis, an axis class, a dictionary of axis fields or a function
+(#574). They return numbers that are entries and positions at once: an
+axis before `...` is counted from the start and an axis after `...` from
+the end, so that in `[x, ..., t]` the index of `t` is `-1`, and `axes[-1]`
+and `axes.at(-1)` are both `t`. `restrict` accepts the same queries,
+alone or among positions and names.
 
 ### B.3 Coordinate systems
 
@@ -457,11 +465,11 @@ Part B, implemented:
 21. `axes.R`, `L`, `A`, `P`, `S` and `I` are classes.
 22. `smartproperty` takes a single `unset=` option, and every setter of
     a cached property deletes the cached value of that property.
+23. `index` and `indices` return numbers that are entries and positions
+    at once, counted from the end after `...`, and `index`, `indices`
+    and `restrict` accept queries (#574).
 
 ## Open questions
 
-1. A.9 needs a public function that maps an axis reference to a position.
-   `AxisSequence.restrict` performs that step internally, while `index` and
-   `[name]` return entries, which are positions only in closed sequences.
-2. `Axis.merge_with` has no consumer. Part A will either use it, for
+1. `Axis.merge_with` has no consumer. Part A will either use it, for
    example when factors declare full-space systems, or remove it.
