@@ -16,7 +16,7 @@ from brainhops.datamodel.axes import (
     VectorAxis,
     is_component_type,
 )
-from brainhops.datamodel.enums import AxisType, TensorLayout, Valence
+from brainhops.datamodel.enums import AxisType, IndexVariance, TensorLayout
 from brainhops.io.transformations.zarr._axes import _to_axis
 
 _J = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.5, 3.0]])
@@ -51,7 +51,7 @@ def test_a_component_axis_is_built_from_its_type(kind: str, cls: type) -> None:
 
 
 @pytest.mark.parametrize(
-    "kind", ["space", "time", "channel", "covector", None, "foo"]
+    "kind", ["space", "time", "channel", "covariant", None, "foo"]
 )
 def test_other_types_are_not_component_types(kind: str) -> None:
     assert not is_component_type(kind)
@@ -61,12 +61,12 @@ def test_a_tensor_axis_is_read_from_a_mapping() -> None:
     axis = Axis(
         "c",
         "tensor",
-        valence=["covector", "covector"],
+        variance=["covariant", "covariant"],
         layout=[list(entry) for entry in _MRTRIX],
     )
 
     assert isinstance(axis, TensorAxis)
-    assert axis.valence == ("covector", "covector")
+    assert axis.variance == ("covariant", "covariant")
     assert axis.layout == _MRTRIX
     assert axis != TensorAxis("c")
 
@@ -85,7 +85,7 @@ def test_a_vector_is_multiplied_by_the_matrix(cls: type) -> None:
 
 def test_a_gradient_is_multiplied_by_the_inverse_transpose() -> None:
     values = _random(4, 3)
-    gradient = Axis("g", "vector", valence="covector")
+    gradient = Axis("g", "vector", variance="covariant")
 
     out = gradient.apply(values, _J, 1)
 
@@ -159,8 +159,8 @@ def test_a_diffusion_tensor_is_transformed_on_both_sides(layout: str) -> None:
 
 def test_the_c_and_f_layouts_are_transposes_of_each_other() -> None:
     full = _random(4, 3, 3)
-    c = TensorAxis(valence=("vector", "covector"), layout="C")
-    f = TensorAxis(valence=("vector", "covector"), layout="F")
+    c = TensorAxis(variance=("contra", "co"), layout="C")
+    f = TensorAxis(variance=("contra", "co"), layout="F")
 
     out_c = c.apply(full.reshape(4, 9), _J, 1).reshape(4, 3, 3)
     out_f = f.apply(np.swapaxes(full, 1, 2).reshape(4, 9), _J, 1)
@@ -171,7 +171,7 @@ def test_the_c_and_f_layouts_are_transposes_of_each_other() -> None:
 
 def test_a_hessian_is_transformed_by_the_inverse_on_both_sides() -> None:
     full = _symmetric(4, 3, 3)
-    axis = TensorAxis(valence=("covector", "covector"), layout="symmetric")
+    axis = TensorAxis(variance=("co", "co"), layout="symmetric")
     entries = axis.entries(3)
 
     out = axis.apply(_pack(full, entries), _J, 1)
@@ -181,7 +181,7 @@ def test_a_hessian_is_transformed_by_the_inverse_on_both_sides() -> None:
 
 def test_a_linear_map_is_conjugated_by_the_matrix() -> None:
     full = _random(4, 3, 3)
-    axis = TensorAxis(valence=("vector", "covector"))
+    axis = TensorAxis(variance=("contra", "co"))
 
     out = axis.apply(full.reshape(4, 9), _J, 1)
 
@@ -190,7 +190,7 @@ def test_a_linear_map_is_conjugated_by_the_matrix() -> None:
 
 def test_a_tensor_of_rank_three_is_transformed_on_each_index() -> None:
     full = _random(2, 3, 3, 3)
-    axis = TensorAxis(valence=("vector", "vector", "covector"))
+    axis = TensorAxis(variance=("contra", "contra", "co"))
 
     out = axis.apply(full.reshape(2, 27), _J, 1)
 
@@ -205,7 +205,7 @@ def test_a_symmetric_tensor_of_rank_three_is_packed_again(layout: str) -> None:
         np.transpose(full, (0, *perm))
         for perm in itertools.permutations((1, 2, 3))
     )
-    axis = TensorAxis(valence=("vector",) * 3, layout=layout)
+    axis = TensorAxis(variance=("contra",) * 3, layout=layout)
     entries = axis.entries(3)
 
     out = axis.apply(_pack(full, entries), _J, 1)
@@ -231,7 +231,7 @@ def test_a_diagonal_tensor_of_mixed_valence_is_expanded_to_a_full_one() -> (
     None
 ):
     diagonal = _random(4, 3)
-    axis = TensorAxis(valence=("vector", "covector"), layout="diagonal")
+    axis = TensorAxis(variance=("contra", "co"), layout="diagonal")
 
     out = axis.apply(diagonal, _J, 1)
 
@@ -279,7 +279,7 @@ def test_a_tensor_takes_a_batch_of_matrices() -> None:
 def test_a_tensor_is_transformed_lazily_with_dask() -> None:
     da = pytest.importorskip("dask.array")
     full = _random(4, 3, 3)
-    axis = TensorAxis(valence=("covector", "vector"))
+    axis = TensorAxis(variance=("co", "contra"))
 
     out = axis.apply(da.from_array(full.reshape(4, 9), chunks=2), _J, 1)
 
@@ -303,19 +303,19 @@ def test_a_diagonal_tensor_is_expanded_lazily_with_dask() -> None:
 def test_the_layout_is_read_from_the_number_of_entries() -> None:
     assert TensorAxis().resolved_layout(3, 9) == "C"
     assert TensorAxis().resolved_layout(3, 6) == "symmetric"
-    assert TensorAxis().frame_ndim(9) == 3
-    assert TensorAxis().frame_ndim(6) == 3
-    assert TensorAxis(valence=("vector",) * 3).frame_ndim(8) == 2
-    assert TensorAxis(valence=("vector",) * 3).frame_ndim(10) == 3
+    assert TensorAxis().ndim(9) == 3
+    assert TensorAxis().ndim(6) == 3
+    assert TensorAxis(variance=("contra",) * 3).ndim(8) == 2
+    assert TensorAxis(variance=("contra",) * 3).ndim(10) == 3
     # The size of the frame tells the layout of 36 entries.
-    assert TensorAxis().frame_ndim(36, 6) == 6
+    assert TensorAxis().ndim(36, 6) == 6
     assert TensorAxis().resolved_layout(6, 36) == "C"
     assert TensorAxis().resolved_layout(8, 36) == "symmetric"
 
 
 def test_a_layout_is_not_inferred_from_an_ambiguous_size() -> None:
     with pytest.raises(ValueError):
-        TensorAxis().frame_ndim(36)
+        TensorAxis().ndim(36)
 
 
 @pytest.mark.parametrize("size", [3, 5, 7])
@@ -323,7 +323,7 @@ def test_a_size_that_holds_no_tensor_is_refused(size: int) -> None:
     with pytest.raises(ValueError):
         TensorAxis().resolved_layout(3, size)
     with pytest.raises(ValueError):
-        TensorAxis(layout="C").frame_ndim(size)
+        TensorAxis(layout="C").ndim(size)
 
 
 def test_a_diagonal_layout_is_never_inferred() -> None:
@@ -334,16 +334,16 @@ def test_a_diagonal_layout_is_never_inferred() -> None:
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"valence": ()},
-        {"valence": ("vector",)},
-        {"layout": "symmetric-diagonal-first", "valence": ("vector",) * 3},
-        {"layout": "symmetric", "valence": ("vector", "covector")},
-        {"layout": "symmetric-lower", "valence": ("vector", "covector")},
+        {"variance": ()},
+        {"variance": ("contra",)},
+        {"layout": "symmetric-diagonal-first", "variance": ("contra",) * 3},
+        {"layout": "symmetric", "variance": ("contra", "co")},
+        {"layout": "symmetric-lower", "variance": ("contra", "co")},
         {"layout": ((0, 0), (1, 1), (0, 0))},
         {"layout": ((0, 1), (0, 1))},
-        {"layout": ((0, 1, 1), (1, 0, 1)), "valence": ("vector",) * 3},
+        {"layout": ((0, 1, 1), (1, 0, 1)), "variance": ("contra",) * 3},
         {"layout": ((0,), (1,))},
-        {"layout": ((0, 1),), "valence": ("vector", "covector")},
+        {"layout": ((0, 1),), "variance": ("contra", "co")},
     ],
 )
 def test_an_invalid_layout_is_refused(kwargs: tx.Dict[str, tx.Any]) -> None:
@@ -351,8 +351,8 @@ def test_an_invalid_layout_is_refused(kwargs: tx.Dict[str, tx.Any]) -> None:
         TensorAxis(**kwargs)
 
 
-def test_a_diagonal_explicit_layout_accepts_a_mixed_valence() -> None:
-    axis = TensorAxis(valence=("vector", "covector"), layout=((0, 0), (1, 1)))
+def test_a_diagonal_explicit_layout_accepts_a_mixed_variance() -> None:
+    axis = TensorAxis(variance=("contra", "co"), layout=((0, 0), (1, 1)))
 
     assert axis.reframed(2).layout == "C"
 
@@ -369,21 +369,21 @@ def test_indexing_part_of_a_component_axis_gives_a_channel_axis() -> None:
     assert sub2full.input.axes[1].name == "c"
 
 
-def test_a_vector_with_an_unknown_valence_is_refused() -> None:
+def test_a_vector_with_an_unknown_variance_is_refused() -> None:
     with pytest.raises(ValueError):
-        VectorAxis(valence="tensor")
+        VectorAxis(variance="tensor")
 
 
-def test_a_displacement_has_no_valence_to_change() -> None:
-    assert DisplacementAxis().valences == ("vector",)
+def test_a_displacement_has_no_variance_to_change() -> None:
+    assert DisplacementAxis().variances == ("vector",)
     with pytest.raises(TypeError):
-        DisplacementAxis(valence="covector")
+        DisplacementAxis(variance="co")
 
 
 def test_the_gradient_of_a_moving_image_pairs_with_its_displacement() -> None:
     # The pairing of a gradient with a displacement does not change when
     # both are re-expressed in the same new frame.
-    gradient = VectorAxis(valence="covector").apply(_random(4, 3), _J, 1)
+    gradient = VectorAxis(variance="co").apply(_random(4, 3), _J, 1)
     vectors = DisplacementAxis().apply(_random(4, 3)[::-1], _J, 1)
 
     expected = np.sum(_random(4, 3) * _random(4, 3)[::-1], axis=1)
@@ -394,8 +394,8 @@ def test_a_full_tensor_may_be_listed_in_any_order() -> None:
     full = _random(4, 3, 3)
     order = ((2, 1), (0, 0), (1, 2), (0, 2), (1, 1), (2, 0), (1, 0))
     order += ((0, 1), (2, 2))
-    axis = TensorAxis(valence=("vector", "covector"), layout=order)
-    c = TensorAxis(valence=("vector", "covector"), layout="C")
+    axis = TensorAxis(variance=("contra", "co"), layout=order)
+    c = TensorAxis(variance=("contra", "co"), layout="C")
 
     out = axis.apply(_pack(full, order), _J, 1)
 
@@ -423,13 +423,13 @@ def test_an_unknown_layout_name_is_refused() -> None:
         TensorAxis(layout="upper")
 
 
-@pytest.mark.parametrize("valence", ["covector", Valence.covector])
-def test_a_valence_is_a_member_or_its_value(valence: tx.Any) -> None:
-    axis = VectorAxis(valence=valence)
+@pytest.mark.parametrize("variance", ["covariant", IndexVariance.covector])
+def test_a_variance_is_a_member_or_its_value(variance: tx.Any) -> None:
+    axis = VectorAxis(variance=variance)
 
-    assert axis.valence is Valence.covector
-    assert axis == VectorAxis(valence="covector")
-    assert axis.valences == (Valence.covector,)
+    assert axis.variance is IndexVariance.covariant
+    assert axis == VectorAxis(variance="covariant")
+    assert axis.variances == (IndexVariance.covariant,)
 
 
 @pytest.mark.parametrize(
@@ -442,8 +442,8 @@ def test_a_layout_is_a_member_or_its_value(layout: tx.Any) -> None:
     assert axis == TensorAxis(layout=str(TensorLayout(layout).value))
 
 
-def test_tensor_valences_are_members_or_values() -> None:
-    axis = TensorAxis(valence=["vector", Valence.covector])
+def test_tensor_variances_are_members_or_values() -> None:
+    axis = TensorAxis(variance=["co", IndexVariance.contra])
 
-    assert axis.valence == (Valence.vector, Valence.covector)
-    assert all(isinstance(v, Valence) for v in axis.valence)
+    assert axis.variance == (IndexVariance.contra, IndexVariance.co)
+    assert all(isinstance(v, IndexVariance) for v in axis.variance)

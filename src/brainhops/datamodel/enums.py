@@ -18,9 +18,9 @@ __all__ = [
     "AxisType",
     "AxisTypeName",
     "AxisTypeLike",
-    "Valence",
-    "ValenceName",
-    "ValenceLike",
+    "IndexVariance",
+    "IndexVarianceName",
+    "IndexVarianceLike",
     "TensorLayout",
     "TensorLayoutName",
     "TensorLayoutLike",
@@ -229,7 +229,7 @@ class AxisType(StrEnum):
     independent values. `displacement` behaves as `vector` and
     `coordinate` behaves as `point`, and both are kept for the
     transformation fields of OME-NGFF. A covector, such as the gradient
-    of an image, is a `vector` whose valence is `"covector"`.
+    of an image, is a `vector` whose variance is `"covariant"`.
 
     | Name           | Value            | Description                       |
     |----------------|------------------|-----------------------------------|
@@ -269,28 +269,31 @@ AxisTypeLike: tx.TypeAlias = tx.Union[AxisType, AxisTypeName]
 """Values that can be interpreted as axis types."""
 
 
-class Valence(StrEnum):
-    """How one index of a vector or a tensor changes with the frame.
-
-    When the frame changes by a linear map `J`, an index of valence
-    `vector` is multiplied by `J` and an index of valence `covector` by
-    `J⁻ᵀ`. The gradient of an image is a vector of valence `covector`.
-
-    | Name       | Value        | Description                       |
-    |------------|--------------|-----------------------------------|
-    | `vector`   | `"vector"`   | The index is multiplied by `J`.   |
-    | `covector` | `"covector"` | The index is multiplied by `J⁻ᵀ`. |
+class IndexVariance(StrEnum):
     """
+    How one index of a vector or a tensor changes with the coordinate frame.
 
-    vector = "vector"
-    covector = "covector"
+    When a linear map `J` is applied to a coordinate frame, a
+    contravariant index is multiplied by `J` and a covariant index is
+    multiplied by `J⁻ᵀ`.
+
+    The gradient of an image is a vector of variance `covariant`.
+
+    | Name            | Value             | Alias              | Description                       |
+    |-----------------|-------------------|--------------------|-----------------------------------|
+    | `contravariant` | `"contravariant"` | `contra`, `vector` | The index is multiplied by `J`.   |
+    | `covariant`     | `"covariant"`     | `co`, `covector`   | The index is multiplied by `J⁻ᵀ`. |
+    """  # noqa: E501
+
+    contravariant = contra = vector = "contravariant"
+    covariant = co = covector = "covariant"
 
 
-ValenceName: tx.TypeAlias = tx.Literal["vector", "covector"]
-"""Valence names."""
+IndexVarianceName: tx.TypeAlias = tx.Literal["vector", "covector"]
+"""IndexVariance names."""
 
-ValenceLike: tx.TypeAlias = tx.Union[Valence, ValenceName]
-"""Values that can be interpreted as valences."""
+IndexVarianceLike: tx.TypeAlias = tx.Union[IndexVariance, IndexVarianceName]
+"""Values that can be interpreted as variances."""
 
 
 # ruff: disable[E501]

@@ -29,6 +29,7 @@ from brainhops.datamodel._frames import (
     _structure,
     component_axes,
 )
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
@@ -93,7 +94,7 @@ def values_in_format_frames(
         If the format cannot store the frame of some values, or stores
         them only approximately, and `lossy` is false.
     """
-    axes = image._array_axes()
+    axes = get_axes(image.transformation.input, image.ndim, on_error=None)
     components = component_axes(axes)
     if not components:
         return None

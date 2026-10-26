@@ -158,7 +158,7 @@ def test_a_consolidated_image_reads_its_frames_from_the_header(
 def test_a_frame_that_nifti_cannot_store_needs_lossy(
     tmp_path: pathlib.Path, values: np.ndarray
 ) -> None:
-    voxel, world = _systems("vector", valence="covector")
+    voxel, world = _systems("vector", variance="covariant")
     image = SingleScaleImage(values, [_affine(voxel, world)])
     path = tmp_path / "gradient.nii"
 
@@ -682,7 +682,7 @@ def test_an_fsl_intent_given_by_keyword_needs_lossy(
 def test_a_template_does_not_lay_out_other_values_as_fsl(
     tmp_path: pathlib.Path, values: np.ndarray
 ) -> None:
-    # A covector written as it is takes the intent of the template, but
+    # A covector written as it is takes =the intent of the template, but
     # keeps the layout of the NIfTI standard.
     like = _fsl_file(
         tmp_path / "warp.nii",
@@ -690,7 +690,7 @@ def test_a_template_does_not_lay_out_other_values_as_fsl(
         _reference_affine(False),
         FNIRT_DISPLACEMENT,
     )
-    voxel, world = _systems("vector", valence="covector")
+    voxel, world = _systems("vector", variance="covariant")
     image = SingleScaleImage(values, [_affine(voxel, world)])
     path = tmp_path / "gradient.nii"
 

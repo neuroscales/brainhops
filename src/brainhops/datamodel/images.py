@@ -24,9 +24,6 @@ from ._frames import (
     FrameSlot,
     FrameTargets,
     ReframeMethodOrCallable,
-    array_axes,
-    axis_index,
-    change_matrix,
     component_axes,
     component_count,
     compose_frames,
@@ -35,17 +32,20 @@ from ._frames import (
     jacobian,
     normalize_frames,
     pair_axes,
+    reframe_matrix,
     resolve_target,
     squeeze_axis,
     with_components,
 )
+from ._reframe import apply_linear_map
+from ._sugar import axis_index, get_axes
 from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
     _nearest_resolution_index,
     nearest_level,
 )
 from ._transformations.compute.separable import pull_separable
-from .axes import AxisSequence, TensorAxis
+from .axes import TensorAxis
 from .base import DataModelBase, _ComparesByIdMixin
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry, _index2transform
@@ -69,13 +69,7 @@ def _always_unset(value: tx.Any) -> bool:
     return True
 
 
-class Image(
-    _BackendsMixin,
-    _ComparesByIdMixin,
-    DataModelBase,
-    eq=False,
-    kw_only=True,
-):
+class Image(_BackendsMixin, _ComparesByIdMixin, DataModelBase):
     """The base class of all images.
 
     !!! note
@@ -376,13 +370,8 @@ class SingleScaleImage(Image):
         KeyError
             If a mapping names an axis that does not exist.
         """
-        return normalize_frames(
-            self._frames, self._array_axes(), tuple(self.shape)
-        )
-
-    def _array_axes(self) -> tx.Optional[AxisSequence]:
-        """Return the axes of the array system, or `None` if unknown."""
-        return array_axes(self.transformation.input, self.ndim)
+        axes = get_axes(self.transformation.input, self.ndim, on_error=None)
+        return normalize_frames(self._frames, axes, self.shape)
 
     # --- conversion to another backend -------------------------------
 
@@ -567,7 +556,7 @@ class SingleScaleImage(Image):
         # onto it, and each frame is composed with the map of the voxels.
         target = geometry.transformation
         frames = ()
-        source_axes = self._array_axes()
+        source_axes = get_axes(self.transformation.input, self.ndim, None)
         if component_axes(source_axes):
             system = with_components(
                 target.input, self.transformation.input, source_axes, self.ndim
@@ -579,8 +568,8 @@ class SingleScaleImage(Image):
                 self.frames,
                 list(range(self.ndim)),
                 vox2vox,
-                array_axes(system, self.ndim),
-                tuple(new_data.shape),
+                get_axes(system, self.ndim, on_error=None),
+                new_data.shape,
             )
         resliced = SingleScaleImage(
             data=new_data,
@@ -598,30 +587,30 @@ class SingleScaleImage(Image):
         frame: FrameTargets = -1,
         *,
         method: ReframeMethodOrCallable = "jacobian",
+        axis: tx.Union[int, str, tx.Sequence[tx.Union[int, str]], None] = None,
     ) -> "SingleScaleImage":
         """Re-express the values of vectors and tensors in another frame.
 
-        Some axes hold the components of vectors or tensors, expressed in
-        a frame that
-        [`frames`][brainhops.datamodel.images.SingleScaleImage.frames]
-        records. This method changes that frame. With the default
-        arguments, the values are re-expressed in the world of the
-        preferred transformation, which is what a writer or a viewer of
-        the image expects. No voxel moves.
+        Some axes hold the components of vectors or tensors, expressed
+        in a coordinate frame that [`frames`][SingleScaleImage.frames]
+        records. This method changes that coordinate frame.
+
+        With the default arguments, the values are re-expressed in the
+        world coordinate system of the preferred transformation.
 
         If the values are in the frame `F` and are re-expressed in the
-        frame `F′`, the components at each voxel `x` are changed by
+        frame `F'`, the components at each voxel `x` are changed by
 
         ```text
-        J(x) = D F′(x) · (D F(x))⁻¹
+        J(x) = D F'(x) · (D F(x))⁻¹
         ```
 
-        where `D` is the Jacobian, which is the linear part of a map that
-        is affine. The type and the valence of the axis say how the
-        components change (see
-        [`ComponentAxis`][brainhops.datamodel.axes.ComponentAxis]): each
-        vector index is multiplied by `J` and each covector index by
-        `J⁻ᵀ`, so that a vector becomes `J v`, a gradient becomes
+        where `D` is the Jacobian of a transformation. The kind and the
+        variance of objects stored along a reframed axis are defined by
+        the axis type (see [`ComponentAxis`][]):
+        vectors are multiplied by `J` and covectors by `J⁻ᵀ`
+
+        vector becomes `J v`, a gradient becomes
         `J⁻ᵀ g` and a diffusion tensor becomes `J T Jᵀ`. A tensor stored
         in a layout with components that are zero by construction is
         stored in a closed layout afterwards (see
@@ -670,6 +659,8 @@ class SingleScaleImage(Image):
             callable receives `J`, of shape `(n, n)` or `(*shape, n, n)`,
             and returns the matrix to apply.
 
+
+
         Returns
         -------
         SingleScaleImage
@@ -698,10 +689,10 @@ class SingleScaleImage(Image):
             If the values of an axis whose frame changes are the
             coordinates of points.
         """
-        axes = self._array_axes()
-        slots = self.frames
-        targets = _frame_targets(self, frame, axes, slots)
-        targets = {i: t for i, t in targets.items() if t is not slots[i]}
+        axes = get_axes(self.transformation.input, self.ndim, on_error=None)
+        frames = self.frames
+        targets = _frame_targets(self, frame, axes, frames)
+        targets = {i: t for i, t in targets.items() if t is not frames[i]}
         if not targets:
             return self
         for i in targets:
@@ -734,22 +725,23 @@ class SingleScaleImage(Image):
                 cache[key] = jacobian(slot, info, cols, reduced, data)
             return cache[key]
 
-        new_slots = list(slots)
+        new_slots = list(frames)
         new_axes = list(axes)
         for i, target in targets.items():
             axis = axes[i]
-            source = slots[i]
+            source = frames[i]
             ncomponents = component_count(axes, i, shape[i], [source, target])
             source_info, target_info, cols = pair_axes(
                 source, target, axes, ncomponents
             )
-            matrix = change_matrix(
+            matrix = reframe_matrix(
                 jacobian_of(source, source_info, cols),
                 jacobian_of(target, target_info, cols),
                 method,
-                ncomponents,
             )
-            data = axis.apply(data, squeeze_axis(matrix, i, len(shape)), i)
+            data = apply_linear_map(
+                data, squeeze_axis(matrix, i, len(shape)), axis, i
+            )
             new_slots[i] = target
             if isinstance(axis, TensorAxis):
                 # A layout with components that are zero by construction is
@@ -842,14 +834,15 @@ class SingleScaleImage(Image):
                 Indexed(index, self.shape, grid.input), history="getitem"
             )
         frames = ()
-        if component_axes(self._array_axes()):
+        array_axes = get_axes(self.transformation.input, self.ndim, None)
+        if component_axes(array_axes):
             sub2full, shape = _index2transform(index, self.shape, grid.input)
             frames = compose_frames(
                 self.frames,
                 _source_axes(sub2full),
                 sub2full,
-                array_axes(sub2full.input, len(shape)),
-                tuple(shape),
+                get_axes(sub2full.input, len(shape), on_error=None),
+                shape,
             )
         return SingleScaleImage(
             data=data,
@@ -1136,7 +1129,7 @@ def _frame_targets(
     else:
         chosen = {}
         for key, value in frame.items():
-            i = axis_index(key, axes, image.ndim)
+            i = axis_index(axes, key, image.ndim)
             if i not in components:
                 raise ValueError(
                     f"Axis {key!r} is not a component axis, so its values "
@@ -1174,7 +1167,7 @@ def _with_input_axes(
     many axes, and the transformation is returned as it is otherwise.
     """
     system = xform.input
-    if array_axes(system, len(axes)) is None:
+    if get_axes(system, len(axes), on_error=None) is None:
         return xform
     return xform.to(input=replace(system, axes=list(axes)))
 

@@ -317,7 +317,7 @@ def test_reframe_skips_a_foreign_frame(values: np.ndarray, a: Affine) -> None:
 
 
 def test_reframe_a_gradient(values: np.ndarray, a: Affine) -> None:
-    gradient = VectorAxis("c", valence="covector")
+    gradient = VectorAxis("c", variance="covariant")
     voxel = CoordinateSystem([*_system("ijk", "voxel").axes[:3], gradient])
     image = SingleScaleImage(values, [a.to(input=voxel)])
 

@@ -28,11 +28,11 @@ from brainhops.datamodel._frames import (
     FrameSlot,
     _free_rows,
     _structure,
-    array_axes,
     component_axes,
     component_count,
     explicit_frame,
 )
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -119,7 +119,7 @@ def header_frames(
     """
     header = metadata.raw.header
     intent = _nifti_intent(header)
-    axes = array_axes(system, len(shape))
+    axes = get_axes(system, len(shape), on_error=None)
     components = component_axes(axes)
     if intent not in FRAMED_INTENTS or not components:
         return {}
@@ -178,7 +178,7 @@ def restricted_frame(
     structure = _structure(frame, len(axes))
     outputs = None
     if structure is not None:
-        outputs = array_axes(frame.output, structure.outputs.shape[0])
+        outputs = get_axes(frame.output, structure.outputs.shape[0], None)
     if outputs is None:
         return frame.output
     free = _free_rows(structure.outputs, component_axes(axes))

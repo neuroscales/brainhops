@@ -20,7 +20,7 @@ from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.backends import array_backend, to_backend, to_numpy
 
 # datamodel
-from brainhops.datamodel._sugar import vector_axis
+from brainhops.datamodel._sugar import get_vector_axis
 from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
@@ -384,13 +384,13 @@ class OmeZarrField(
         # on the last array axis.
         if not self.axes:
             return "coordinate"
-        return vector_axis(self.axes)[0]
+        return get_vector_axis(self.axes)[0]
 
     @property
     def _vector_axis(self) -> tx.Optional[int]:
         if not self.axes:
             return None
-        return vector_axis(self.axes)[1]
+        return get_vector_axis(self.axes)[1]
 
     def _level_voxel2world(self, index: int, ndim: int) -> Transformation:
         # Always a defined affine: the finest placement composed with the

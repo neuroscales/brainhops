@@ -463,7 +463,7 @@ class DisplayVocabulary(Vocabulary):
     """
     One description per channel. The descriptions run along the axes of
     type `channel` only. The entries of a component axis, such as a
-    `vector` or a `tensor` axis, are described by the type, the valence,
+    `vector` or a `tensor` axis, are described by the type, the variance,
     the layout and the frame of that axis, so a change of frame, which
     only re-expresses the values of component axes, keeps these
     descriptions.

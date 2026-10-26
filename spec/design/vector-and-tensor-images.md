@@ -80,7 +80,7 @@ The entries of a vector axis follow axes of the system of the frame, in
 order. This is also the rule that OME-NGFF RFC-3 states
 for vector axes, and section 5 explains how these axes are found.
 
-The valences are the members of the enumeration `Valence`, and a field
+The valences are the members of the enumeration `IndexVariance`, and a field
 also accepts their names as strings. A tensor axis has two fields of its
 own.
 

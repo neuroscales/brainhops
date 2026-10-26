@@ -18,8 +18,9 @@ from brainhops._core.typing import ArrayProtocol
 # datamodel
 from brainhops.datamodel._backends import dataobjproperty, dataproperty
 from brainhops.datamodel._frames import FrameSlot, normalize_frames
+from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.enums import IntentEnum, Valence
+from brainhops.datamodel.enums import IndexVariance, IntentEnum
 from brainhops.datamodel.images import SingleScaleImage, _always_unset
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -339,7 +340,8 @@ class NiftiImage(
         `(None,) * ndim` puts every axis in the array system.
         """
         given = self._frames or self._header_frames()
-        return normalize_frames(given, self._array_axes(), tuple(self.shape))
+        array_axes = get_axes(self.transformation.input, self.ndim, None)
+        return normalize_frames(given, array_axes, tuple(self.shape))
 
     def _header_frames(self) -> tx.Dict[int, FrameSlot]:
         """Return the frame of each component axis, as the header states it.
@@ -618,7 +620,7 @@ class NiftiImage(
         intent does not change, is encoded with its values and its
         intent as they are, including an FSL intent, and an FSL field
         then keeps the 4-D layout of FSL. Otherwise, the vectors of a
-        displacement axis or of a vector axis of valence `"vector"` are
+        displacement axis or of a `"contravariant"` vector axis are
         re-expressed in the world of the preferred transformation, which
         becomes the best affine, and converted to RAS millimetres when
         that world has another orientation or unit, and the header gets
@@ -938,7 +940,7 @@ def _in_ras_millimetres(
         return image
     data = image.data
     backend = array_backend(data)
-    axes = image._array_axes()
+    axes = get_axes(image.transformation.input, image.ndim, on_error=None)
     for index in indices:
         count = int(data.shape[index])
         coupled = np.any(conversion[count:, :count]) or np.any(
@@ -963,7 +965,7 @@ class _NiftiFrames:
     NIfTI states a frame for displacements only. A DISPVECT file holds
     RAS vectors in the world of its best affine, which is the preferred
     transformation of the image once it is written. A component axis
-    whose values are vectors of valence `"vector"`, which is a
+    whose values are contravqriqnt vectors, which is a
     displacement axis or a vector axis, is therefore written in that
     frame, restricted to the components of the axis. NIfTI has no frame
     for covectors, tensors and the coordinates of points. It cannot hold
@@ -1000,12 +1002,12 @@ class _NiftiFrames:
         """Return the frame of the values along an axis, or `None`."""
         if not self.dispvect or self.coefficients:
             return None
-        if axis.valences != (Valence.vector,):
+        if axis.valences != (IndexVariance.vector,):
             return None
         image = self.image
         frame = restricted_frame(
             image.transformation,
-            image._array_axes(),
+            get_axes(image.transformation.input, image.ndim, None)[index],
             index,
             image.shape[index],
         )
