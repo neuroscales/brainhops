@@ -10,7 +10,14 @@ import typing_extensions as tx
 from bagof.magic import HideIfDefault, NotKwOnly, replace
 
 from .._sugar import get_axes
-from ..axes import Axis, AxisList, AxisSequence, AxisSequenceLike, AxisTuple
+from ..axes import (
+    Axis,
+    AxisList,
+    AxisQuery,
+    AxisSequence,
+    AxisSequenceLike,
+    AxisTuple,
+)
 from ..base import DataModelBase
 
 if tx.TYPE_CHECKING:
@@ -158,16 +165,20 @@ class CoordinateSystem(
         return replace(self, axes=expanded)
 
     def restrict(
-        self, refs: tx.Iterable[tx.Union[int, str]]
+        self,
+        refs: tx.Union[AxisQuery, tx.Iterable[tx.Union[int, AxisQuery]]],
     ) -> "CoordinateSystem":
         """Return the system formed by a selection of the axes.
 
-        Each reference selects an axis by position or by name, as in
-        [`AxisSequence.restrict`][], and the selected axes follow the order of
-        `refs`. A position covered by the `...` of an open system gives an
-        unknown axis. The result describes another space,
-        so neither the class nor the name is carried over: the result is
-        whatever `CoordinateSystem(axes=...)` builds from the selected axes.
+        This describes a subspace, such as the spatial axes of the system
+        of an image. The axes are selected as by
+        [`AxisSequence.restrict`][]: a reference is a position, a name, or
+        any other query of [`AxisQuery`][], which selects every axis that
+        it matches, and the selected axes follow the order of `refs`. A
+        position covered by the `...` of an open system gives an unknown
+        axis. The result describes another space, so neither the class
+        nor the name is carried over: the result is whatever
+        `CoordinateSystem(axes=...)` builds from the selected axes.
 
         !!! example
             ```pycon
@@ -176,22 +187,32 @@ class CoordinateSystem(
             CoordinateSystem2D(axes=(Axis(name='z'), Axis(name='x')))
             >>> CoordinateSystem(axes=[x, ...]).restrict([0])
             CoordinateSystem(axes=[Axis(name='x')])
+            >>> t = TimeAxis(name="t")
+            >>> CoordinateSystem(axes=[x, t]).restrict(TimeAxis)
+            CoordinateSystem(axes=[TimeAxis(name='t')])
             ```
 
         Parameters
         ----------
-        refs : iterable of int or str
-            The positions or names of the axes to keep.
+        refs : AxisQuery or iterable of (int or AxisQuery)
+            The positions, names and other queries that select the axes
+            to keep.
 
         Returns
         -------
         CoordinateSystem
-            A closed system with one axis per reference.
+            A closed system with the selected axes.
 
         Raises
         ------
-        ValueError, IndexError, TypeError
-            As raised by [`AxisSequence.restrict`][].
+        IndexError
+            If a position lies outside a closed system.
+        KeyError
+            If no explicit axis has a name.
+        ValueError
+            If a name is shared, or two references select the same axis.
+        TypeError
+            If a reference is neither an integer nor a query.
         """
         return CoordinateSystem(axes=get_axes(self).restrict(refs))
 
