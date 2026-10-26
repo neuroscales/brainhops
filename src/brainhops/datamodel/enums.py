@@ -289,7 +289,9 @@ class IndexVariance(StrEnum):
     covariant = co = covector = "covariant"
 
 
-IndexVarianceName: tx.TypeAlias = tx.Literal["vector", "covector"]
+IndexVarianceName: tx.TypeAlias = tx.Literal[
+    "contravariant", "covariant", "contra", "co", "vector", "covector"
+]
 """IndexVariance names."""
 
 IndexVarianceLike: tx.TypeAlias = tx.Union[IndexVariance, IndexVarianceName]

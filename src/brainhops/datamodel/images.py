@@ -24,7 +24,6 @@ from ._frames import (
     FrameSlot,
     FrameTargets,
     ReframeMethodOrCallable,
-    component_axes,
     component_count,
     compose_frames,
     explicit_frame,
@@ -38,7 +37,7 @@ from ._frames import (
     with_components,
 )
 from ._reframe import apply_linear_map
-from ._sugar import axis_index, get_axes
+from ._sugar import axis_index, component_axes, get_axes
 from ._transformations.compute.multiscale import (
     _as_affine_ignoring_fields,
     _nearest_resolution_index,
@@ -696,7 +695,7 @@ class SingleScaleImage(Image):
         if not targets:
             return self
         for i in targets:
-            if axes[i].valences is None:
+            if axes[i].variances is None:
                 raise NotImplementedError(
                     f"The values along axis {i} are the coordinates of "
                     f"points, which change with the map itself rather than "

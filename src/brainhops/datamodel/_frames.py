@@ -9,6 +9,8 @@ and
 [`SingleScaleImage.reframe`][brainhops.datamodel.images.SingleScaleImage.reframe].
 """
 
+# The design is recorded in spec/design/vector-and-tensor-images.md.
+
 import itertools
 import math
 from collections.abc import Mapping
@@ -25,9 +27,14 @@ from brainhops._core.typing import ArrayProtocol, Shape, nparray, npmatrix
 from ._axes.components import (
     ComponentAxis,
     TensorAxis,
-    is_component_type,
 )
-from ._sugar import axis_index, get_axes, enum_component_axes, is_point_axis
+from ._sugar import (
+    axis_index,
+    component_axes,
+    enum_component_axes,
+    get_axes,
+    is_point_axis,
+)
 from ._transformations.compute.multiscale import (
     _as_affine,
     _as_affine_ignoring_fields,
@@ -135,7 +142,7 @@ def normalize_frames(
                 f"slot per axis, not {len(frames)}."
             )
 
-    components = set(enum_component_axes(axes))
+    components = set(component_axes(axes))
     for i, slot in enumerate(frames):
         if slot is None:
             continue
@@ -338,14 +345,10 @@ def _keeps_values(voxel_map: Transformation, points: bool) -> bool:
     if inputs is None or outputs is None:
         return False
     ind_input_components = tuple(i for i, _ in enum_component_axes(inputs))
-    cols = [
-        c for c in range(linear.shape[1])
-        if c not in ind_input_components
-    ]
+    cols = [c for c in range(linear.shape[1]) if c not in ind_input_components]
     ind_output_components = tuple(i for i, _ in enum_component_axes(outputs))
     rows = [
-        r for r in range(linear.shape[0])
-        if r not in ind_output_components
+        r for r in range(linear.shape[0]) if r not in ind_output_components
     ]
     if len(rows) != len(cols):
         return False
@@ -491,7 +494,7 @@ def component_count(
         entries alone does not tell the size of the frame.
     """
     axis = axes[index]
-    components = enum_component_axes(axes)
+    components = component_axes(axes)
     for frame in frames:
         if not isinstance(frame, Transformation):
             continue
@@ -500,10 +503,10 @@ def component_count(
             continue
         ndim = len(_free_rows(structure.outputs, components))
         try:
-            return axis.frame_ndim(size, ndim)
+            return get_frame_ndim(axis, size, ndim)
         except ValueError:
             continue
-    return axis.frame_ndim(size)
+    return get_frame_ndim(axis, size)
 
 
 def explicit_frame(
@@ -531,7 +534,7 @@ def explicit_frame(
     if structure is None:
         return frame
     final = structure.outputs
-    candidates = _free_rows(final, enum_component_axes(axes))
+    candidates = _free_rows(final, component_axes(axes))
     if len(candidates) == ncomponents:
         return frame
     if len(candidates) > ncomponents:
@@ -613,7 +616,7 @@ def frame_axes(
             "the axes that the components of the values follow cannot be "
             "read from it."
         )
-    components = enum_component_axes(axes)
+    components = component_axes(axes)
     final = _free_rows(structure.outputs, components)
     if len(final) != ncomponents:
         raise ValueError(
@@ -811,7 +814,7 @@ def squeeze_axis(matrix: ArrayProtocol, axis: int, ndim: int) -> ArrayProtocol:
 def get_frame_ndim(
     axis: ComponentAxis, axis_length: int, expected: tx.Optional[int] = None
 ) -> int:
-    """Return the dimensionalty of the vector space.
+    """Return the dimensionality of the vector space.
 
     Parameters
     ----------
@@ -846,7 +849,7 @@ def get_frame_ndim(
 def get_frame_ndim(  # noqa: F811
     axis: TensorAxis, axis_length: int, expected: tx.Optional[int] = None
 ) -> int:
-    """Return the dimensionalty of the vector space on which the tensor acts.
+    """Return the dimensionality of the vector space on which the tensor acts.
 
     Parameters
     ----------
@@ -976,7 +979,7 @@ def _tensor_ind2sub(
     -------
     np.ndarray
         A nd array with shape `(size, rank)`, where `rank` is the rank
-        of the tensoe and `size` the number of entries along the axis.
+        of the tensor and `size` the number of entries along the axis.
         For each entry, the frame axis of each index of the tensor.
 
     Raises
@@ -1005,7 +1008,7 @@ def _resolve_layout(
     Parameters
     ----------
     axis : TensorAxis
-        The [`Axis`][] pbkects that describes the tensor.
+        The [`Axis`][] that describes the tensor.
     ndim : int
         The dimensionality of the vector space.
     size : int, optional

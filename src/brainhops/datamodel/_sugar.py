@@ -24,11 +24,15 @@ def get_axes(
 
     Parameters
     ----------
-    system : CoordinateSystemL | Sequence[Axis] | None
+    system : CoordinateSystemLike | Sequence[Axis] | None
         A coordinate system, its axes, or `None`.
     ndim : int, optional
         If provided and the input system is variadic, expand to `ndim`
         axes.
+    on_error : {"raise", "warn", "ignore"} | Exception | Any, default="raise"
+        What to do when the system does not have `ndim` axes, as
+        [`raise_or_warn`][brainhops.errors.raise_or_warn] describes. Any
+        other value, such as `None`, is returned instead of the axes.
 
     Returns
     -------
@@ -40,6 +44,9 @@ def get_axes(
         class may be, are returned as an `AxisList` of the same axes.
     """
     if isinstance(system, AxisSequence):
+        axes = system
+    elif isinstance(system, (list, tuple)):
+        # A plain sequence of axes, as a CoordinateSystemLike may be.
         axes = system
     else:
         axes = getattr(system, "axes", None)
@@ -204,15 +211,20 @@ def axis_index(
 
 
 def enum_component_axes(
-    axes: tx.Optional["CoordinateSystemLike"]
+    axes: tx.Optional["CoordinateSystemLike"],
 ) -> tx.Iterator[tx.Tuple[int, Axis]]:
-    """Return the indices of the component axes among `axes`."""
+    """Return the indices and the component axes among `axes`."""
     axes = get_axes(axes)
     return (
-        (i, axis)
-        for i, axis in enumerate(axes)
-        if is_component_axis(axis)
+        (i, axis) for i, axis in enumerate(axes) if is_component_axis(axis)
     )
+
+
+def component_axes(
+    axes: tx.Optional["CoordinateSystemLike"],
+) -> tx.List[int]:
+    """Return the indices of the component axes among `axes`."""
+    return [i for i, _ in enum_component_axes(axes)]
 
 
 def is_component_type(value: tx.Any) -> bool:
@@ -251,12 +263,13 @@ def is_component_axis(axis: Axis) -> bool:
         Whether the entries along the axis are the components of a point,
         a vector or a tensor.
     """
-    return is_component_type(axis.type)
+    # The unknown axes of a variadic system are an ellipsis, with no type.
+    return is_component_type(getattr(axis, "type", None))
 
 
 def is_point_axis(axis: Axis) -> bool:
     """Return whether the entries of an axis are coordinates of points."""
-    return getattr(axis, "valences", None) is None
+    return getattr(axis, "variances", None) is None
 
 
 def get_vector_axis(

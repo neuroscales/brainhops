@@ -28,11 +28,10 @@ from brainhops.datamodel._frames import (
     FrameSlot,
     _free_rows,
     _structure,
-    component_axes,
     component_count,
     explicit_frame,
 )
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._sugar import component_axes, get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -183,7 +182,7 @@ def restricted_frame(
         return frame.output
     free = _free_rows(structure.outputs, component_axes(axes))
     try:
-        count = axes[index].frame_ndim(size)
+        count = axes[index].ndim(size)
     except ValueError:
         return frame.output
     if len(free) < count:

@@ -27,9 +27,8 @@ import typing_extensions as tx
 from brainhops.datamodel._frames import (
     FrameSlot,
     _structure,
-    component_axes,
 )
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._sugar import component_axes, get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem

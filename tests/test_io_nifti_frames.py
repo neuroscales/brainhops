@@ -682,7 +682,7 @@ def test_an_fsl_intent_given_by_keyword_needs_lossy(
 def test_a_template_does_not_lay_out_other_values_as_fsl(
     tmp_path: pathlib.Path, values: np.ndarray
 ) -> None:
-    # A covector written as it is takes =the intent of the template, but
+    # A covector written as it is takes the intent of the template, but
     # keeps the layout of the NIfTI standard.
     like = _fsl_file(
         tmp_path / "warp.nii",

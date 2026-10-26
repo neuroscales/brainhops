@@ -335,7 +335,6 @@ def test_a_diagonal_layout_is_never_inferred() -> None:
     "kwargs",
     [
         {"variance": ()},
-        {"variance": ("contra",)},
         {"layout": "symmetric-diagonal-first", "variance": ("contra",) * 3},
         {"layout": "symmetric", "variance": ("contra", "co")},
         {"layout": "symmetric-lower", "variance": ("contra", "co")},
@@ -375,9 +374,17 @@ def test_a_vector_with_an_unknown_variance_is_refused() -> None:
 
 
 def test_a_displacement_has_no_variance_to_change() -> None:
-    assert DisplacementAxis().variances == ("vector",)
-    with pytest.raises(TypeError):
+    assert DisplacementAxis().variances == (IndexVariance.contravariant,)
+    with pytest.raises(ValueError):
         DisplacementAxis(variance="co")
+
+
+def test_a_single_variance_applies_to_every_index() -> None:
+    # Without a layout, a single variance describes a tensor of rank 2,
+    # and an explicit layout gives the rank.
+    assert TensorAxis(variance=("co",)).variance == (IndexVariance.co,) * 2
+    axis = TensorAxis(variance=("co",), layout=((0, 0, 0), (1, 1, 1)))
+    assert axis.variance == (IndexVariance.co,) * 3
 
 
 def test_the_gradient_of_a_moving_image_pairs_with_its_displacement() -> None:
@@ -445,5 +452,5 @@ def test_a_layout_is_a_member_or_its_value(layout: tx.Any) -> None:
 def test_tensor_variances_are_members_or_values() -> None:
     axis = TensorAxis(variance=["co", IndexVariance.contra])
 
-    assert axis.variance == (IndexVariance.contra, IndexVariance.co)
+    assert axis.variance == (IndexVariance.co, IndexVariance.contra)
     assert all(isinstance(v, IndexVariance) for v in axis.variance)

@@ -23,7 +23,7 @@ apply_linear_map = Function("apply_linear_map")
 def _apply_to_vector(
     vector: ArrayProtocol,
     matrix: ArrayProtocol,
-    axis_type: TensorAxis,
+    axis_type: ComponentAxis,
     axis: int = -1,
 ) -> ArrayProtocol:
     """Return the components of the vector in the new frame.
@@ -52,7 +52,17 @@ def _apply_to_vector(
     ------
     ValueError
         If the number of entries does not match the size of `matrix`.
+    NotImplementedError
+        If the entries are the coordinates of points, which the
+        Jacobian of a map does not re-express.
     """
+    if axis_type.variances is None:
+        raise NotImplementedError(
+            f"The entries of a {axis_type.type!r} axis are the coordinates "
+            f"of points, which change with the map itself rather than "
+            f"with its Jacobian, so they cannot be re-expressed in "
+            f"another frame."
+        )
     vector = moveaxis(vector, axis, -1)
     vector = _apply_to_full_tensor(vector, matrix, axis_type.variances)
     return moveaxis(vector, -1, axis)
@@ -100,12 +110,12 @@ def _apply_to_compact_tensor(
         If the number of entries does not match the layout and the
         size of `matrix`.
     """
-    rank = axis.rank
+    rank = axis_type.rank
     variance = axis_type.variances
     xp = array_backend(tensor)
     size = tensor.shape[axis]
-    ndim = get_frame_ndim(size, int(matrix.shape[-1]))
-    sub2ind = _tensor_sub2ind(ndim, size)
+    ndim = get_frame_ndim(axis_type, size, int(matrix.shape[-1]))
+    sub2ind = _tensor_sub2ind(axis_type, ndim, size)
     packed = xp.moveaxis(tensor, axis, -1)
     if -1 in sub2ind:
         # The components that are zero by construction are read from an
@@ -116,7 +126,7 @@ def _apply_to_compact_tensor(
     full = packed[..., sub2ind]
     full = full.reshape(tuple(packed.shape[:-1]) + (ndim,) * rank)
     full = _apply_to_full_tensor(full, matrix, variance)
-    out = _reframed_axis(axis, ndim, size)
+    out = _reframed_axis(axis_type, ndim, size)
     pack = np.array(
         [
             np.ravel_multi_index(entry, (ndim,) * rank)
@@ -153,17 +163,22 @@ def _apply_to_full_tensor(
         `IndexVariance.vector` or `IndexVariance.covector`.
     """
     rank = len(variance)
-    forward = like(matrix, tensor, atleast=np.floating)
+    forward = like(matrix, tensor, atleast=np.float32)
     xp = array_backend(tensor)
     backward = None
-    if "covector" in variance:
+    if IndexVariance.covariant in variance:
         backward = batchT(inv(forward))
     if rank > 1:
-        shape = matrix.shape
+        # The other indices of the tensor sit between the batch and the
+        # index that is multiplied, so the matrices get an axis of one
+        # entry for each of them.
+        shape = tuple(matrix.shape)
         broadcast_shape = shape[:-2] + (1,) * (rank - 1) + shape[-2:]
-        matrix = matrix.reshape(broadcast_shape)
+        forward = forward.reshape(broadcast_shape)
+        if backward is not None:
+            backward = backward.reshape(broadcast_shape)
     for each in reversed(variance):
-        factor = forward if each == "vector" else backward
+        factor = forward if each == IndexVariance.contravariant else backward
         tensor = matvec(factor, tensor)
         tensor = xp.moveaxis(tensor, -1, -rank)
     return tensor
@@ -220,6 +235,6 @@ def _permutation_groups(
     """Group the entries of an explicit layout by their sorted indices."""
     groups: tx.Dict[tx.Tuple[int, ...], tx.List[tx.Tuple[int, ...]]] = {}
     for entry in layout:
-        entry = tuple(entry.tolist())
+        entry = tuple(int(i) for i in entry)
         groups.setdefault(tuple(sorted(entry)), []).append(entry)
     return groups

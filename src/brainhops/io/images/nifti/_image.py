@@ -965,7 +965,7 @@ class _NiftiFrames:
     NIfTI states a frame for displacements only. A DISPVECT file holds
     RAS vectors in the world of its best affine, which is the preferred
     transformation of the image once it is written. A component axis
-    whose values are contravqriqnt vectors, which is a
+    whose values are contravariant vectors, which is a
     displacement axis or a vector axis, is therefore written in that
     frame, restricted to the components of the axis. NIfTI has no frame
     for covectors, tensors and the coordinates of points. It cannot hold
@@ -1002,12 +1002,12 @@ class _NiftiFrames:
         """Return the frame of the values along an axis, or `None`."""
         if not self.dispvect or self.coefficients:
             return None
-        if axis.valences != (IndexVariance.vector,):
+        if axis.variances != (IndexVariance.contravariant,):
             return None
         image = self.image
         frame = restricted_frame(
             image.transformation,
-            get_axes(image.transformation.input, image.ndim, None)[index],
+            get_axes(image.transformation.input, image.ndim, None),
             index,
             image.shape[index],
         )
