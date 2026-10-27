@@ -71,10 +71,16 @@ class SimplifyPolicy(StrEnum):
       assumed invertible when square, surjective when wide and injective
       when tall.
     - `numeric`: values are read as well, so that zero entries,
-      diagonality, orthogonality and rank can be tested. A typed inverse
-      may be materialized when a transformation is rewritten as the
-      cheapest type that it belongs to. The rank replaces the assumption
-      based on the shape, so a singular square matrix is not invertible.
+      diagonality, orthogonality and rank can be tested. The rank
+      replaces the assumption based on the shape, so a singular square
+      matrix is not invertible. A lazy inverse is never materialized,
+      because resolving it is the job of the composition mode.
+
+    When `numeric` is given alone, as `"numeric"` or `True`, values are
+    read only for matrix transformations, which are the members of the
+    Affine family. Every other transformation, such as a field, is
+    simplified analytically. The mapping `{None: "numeric"}` extends the
+    reading of values to every transformation.
 
     The members and their values are listed in the following table.
 
@@ -82,7 +88,7 @@ class SimplifyPolicy(StrEnum):
     |------------|--------------|--------------------------------------------------------------------|
     | `none`     | `"none"`     | Only the declared type is used; nothing is inspected or rewritten. |
     | `analytic` | `"analytic"` | The structure is inspected, but no value is read.                  |
-    | `numeric`  | `"numeric"`  | Values are read as well, for zero, diagonality and rank tests.     |
+    | `numeric`  | `"numeric"`  | Values are read as well, for matrix transformations when alone.    |
     """
 
     none = "none"

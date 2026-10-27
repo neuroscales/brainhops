@@ -183,13 +183,14 @@ class PillowImage(
     """A two-dimensional raster image, read and written with Pillow.
 
     A raster image holds the header of its file as [`PillowMetadata`][],
-    whose record is a [`PillowRaw`][], and the pixels of a frame in `rawdata`.
-    When the image is read from a file, `rawdata` is a lazy array that decodes
-    the frame only when it is needed, and `data` is decoded from it on
-    first access. The data are `(x, y)` for an image of one sample per
-    pixel and `(x, y, c)` otherwise, in Fortran order. The format of the
-    file, the mode of the frame, its `info` dictionary and the number of
-    frames are in the record, as `image.metadata.raw.format` and so on.
+    whose record is a [`PillowRaw`][], and the pixels of a frame in
+    `rawdata`. When the image is read from a file, `rawdata` is a lazy
+    array that decodes the frame only when it is needed, and `data`
+    returns that lazy array. The data are `(x, y)` for an image of one
+    sample per pixel and `(x, y, c)` otherwise, in Fortran order. The
+    format of the file, the mode of the frame, its `info` dictionary and
+    the number of frames are in the record, as
+    `image.metadata.raw.format` and so on.
 
     The image has a single transformation, which scales pixels to
     `"physical"`. It is decoded from the record on first access, unless

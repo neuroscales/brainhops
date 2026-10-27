@@ -170,7 +170,7 @@ class _MrtrixProxy(StridedProxy):
     stored values: when the header has an intensity `scaling`, the
     reader wraps the proxy in a
     [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] that applies it,
-    as nibabel's proxy applies the scaling of a NIfTI header.
+    as the NIfTI reader does with the scaling of a NIfTI header.
 
     A read gets only the bytes that its selection needs (see
     [`StridedProxy`][]): the voxels of a local file that is not

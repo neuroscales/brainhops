@@ -26,12 +26,14 @@ view in the brainhops order: spatial axes x, y and z, then time, channels and
 other axes. An RGB image is thus `(x, y, c)`, and an ImageJ `TZCYX` hyperstack
 is `(x, y, z, t, c)`.
 
-Pixels are read when `image.data` is first accessed. A local, uncompressed and
-contiguous series (as ImageJ, tifffile and most microscopes write them) is
-memory-mapped copy-on-write, unless `mmap=False`. When dask is the array
-backend, or with `lazy=True`, the data is a dask array over the Zarr store of
-tifffile (which needs dask and zarr), suited to large compressed or tiled
-series. Otherwise, the series is read in full.
+After a read, `image.data` is a lazy array, and the pixels are read
+when a computation needs its values. A local, uncompressed and
+contiguous series (as ImageJ, tifffile and most microscopes write them)
+is then memory-mapped copy-on-write, unless `mmap=False`. With
+`lazy=True`, the data is a dask array over the Zarr store of tifffile
+(which needs dask and zarr), suited to large compressed or tiled series.
+Without the option, the lazy array reads through that dask array when
+dask is the array backend, and it reads the series in full otherwise.
 
 ## Geometry
 

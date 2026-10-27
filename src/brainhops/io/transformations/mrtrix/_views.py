@@ -18,8 +18,8 @@ def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the vectors of a warp from the array that the file stores.
 
     The array is returned as it is, so that the lazy array of a file
-    stays lazy and reads nothing. The `data` of the object reads it
-    once, as the backend setting says.
+    stays lazy and reads nothing until a computation needs its values.
+    The `data` of the object returns that lazy array.
     """
     return raw
 

@@ -5,7 +5,6 @@ transformation, units and the image that stores them."""
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core.typing import ArrayProtocol
@@ -33,6 +32,7 @@ from ._constants import (
     _NIFTI_XFORM_CODE_BY_NAME,
     _QFORM_NAME,
 )
+from ._data import whole_file
 from ._header import (
     _STORAGE_OVERRIDES,
     _apply_like,
@@ -321,12 +321,13 @@ def _image_with_geometry(
     inserted where NIfTI needs them: `(x,y,t)->(X,Y,1,T)`,
     `(x,y,z,c)->(X,Y,Z,1,C)` and `(x,y,c)->(X,Y,1,1,C)`.
 
-    The array of the image is the data, laid out as NIfTI stores it. A
-    nibabel proxy keeps the data type, the slope and the intercept that
-    its file stored, so the header records how the proxy is stored and
-    `_written_nifti` writes it unscaled, byte for byte. An override of
-    the data type or of the scaling resets the scaling instead, and the
-    proxy is then read and scaled again when it is written.
+    The array of the image is the data, laid out as NIfTI stores it. The
+    lazy array of a whole NIfTI file keeps the data type, the slope and
+    the intercept that its file stored, so the header records how that
+    file stores it and `_written_nifti` writes it unscaled, byte for
+    byte. An override of the data type or of the scaling resets the
+    scaling instead, and the lazy array is then read and scaled again
+    when it is written.
     """
     overrides = dict(overrides or {})
 
@@ -348,10 +349,9 @@ def _image_with_geometry(
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
     scaling = None
-    if isinstance(data, ArrayProxy) and not (
-        _STORAGE_OVERRIDES.intersection(overrides)
-    ):
-        scaling = _stored_scaling(header, data)
+    whole = whole_file(data)
+    if whole is not None and not _STORAGE_OVERRIDES.intersection(overrides):
+        scaling = _stored_scaling(header, whole)
     if header is not None:
         if space == "mm" and header.get_xyzt_units()[0] == "unknown":
             space = "unknown"

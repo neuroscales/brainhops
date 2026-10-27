@@ -313,10 +313,18 @@ class _UnionFind:
 # ----------------------------------------------------------------------
 #   DEPENDENCY PATTERNS
 # ----------------------------------------------------------------------
-# Reading a pattern never materializes a lazy inverse, because the pattern of
-# an inverse is the transpose of the pattern of its forward transformation. An
-# element whose affine matrix cannot be read (UNREADABLE) leaves the chain
-# unfactored, and it is never mistaken for the identity.
+# Reading a pattern never materializes a lazy inverse. The pattern of an
+# inverse is read as the transpose of the pattern of its forward
+# transformation, which is not the true pattern of the inverse: the inverse
+# of x' = x + y, y' = y is x = x' - y', y = y', whose pattern is the forward
+# pattern itself. The transpose is used only to group coupled axes, and for
+# that purpose it is exact. The grouping links two axes whatever the
+# direction of the dependence, so the transpose gives the same links as the
+# forward pattern, and an inverse couples the same groups of axes as its
+# forward transformation. The transpose must not be used to decide which
+# inputs a given output reads. An element whose affine matrix cannot be read
+# (UNREADABLE) leaves the chain unfactored, and it is never mistaken for the
+# identity.
 
 
 def _element_ndim(
@@ -382,6 +390,7 @@ def _read_pattern(
         fpat = _read_pattern(forward, no, ni)
         if fpat is None or fpat.shape != (ni, no):
             return None
+        # The transpose is valid for grouping only (see the note above).
         return fpat.T
     if _interpolates(element):
         return np.ones((no, ni), dtype=bool) if ni == no else None

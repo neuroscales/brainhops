@@ -612,15 +612,12 @@ class _ReaderMixin:
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        """Read an object from a path or an open file.
-
-        An open file that is compressed is decompressed as it is read.
-        """
+        """Read an object from a path or an open file."""
         if isinstance(file, (str, path.PathLike)):
             return cls.from_filename(file, **kwargs)
 
         if hasattr(file, "read"):
-            return cls.from_fileobj(open_compressed(file), **kwargs)
+            return cls.from_fileobj(file, **kwargs)
 
         raise ParserTypeError(f"Cannot parse file of type {type(file)}")
 
@@ -650,9 +647,12 @@ class _ReaderMixin:
         """Read an object from a file object open for reading.
 
         The default implementation reads the whole stream and passes it to
-        [`from_content`][]. A parser that needs only part of the stream, such
-        as a header, should override this method. [`from_bytes`][] then wraps
-        binary content in a stream and reads it with the override.
+        [`from_content`][], which decompresses compressed content. A parser
+        that needs only part of the stream, such as a header, should override
+        this method. [`from_bytes`][] then wraps binary content in a stream
+        and reads it with the override. An override receives the stream as
+        the caller gave it, compressed or not, because a lazy array that keeps
+        the stream must read it from the position where the file starts.
         """
         with preserve_position(file):
             return cls.from_content(file.read(), **kwargs)

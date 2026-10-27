@@ -43,6 +43,7 @@ from brainhops.io.transformations.nifti import (
 )
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
+    _check_single_field,
     _field_to_disk,
     _field_to_model,
 )
@@ -111,9 +112,11 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         Coordinates that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`: NIfTI stores the field with
-        shape (X, Y, Z, 1, 3), and the singleton axis is dropped.
-        Assigning the data drops the chain decoded from the previous
-        data.
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. A file
+        whose fourth axis is longer than one holds a field per volume,
+        which is not supported yet, so reading its data raises
+        `ParserContentError`. Assigning the data drops the chain decoded
+        from the previous data.
         """
         if self.rawdata is None:
             return None
@@ -255,7 +258,8 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
-            If the field has no coordinates.
+            If the field has no coordinates, or if its array holds a
+            field for each of several volumes.
         """
         fields, overrides = _split_options(options)
         name = type(self).__name__
@@ -273,6 +277,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            _check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -316,13 +321,15 @@ def _spm_encoded(
     Raises
     ------
     WriterError
-        If the field has no coordinates.
+        If the field has no coordinates, or if its array holds a field
+        for each of several volumes.
     """
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
         stored = field.rawdata
     if stored is not None and field._transformations is None:
+        _check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
         image = _record_image(stored, record, overrides=overrides)
     else:

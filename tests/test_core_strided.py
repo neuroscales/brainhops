@@ -141,6 +141,22 @@ def test_dask_blocks_are_slabs_of_the_slowest_axis(tmp_path) -> None:  # noqa: A
     )
 
 
+def test_an_axis_of_length_one_is_not_a_slab_axis(tmp_path) -> None:  # noqa: ANN001
+    # A vector field of shape (X, Y, Z, 1, C) in Fortran order gives the
+    # singleton axis the same stride as the components, which hold the
+    # slabs.
+    dask = pytest.importorskip("dask")
+    path = tmp_path / "values.bin"
+    _write(path, "F", compressed=False)
+    shape = (SHAPE[0], SHAPE[1], 1, SHAPE[2])
+    slab_bytes = SHAPE[0] * SHAPE[1] * 4
+    with dask.config.set({"array.chunk-size": f"{2 * slab_bytes}B"}):
+        proxy = StridedProxy.contiguous(
+            path, ">f4", shape, offset=len(HEADER), order="F"
+        )
+        assert proxy.chunks == (SHAPE[0], SHAPE[1], 1, 2)
+
+
 def test_a_short_file_is_reported(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "values.bin.gz"
     with gzip.open(path, "wb") as f:

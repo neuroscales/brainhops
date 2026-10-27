@@ -6,11 +6,11 @@ from io import BytesIO
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
-from nibabel.arrayproxy import ArrayProxy
 
 # core
 from brainhops._core import path
 from brainhops._core.path import is_local, is_same_file
+from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 
 # io
@@ -23,12 +23,8 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._files import (
-    _NIFTI_IMAGES,
-    _accepted,
-    _image_to_stream,
-    _nifti_from_stream,
-)
+from ._data import _NiftiProxy
+from ._files import _image_to_stream
 from ._header import _NiftiObject, _written_nifti
 from ._metadata import NiftiMetadata
 from ._raw import NiftiRaw, _sniffed_header
@@ -36,7 +32,7 @@ from ._raw import NiftiRaw, _sniffed_header
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
 _NIBABEL_OPTIONS = ("mmap", "keep_file_open")
-"""The options of the nibabel readers that a NIfTI format accepts."""
+"""The reader options that a NIfTI format accepts, as nibabel's readers."""
 
 
 class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
@@ -51,10 +47,11 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
     as the file stores it in `rawdata`, and encodes its pending state
     into them with `consolidate`.
 
-    A file is read lazily. A local file is handed to nibabel by name, so
-    that nibabel opens it whenever the array is read and can memory-map
-    it. A remote file is read into memory, and a stream is kept by the
-    lazy array, so it must stay open while the array may be read. A file
+    A file is read lazily. A local file is kept by its name, so that the
+    lazy array opens it whenever the array is read, and memory-maps it
+    when the file is not compressed. A remote file is read into memory,
+    and a stream is kept by the lazy array, so it must stay open while
+    the array may be read. A file is written through nibabel. A file
     is written from a copy that `consolidate` encodes, and the object
     itself is not changed, except when it is written over the file that
     its lazy array reads (#426).
@@ -134,19 +131,21 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
         """Read an object from the path of a NIfTI file.
 
-        A local file is handed to nibabel by name, so that nibabel opens
-        it whenever the array is read and can memory-map it. The lazy
-        array outlives this call, so a remote file is read into memory and
-        then read by [`from_bytes`][], rather than from a stream that would
-        be closed.
+        A local file is kept by its name, so that the lazy array opens it
+        whenever the array is read, and memory-maps it when the file is
+        not compressed. The lazy array outlives this call, so a remote
+        file is read into memory and then read by [`from_bytes`][], rather
+        than from a stream that would be closed.
 
         Parameters
         ----------
         filename : path-like
             The path of the file, which may be compressed.
         **kwargs : Any
-            Options of the nibabel readers, which are `mmap` and
-            `keep_file_open`.
+            The reader options, which nibabel's readers also take.
+            `mmap` tells whether the array of a local file that is not
+            compressed is memory-mapped. `keep_file_open` is accepted
+            and ignored, because the lazy array never keeps a file open.
 
         Returns
         -------
@@ -157,10 +156,12 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         ------
         TypeError
             If another option is given.
+        ValueError
+            If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
         ParserExistsError
             If the path does not exist.
         """
-        _check_options(kwargs)
+        mmap = _mmap_option(kwargs)
         filename = path.Path(filename)
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
@@ -168,29 +169,27 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
             return cls.from_bytes(filename.read_bytes(), **kwargs)
         with filename.open("rb") as stream:
             record = NiftiRaw.from_fileobj(stream)
-        version = 2 if isinstance(record.header, nb.Nifti2Header) else 1
-        read = _NIFTI_IMAGES[version].from_filename
-        image = read(str(filename), **_accepted(read, kwargs))
-        return cls(
-            rawdata=image.dataobj, metadata=NiftiMetadata.from_raw(record)
+        proxy = _NiftiProxy.from_header(
+            str(filename), record.header, mmap=mmap
         )
+        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(record))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
         """Read an object from an open NIfTI stream.
 
         The record is read first, and the position of the stream is
-        restored so that nibabel reads the same header before it builds
-        the lazy array. The lazy array keeps the stream, so the stream
-        must stay open while the array may be read.
+        restored so that the lazy array reads the array from the same
+        start. The lazy array keeps the stream, so the stream must stay
+        open while the array may be read. A stream that cannot seek is
+        read into memory first, and a stream is never memory-mapped.
 
         Parameters
         ----------
         file : BinaryIO
             The stream, which may be compressed with gzip.
         **kwargs : Any
-            Options of the nibabel readers, which are `mmap` and
-            `keep_file_open`, and which nibabel ignores for a stream.
+            The reader options, as for [`from_filename`][].
 
         Returns
         -------
@@ -201,22 +200,27 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         ------
         TypeError
             If another option is given.
+        ValueError
+            If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
         """
-        _check_options(kwargs)
+        mmap = _mmap_option(kwargs)
+        if not _seekable(file):
+            file = BytesIO(file.read())
+        start = file.tell()
         with preserve_position(file):
             record = NiftiRaw.from_fileobj(file)
-        image = _nifti_from_stream(file, **kwargs)
-        return cls(
-            rawdata=image.dataobj, metadata=NiftiMetadata.from_raw(record)
-        )
+        proxy = _NiftiProxy.from_header(file, record.header, start, mmap=mmap)
+        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(record))
 
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """Build an object from a nibabel image or header.
 
-        The array of an image becomes `rawdata` as it is, and a copy of
-        its header becomes the record of the metadata. A header alone
-        gives an object without an array.
+        The array of an image becomes `rawdata`, and a copy of its header
+        becomes the record of the metadata. A header alone gives an object
+        without an array. The array proxy of an image that nibabel read
+        from a file is replaced by the lazy array that [`from_filename`][]
+        builds for that file, and any other array is kept as it is.
 
         Parameters
         ----------
@@ -237,7 +241,8 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
             If `nifti` is neither a NIfTI image nor a NIfTI header.
         """
         if isinstance(nifti, nb.Nifti1Image):
-            raw, header = nifti.dataobj, nifti.header
+            raw = _NiftiProxy.from_nibabel(nifti.dataobj)
+            header = nifti.header
         elif isinstance(nifti, nb.Nifti1Header):
             raw, header = None, nifti
         else:
@@ -303,8 +308,10 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         WriterError
             If the object cannot be encoded.
         """
-        reading = isinstance(self.rawdata, ArrayProxy) and is_same_file(
-            self.rawdata.file_like, filename
+        raw = self.rawdata
+        root = raw.root if isinstance(raw, ArrayProxy) else raw
+        reading = isinstance(root, _NiftiProxy) and is_same_file(
+            root.source, filename
         )
         if not reading:
             super().to_filename(filename, **kwargs)
@@ -359,16 +366,33 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         return buffer.getvalue()
 
 
-def _check_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the reader options that nibabel does not take.
+def _mmap_option(kwargs: tx.Mapping[str, tx.Any]) -> bool:
+    """Return whether the reader options ask for a memory map.
+
+    `mmap` is true by default, and the modes `"c"` and `"r"` that nibabel
+    takes ask for one too. `keep_file_open` is ignored.
 
     Raises
     ------
     TypeError
         If an option is not one of the nibabel readers.
+    ValueError
+        If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
     """
     unknown = [name for name in kwargs if name not in _NIBABEL_OPTIONS]
     if unknown:
         raise TypeError(
             f"Unknown NIfTI reader option(s): {', '.join(unknown)}"
         )
+    mmap = kwargs.get("mmap", True)
+    if mmap not in (True, False, "c", "r"):
+        raise ValueError("mmap should be one of {True, False, 'c', 'r'}")
+    return bool(mmap)
+
+
+def _seekable(fileobj: tx.IO) -> bool:
+    """Tell whether a stream can seek."""
+    try:
+        return bool(fileobj.seekable())
+    except Exception:  # noqa: BLE001
+        return False

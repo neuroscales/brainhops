@@ -361,9 +361,9 @@ class NrrdImage(
     image holds the header of its file as [`NrrdMetadata`][], whose
     record is an [`NrrdRaw`][], and the samples in `rawdata`. When the
     image is read from a file, `rawdata` is a lazy array that reads the
-    samples only when they are needed, and `data` is decoded from it on
-    first access. The data are indexed `[x, y, z, t, c, ...]` in Fortran
-    order, whatever the order of the axes in the file.
+    samples only when they are needed, and `data` returns that lazy
+    array. The data are indexed `[x, y, z, t, c, ...]` in Fortran order,
+    whatever the order of the axes in the file.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are a [`Scaling`][]

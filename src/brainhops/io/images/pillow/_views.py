@@ -20,9 +20,10 @@ from brainhops._core.typing import ArrayProtocol
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the file stores.
 
-    The rows and the columns are swapped with a transpose, so that
-    the lazy array of a file stays lazy and reads nothing. The
-    `data` of the object reads it once, as the backend setting says.
+    The rows and the columns are swapped with a transpose, so that the
+    lazy array of a file stays lazy and reads nothing. The `data` of the
+    object returns that lazy array, which reads its values only when a
+    computation needs them.
     """
     return _swapped(raw)
 

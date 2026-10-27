@@ -84,9 +84,9 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
 
     A NIfTI image holds the header of its file as [`NiftiMetadata`][] and
     the voxels as stored in `rawdata`. When the image is read from a
-    file, `rawdata` is a nibabel proxy, which reads the voxels only when
-    they are needed, and `data` is decoded from it on first access. The
-    transformations are decoded from the header in the same way.
+    file, `rawdata` is a lazy array, which reads the voxels only when
+    they are needed, and `data` returns that lazy array. The
+    transformations are decoded from the header on first access.
 
     `rawdata` and the header describe the file as it was read, or as the image
     was last consolidated. Data assigned to the image are pending: they
@@ -97,25 +97,25 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
     those that the header decodes to, so that they are encoded only when
     they differ. A write encodes the image in the same way, into a copy,
     and leaves the image as it was, except when the image is written
-    over the file that its proxy reads.
+    over the file that its lazy array reads.
 
     When the image is consolidated, the header of its file is the base of
     the new header. The fields that describe the layout of the voxels and
     the geometry are encoded again from the image, and the other fields,
     such as the description, the intent and the extensions, are kept. An
     image that is read and written again without changes is written from
-    its proxy and its header as they are, so the file is copied byte for
-    byte.
+    its lazy array and its header as they are, so the file is copied
+    byte for byte.
     """
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
-    After a read, `rawdata` is a nibabel proxy, which applies the
-    scaling of the header when it is read. `rawdata` describes the file
-    as it was read, or as the image was last consolidated, so assigning
-    `data` leaves it as it is until [`consolidate`][] encodes the data
-    into a copy.
+    After a read, `rawdata` is a lazy array of the voxels of the file,
+    which applies the scaling of the header when it is read, as nibabel
+    applies it. `rawdata` describes the file as it was read, or as the
+    image was last consolidated, so assigning `data` leaves it as it is
+    until [`consolidate`][] encodes the data into a copy.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)

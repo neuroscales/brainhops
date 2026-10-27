@@ -1,4 +1,4 @@
-"""The record of a NIfTI file, and reading and writing whole files."""
+"""The record of a NIfTI file, which is its header."""
 
 # stdlib
 import warnings
@@ -186,3 +186,8 @@ def _sniffed_header(
         except Exception:
             continue
     return None
+
+
+# ----------------------------------------------------------------------
+#   WHOLE FILES
+# ----------------------------------------------------------------------

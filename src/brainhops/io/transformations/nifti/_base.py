@@ -17,6 +17,7 @@ from brainhops.io.common.nifti import (
     NiftiRaw,
     NiftiReaderWriter,
 )
+from brainhops.io.common.nifti._data import _NiftiProxy
 from brainhops.io.common.nifti._header import (
     _NiftiObject,
 )
@@ -32,7 +33,8 @@ class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
     A NIfTI transformation holds the header of its file as
     [`NiftiMetadata`][], and the array of the file as it is stored in
     `rawdata`. When the transformation is read from a file, `rawdata` is
-    a nibabel proxy, which reads the array only when it is needed. Each
+    a lazy array, which reads the array of the file only when it is
+    needed. Each
     concrete format decodes its `data`, and the transformation of the
     data model, from `rawdata` and from the header, and caches what it
     decodes.
@@ -60,11 +62,12 @@ class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array of the file as it is stored, or `None` without one.
 
-    After a read, `rawdata` is a nibabel proxy, which applies the
-    scaling of the header when it is read. A transformation that keeps
-    its data in the header, such as an affine, has no array. `rawdata`
-    describes the file as it was read, or as the transformation was last
-    consolidated, so assigning `data` leaves it as it is.
+    After a read, `rawdata` is a lazy array of the file, which applies
+    the scaling of the header when it is read, as nibabel applies it. A
+    transformation that keeps its data in the header, such as an affine,
+    has no array. `rawdata` describes the file as it was read, or as the
+    transformation was last consolidated, so assigning `data` leaves it
+    as it is.
     """
 
     # --- writing ------------------------------------------------------
@@ -122,7 +125,9 @@ def _nibabel_parts(
 ) -> tx.Tuple[tx.Optional[ArrayProtocol], _NiftiHeader]:
     """Return the array and the header of a nibabel image or header.
 
-    A header alone has no array.
+    A header alone has no array. The array proxy of an image that nibabel
+    read from a file is replaced by the lazy array that brainhops reads
+    the same file with.
 
     Raises
     ------
@@ -130,7 +135,7 @@ def _nibabel_parts(
         If `nifti` is neither a NIfTI image nor a NIfTI header.
     """
     if isinstance(nifti, nb.Nifti1Image):
-        return nifti.dataobj, nifti.header
+        return _NiftiProxy.from_nibabel(nifti.dataobj), nifti.header
     if isinstance(nifti, nb.Nifti1Header):
         return None, nifti
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")

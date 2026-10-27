@@ -61,12 +61,12 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
     A plain Zarr array is a store, a directory or a remote prefix of
     keys, that holds the document of one array and its chunks. The image
     holds the document as [`ZarrMetadata`][], whose record is a
-    [`ZarrRaw`][], and the array as the store keeps it in `rawdata`. When the
-    image is read from a store, `rawdata` is a lazy array that reads the
-    chunks only when they are needed, and `data` is decoded from it on
-    first access. An OME-Zarr pyramid, a group with a multiscale
-    geometry, is read by
-    [`OmeZarrImage`][brainhops.io.images.zarr.OmeZarrImage] instead.
+    [`ZarrRaw`][], and the array as the store keeps it in `rawdata`.
+    When the image is read from a store, `rawdata` is a lazy array that
+    reads the chunks only when they are needed, and `data` returns that
+    lazy array. An OME-Zarr pyramid, a group with a multiscale geometry,
+    is read by [`OmeZarrImage`][brainhops.io.images.zarr.OmeZarrImage]
+    instead.
 
     A plain array stores no geometry, so the image decodes no
     transformation from its record. The reader option `transformation`

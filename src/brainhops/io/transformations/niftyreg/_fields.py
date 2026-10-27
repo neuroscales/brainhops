@@ -26,7 +26,7 @@ from brainhops.datamodel._transformations.compute.converters import (
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.errors import ConversionError, ParserContentError
+from brainhops.errors import ConversionError, ParserContentError, WriterError
 
 # io
 from brainhops.io.base._base import register_format
@@ -70,6 +70,7 @@ from brainhops.io.transformations.base.fields import (
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
+    _check_single_field,
     _field_to_disk,
     _field_to_model,
 )
@@ -379,10 +380,12 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         Vectors that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`: NiftyReg stores a field with
-        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
-        vectors are positions or displacements, as the type of the file
-        says. Assigning the data drops the chain decoded from the
-        previous data.
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. A file
+        whose fourth axis is longer than one holds a field per volume,
+        which is not supported yet, so reading its data raises
+        `ParserContentError`. The vectors are positions or
+        displacements, as the type of the file says. Assigning the data
+        drops the chain decoded from the previous data.
         """
         if self.rawdata is None:
             return None
@@ -543,6 +546,9 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             metadata.
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
+        WriterError
+            If the stored array holds a field for each of several
+            volumes.
         """
         fields, overrides = _split_options(options)
         name = type(self).__name__
@@ -560,6 +566,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            _check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -635,6 +642,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             return None
         if self._transformations is not None:
             return None
+        _check_single_field(stored, WriterError)
         image = _record_image(stored, self._record(), overrides=overrides)
         _apply_like(image, like)
         _apply_overrides(image, overrides)

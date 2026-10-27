@@ -57,6 +57,7 @@ from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 import brainhops.io as io
 from brainhops._core.path import replace_directory
 from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ScaledProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
@@ -262,8 +263,9 @@ from brainhops.io.transformations.trakem2._xform import (
 
 try:
     import nibabel as nb
-    from nibabel.arrayproxy import ArrayProxy
 
+    from brainhops.io.common.mgh._data import _MghProxy
+    from brainhops.io.common.nifti._data import _NiftiProxy
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
@@ -2127,7 +2129,7 @@ if nb is not None:
     _NIFTI = Exemplar(
         metadata=NiftiMetadata,
         suffix=".nii",
-        proxies=(ArrayProxy,),
+        proxies=(_NiftiProxy, ScaledProxy),
         to_model=_image_to_model,
         to_disk=_image_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -2990,6 +2992,7 @@ if nb is not None:
     EXEMPLARS[MghImage] = _NIFTI._replace(
         metadata=MghMetadata,
         suffix=".mgh",
+        proxies=(_MghProxy,),
         to_model=_mgh_to_model,
         to_disk=_mgh_to_disk,
         edit_record=_mgh_edit_record,
@@ -5072,9 +5075,10 @@ def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
 def _caches(obj: tx.Any, name: str) -> bool:
     """Tell whether an object caches a view.
 
-    The `data` of an image or a field returns the lazy array of the file
-    and caches nothing, whereas the views decoded from a record, such as
-    the matrix of an affine, are cached.
+    A view is cached when its property is declared with a cache. The
+    `data` of a file format caches the lazy array of the file rather
+    than its values, and the views decoded from a record, such as the
+    matrix of an affine, are cached as well.
     """
     return getattr(getattr(type(obj), name, None), "cache", True)
 
@@ -5368,8 +5372,10 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
     assert isinstance(loaded.metadata, exemplar.metadata)
     data = _data(exemplar, loaded)
     assert np.array_equal(np.asarray(data), exemplar.sample())
-    # A cached view is decoded once, whereas the `data` of an image or a
-    # field is not cached, and reading either leaves the proxy in place.
+    # A cached view is built once, so that a second access returns the
+    # same array, and reading its values leaves the proxy in place. The
+    # `data` of a file format caches the lazy array of the file, not its
+    # values.
     if _caches(loaded, exemplar.view):
         assert _data(exemplar, loaded) is data
     else:
@@ -7099,7 +7105,7 @@ def test_an_untouched_nifti_keeps_its_extensions_and_description(
 def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
     source = _saved(NiftiImage, EXEMPLARS[NiftiImage], tmp_path)
     loaded = NiftiImage.load(source)
-    assert isinstance(loaded.rawdata, ArrayProxy)
+    assert isinstance(loaded.rawdata, _NiftiProxy)
     assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
     assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
     # Other metadata gives other transformations.
