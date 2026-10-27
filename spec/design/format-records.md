@@ -1003,9 +1003,11 @@ its status.
     keeps its own cache, unless the setter deletes it or names it in
     `invalidates`. Doing this automatically would break the setters
     that fill the cache on purpose (`concrete.py:396-421`), so every
-    NIfTI setter declares `unset=_always` and removes `_cache_data` by
+    NIfTI setter declared `unset=_always` and removed `_cache_data` by
     hand, since `_FORGET_VIEWS` clears only the attributes listed in
-    `derived_fields`. Status: open.
+    `derived_fields`. Status: obsolete. `smartproperty` has no `unset`
+    option, and the `data` of a format caches its lazy array with
+    `invalidated_by`, which no setter needs to clear.
 21. The test that compares the registry with the table of formats sees
     only registered classes, so a concrete format that is not
     registered escapes it. `NiftiRASToVoxel` is not registered, so a

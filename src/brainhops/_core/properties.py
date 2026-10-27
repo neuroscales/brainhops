@@ -16,23 +16,15 @@ __all__ = [
     "drop_cache",
     "lazyproperty",
     "smartproperty",
-    "UnsetLike",
 ]
+
+import weakref
 
 import typing_extensions as tx
 
 _Getter = tx.Callable[[tx.Self], tx.Any]
 _Setter = tx.Callable[[tx.Self, tx.Any], None]
 _Deleter = tx.Callable[[tx.Self], None]
-_IsUnset = tx.Callable[[tx.Any], bool]
-_Converter = tx.Callable[[tx.Any], tx.Any]
-_UnsetForm = tx.Union[None, _IsUnset]
-UnsetLike = tx.Union[_UnsetForm, tx.Tuple[_UnsetForm, ...]]
-"""Accepted values of the `unset` argument of [`smartproperty`][].
-
-The value decides when a stored value reads as unset. It is `None`, a
-predicate, or a tuple of these forms.
-"""
 
 _Names: tx.TypeAlias = tx.Union[str, tx.Iterable[str]]
 
@@ -227,10 +219,8 @@ def smartproperty(fget: _Getter) -> property: ...
 @tx.overload
 def smartproperty(
     *,
-    unset: UnsetLike = None,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
-    convert: tx.Optional[_Converter] = None,
     invalidated_by: tx.Sequence[str] = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
@@ -242,10 +232,8 @@ def smartproperty(
     fdel: tx.Optional[_Deleter] = None,
     doc: tx.Optional[str] = None,
     *,
-    unset: UnsetLike = None,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
-    convert: tx.Optional[_Converter] = None,
     invalidated_by: tx.Sequence[str] = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
@@ -257,19 +245,17 @@ def smartproperty(
     fdel: tx.Optional[_Deleter] = None,
     doc: tx.Optional[str] = None,
     *,
-    unset: UnsetLike = None,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
-    convert: tx.Optional[_Converter] = None,
     invalidated_by: tx.Sequence[str] = (),
 ) -> property:
     """Create a property backed by a private attribute.
 
     A property named `name` reads and writes the attribute `_<name>`. When
-    the stored value reads as unset, the value is computed by `fget`
-    instead, and with `cache=True` the computed value is stored in
-    `_cache_<name>` so that it is computed only once. A value that has been
-    set is always returned rather than computed.
+    the stored value is `None`, the value is computed by `fget` instead,
+    and with `cache=True` the computed value is stored in `_cache_<name>`
+    so that it is computed only once. A value that has been set is always
+    returned rather than computed.
 
     The common forms are listed below, from the simplest to the most
     specific.
@@ -287,9 +273,6 @@ def smartproperty(
     - `fset=` gives a setter defined elsewhere, for example a module-level
       function shared by several classes.
     - `fset=False` makes the property read-only.
-    - `unset=` says which stored values read as unset.
-    - `convert=` transforms the value at each read, without changing
-      what is stored or cached.
     - `invalidated_by=` names the attributes that a cached value is
       computed from, so that it is computed again when one of them holds
       another object.
@@ -315,17 +298,6 @@ def smartproperty(
         Deleter of the property, passed to [`property`][property] as it is.
     doc : str, optional
         Docstring of the property.
-    unset : UnsetLike, optional
-        Values that read as unset. By default, only a stored `None` reads
-        as unset. With a callable, any value for which the callable
-        returns true reads as unset. A tuple of these forms matches a
-        value when any of its forms matches. A property that stands in for
-        an inherited field whose default is an empty container takes the
-        field over under a private name, with
-        `_x: ... = Inherit("x", default=None)` from
-        [`bagof.magic`][bagof.magic], and keeps the default `unset=None`.
-        The constructor then stores `None` when nothing is given, and an
-        empty container assigned on purpose is used as it is.
     cache : bool, default=False
         Whether to cache the computed value.
     invalidates : str or Invalidator or tuple, default=()
@@ -334,17 +306,12 @@ def smartproperty(
         reads the names from the object, and a tuple may mix both. A
         setter given later with the `setter` decorator of the property
         deletes the same cached values.
-    convert : callable, optional
-        Function applied to the value at each read, whether the value was
-        stored or computed. Its result is returned and is neither stored
-        nor cached, so the stored or cached value stays as it was. A
-        value of `None` is returned as it is.
     invalidated_by : sequence of str, default=()
         Attributes of the object that the cached value is computed from.
-        The cache keeps the objects that they held when the value was
-        computed, and the value is computed again when one of them holds
-        another object. A change made to the same object in place is not
-        seen. It needs `cache=True`.
+        The cache keeps weak references to the objects that they held
+        when the value was computed, and the value is computed again when
+        one of them holds another object. A change made to the same object
+        in place is not seen. It needs `cache=True`.
 
     Returns
     -------
@@ -355,11 +322,10 @@ def smartproperty(
     Raises
     ------
     ValueError
-        If `unset` is an empty tuple, or if `invalidated_by` is given
-        without `cache=True`.
+        If `invalidated_by` is given without `cache=True`.
     TypeError
-        If `unset` has any other invalid type, or if an item of
-        `invalidates` is neither a name nor an `Invalidator`.
+        If an item of `invalidates` is neither a name nor an
+        `Invalidator`.
     """
 
 
@@ -368,36 +334,28 @@ def smartproperty(
     fset=None,
     fdel=None,
     doc=None,
-    unset=None,
     cache=False,
     invalidates=(),
-    convert=None,
     invalidated_by=(),
 ):
-    # The form of unset is resolved once, at declaration, so that a wrong
-    # value is refused there and the getter tests a single predicate.
-    is_unset = _unset_predicate(unset)
-
     if fget is None:
-        # When only options are given, as in @smartproperty(unset=...), the
-        # call returns a decorator that receives the getter.
+        # When only options are given, as in @smartproperty(cache=True),
+        # the call returns a decorator that receives the getter.
         def decorate(func: tx.Callable) -> property:
             return smartproperty(
                 func,
                 fset,
                 fdel,
                 doc,
-                unset=unset,
                 cache=cache,
                 invalidates=invalidates,
-                convert=convert,
                 invalidated_by=invalidated_by,
             )
 
         return decorate
 
-    # Like unset, invalidates is resolved at declaration, so that a wrong
-    # item is refused there.
+    # The options are resolved at declaration, so that a wrong item is
+    # refused there.
     invalidates = _invalidated_items(invalidates)
     invalidated_by = tuple(invalidated_by)
     if invalidated_by and not cache:
@@ -412,13 +370,10 @@ def smartproperty(
     fget = _make_fget(
         name,
         fget,
-        is_unset,
         set=fset is not False,
         cache=cache,
         invalidated_by=invalidated_by,
     )
-    if convert is not None:
-        fget = _converting_fget(fget, convert)
 
     if not callable(fset):
         fset = _make_fset(name, settable=fset is not False)
@@ -532,7 +487,6 @@ class _SmartProperty(property):
 def _make_fget(
     name: str,
     make_fn: tx.Optional[_Getter],
-    isunset_fn: _IsUnset,
     set: bool = True,
     cache: bool = False,
     invalidated_by: tx.Tuple[str, ...] = (),
@@ -542,21 +496,17 @@ def _make_fget(
     # assigned, but a constructor may still write the private field _<name>,
     # and the read-only property must then return that value.
     if cache:
-        return _make_fget_settable_cacheable(
-            name, make_fn, isunset_fn, invalidated_by
-        )
-    return _make_fget_settable(name, make_fn, isunset_fn)
+        return _make_fget_settable_cacheable(name, make_fn, invalidated_by)
+    return _make_fget_settable(name, make_fn)
 
 
-def _make_fget_settable(
-    name: str, make_fn: tx.Optional[_Getter], isunset_fn: _IsUnset
-) -> _Getter:
+def _make_fget_settable(name: str, make_fn: tx.Optional[_Getter]) -> _Getter:
     # Without a cache, the value is computed again on every access.
     private_name = "_" + name
 
     def fget(self: tx.Self) -> tx.Any:
         value = getattr(self, private_name, None)
-        if not isunset_fn(value):
+        if value is not None:
             return value
         if make_fn is None:
             return value
@@ -569,7 +519,6 @@ def _make_fget_settable(
 def _make_fget_settable_cacheable(
     name: str,
     make_fn: tx.Optional[_Getter],
-    isunset_fn: _IsUnset,
     invalidated_by: tx.Tuple[str, ...] = (),
 ) -> _Getter:
     private_name = "_" + name
@@ -577,14 +526,16 @@ def _make_fget_settable_cacheable(
 
     def fget(self: tx.Self) -> tx.Any:
         value = getattr(self, private_name, None)
-        if not isunset_fn(value):
+        if value is not None:
             return value
         value = getattr(self, cache_name, None)
         if value is not None and _cache_is_current(self, name, invalidated_by):
             return value
         if make_fn is None:
             return None
-        sources = tuple(getattr(self, attr) for attr in invalidated_by)
+        sources = tuple(
+            _reference(getattr(self, attr)) for attr in invalidated_by
+        )
         value = make_fn(self)
         object.__setattr__(self, cache_name, value)
         if invalidated_by:
@@ -593,20 +544,6 @@ def _make_fget_settable_cacheable(
 
     fget.__name__ = name
     return fget
-
-
-def _converting_fget(fget: _Getter, convert: _Converter) -> _Getter:
-    # The conversion wraps the getter from outside, so the stored or cached
-    # value is the one before the conversion, and a value of None, which
-    # means that nothing is stored, is not converted.
-    def converted(self: tx.Self) -> tx.Any:
-        value = fget(self)
-        if value is None:
-            return value
-        return convert(value)
-
-    converted.__name__ = fget.__name__
-    return converted
 
 
 def _make_fset(name: str, settable: bool = True) -> tx.Optional[_Setter]:
@@ -618,8 +555,8 @@ def _make_fset(name: str, settable: bool = True) -> tx.Optional[_Setter]:
 
 
 def _make_fset_settable(name: str) -> _Setter:
-    # The setter stores any value, because the getter decides whether the
-    # stored value reads as unset.
+    # The setter stores any value, and the getter computes the value when
+    # the stored one is `None`.
     private_name = "_" + name
 
     def fset(self: tx.Self, value: tx.Any) -> None:
@@ -683,24 +620,43 @@ def _wrap_fset(
 
 
 _SOURCES = "_cache_sources_"
-"""The prefix of the attribute that keeps the objects that a cached value
-was computed from (see the option `invalidated_by` of [`smartproperty`][]).
+"""The prefix of the attribute that keeps weak references to the objects
+that a cached value was computed from (see the option `invalidated_by` of
+[`smartproperty`][]).
 """
+
+
+def _reference(value: tx.Any) -> tx.Callable[[], tx.Any]:
+    # A weak reference to a value, so that the cache does not keep it
+    # alive once the attribute holds another one. The `id` of the value
+    # would not do, because a new object may reuse the `id` of one that
+    # was collected. A value that cannot be referenced weakly, such as
+    # `None`, a number or a tuple, is kept as it is.
+    try:
+        return weakref.ref(value)
+    except TypeError:
+        return lambda: value
+
+
+def _refers_to(reference: tx.Callable[[], tx.Any], value: tx.Any) -> bool:
+    # A weak reference whose object was collected refers to nothing, even
+    # when the attribute now holds `None`.
+    held = reference()
+    if held is None and isinstance(reference, weakref.ref):
+        return False
+    return held is value
 
 
 def _cache_is_current(
     obj: object, name: str, invalidated_by: tx.Tuple[str, ...]
 ) -> bool:
-    # The objects themselves are kept and compared by identity, rather
-    # than their `id`, which a new object may reuse once the old one is
-    # collected.
     if not invalidated_by:
         return True
     sources = obj.__dict__.get(_SOURCES + name)
     if sources is None or len(sources) != len(invalidated_by):
         return False
     return all(
-        getattr(obj, attr) is source
+        _refers_to(source, getattr(obj, attr))
         for attr, source in zip(invalidated_by, sources)
     )
 
@@ -814,51 +770,5 @@ def smartsetter(fset):
 
 
 def _smartsetter(name: str, fset: _Setter) -> property:
-    fget = _make_fget_settable(name, None, _is_none)
+    fget = _make_fget_settable(name, None)
     return property(fget, fset, None, fset.__doc__)
-
-
-# --- unset ------------------------------------------------------------
-
-
-def _unset_predicate(unset: UnsetLike) -> _IsUnset:
-    """Return the single predicate that a form of `unset` stands for.
-
-    A tuple of forms becomes a predicate that is true when any form matches.
-
-    Raises
-    ------
-    ValueError
-        If the tuple is empty.
-    TypeError
-        If a form is neither `None` nor callable.
-    """
-    forms = unset if isinstance(unset, tuple) else (unset,)
-    if not forms:
-        raise ValueError(
-            "unset=() names no form: give None, a predicate, or a tuple of "
-            "them."
-        )
-    tests = tuple(_unset_form(form) for form in forms)
-    if len(tests) == 1:
-        return tests[0]
-
-    def is_unset(value: tx.Any) -> bool:
-        return any(test(value) for test in tests)
-
-    return is_unset
-
-
-def _unset_form(form: tx.Any) -> _IsUnset:
-    if form is None:
-        return _is_none
-    if callable(form):
-        return form
-    raise TypeError(
-        f"unset takes None, a predicate `(value) -> bool`, or a tuple of "
-        f"them, not a {type(form).__name__}."
-    )
-
-
-def _is_none(value: tx.Any) -> bool:
-    return value is None

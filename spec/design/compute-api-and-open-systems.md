@@ -372,13 +372,12 @@ raise `WriterError` when more axes are stated than the data has.
 
 ### B.7 Smaller changes
 
-`smartproperty` takes a single `unset=` option, which says when a stored
-value reads as "not set": `None` (the default), a predicate, or a tuple
-of these. A property over an inherited field whose default is an empty
-container takes the field over under a private name with
-`Inherit("x", default=None)` instead of reading an empty container as
-unset. `lazyproperty` takes no `unset=` option: it computes
-its value when nothing is stored and caches it. Every setter of either
+`smartproperty` computes its value when the stored value is `None`, and
+has no option to read any other value as "not set". A property over an
+inherited field whose default is an empty container takes the field
+over under a private name with `Inherit("x", default=None)`, so that an
+empty container is a value. `lazyproperty` computes its value when
+nothing is stored and caches it. Every setter of either
 property deletes the cached value of the property before it runs, and
 the cached values named by `invalidates=` after it runs.
 
@@ -463,8 +462,9 @@ Part B, implemented:
     and `RSAmm` are millimetre-only.
 20. `order` is declared on `CoordinateSystem`.
 21. `axes.R`, `L`, `A`, `P`, `S` and `I` are classes.
-22. `smartproperty` takes a single `unset=` option, and every setter of
-    a cached property deletes the cached value of that property.
+22. `smartproperty` computes its value when the stored value is `None`,
+    and every setter of a cached property deletes the cached value of
+    that property.
 23. `index` and `indices` return numbers that are entries and positions
     at once, counted from the end after `...`, and `index`, `indices`
     and `restrict` accept queries (#574).
