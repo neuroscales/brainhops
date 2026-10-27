@@ -48,7 +48,8 @@ def _time(name: str = "t", discrete: object = None) -> Axis:
 def _components(els: list, shape: tuple) -> object:
     """Return (grid axes, data axes) per group, or None if unfactored."""
     seq = Sequence(transformations=[CartesianField(shape=shape), *els])
-    read = sep._groups(seq.compute(mode=kinds.Affine, factor=True), len(shape))
+    nf = seq.compute(mode=kinds.Affine, factor=True, simplify="numeric")
+    read = sep._groups(nf, len(shape))
     if read is None:
         return None
     return sorted(
@@ -876,7 +877,9 @@ def test_cras_to_fras_bridge_factors_into_singletons() -> None:
             @ geometry.transformation
             @ geometry.grid
         )
-        nf = transformation.compute(mode=kinds.Affine, factor=True)
+        nf = transformation.compute(
+            mode=kinds.Affine, factor=True, simplify="numeric"
+        )
         _, groups = sep._groups(nf, 3)
         # Each group holds one grid axis and one data axis, and the groups
         # cover every axis.

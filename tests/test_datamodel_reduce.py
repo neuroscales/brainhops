@@ -620,7 +620,7 @@ def test_a_direct_factor_call_cancels_before_it_cuts() -> None:
     shear = _SHEAR
     grid = CartesianField(shape=(3, 3, 3))
     chain = Sequence([grid, shear, shear.inverse(), Projection(dropped=[2])])
-    nf = factor_sequence(chain, simplify="numeric")
+    nf = factor_sequence(chain, policy="numeric")
     first, drop = nf.transformations
     assert first is grid
     assert list(drop.dropped) == [2]

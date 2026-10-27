@@ -81,7 +81,7 @@ from .reduce import (
     restrict_block,
     stage_counts,
 )
-from .simplify import SimplifyTable
+from .simplify import ANALYTIC_FLOOR, SimplifyTable
 from .utils import UNREADABLE, axis_list
 
 if tx.TYPE_CHECKING:
@@ -99,9 +99,9 @@ if tx.TYPE_CHECKING:
 
 def factor_sequence(
     seq: "Sequence",
-    compute: "ModeLike" = False,
+    policy: "SimplifyLike" = "analytic",
     *,
-    simplify: "SimplifyLike" = False,
+    compute: "ModeLike" = False,
     cache: tx.Optional["PatternCache"] = None,
 ) -> Transformation:
     """Rewrite a sequence into its axis-group normal form.
@@ -130,6 +130,15 @@ def factor_sequence(
     seq : Sequence
         Chain to factor. Nested sequences are flattened, and a leading
         [`CartesianField`][] is the sampling grid, kept as is.
+    policy : SimplifyLike, default="analytic"
+        How closely the elements may be read, with the values and the
+        meaning of the policy of
+        [`simplify`][brainhops.datamodel._transformations.compute.simplify.simplify].
+        It decides the groups, the two ends and the simplification of
+        the pieces of each group. Under the analytic policy, a matrix
+        couples all its axes, and under the numeric policy, its exact
+        zeros are read. A policy that leaves every transformation alone
+        reads the structure only, as the analytic policy does.
     compute : ModeLike, default=False
         Kinds of transformation that may be composed inside a group, with
         the values accepted by the `mode` argument of
@@ -138,11 +147,6 @@ def factor_sequence(
         The default, `False`, composes nothing, so each factor holds the
         sub-chain of its group, whereas `True` leaves each factor holding a
         single transformation.
-    simplify : SimplifyLike, default=False
-        Simplification policy for the pieces of each group, which also
-        says how closely the elements are read to find the two ends.
-        When it leaves every transformation alone, the ends are found
-        from the structure of the elements only.
     cache : PatternCache, optional
         Cache of dependency patterns, shared across the rounds of one
         computation. A fresh cache is used if it is omitted.
@@ -187,11 +191,12 @@ def factor_sequence(
     ```
 
     With `compute=True`, each group is composed into a single
-    transformation, and the factor of the last axis, whose scale is one, is
-    dropped because its group composes to the identity.
+    transformation, and, under the numeric policy, the factor of the
+    last axis, whose scale is one, is dropped because its group composes
+    to the identity.
 
     ```pycon
-    >>> nf = factor_sequence(seq, compute=True)
+    >>> nf = factor_sequence(seq, compute=True, policy="numeric")
     >>> grid, *body = nf.transformations
     >>> [type(t).__name__ for t in body]
     ['SubspaceTransformation', 'SubspaceTransformation', 'Permutation']
@@ -203,6 +208,9 @@ def factor_sequence(
 
     if cache is None:
         cache = PatternCache()
+    table = SimplifyTable.from_like(policy)
+    if table.is_noop():
+        table = ANALYTIC_FLOOR
 
     xforms = _unnest(seq.transformations)
     if not xforms:
@@ -224,11 +232,11 @@ def factor_sequence(
     if n_in is None:
         return seq
 
-    head, middle, tail = _split_ends(body, simplify)
+    head, middle, tail = _split_ends(body, table)
     if head is not None:
         n_in -= len(axis_list(head.dropped))
 
-    stages = _build_stages(middle, n_in, cache)
+    stages = _build_stages(middle, n_in, cache, table)
     if stages is None:
         return seq
 
@@ -239,7 +247,7 @@ def factor_sequence(
         return seq
 
     try:
-        factors = _build_factors(groups, stages, compute, simplify)
+        factors = _build_factors(groups, stages, compute, table)
     except RestrictionError:
         # When an element cannot be cut into group pieces safely, the chain
         # is left unfactored rather than losing one of the pieces.
@@ -372,17 +380,15 @@ class _UnionFind:
 # ----------------------------------------------------------------------
 # The patterns are read by the pattern readers of the `reducers` module,
 # and an element whose pattern cannot be read links all its axes. The
-# partition reads the exact zeros of matrices whatever the policy of the
-# caller, so that an affine with independent axes is split. For the lazy
-# inverse of a matrix transformation, the reader therefore reads the
-# coefficients of the inverse, which the forward transformation computes
-# and caches while the inverse stays lazy. For any other lazy inverse,
-# the reader returns the closure of the forward pattern. Grouping only
-# needs to know which axes are linked, whatever the direction of the
-# link, and the closure links every pair of axes that the inverse links.
-
-# The table with which the pass reads the patterns of the elements.
-_GROUPING = SimplifyTable({None: SimplifyPolicy.numeric})
+# partition follows the policy: under the analytic policy a matrix
+# couples all its axes, and under the numeric policy its exact zeros are
+# read. For the lazy inverse of a matrix transformation, the numeric
+# policy reads the coefficients of the inverse, which the forward
+# transformation computes and caches while the inverse stays lazy.
+# Otherwise, the reader returns the closure of the forward pattern, and
+# no coefficient is read. Grouping only needs to know which axes are
+# linked, whatever the direction of the link, and the closure links
+# every pair of axes that the inverse links.
 
 
 # ----------------------------------------------------------------------
@@ -408,7 +414,7 @@ def _build_stages(
     # Intermediate stages may change dimension, for example by embedding
     # into a wider space and projecting back, but the two ends of the
     # part of the chain that is grouped may not.
-    policy = _GROUPING if policy is None else policy
+    policy = ANALYTIC_FLOOR if policy is None else policy
     counts = stage_counts(body, start=n_in)
     if counts is None or counts[-1] != n_in:
         return None
@@ -494,7 +500,7 @@ def _restrict_group(
     # order. A group is decoupled from the other groups, so its block of
     # each element is closed. An element that lies entirely within the
     # group is kept as the same object, and identity pieces are omitted.
-    policy = _GROUPING if policy is None else policy
+    policy = ANALYTIC_FLOOR if policy is None else policy
     sub: tx.List[Transformation] = []
     for stage, s in enumerate(stages, start=1):
         rows = group.per_stage.get(stage, [])
@@ -516,49 +522,53 @@ def _restrict_group(
     return sub
 
 
-def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
-    # An inner transformation that does not interpolate is checked by value,
-    # so a restriction that turns out to be the identity, such as
-    # Scaling([1]), is dropped. A field is checked without computing its
-    # values, so it is never dropped because of them. A chain, which the
-    # structural mode leaves uncomposed, is checked without composing it,
-    # since checking its identity by value would compose it.
+def _inner_is_identity(
+    inner: tx.Optional[Transformation], policy: SimplifyTable
+) -> bool:
+    # An inner transformation is checked by value only when the policy
+    # reads its values, so that, under the numeric policy, a piece that
+    # turns out to be the identity, such as Scaling([1]), is dropped. A
+    # field and a chain are checked by structure, because checking them
+    # by value would sample the field or compose the chain.
     from ..sequence import Sequence, _interpolates
 
     if inner is None:
         return True
     if _interpolates(inner) or isinstance(inner, Sequence):
         return inner.is_identity(compute=False)
-    return inner.is_identity(compute=True)
+    numeric = policy.resolve(inner) is SimplifyPolicy.numeric
+    return inner.is_identity(compute=numeric)
 
 
 def _build_factors(
     groups: tx.List[_Group],
     stages: tx.List[_Stage],
     compute: "ModeLike",
-    simplify: "SimplifyLike",
+    policy: SimplifyTable,
 ) -> tx.Optional[tx.List[SubspaceTransformation]]:
     from ..sequence import Sequence
 
     factors: tx.List[SubspaceTransformation] = []
     for group in groups:
-        sub = _restrict_group(group, stages)
+        sub = _restrict_group(group, stages, policy)
         if not sub:
             continue
-        # The pieces are composed under the kinds and the simplification
-        # policy that the caller admits, so a restricted transformation and
-        # its inverse cancel before anything else is composed.
+        # The pieces are composed under the kinds that the caller admits
+        # and simplified under the policy, so a restricted
+        # transformation and its inverse cancel before anything else is
+        # composed.
         try:
             inner = Sequence(transformations=sub).compute(
-                compute, simplify=simplify, factor=False
+                compute, simplify=policy, factor=False
             )
         except (ConversionError, CompositionError):
-            # Factoring is an optimization, so returning the chain unchanged is
-            # always sound. Restricted pieces can fail to compose even where
-            # the whole chain composes, for example when a subspace piece
-            # with an unknown axis count sits next to an affine piece.
+            # Factoring is an optimization, so returning the chain
+            # unchanged is always sound. Restricted pieces can fail to
+            # compose even where the whole chain composes, for example
+            # when a subspace piece with an unknown axis count sits next
+            # to an affine piece.
             return None
-        if _inner_is_identity(inner):
+        if isinstance(inner, Identity) or _inner_is_identity(inner, policy):
             continue
         axes = np.asarray(group.axes, dtype=int)
         factors.append(
@@ -652,7 +662,7 @@ def _same_projection(got: Transformation, want: Projection) -> bool:
 
 
 def _split_ends(
-    body: tx.List[Transformation], simplify: "SimplifyLike"
+    body: tx.List[Transformation], policy: SimplifyTable
 ) -> tx.Tuple[
     tx.Optional[Projection],
     tx.List[Transformation],
@@ -661,16 +671,11 @@ def _split_ends(
     # Reduce the chain, allowing it to grow by its two ends, and return
     # the projection that drops the unread inputs at its start, the
     # elements in between and the projection that creates the constant
-    # outputs at its end. Without a policy, the ends are read from the
-    # structure of the elements only. The pairs that cancel at no cost
-    # collapse first, so that a lazy inverse is not cut, and maybe
+    # outputs at its end. The pairs that cancel at no cost collapse
+    # first, so that a lazy inverse is not cut, and maybe
     # computed, before it meets its forward transformation.
     from .simplifiers import _settle
-    from .simplify import ANALYTIC_FLOOR
 
-    policy = SimplifyTable.from_like(simplify)
-    if policy.is_noop():
-        policy = ANALYTIC_FLOOR
     chain = list(body)
     if may_reduce(chain, policy):
         chain = _settle(chain, policy)

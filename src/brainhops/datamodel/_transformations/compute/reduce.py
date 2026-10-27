@@ -491,11 +491,13 @@ def reduce_chain(
         Policy that says how closely each element may be read. An
         element that the policy leaves alone keeps all its axes.
     ends : bool, default=False
-        Whether the result may be longer than the chain. Simplification
-        never lengthens a chain, so by default a reduction that would
-        add elements, for example the projection that drops an input
-        that the first element does not read, is not applied. The factor
-        pass sets `ends` to obtain the two ends of its normal form.
+        Whether the result may have a projection at each end that the
+        chain does not have. Simplification never lengthens a chain, so
+        by default a reduction that would add elements, for example the
+        projection that drops an input that the first element does not
+        read, is not applied. The factor pass sets `ends` to obtain the
+        two ends of its normal form, and the rest of the result is then
+        still never longer than the chain.
 
     Returns
     -------
@@ -534,9 +536,25 @@ def _reduce(
         return None
     if _same_chain(chain, leaves):
         return None
-    if not ends and len(chain) > len(leaves):
+    if len(_core(chain) if ends else chain) > len(leaves):
         return None
     return chain
+
+
+def _core(chain: tx.List["Transformation"]) -> tx.List["Transformation"]:
+    # Return the chain without a leading projection that only drops axes
+    # and a trailing projection that only creates axes, which are the
+    # only elements that the reduction may add for the factor pass.
+    from ..meta import Projection
+
+    core = list(chain)
+    if core and isinstance(core[0], Projection):
+        if not axis_list(core[0].created):
+            core.pop(0)
+    if core and isinstance(core[-1], Projection):
+        if not axis_list(core[-1].dropped):
+            core.pop()
+    return core
 
 
 class _Reduction:

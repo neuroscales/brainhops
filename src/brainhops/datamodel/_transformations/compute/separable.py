@@ -3,13 +3,15 @@
 """Reslicing of an image through the axis-group normal form of its transform.
 
 Reslicing samples data at transformed coordinates. A transformation that
-couples every output axis to every input axis requires a full coordinates
-field and an N-d pull, but translations, scalings, permutations and many
-other transformations do not couple everything. The grouping of the axes is
-read from the normal form `[grid, F_1, ..., F_m, Pi_perm?]` returned by
-`Sequence.compute(factor=True)`, in which each factor acts on its own group
-of grid axes and the trailing permutation sends the groups to the data
-axes.
+couples every output axis to every input axis requires a full
+coordinates field and an N-d pull, but translations, scalings,
+permutations and many other transformations do not couple everything.
+The grouping of the axes is read from the normal form
+`[grid, F_1, ..., F_m, Pi_perm?]` returned by
+`Sequence.compute(factor=True)` under the numeric policy, which reads the
+exact zeros of the matrices. In the
+normal form, each factor acts on its own group of grid axes, and the
+trailing permutation sends the groups to the data axes.
 
 This module executes one step per group. A group that needs no
 interpolation, such as a flip or an integer shift, is applied as a gather or
@@ -467,7 +469,9 @@ def _plan(
     # reports the malformed input.
     clip = _normalize_clip(clip, len(data_shape))
     try:
-        nf = seq.compute(mode=kinds.Affine, factor=True)
+        # Resampling reads every value anyway, so the groups are found
+        # from the exact zeros of the matrices.
+        nf = seq.compute(mode=kinds.Affine, factor=True, simplify="numeric")
     except Exception:
         return None
     read = _groups(nf, len(data_shape))

@@ -325,9 +325,9 @@ class Sequence(SequenceMixin, MetaTransformation):
 
     def factor(
         self,
+        policy: SimplifyLike = "analytic",
         *,
         compute: tx.Union[ModeLike, bool, None] = False,
-        simplify: SimplifyLike = False,
     ) -> Transformation:
         """Rewrite the chain as one factor per group of axes.
 
@@ -358,15 +358,18 @@ class Sequence(SequenceMixin, MetaTransformation):
 
         Parameters
         ----------
+        policy : SimplifyLike, default="analytic"
+            How closely the elements may be read, with the values and
+            the meaning of the policy of [`simplify`][]. Under the
+            analytic policy, a matrix couples all its axes, and under
+            the numeric policy, its exact zeros are read, so that an
+            affine with independent axes splits.
         compute : ModeLike or bool or None, default=False
             Kinds of transformation that may be composed inside a group,
             with the values accepted by the `mode` argument of
             [`compute`][]. The default, `False`, composes nothing, so each
             factor holds the sub-chain of its own group, whereas `True`
             leaves each factor holding a single transformation.
-        simplify : SimplifyLike, default=False
-            How hard to simplify the pieces of each group, with the values
-            accepted by the `simplify` argument of [`compute`][].
 
         Returns
         -------
@@ -379,7 +382,7 @@ class Sequence(SequenceMixin, MetaTransformation):
             or restricted. An [`Identity`][] is returned when no factor
             is left.
         """
-        return factor_sequence(self, compute, simplify=simplify)
+        return factor_sequence(self, policy, compute=compute)
 
     def flatten(self, endpoints: bool = True) -> tx.Self:
         """Splice the nested sequences of the chain into the chain itself.
@@ -608,9 +611,7 @@ def _compute_sequence(
 
         # --- 2b. factor ---
         if factor:
-            factored = factor_sequence(
-                seq, modes, simplify=policy, cache=cache
-            )
+            factored = factor_sequence(seq, policy, compute=modes, cache=cache)
             if not isinstance(factored, Sequence):
                 return factored
             seq = factored

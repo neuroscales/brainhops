@@ -22,10 +22,12 @@ silent surprises. Passing tests is not sufficient.
 ### A.1 Principles
 
 - Each operation has one job. `simplify` rewrites a transformation into a
-  cheaper equivalent and `factor` rewrites it into independent groups of
-  axes, neither of them composing anything. `t.restrict(...)`, like
-  `t.inverse()`, only describes its result lazily. `compute` is the only
-  operation that composes.
+  cheaper equivalent without composing anything, and `factor` rewrites it
+  into independent groups of axes. `factor` composes nothing by default,
+  and its `compute=` mode composes inside each group, as a convenience
+  that is equivalent to a call of `compute` with `factor=True`.
+  `t.restrict(...)`, like `t.inverse()`, only describes its result
+  lazily. `compute` is the operation that composes.
 - Every operation returns an equivalent transformation or raises. It never
   silently drops a piece, changes a value or approximates.
 - One policy argument, with the same meaning everywhere, governs how
@@ -67,9 +69,10 @@ by a concrete transformation only when it is cut down to fewer axes,
 after the pass that cancels each transformation against its own lazy
 inverse, so that no cancellation is lost.
 
-### A.3 `factor(t, policy="analytic")`
+### A.3 `factor(t, policy="analytic", *, compute=False)`
 
-`factor` becomes public. It rewrites `t`, without composing, into the
+`factor` is public. It takes the policy of `simplify`, with the same
+values and the same meaning, and rewrites `t` into the
 axis-group normal form `[grid?, δ?, F_1, …, F_m, Π?, κ?]`, in which each
 `F_i = SubspaceTransformation(chain_i, A_i, A_i)` acts on the group of
 axes `A_i` and `chain_i` is `t` restricted to that group. The two
@@ -78,7 +81,11 @@ the inputs that no output reads, and the projection `κ` creates the
 outputs that read no input, at their constant values. A chain whose two
 ends have different numbers of axes can therefore be factored. A
 transformation that does not split into at least two groups and has
-neither end is returned unchanged. With the multi-block
+neither end is returned unchanged. By default nothing is composed, so
+each factor holds the pieces of its group. The `compute=` mode composes
+inside each group, never across groups, and is a convenience: a call of
+`compute` with `factor=True` and the same mode and policy gives the same
+factors. With the multi-block
 `SubspaceTransformation` of A.8, the normal form becomes
 `[grid?, δ?, SubspaceTransformation(blocks), κ?]`, the reordering `Π` is
 absorbed into `output_axes`, and restriction to whole blocks is
@@ -97,29 +104,28 @@ element, and `κ_t` selects the volume.
 
 The groups are the connected components of the graph that links two axes
 when one reads the other, whatever the direction of the dependence. The
-pass reads the patterns with the pattern readers of A.4. For the lazy
-inverse of a matrix transformation, the reader returns the exact zeros
-of the coefficients of the inverse, and otherwise the closure of the
-pattern of the forward transformation. The closure links every pair of
-axes that the inverse links, so a group is never split wrongly, and no
-inverse is computed for it.
+pass reads the patterns with the pattern readers of A.4, so the
+partition follows the policy. The analytic policy reads the structure of
+each type (diagonal scalings and translations, permutation vectors,
+subspace axes, fully coupled fields and matrices), and a matrix couples
+all its axes. The numeric policy also reads the exact zeros of matrices,
+so that an affine with independent axes splits. For the lazy inverse of
+a matrix transformation, the numeric policy reads the exact zeros of the
+coefficients of the inverse, and otherwise the reader returns the
+closure of the pattern of the forward transformation. The closure links
+every pair of axes that the inverse links, so a group is never split
+wrongly, and no inverse is computed for it.
 
-The implementation from #104 changes in four ways. First, `factor` no
-longer composes and loses its `mode` argument, so a group whose pieces
-cannot be composed no longer prevents the rest from being factored.
-Second, the partition follows the policy: the analytic policy reads the
-structure of each type (diagonal scalings and translations, permutation
-vectors, subspace axes, fully coupled fields and matrices), and only the
-numeric policy reads the exact zero pattern of affine matrices, which #104
-does today whatever the policy. Third, each factor declares full-space
-coordinate systems, built by `factor` itself, because deriving them from
-the inner transformation would yield an open system (B.1). Fourth, the
-module `factor.py` will be renamed (for example to `factoring.py`), while
-the `factor=` keyword of `compute` stays.
+Two changes remain. Each factor will declare full-space coordinate
+systems, built by `factor` itself, because deriving them from the inner
+transformation would yield an open system (B.1). The module `factor.py`
+will be renamed (for example to `factoring.py`), while the `factor=`
+keyword of `compute` stays.
 
 `factor` is idempotent (`factor(factor(t)) is factor(t)`), never
-materialises a lazy inverse, and preserves the map. The reslice executor
-reads the normal form and asks explicitly for
+computes a lazy inverse only under the numeric policy to read its
+coefficients, and preserves the map. The reslice executor reads the
+normal form and asks explicitly for
 `compute(mode=Affine, factor=True, simplify="numeric")`, since resampling
 reads every value anyway.
 
@@ -225,7 +231,7 @@ Inside a chain, a drop is absorbed by the element before it, which is
 cut down to fewer outputs, and a creation by the element after it, which
 passes it through unchanged. The factor pass runs the same reduction,
 after the pairs that cancel at no cost have collapsed, and allows it to
-add the two ends of its normal form. When a lazy inverse is cut, the
+add the two ends of its normal form and nothing else. When a lazy inverse is cut, the
 pattern of the forward transformation under the policy decides whether
 the cut can stay lazy. When the forward map is block diagonal or block
 triangular with respect to the block, the cut is the lazy inverse of
@@ -646,14 +652,13 @@ The next pull requests, in order (#582):
    two passes of A.4 in `simplify`, add the two ends of the normal form
    to the factor pass, and remove the restrictors of #104, which is
    implemented. The factor pass reads its patterns with the pattern
-   readers and cuts its groups with the restrictors of closed blocks.
-   It reads the exact zeros of matrices whatever the policy, as #104
-   did, until the partition follows the policy;
+   readers, so that its partition follows the policy, and cuts its
+   groups with the restrictors of closed blocks. `factor` takes the
+   policy of `simplify`, and reslice asks for the numeric policy;
 3. add `Transformation.restrict`, which accepts the axis queries of #574,
    and remove the transformation-level `embed`.
 
-The remaining work makes `factor` a public pure rewrite and `compute` a
-single pass, makes reslice ask for `simplify="numeric"`, and adds the
+The remaining work makes `compute` a single pass, and adds the
 multi-block `SubspaceTransformation` and axis references by name. It
 will be checked by the parity sweep, the idempotence test and reslice
 timings. Cutting a field down to some of its own outputs, and taking the
@@ -727,9 +732,9 @@ yet:
 28. One element of a batched transformation is the restriction with `at`
     set on the batch axis.
 
-Part A, agreed with the reduction of projections. Decisions 29 to 33,
-35 and 36 are implemented (#582), and decision 34 is not implemented
-yet:
+Part A, agreed with the reduction of projections. Decisions 29 to 33
+and 35 to 37 are implemented (#582), and decision 34 is implemented
+(#587):
 
 29. The knowledge about each type is registered through two dispatched
     functions, a pattern reader and a restrictor of closed blocks, which
@@ -760,6 +765,10 @@ yet:
 36. The restrictors of decoupled blocks of #104 are removed. The factor
     pass reads its patterns with the pattern readers and cuts its groups
     with the restrictors of closed blocks.
+37. `factor` takes the policy of `simplify`, and its partition follows
+    that policy. It keeps its `compute=` mode, which composes inside the
+    groups as a convenience equivalent to a call of `compute` with
+    `factor=True`. The reslice executor asks for the numeric policy.
 
 ## Open questions
 
