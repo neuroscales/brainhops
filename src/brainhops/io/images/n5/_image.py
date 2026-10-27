@@ -135,7 +135,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
     It is `None` for a dataset that was read on its own.
     """
 
-    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
+    @smartproperty(cache=True, invalidated_by="rawdata")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The samples, assigned or decoded from `rawdata`.
 

@@ -161,7 +161,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     It is the reader option `level`.
     """
 
-    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
+    @smartproperty(cache=True, invalidated_by="rawdata")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels in the order x, y, z, assigned or decoded from `rawdata`.
 

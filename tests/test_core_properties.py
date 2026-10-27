@@ -361,6 +361,14 @@ def test_invalidated_by_needs_a_cache() -> None:
         smartproperty(lambda self: None, invalidated_by=("source",))
 
 
+def test_invalidated_by_takes_a_single_name() -> None:
+    def view(self: tx.Any) -> tx.Any:
+        return self.source
+
+    prop = smartproperty(view, cache=True, invalidated_by="source")
+    assert prop.invalidated_by == ("source",)
+
+
 # smartsetter
 
 

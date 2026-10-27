@@ -148,7 +148,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     transformations that were assigned.
     """
 
-    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
+    @smartproperty(cache=True, invalidated_by="rawdata")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels in Fortran order, assigned or decoded from `rawdata`.
 

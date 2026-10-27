@@ -365,9 +365,10 @@ file through the getter of its `data` property, which returns instead
 an array that was assigned. The property caches the proxy, not its
 values, so that `image.data is image.data`. The format reassigns
 `rawdata` when it consolidates or writes, so the cache is declared with
-`invalidated_by=("rawdata", "metadata")`: it keeps weak references to
-the two objects that the proxy was built from, and builds the proxy
-again when either attribute holds another object. A weak reference
+`invalidated_by="rawdata"`: it keeps a weak reference to the object that
+the proxy was built from, and builds the proxy again when `rawdata`
+holds another object. The image stack also reads the axis of its slices
+from its record, so its cache is invalidated by `metadata` too. A weak reference
 rather than the object keeps the cache from holding a replaced object
 alive, and rather than its `id`, which a new object may reuse once the
 old one is collected.

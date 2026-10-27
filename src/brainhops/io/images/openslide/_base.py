@@ -282,7 +282,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
     whole slide, in which it finds its level.
     """
 
-    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
+    @smartproperty(cache=True, invalidated_by="rawdata")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The pixels of the level, assigned or decoded from `rawdata`.
 

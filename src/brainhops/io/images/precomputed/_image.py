@@ -137,7 +137,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     `None`, the default, reads the finest scale.
     """
 
-    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
+    @smartproperty(cache=True, invalidated_by="rawdata")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels, assigned or decoded from `rawdata`.
 

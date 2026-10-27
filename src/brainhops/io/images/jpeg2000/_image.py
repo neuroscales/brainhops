@@ -141,7 +141,7 @@ class Jpeg2000Image(
     were assigned.
     """
 
-    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
+    @smartproperty(cache=True, invalidated_by="rawdata")
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, assigned or decoded from `rawdata`.
 

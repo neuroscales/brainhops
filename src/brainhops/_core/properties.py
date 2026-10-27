@@ -221,7 +221,7 @@ def smartproperty(
     *,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
-    invalidated_by: tx.Sequence[str] = (),
+    invalidated_by: tx.Union[str, tx.Sequence[str]] = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -234,7 +234,7 @@ def smartproperty(
     *,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
-    invalidated_by: tx.Sequence[str] = (),
+    invalidated_by: tx.Union[str, tx.Sequence[str]] = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -247,7 +247,7 @@ def smartproperty(
     *,
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
-    invalidated_by: tx.Sequence[str] = (),
+    invalidated_by: tx.Union[str, tx.Sequence[str]] = (),
 ) -> property:
     """Create a property backed by a private attribute.
 
@@ -306,7 +306,7 @@ def smartproperty(
         reads the names from the object, and a tuple may mix both. A
         setter given later with the `setter` decorator of the property
         deletes the same cached values.
-    invalidated_by : sequence of str, default=()
+    invalidated_by : str or sequence of str, default=()
         Attributes of the object that the cached value is computed from.
         The cache keeps weak references to the objects that they held
         when the value was computed, and the value is computed again when
@@ -357,6 +357,8 @@ def smartproperty(
     # The options are resolved at declaration, so that a wrong item is
     # refused there.
     invalidates = _invalidated_items(invalidates)
+    if isinstance(invalidated_by, str):
+        invalidated_by = (invalidated_by,)
     invalidated_by = tuple(invalidated_by)
     if invalidated_by and not cache:
         raise ValueError("invalidated_by needs cache=True.")
