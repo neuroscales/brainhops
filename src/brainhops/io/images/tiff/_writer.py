@@ -407,8 +407,8 @@ def write_plan(
     ----------
     plan : Plan
         The plan of the file.
-    target : str or IO
-        The local name of the file, or a stream open for writing.
+    target : PathLike or IO
+        The local path of the file, or a stream open for writing.
     encoding : Mapping[str, Any]
         The options of tifffile that encode the pixels.
 
@@ -467,10 +467,11 @@ def copy_source(source: backend.TiffSource, target: tx.Any) -> None:
     ----------
     source : TiffSource
         The source, a local file or the bytes of a file.
-    target : str or IO
-        The local name of the file, or a stream open for writing.
+    target : PathLike or IO
+        The local path of the file, or a stream open for writing.
     """
-    if isinstance(target, str) and source.filename is not None:
+    stream = hasattr(target, "write")
+    if not stream and source.filename is not None:
         shutil.copyfile(source.filename, target)
         return
     if source.content is not None:
@@ -478,11 +479,11 @@ def copy_source(source: backend.TiffSource, target: tx.Any) -> None:
     else:
         with open(source.filename, "rb") as file:
             content = file.read()
-    if isinstance(target, str):
+    if stream:
+        target.write(content)
+    else:
         with open(target, "xb") as file:
             file.write(content)
-    else:
-        target.write(content)
 
 
 # ----------------------------------------------------------------------

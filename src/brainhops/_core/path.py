@@ -3,10 +3,11 @@
 The type hints describe the files, paths and contents that the readers
 and writers accept. The helpers work on any path that [`Path`][] wraps,
 local or remote. The formats that store a header and its data in
-separate files find one from the other with [`sibling`][]. A writer replaces a local file at once with
-[`write_file`][] or [`replace_file`][], so that a lazy array that reads
-the old file is never left reading a file that is half written. A
-writer replaces a local directory, such as the store of a pyramid, with
+separate files find one from the other with [`sibling`][]. A writer
+replaces a local file at once with [`write_file`][] or
+[`replace_file`][], so that a lazy array that reads the old file is
+never left reading a file that is half written. A writer replaces a
+local directory, such as the store of a pyramid, with
 [`replace_directory`][] for the same reason.
 
 !!! warning "Internal module"
