@@ -12,7 +12,6 @@ import math
 import os
 import warnings
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -170,7 +169,7 @@ class MrtrixWarp(
     # (`"mrtrix.coord"`) as well as by `"mrtrix.field"`
     # (`"mrtrix.field.coord"`).
     HINTS = ("field",)
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mih")
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The values of the file as it stores them, or `None` without values.
@@ -228,32 +227,6 @@ class MrtrixWarp(
         if raw is None:
             return _declined(error, failure)
         return cls._score_header(raw, file)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this kind of warp.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no MRtrix
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_filename(
@@ -390,23 +363,6 @@ class MrtrixWarp(
         xform = self.consolidate(**writer_options(kwargs), **fields)
         return mrtrix_bytes(xform.metadata.raw, xform.rawdata)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a single-file, uncompressed `.mif` file to a stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-
-        Raises
-        ------
-        TypeError
-            If an unknown option is given.
-        """
-        file.write(self.to_bytes(**kwargs))
-
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write to a path, in the variant that its extension names.
 
@@ -449,22 +405,6 @@ class MrtrixWarp(
             # how they stored the values.
             self.rawdata = read_mrtrix(filename, mmap=mmap)[1]
             self.data = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path or a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path or the stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-        """
-        if isinstance(file, str):
-            file = path.Path(file)
-        if isinstance(file, (path.PathLike, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return super().to_file(file, **kwargs)
 
 
 @register_format

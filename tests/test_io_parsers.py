@@ -19,6 +19,7 @@ from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     ParserTypeError,
     SnifferContentError,
+    SnifferNotImplementedError,
     TextFileReader,
     TextFileWriter,
     WriterError,
@@ -324,6 +325,29 @@ def test_a_dispatcher_mixin_does_not_count_as_a_fileobj_override() -> None:
     assert ConcreteHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"
 
 
+class MagicSniffer(BinaryFileReader):
+    """A binary format that scores only a stream, by its first bytes."""
+
+    @classmethod
+    def sniff_fileobj(cls, file, error=False, **kwargs) -> float:  # noqa: ANN001
+        if file.read(4) == b"MAGI":
+            return Confidence.CERTAIN
+        return Confidence.NO
+
+
+def test_a_fileobj_only_sniffer_scores_bytes() -> None:
+    assert MagicSniffer.sniff_bytes(b"MAGICrest") == Confidence.CERTAIN
+    assert MagicSniffer.sniff_bytes(b"other") == Confidence.NO
+    assert MagicSniffer.sniff(b"MAGICrest") == Confidence.CERTAIN
+
+
+def test_a_sniffer_with_neither_entry_point_raises_without_recursing() -> None:
+    with pytest.raises(SnifferNotImplementedError):
+        Neither.sniff_bytes(b"data")
+    with pytest.raises(SnifferNotImplementedError):
+        Neither.sniff_fileobj(_io.BytesIO(b"data"))
+
+
 def test_text_parsers_still_decode_bytes_to_text() -> None:
     assert Greeting.from_bytes(b"HELLO world\n") == "HELLO world"
     assert Greeting.from_bytes(
@@ -405,3 +429,30 @@ def test_a_disabled_writer_raises_on_an_instance() -> None:
     with pytest.raises(WriterError, match="Write to a path instead."):
         greeting.to_bytes()
     assert list(greeting.to_lines()) == ["HELLO world"]
+
+
+# ----------------------------------------------------------------------
+#   COMPRESSION
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("suffix", [".gz", ".bz2", ".xz"])
+def test_any_format_reads_and_writes_a_compressed_file(
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    from brainhops._core.streams import decompress
+
+    target = tmp_path / ("x.greet" + suffix)
+    WritableGreeting("world").save(target)
+    content = target.read_bytes()
+    assert decompress(content) == b"HELLO world\n"
+    assert content != b"HELLO world\n"
+    assert Greeting.sniff(target) == Confidence.CERTAIN
+    assert Greeting.load(target) == "HELLO world"
+    assert Greeting.load(content) == "HELLO world"
+    assert Greeting.from_bytes(content) == "HELLO world"
+    with target.open("rb") as stream:
+        assert Greeting.sniff(stream) == Confidence.CERTAIN
+        assert stream.tell() == 0
+        assert Greeting.load(stream) == "HELLO world"

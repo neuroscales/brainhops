@@ -112,7 +112,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         return cls(metadata=metadata, **kwargs)
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as a bare affine, always `Confidence.WEAK`.
 

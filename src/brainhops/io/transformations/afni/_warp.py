@@ -2,8 +2,6 @@
 AFNI datasets (`.HEAD` and `.BRIK`)."""
 
 # stdlib
-import os
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -13,6 +11,7 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 # core
 from brainhops._core import path
 from brainhops._core.backends import array_backend
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
@@ -25,7 +24,6 @@ from brainhops.datamodel.metadata._vocabulary import FIELDS
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -242,31 +240,6 @@ class AfniBrikWarp(
         if raw is None:
             return _declined(error, failure)
         return cls._score_header(raw)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold the header of a warp.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a `.HEAD` file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no AFNI header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_filename(
@@ -586,7 +559,7 @@ class AfniBrikWarp(
         options["attributes"] = attributes
         options.update(fields, on_loss=on_loss)
         reading = reads_brik(self.rawdata, brik) or any(
-            reads_brik(self.rawdata, sibling) for sibling, _ in stale
+            reads_brik(self.rawdata, sibling) for sibling in stale
         )
         if reading:
             mmap = self.rawdata.root.mmap
@@ -599,36 +572,15 @@ class AfniBrikWarp(
             )
         record = xform.metadata.raw
         write_brik(record, xform.rawdata, brik)
-        write_file(head, record.to_bytes())
-        for _, local in stale:
-            os.remove(local)
+        atomic_write_bytes(head, record.to_bytes())
+        for sibling in stale:
+            sibling.unlink()
         if reading:
             # The warp holds what the dataset holds, and its lazy array reads
             # the new BRIK, since the lazy array of the old BRIK describes how
             # that BRIK stored the values.
             self.rawdata = brik_proxy(record, brik, mmap)
             self.data = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path, since AFNI datasets cannot be written to a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path, or a stream, which is refused.
-        **kwargs : Any
-            Arguments of [`to_filename`][].
-
-        Raises
-        ------
-        WriterError
-            If `file` is a stream.
-        """
-        if isinstance(file, str):
-            file = path.Path(file)
-        if isinstance(file, (path.PathLike, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return self.to_fileobj(file, **kwargs)
 
     to_fileobj = disabled(
         WriterError,

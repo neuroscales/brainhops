@@ -9,6 +9,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
@@ -19,8 +20,6 @@ from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -502,7 +501,7 @@ class TiffMultiScaleImage(
         **kwargs : Any
             The options of [`to_bytes`][].
         """
-        kwargs.setdefault("name", _to_filename(file))
+        kwargs.setdefault("name", path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -539,7 +538,7 @@ class TiffMultiScaleImage(
         apply_loss_policy(report, on_loss, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
-        kwargs.setdefault("name", _to_filename(filename))
+        kwargs.setdefault("name", path.base_name(filename))
         options, encoding = split_options(kwargs)
         raws = self.rawdata or ()
         reading = [
@@ -547,7 +546,7 @@ class TiffMultiScaleImage(
             for raw in raws
             if isinstance(raw, ArrayProxy)
             and isinstance(raw.root, _TiffProxy)
-            and same_file(raw.root.source.filename, filename)
+            and is_same_file(raw.root.source.filename, filename)
         ]
         if not encoding and self._copies_source(**options):
             if not reading:
@@ -579,20 +578,6 @@ class TiffMultiScaleImage(
             self.series = record.series
             self.images = None
             self.transformations = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write the pyramid to a path or a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path or the stream.
-        **kwargs : Any
-            The options of [`to_bytes`][].
-        """
-        if isinstance(file, (str, path.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return super().to_file(file, **kwargs)
 
     # --- helpers ------------------------------------------------------
 
