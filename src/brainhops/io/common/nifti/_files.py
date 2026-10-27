@@ -113,10 +113,10 @@ def _image_from_stream(
     return read(file_map, **_accepted(read, kwargs))
 
 
-def _image_to_stream(
+def write_nifti_stream(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
 ) -> None:
-    """Write a NIfTI image to an uncompressed stream.
+    """Write a NIfTI image to a stream, uncompressed.
 
     Before nibabel 5.0, which added `to_stream`, the stream is passed in a file
     map.
@@ -150,12 +150,15 @@ def _nifti_from_stream(
         raise
 
 
-def _save_nifti(
+def write_nifti_file(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
 ) -> None:
     """Write a NIfTI image to a local or remote path.
 
-    The file is compressed when its name ends with `.gz`.
+    The file is compressed when its name ends with `.gz`. A local file is
+    written beside the target and moved over it, so that the voxels of a
+    lazy image are read from the old file even when the image is written
+    over the file that it reads.
     """
     if is_local(file):
         # The file is written beside the target and moved over it, because
@@ -170,9 +173,9 @@ def _save_nifti(
     with path.Path(file).open("wb") as f:
         if compress:
             with gzip.GzipFile(fileobj=f, mode="wb") as gz:
-                _image_to_stream(image, gz)
+                write_nifti_stream(image, gz)
         else:
-            _image_to_stream(image, f)
+            write_nifti_stream(image, f)
 
 
 # ----------------------------------------------------------------------

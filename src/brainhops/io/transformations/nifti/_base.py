@@ -9,6 +9,7 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -19,15 +20,19 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
+from brainhops.io.common.nifti._files import (
+    write_nifti_file,
+    write_nifti_stream,
+)
 from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _written_nifti,
 )
 from brainhops.io.common.nifti._raw import (
     _sniffed_header,
-    read_nifti,
+    read_nifti_file,
+    read_nifti_stream,
     reads_file,
-    write_nifti,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -154,11 +159,14 @@ class NiftiBasedTransformation(
         ParserExistsError
             If the path does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
-        raw, proxy = read_nifti(filename, **kwargs)
+        if not is_local(filename):
+            # The lazy array outlives this call, so it reads a remote file
+            # from memory rather than from a stream that would be closed.
+            return cls.from_bytes(filename.read_bytes(), **kwargs)
+        raw, proxy = read_nifti_file(filename, **kwargs)
         return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
 
     @classmethod
@@ -181,7 +189,7 @@ class NiftiBasedTransformation(
         NiftiBasedTransformation
             The transformation, whose array is read lazily.
         """
-        raw, proxy = read_nifti(file, **kwargs)
+        raw, proxy = read_nifti_stream(file, **kwargs)
         return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
 
     @classmethod
@@ -303,14 +311,14 @@ class NiftiBasedTransformation(
             The writer options of [`consolidate`][].
         """
         if not reads_file(self.rawdata, filename):
-            write_nifti(self.to_nibabel(**kwargs), filename)
+            write_nifti_file(self.to_nibabel(**kwargs), filename)
             return
         self.consolidate(inplace=True, **kwargs)
-        write_nifti(self.to_nibabel(), filename)
+        write_nifti_file(self.to_nibabel(), filename)
         # The lazy array of the old file describes how that file stored
         # the values, so the transformation reads the new file, holds the
         # record of its header, and drops the views decoded before.
-        record, proxy = read_nifti(filename)
+        record, proxy = read_nifti_file(filename)
         self.rawdata = proxy
         self.metadata = type(self.metadata).from_raw(record)
         self.data = None
@@ -325,7 +333,7 @@ class NiftiBasedTransformation(
         **kwargs : Any
             The writer options of [`consolidate`][].
         """
-        write_nifti(self.to_nibabel(**kwargs), file)
+        write_nifti_stream(self.to_nibabel(**kwargs), file)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the uncompressed NIfTI encoding of the transformation.
