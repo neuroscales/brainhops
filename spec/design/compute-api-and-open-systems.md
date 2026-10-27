@@ -2,9 +2,9 @@
 
 Part B of this memo, on open coordinate systems, is implemented in #112
 and #115. Part A, on the public operations `compute`, `simplify`,
-`factor`, `restrict` and `project`, is agreed. Its first part, which
-lets `compute` read, compose and cancel projections, is implemented in
-#570, and the rest is not implemented yet.
+`factor` and `restrict`, is agreed. Its first part, which lets `compute`
+read, compose and cancel projections, is implemented in #570, and the
+rest is not implemented yet.
 
 Part A defines a small set of public operations on transformations. Part B
 lets a coordinate system state that some of its axes are unknown, which
@@ -91,29 +91,64 @@ matrix `M`, closure means `M[O, ∁I] = 0`, and decoupling adds
 is closed but not decoupled, and its restriction, the identity on x, is
 well defined.
 
-`t.restrict(input_axes, output_axes)` returns the lazy composition
-`π_O @ t @ ι_I`, where the `Projection` `ι_I` creates the input axes
-outside `I` and the `Projection` `π_O` drops the output axes outside `O`.
-No new type is needed, and the keywords match those of
-`SubspaceTransformation`. `compute(mode=False, simplify="analytic")`
-reduces the composition with two rewrites that cost nothing. Commutation,
-`π ∘ T → T' ∘ π'`, cuts `T` down to the axes that `π` keeps and moves the
-projection towards the input side. Cancellation, `π ∘ ι → Identity`,
-applies when one projection exactly undoes the other. The reduction keeps
-the type (`π ∘ Scaling` is a smaller `Scaling`), keeps lazy inverses
-lazy, and returns `t` itself when the block covers all axes. Under a
-composing mode, `compute` reduces the projections first and then composes
-the rest.
+`t.restrict(input_axes, output_axes, at=None)` returns the lazy
+composition `π_O @ t @ ι_I`, where the `Projection` `ι_I` creates the
+input axes outside `I` and the `Projection` `π_O` drops the output axes
+outside `O`. A created axis is placed at the value that `at` gives it,
+and it is free when `at` does not name it, which means that the result
+must not depend on it. No new type is needed, and the keywords match
+those of `SubspaceTransformation`.
 
-This requires five additions: created axes with value `0` (settled in
-A.8); a third kind of rule, the terminating pair rewrite; one commutation
-rule per type, replacing the restrictors of #104; coordinate systems on
-`Projection`, through `CoordinateSystem.restrict` and `embed`; and
-composers for `Projection`. The contract is that
-`t.restrict(I, O).compute()` is equivalent to `t` read from `I` to `O`
-whenever `O` is closed over `I`, and that
-`restrict(SubspaceTransformation(t, a, b), a, b)` reduces to `t`. Coupled
-blocks are handled by `project` (A.8).
+`compute` reduces the projections before it composes anything, so that
+no transformation is built over axes that are dropped afterwards. The
+projection `π` moves towards the input side by commutation,
+`π ∘ T → T' ∘ π'`: `T` is cut down to the outputs that `π` keeps, and
+`π'` drops the inputs that these outputs do not read. An embedding `ι`
+moves towards the output side through every transformation that carries
+its created axes through unchanged, such as a subspace that does not act
+on them, a permutation or an identity. When they meet, the pair rule of
+#570 merges them, and an embedding followed by the projection that drops
+the same axes cancels. The reduction keeps the type (`π ∘ Scaling` is a
+smaller `Scaling`), keeps lazy inverses lazy, and returns `t` itself when
+the block covers all axes. Under a composing mode, `compute` then
+composes what remains. A projection that cannot move through a
+transformation, because no rule applies or because the transformation
+is a lazy inverse whose structure is unknown, is composed with it as a
+matrix instead.
+
+A free axis is a created axis whose value is NaN (see below). A kept
+output that reads a free axis has no defined value, and `compute` raises
+`RestrictionError` (decision 6). When `π` meets `ι`, the inputs that the
+kept outputs read are known, so the test is structural. When a
+projection is composed as a matrix, the NaN carries the test through the
+product.
+
+`Projection` has a field `at`, which holds one value per created axis.
+Its default is `0`, the value of `projectAxis`. A number places the
+created axis at that value, which is the same map as the embedding at `0`
+followed by a translation, and NaN makes the axis free. In the matrix of
+a projection, `at` is the translation of the rows of the created axes, so
+NaN appears only in the translation column, and every product keeps it
+there. Matrix products let an exact zero coefficient cancel a NaN:
+`0 · NaN = 0`, while `c · NaN = NaN` for `c ≠ 0` and `NaN + x = NaN`.
+An output that truly depends on a free axis is reached by at least one
+path of non-zero coefficients, so it always ends with a NaN, and the
+result is never wrong. A product can still keep a NaN that two paths
+would cancel exactly, or that a coefficient left by rounding lets
+through, and `restrict` then refuses a block that is in fact closed.
+
+This requires the following additions: the field `at` of `Projection`
+and the matrix product that lets zero cancel NaN; a third kind of rule,
+the terminating pair rewrite; one commutation rule per type, replacing
+the restrictors of #104, and the rules that move an embedding through the
+transformations that carry its axes; coordinate systems on `Projection`,
+through `CoordinateSystem.restrict` and `embed`; and composers for
+`Projection`, of which the last two are implemented in #570. The contract
+is that `t.restrict(I, O, at).compute()` is equivalent to `t` read from
+`I` to `O` with the inputs that `at` names at their values, that it
+raises when an output in `O` reads an input outside `I` that `at` does
+not name, and that `restrict(SubspaceTransformation(t, a, b), a, b)`
+reduces to `t`.
 
 ### A.5 No separate `embed`
 
@@ -161,13 +196,15 @@ classes plug in, not a public extension point.
 
 The `projectAxis` transformation of OME-NGFF 0.6 has the structure of
 `Projection(dropped, created)`: `droppedInputs` are the inputs it drops,
-and `createdOutputs` are the outputs it adds, with value zero. Created
-axes are therefore `0`, with no `fill` field, and a coupled block is the
-section of `t` at `0`.
+and `createdOutputs` are the outputs it adds, with value zero. The
+default of `Projection.at` is therefore `0`. A projection whose `at`
+holds other numbers is written as a `projectAxis` followed by a
+`translation`, and a projection with a free axis is refused, since it
+never survives `compute` (A.4).
 
-The specification also exposes a correctness issue. `Projection.inverse()`
-currently swaps `dropped` and `created`, but a projection that drops an
-axis has no inverse: creating the axis at `0` is only a right inverse
+The specification also exposes a correctness issue. Swapping `dropped`
+and `created` does not invert a projection that drops an axis, which has
+no inverse: creating the axis at `0` is only a right inverse
 (`drop ∘ create = id`, while `create ∘ drop ≠ id`). It is decided that
 `inverse()` raises whenever anything is dropped, and that the cancellation
 of A.4 is one-sided: a drop after a creation of the same axes cancels, but
@@ -212,15 +249,32 @@ The other 0.6 types (`identity`, `scale`, `translation`, `affine`,
 are already covered. Version 0.6 has no `inverseOf`, so writers emit a
 closed-form inverse or wrap it in a `bijection`.
 
-#### `restrict` and `project`
+#### `restrict` with fixed and free axes
 
-Two methods with distinct contracts are clearer than a boolean flag that
-changes the meaning of one method. `t.project(input_axes, output_axes)`
-is always defined: a closed block reduces by commutation, and a coupled
-block is computed as the section of `t` with the other inputs at `0`. The
-name follows `projectAxis`. `t.restrict(...)` builds the same expression
-with the guarantee that the block is closed. It is decided that it raises
-`RestrictionError` lazily, at `compute`, when commutation cannot proceed.
+A single method, `restrict`, removes axes, and its `at` argument tells
+apart the two reasons for removing an input. When the caller means that
+the kept outputs do not depend on the input, the input is left out of
+`at`, so that it is free and `compute` refuses a block that is not
+closed. When the caller means the transformation at a value of the
+input, such as one volume of a batch (A.10) or one slice of a volume,
+`at` gives that value, and the result is the section of `t` there. A
+flag such as `allow_coupled=True` was rejected, because it would supply
+the value implicitly, as `0`, which is the silent behaviour that the
+free axes prevent, and because the caller could not choose the value. A
+separate method `project`, with removed inputs at `0` by default, was
+rejected for the same reason, and because "projection" also names the
+creation of axes, whereas `restrict` only removes them.
+
+For an affine of `(x, y, t)` restricted to `x` and `y` on both sides:
+
+| Rows of the affine                         | `at` omitted        | `at={"t": 4}`       |
+| ------------------------------------------ | ------------------- | ------------------- |
+| `x' = 2x + 1`, `y' = 3y + 2`, `t' = t + 5` | `[[2,0,1],[0,3,2]]` | `[[2,0,1],[0,3,2]]` |
+| `x' = 2x + t/2 + 1`, `y' = 3y + 2`         | `RestrictionError`  | `[[2,0,3],[0,3,2]]` |
+| `x' = 2x + 1`, `y' = 3y + 2`, `t' = t + y` | `[[2,0,1],[0,3,2]]` | `[[2,0,1],[0,3,2]]` |
+
+In the second row, `x'` reads `t`. In the third row, only the output
+`t'`, which is dropped, reads a kept input.
 
 ### A.9 Axis references: positions or names
 
@@ -229,7 +283,7 @@ between systems that list every axis. In brainhops, systems may be missing
 or open, so a position in a space of unknown width is a guess, notably
 when a pass-through has to decide which input to drop. Every axis
 reference (block axes, `Permutation`, `Projection`, and the axes of
-`restrict` and `project`) will therefore accept a position or a name.
+`restrict`) will therefore accept a position or a name.
 References are stored as given and resolved lazily against the system on
 the relevant side. A name resolves when the system has exactly one axis
 with that name, and never matches the axes that `...` stands for. Names
@@ -256,6 +310,44 @@ The pass-through rule of a multi-block `SubspaceTransformation` is:
 
 The unknown axes behind `...` pass through one to one, and no axis is ever
 dropped from inside `...`.
+
+### A.10 Batched transformations
+
+Some transformations are a family of transformations indexed by an axis,
+such as one spatial affine per volume of a time series, as estimated by
+motion correction, or the batches of transforms that X5 and ITK files
+store (#251). Batched transformations are not implemented yet (#576), but
+the operations of Part A are defined so that they treat them
+consistently.
+
+A batch axis is an axis that a transformation carries through unchanged,
+while its other outputs may depend on it. With one affine per volume, the
+spatial outputs are `A(t) x + b(t)` and the time output is `t`, so time
+is a batch axis. With slice timing, the time output is `t + δ(z)`, so
+time is not a batch axis, and the spatial outputs do not depend on `t`.
+
+The following rules hold for batched transformations:
+
+- Restricting one affine per volume to its spatial axes, with time left
+  free, raises when the result is computed, because the spatial outputs
+  read `t` and no single spatial map exists. Restricting slice timing to
+  its spatial axes is defined, because the outputs that are kept do not
+  read `t`, although the time output, which is dropped, reads `z`.
+- The transformation of one element is the restriction with `at` set on
+  the batch axis, as in `t.restrict(SpaceAxis, SpaceAxis, at={"t": k})`.
+- A batched transformation reports that its other outputs depend on the
+  batch axis. The rules of `compute` and the factor pass read which
+  outputs depend on which inputs, and a batched affine that looked like
+  a plain affine would be cut without an error.
+- A batch axis is discrete. Along a discrete axis, the resampler already
+  gathers whole samples and refuses a map that would interpolate between
+  two of them, so it selects elements of the batch and never blends them.
+  Re-expressing vectors in another frame already evaluates a frame at
+  every position of such an axis without differentiating along it, which
+  gives one Jacobian per element.
+
+How a batched transformation is stored, for example as an affine whose
+matrix has a leading batch dimension, is decided when it is implemented.
 
 ---
 
@@ -416,14 +508,26 @@ Until the commutation rules exist, a composing `compute` multiplies a
 projection into its affine neighbours, and the factor pass still leaves
 unfactored a chain whose two ends have different numbers of axes.
 
-The remaining pull requests replace the restrictors of #104 with pair
-rewrite rules, including the commutation `π ∘ T → T' ∘ π'`; add
-`Transformation.restrict` and `project` and remove the
-transformation-level `embed`; make `factor` a public pure rewrite and
-`compute` a single pass; make reslice ask for `simplify="numeric"`; and
-add the multi-block `SubspaceTransformation` and axis references by name.
-They will be checked by the parity sweep, the idempotence test and
-reslice timings.
+The next pull requests, in order:
+
+1. add the field `at` of `Projection` and the matrix product that lets
+   zero cancel NaN, and teach the OME-NGFF writer to write `at`;
+2. replace the restrictors of #104 with the rules that move projections
+   towards the input and embeddings towards the output, so that
+   `compute` reduces projections before it composes;
+3. add `Transformation.restrict`, which accepts the axis queries of #574,
+   and remove the transformation-level `embed`.
+
+The remaining work makes `factor` a public pure rewrite and `compute` a
+single pass, makes reslice ask for `simplify="numeric"`, and adds the
+multi-block `SubspaceTransformation` and axis references by name. It
+will be checked by the parity sweep, the idempotence test and reslice
+timings. Cutting a field down to some of its own outputs needs fields
+whose input and output spaces have different numbers of axes, which are
+planned separately. Until then, a projection that would cut a field
+stays next to it. Batched transformations (A.10) come after Part A,
+together with the readers and writers of the formats that store them
+(#576).
 
 ## Decisions
 
@@ -436,8 +540,9 @@ others are not implemented yet:
 3. Restriction follows `inverse`: it is a lazy composition with
    projections, reduced by `compute` through analytic rewrite rules.
 4. Created axes are `0`, as in `projectAxis`.
-5. `project`, which is always defined, and `restrict`, which raises on a
-   coupled block, are separate methods.
+5. `restrict` is the only method that removes axes. Its `at` argument
+   fixes removed inputs at values, and an input that `at` does not name
+   is free.
 6. `restrict` raises lazily, at `compute`.
 7. `Projection.inverse()` raises when the projection drops axes.
 8. A subset of integers in `mapAxis` is refused on reading.
@@ -468,6 +573,21 @@ Part B, implemented:
 23. `index` and `indices` return numbers that are entries and positions
     at once, counted from the end after `...`, and `index`, `indices`
     and `restrict` accept queries (#574).
+
+Part A, agreed with `restrict` and batched transformations, and not yet
+implemented:
+
+24. `Projection.at` gives the value of each created axis. It is `0` by
+    default, and NaN makes the axis free.
+25. Matrix products let an exact zero coefficient cancel a NaN.
+26. `compute` moves projections towards the input and embeddings towards
+    the output before it composes, and composes a projection that cannot
+    move as a matrix.
+27. A batch axis is an axis that a transformation carries through
+    unchanged while its other outputs may depend on it, and a batched
+    transformation reports that dependence.
+28. One element of a batched transformation is the restriction with `at`
+    set on the batch axis.
 
 ## Open questions
 
