@@ -1,6 +1,6 @@
 """Pattern readers and block restrictors for the built-in types.
 
-The reduction of the `reduce` module removes the axes that a chain does
+The pruning of the `prune` module removes the axes that a chain does
 not need, and the factor pass groups the axes that transform together.
 Both read which outputs of each element read which inputs, and both cut
 elements down to some of their outputs and the inputs that these read.
@@ -59,7 +59,7 @@ from ..meta import (
 )
 from ..multiscale import MultiscaleField
 from ..sequence import Sequence
-from .reduce import (
+from .prune import (
     block_restrictor,
     close_counts,
     counts_of,
@@ -535,7 +535,7 @@ def _(
 
 def _empty(inputs: tx.List[int]) -> tx.Optional[Transformation]:
     # The empty block of a transformation that can be cut is the
-    # identity on no axis, which tells the reduction that the
+    # identity on no axis, which tells the pruning that the
     # transformation can be removed when none of its outputs is needed.
     return None if inputs else Identity()
 

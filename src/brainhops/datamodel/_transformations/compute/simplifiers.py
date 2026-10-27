@@ -54,7 +54,7 @@ from ..meta import (
 from ..multiscale import MultiscaleField
 from ..sequence import Sequence, _unnest
 from .check import is_kind
-from .reduce import may_reduce, reduce_chain
+from .prune import may_prune, prune_chain
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
 from .utils import axis_list
@@ -249,7 +249,7 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
     rebuild either side and break the link between them.
 
     The axes that the chain does not need are then removed by the
-    reduction of the `reduce` module, which cuts elements down and
+    pruning of the `prune` module, which cuts elements down and
     moves, merges or cancels projections. It runs after the rounds, so
     that no lazy inverse is cut before it has had the chance to cancel,
     and the rounds run again on its result. Nothing is composed or
@@ -258,21 +258,21 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
     if policy.is_noop():
         return t
     leaves = _settle(_unnest(t.transformations), policy)
-    for _ in range(_REDUCTION_ROUNDS):
-        if len(leaves) < 2 or not may_reduce(leaves, policy):
+    for _ in range(_PRUNING_ROUNDS):
+        if len(leaves) < 2 or not may_prune(leaves, policy):
             break
-        reduced = reduce_chain(leaves, policy)
-        if reduced is None:
+        pruned = prune_chain(leaves, policy)
+        if pruned is None:
             break
-        leaves = _settle(reduced, policy)
+        leaves = _settle(pruned, policy)
     return _rebuild(t, leaves)
 
 
-# The reduction finds everything in one run, and a second run only takes
+# The pruning finds everything in one run, and a second run only takes
 # what the collapse of the projections that the first run moved makes
 # visible. The bound is a safety net against two runs that undo each
 # other.
-_REDUCTION_ROUNDS = 4
+_PRUNING_ROUNDS = 4
 
 
 def _settle(

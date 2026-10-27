@@ -10,9 +10,9 @@ implementations registered with that dispatcher.
 | conversion | `convert`     | `converters`    |
 | conversion | `simplify`    | `simplifiers`   |
 | product    | `compose`     | `composers`     |
-| reduction  | `reduce`      | `reducers`      |
+| pruning    | `prune`       | `pruners`       |
 
-The `reduce` module reads the dependency pattern of each element and
+The `prune` module reads the dependency pattern of each element and
 cuts it down to a closed block, to remove the axes that a chain does not
 need and to cut an element into the groups of the factor pass. The
 `adaptors` module bridges two consecutive transformations whose

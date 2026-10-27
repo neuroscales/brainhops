@@ -32,7 +32,7 @@ NF = [grid]? . [delta]? . F_1 . F_2 . ... . F_m . [Pi_perm]? . [kappa]?
   that read no input, at their constant values. It is omitted when every
   output reads an input.
 
-The two projections are found by the reduction of the `reduce` module,
+The two projections are found by the pruning of the `prune` module,
 which removes the axes that a chain does not need and which may, for
 this pass only, add a projection at each end of the chain. A chain whose
 two ends have different numbers of axes is therefore factored when the
@@ -47,7 +47,7 @@ unchanged.
 The reslicing code in the `separable` module reads the normal form to
 decide how to sample each group, so this module is the only place where
 axis groups are determined. Each element is cut into one piece per group
-by the block restrictors of the `reducers` module. The cut keeps a lazy
+by the block restrictors of the `pruners` module. The cut keeps a lazy
 inverse lazy when a block of its forward transformation gives it, and an
 element that lies entirely within one group is kept as the same object.
 As a result, a pair such as `Sub(warp) . Sub(warp^-1)` appears as
@@ -72,12 +72,12 @@ from brainhops.errors import (
 from ..base import Transformation
 from ..concrete import CartesianField, Identity, Permutation
 from ..meta import Projection, SubspaceTransformation
-from .reduce import (
+from .prune import (
     close_counts,
     counts_of,
-    may_reduce,
+    may_prune,
+    prune_chain,
     read_pattern,
-    reduce_chain,
     restrict_block,
     stage_counts,
 )
@@ -370,7 +370,7 @@ class _UnionFind:
 # ----------------------------------------------------------------------
 #   DEPENDENCY PATTERNS
 # ----------------------------------------------------------------------
-# The patterns are read by the pattern readers of the `reducers` module,
+# The patterns are read by the pattern readers of the `pruners` module,
 # and an element whose pattern cannot be read links all its axes. The
 # partition reads the exact zeros of matrices whatever the policy of the
 # caller, so that an affine with independent axes is split. For the lazy
@@ -658,7 +658,7 @@ def _split_ends(
     tx.List[Transformation],
     tx.Optional[Projection],
 ]:
-    # Reduce the chain, allowing it to grow by its two ends, and return
+    # Prune the chain, allowing it to grow by its two ends, and return
     # the projection that drops the unread inputs at its start, the
     # elements in between and the projection that creates the constant
     # outputs at its end. Without a policy, the ends are read from the
@@ -672,11 +672,11 @@ def _split_ends(
     if policy.is_noop():
         policy = ANALYTIC_FLOOR
     chain = list(body)
-    if may_reduce(chain, policy):
+    if may_prune(chain, policy):
         chain = _settle(chain, policy)
-        reduced = reduce_chain(chain, policy, ends=True)
-        if reduced is not None:
-            chain = reduced
+        pruned = prune_chain(chain, policy, ends=True)
+        if pruned is not None:
+            chain = pruned
     head = None
     if chain and _only_drops(chain[0]):
         head = chain.pop(0)

@@ -66,7 +66,7 @@ from .compute import adaptors as _adaptors  # noqa: F401, F403
 from .compute import checkers as _checkers  # noqa: F401, F403
 from .compute import composers as _composers  # noqa: F401, F403
 from .compute import converters as _converters  # noqa: F401, F403
-from .compute import reducers as _reducers  # noqa: F401, F403
+from .compute import pruners as _pruners  # noqa: F401, F403
 from .compute import simplifiers as _simplifiers  # noqa: F401, F403
 from .compute.check import is_kind
 from .compute.simplify import SimplifyLike, SimplifyPolicy, SimplifyTable

@@ -8,7 +8,7 @@ registered rule is exercised once.
 import numpy as np
 import pytest
 
-from brainhops.datamodel._transformations.compute.reduce import (
+from brainhops.datamodel._transformations.compute.prune import (
     restrict_block,
 )
 from brainhops.datamodel._transformations.compute.simplify import (

@@ -4,7 +4,7 @@ Part B of this memo, on open coordinate systems, is implemented in #112
 and #115. Part A, on the public operations `compute`, `simplify`,
 `factor` and `restrict`, is agreed. Its first part, which lets `compute`
 read, compose and cancel projections, is implemented in #570, and the
-values of created axes, the free axes of `restrict`, the reduction of
+values of created axes, the free axes of `restrict`, the pruning of
 projections in `simplify` and the two ends of the normal form of
 `factor` are implemented for #582. The rest is not implemented yet.
 
@@ -73,7 +73,7 @@ inverse, so that no cancellation is lost.
 axis-group normal form `[grid?, δ?, F_1, …, F_m, Π?, κ?]`, in which each
 `F_i = SubspaceTransformation(chain_i, A_i, A_i)` acts on the group of
 axes `A_i` and `chain_i` is `t` restricted to that group. The two
-optional ends come from the reduction of A.4. The projection `δ` drops
+optional ends come from the pruning of A.4. The projection `δ` drops
 the inputs that no output reads, and the projection `κ` creates the
 outputs that read no input, at their constant values. A chain whose two
 ends have different numbers of axes can therefore be factored. A
@@ -91,7 +91,7 @@ repeats the result along `t`, instead of interpolating in 4D. The
 axis-aligned slice `k = 40` of a volume, shown on a 2D grid, gives
 `[grid, F_ij, κ_k]`, so the resampler reads that slice and interpolates
 in 2D. Volume 4 of a series with one affine per volume (A.10) is
-reduced in the same way: the embedding of `t` stays before each element
+pruned in the same way: the embedding of `t` stays before each element
 that reads it, a composing `compute` folds the value of `t` into that
 element, and `κ_t` selects the volume.
 
@@ -142,9 +142,9 @@ and it is free when `at` does not name it, which means that the result
 must not depend on it. No new type is needed, and the keywords match
 those of `SubspaceTransformation`.
 
-`simplify` reduces the projections, so that `compute`, which simplifies
+`simplify` prunes the projections, so that `compute`, which simplifies
 before it composes (A.6), never builds a transformation over axes that
-are dropped afterwards. The reduction needs no rule per pair of types.
+are dropped afterwards. The pruning needs no rule per pair of types.
 Each element of a flattened chain has a dependency pattern, which says
 which of its outputs read which of its inputs. A projection is an
 element like any other: the axes that it creates are outputs that read
@@ -173,7 +173,7 @@ backward pass guarantees. A decoupled block is also closed, so the
 factor pass cuts its groups with the same restrictors, and the
 restrictors of decoupled blocks of #104 are removed. An embedding followed by the projection that drops the
 same axes cancels, and the pair rule of #570 merges two projections that
-end up next to each other. The reduction keeps the type (a cut `Scaling`
+end up next to each other. The pruning keeps the type (a cut `Scaling`
 is a smaller `Scaling`), and it returns `t` itself when nothing is
 dropped. Uncoupling that appears only in a product, such as an affine
 that adds `y` to `x` followed by another that subtracts it, is found by
@@ -217,13 +217,13 @@ there may be something to drop: when some element has different numbers
 of input and output axes, or, under the numeric policy, when the linear
 part of a matrix transformation has a zero row or a zero column.
 
-`simplify` never lengthens a chain (A.2), so a reduction that would add
+`simplify` never lengthens a chain (A.2), so a pruning that would add
 an element is not applied by `simplify`. This happens when the first
 element does not read an input, or when the last element has a constant
 output, and no projection is there to absorb the drop or the creation.
 Inside a chain, a drop is absorbed by the element before it, which is
 cut down to fewer outputs, and a creation by the element after it, which
-passes it through unchanged. The factor pass runs the same reduction,
+passes it through unchanged. The factor pass runs the same pruning,
 after the pairs that cancel at no cost have collapsed, and allows it to
 add the two ends of its normal form. When a lazy inverse is cut, the
 pattern of the forward transformation under the policy decides whether
@@ -236,7 +236,7 @@ inverse is never computed.
 
 A field is read as fully coupled, and its restrictor declines for now,
 because a field cannot yet hold a number of components different from
-the dimension of its grid (#588). Two reductions therefore wait for that
+the dimension of its grid (#588). Two prunings therefore wait for that
 work. A drop after a field does not cut the field, so the field computes
 outputs that are discarded afterwards. An embedding before a field is
 not absorbed into the field, so the resampler interpolates the field at
@@ -301,7 +301,7 @@ pass:
 3. Apply `simplify(·, policy)`, which also drops the axes that are not
    needed (A.4).
 4. If `factor` is set, apply `factor(·, policy)`, which groups what the
-   reduction leaves and has no pass of its own.
+   pruning leaves and has no pass of its own.
 5. Compose once: outside the factors, compose the runs that `mode` admits;
    inside each factor, compose its chain recursively. Each product is
    simplified as it is produced, and a product that collapses to
@@ -672,7 +672,7 @@ others are not implemented yet:
    `simplify`.
 2. The registration decorators are private.
 3. Restriction follows `inverse`: it is a lazy composition with
-   projections, reduced by `simplify` and therefore by `compute`.
+   projections, pruned by `simplify` and therefore by `compute`.
 4. Created axes are `0`, as in `projectAxis`.
 5. `restrict` is the only method that removes axes. Its `at` argument
    fixes removed inputs at values, and an input that `at` does not name
@@ -716,10 +716,10 @@ yet:
 24. `Projection.at` gives the value of each created axis. It is `0` by
     default, and NaN makes the axis free.
 25. Matrix products let an exact zero coefficient cancel a NaN.
-26. `simplify` reduces projections with two passes over the dependency
+26. `simplify` prunes projections with two passes over the dependency
     patterns of the elements of a chain. A backward pass drops the
     inputs that no needed output reads, and a forward pass carries
-    created axes and their values. A projection that cannot be reduced
+    created axes and their values. A projection that cannot be pruned
     is composed as a matrix by `compute`.
 27. A batch axis is an axis that a transformation carries through
     unchanged while its other outputs may depend on it, and a batched
@@ -727,7 +727,7 @@ yet:
 28. One element of a batched transformation is the restriction with `at`
     set on the batch axis.
 
-Part A, agreed with the reduction of projections. Decisions 29 to 33,
+Part A, agreed with the pruning of projections. Decisions 29 to 33,
 35 and 36 are implemented (#582), and decision 34 is not implemented
 yet:
 
