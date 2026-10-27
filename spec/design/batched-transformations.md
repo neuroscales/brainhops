@@ -152,45 +152,38 @@ because no type checks the shape of its data today.
 
 ### Building a batch
 
-Every concrete class has a method `batch`, which builds a batch of its
-own type from a stacked array without creating any element. It takes
+Every concrete class has a class method `batch`, which builds a batch of
+its own type from a stacked array without creating any element. It takes
 the stack, or one of the views of the class, such as
 `homogeneous_matrix`, `field` or `coefficients`, together with
-`batch_axes` and `positions`. Every other keyword of the constructor of
-the class is accepted too.
-
-`batch` can be called on the class or on an instance. On an instance,
-the instance serves as a template: every keyword that is not given is
-taken from it, which includes the encoding (such as `degree`, `bound`,
-`store` and `log`) and the input and output systems, while its own data
-is not used. On the class, the defaults of the class are used.
+`batch_axes` and `positions`. The encoding of the elements, such as
+`degree`, `bound`, `store` and `log`, and their systems are given as the
+other keywords of the constructor of the class, whose defaults apply to
+the keywords that are not given.
 
 ```python
 Affine.batch(matrices, batch_axes=["t"])
 Affine.batch(homogeneous_matrix=matrices, batch_axes=["t"])
-field.batch(fields, batch_axes=["t"])  # with the degree of `field`
+DisplacementField.batch(fields, batch_axes=["t"], degree=3)
 ```
 
-The systems that `batch` receives, or takes from the template, are those
-of one element. The batch axes are new axes, given as axes or as names,
-and a name stands for a discrete axis with that name. They are placed
-after the axes of the elements, which is the order of the axes of an
-image such as `(x, y, z, t)`, whereas the data always keeps the batch
-dimensions first. A batch whose axes are in another order is built with
-the constructor of `BatchedTransformation`, from systems of the whole
-space.
+The systems that `batch` receives are those of one element. The batch
+axes are new axes, given as axes or as names, and a name stands for a
+discrete axis with that name. They are placed after the axes of the
+elements, which is the order of the axes of an image such as
+`(x, y, z, t)`, whereas the data always keeps the batch dimensions first. A batch
+whose axes are in another order is built with the constructor of
+`BatchedTransformation`, from systems of the whole space.
 
-A method that works on both a class and an instance needs a small
-descriptor, which does not exist in the code base yet. Since `batch`
-accepts the views of the class, the conversions between a view and the
-stored data must work on stacks, which the first step of section 9
-provides. When `batch` is called on the class of a file format, or on
-an instance of one, the element type is the data-model class of that
-format, because the metadata of a format describes one record of a file
-and not one element of a batch. A class that holds no data, such as
-`Identity`, refuses `batch`, since a batch of identities is the
-identity. The meta transformations, whose parameters are other
-transformations, have no `batch` either.
+Since `batch` accepts the views of the class, the conversions between a
+view and the stored data must work on stacks, which the first step of
+section 9 provides. When `batch` is called on the class of a file
+format, the element type is the data-model class of that format, because
+the metadata of a format describes one record of a file and not one
+element of a batch. A class that holds no data, such as `Identity`,
+refuses `batch`, since a batch of identities is the identity. The meta
+transformations, whose parameters are other transformations, have no
+`batch` either.
 
 `BatchedTransformation.stack(elements, batch_axes=...)` builds a batch
 from instances that already exist, and copies their data into one
