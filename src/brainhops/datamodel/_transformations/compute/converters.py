@@ -32,7 +32,12 @@ from ..concrete import (
     _is_tangent,
     _values2data,
 )
-from ..meta import Projection, SubspaceTransformation, _close_subspace
+from ..meta import (
+    Projection,
+    SubspaceTransformation,
+    _close_subspace,
+    _created_values,
+)
 from ..sequence import Sequence
 from ..tangents import (
     AffineExponential,
@@ -42,7 +47,7 @@ from ..tangents import (
     StationaryVelocityField,
 )
 from .convert import convert, converter
-from .utils import axis_counts, axis_list, get_ndim
+from .utils import affine_product, axis_counts, axis_list, get_ndim
 
 # typing
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
@@ -515,11 +520,18 @@ def _projection_to_matrix(
     t: Projection, cls: tx.Type[TRANSFORMATION], homogeneous: bool, **kwargs
 ) -> TRANSFORMATION:
     # The matrix of a projection selects the kept input axes, in order,
-    # and has a row of zeros for each created axis, whose coordinate is
-    # zero. Its size is read from the systems of the projection, which a
-    # composer closes from a neighbour when they are missing.
+    # and has a row of zeros for each created axis, whose translation is
+    # the value of that axis. Its size is read from the systems of the
+    # projection, which a composer closes from a neighbour when they are
+    # missing.
     if t.is_identity():
         return convert(convert(t, Identity), cls, **kwargs)
+    values = _created_values(t)
+    if not homogeneous and any(value != 0 for value in values):
+        raise ConversionError(
+            "This projection creates axes at values other than zero, so "
+            "it is affine and not linear."
+        )
     n_in, n_out = axis_counts(t)
     if n_in is None or n_out is None:
         raise ConversionError(
@@ -539,6 +551,8 @@ def _projection_to_matrix(
     if "matrix" not in kwargs:
         matrix = np.zeros((n_out, n_in + 1 if homogeneous else n_in))
         matrix[rows, kept] = 1.0
+        if homogeneous:
+            matrix[created, -1] = values
         kwargs["matrix"] = matrix
     kwargs.setdefault("input", t.input)
     kwargs.setdefault("output", t.output)
@@ -585,11 +599,7 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
         if matrix is None:
             matrix = block
             continue
-        xp = array_backend(block)
-        product = xp.empty_like(block, shape=(block.shape[0], matrix.shape[1]))
-        product[:, :-1] = block[:, :-1] @ matrix[:, :-1]
-        product[:, -1:] = block[:, :-1] @ matrix[:, -1:] + block[:, -1:]
-        matrix = product
+        matrix = affine_product(block, matrix)
     return cls(matrix=matrix, input=t.input, output=t.output)
 
 

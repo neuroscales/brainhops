@@ -49,6 +49,7 @@ from ..meta import (
     Bijection,
     Projection,
     SubspaceTransformation,
+    _created_values,
     _same_axes,
 )
 from ..multiscale import MultiscaleField
@@ -308,9 +309,11 @@ def _(
 # --- Projections ------------------------------------------------------
 # Two consecutive projections are one projection, because each keeps the
 # order of the axes that it does not drop. Merging them reads only the
-# positions of the axes, so it costs nothing. An embedding followed by the
-# projection that drops the same axes merges into the identity, while the
-# reverse order merges into a projection that sets these axes to zero.
+# positions of the axes and the values of the created axes, so it costs
+# nothing. An embedding followed by the projection that drops the same axes
+# merges into the identity, whatever the values of these axes, and a free
+# axis that is dropped therefore disappears. The reverse order merges into
+# a projection that sets these axes to their values.
 
 
 @simplifier
@@ -320,12 +323,13 @@ def _(
     merged = _merge_projections(first, second)
     if merged is None:
         return None
-    dropped, created = merged
+    dropped, created, at = merged
     if not dropped and not created:
         return Identity(input=first.input, output=second.output)
     return Projection(
         dropped=dropped,
         created=created,
+        at=at if any(value != 0 for value in at) else (),
         input=first.input,
         output=second.output,
     )
@@ -333,13 +337,15 @@ def _(
 
 def _merge_projections(
     first: Projection, second: Projection
-) -> tx.Optional[tx.Tuple[tx.List[int], tx.List[int]]]:
-    """Return the axes that two consecutive projections drop and create.
+) -> tx.Optional[tx.Tuple[tx.List[int], tx.List[int], tx.List[float]]]:
+    """Return what two consecutive projections drop and create, and where.
 
-    The axes after the last position that either projection names pass
-    through both unchanged, so the merge is computed in a space just wide
-    enough to hold every position, and holds in any wider space. `None`
-    is returned when a position is negative.
+    The result holds the dropped input axes, the created output axes and
+    the value of each created axis. The axes after the last position that
+    either projection names pass through both unchanged, so the merge is
+    computed in a space just wide enough to hold every position, and
+    holds in any wider space. `None` is returned when a position is
+    negative.
     """
     d1, c1 = axis_list(first.dropped), axis_list(first.created)
     d2, c2 = axis_list(second.dropped), axis_list(second.created)
@@ -348,22 +354,27 @@ def _merge_projections(
     width = 1 + max(d1 + c1 + d2 + c2, default=-1) + len(d1) + len(d2)
 
     def sources(
-        inputs: tx.List[tx.Optional[int]],
+        inputs: tx.List[tx.Any],
         dropped: tx.List[int],
         created: tx.List[int],
-    ) -> tx.List[tx.Optional[int]]:
-        # Each output holds the input that it comes from, or None for a
-        # created axis.
+        values: tx.List[float],
+    ) -> tx.List[tx.Any]:
+        # Each output holds the input that it comes from, or the value of
+        # a created axis, wrapped in a tuple to tell it from an input.
         kept = iter(x for i, x in enumerate(inputs) if i not in dropped)
+        value = dict(zip(created, values))
         size = len(inputs) - len(dropped) + len(created)
-        return [None if o in created else next(kept) for o in range(size)]
+        return [(value[o],) if o in value else next(kept) for o in range(size)]
 
-    middle = sources(list(range(width)), d1, c1)
-    outputs = sources(middle, d2, c2)
-    reached = set(o for o in outputs if o is not None)
+    middle = sources(list(range(width)), d1, c1, _created_values(first))
+    outputs = sources(middle, d2, c2, _created_values(second))
+    reached = set(o for o in outputs if not isinstance(o, tuple))
     dropped = [i for i in range(width) if i not in reached]
-    created = [o for o, source in enumerate(outputs) if source is None]
-    return dropped, created
+    created = [
+        o for o, source in enumerate(outputs) if isinstance(source, tuple)
+    ]
+    at = [outputs[o][0] for o in created]
+    return dropped, created, at
 
 
 # --- Cancellation -----------------------------------------------------

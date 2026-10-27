@@ -4,7 +4,8 @@ Part B of this memo, on open coordinate systems, is implemented in #112
 and #115. Part A, on the public operations `compute`, `simplify`,
 `factor` and `restrict`, is agreed. Its first part, which lets `compute`
 read, compose and cancel projections, is implemented in #570, and the
-rest is not implemented yet.
+values of created axes and the free axes of `restrict` are implemented
+for #582. The rest is not implemented yet.
 
 Part A defines a small set of public operations on transformations. Part B
 lets a coordinate system state that some of its axes are unknown, which
@@ -121,7 +122,11 @@ output that reads a free axis has no defined value, and `compute` raises
 `RestrictionError` (decision 6). When `π` meets `ι`, the inputs that the
 kept outputs read are known, so the test is structural. When a
 projection is composed as a matrix, the NaN carries the test through the
-product.
+product. Composers call `compute` on partial products, in which a free
+axis may still reach an output that a later projection drops, so only
+the outermost call checks its result. Until the commutation rules exist,
+only a `compute` that composes checks it, since `simplify` leaves the
+projections in place.
 
 `Projection` has a field `at`, which holds one value per created axis.
 Its default is `0`, the value of `projectAxis`. A number places the
@@ -508,11 +513,11 @@ Until the commutation rules exist, a composing `compute` multiplies a
 projection into its affine neighbours, and the factor pass still leaves
 unfactored a chain whose two ends have different numbers of axes.
 
-The next pull requests, in order:
+The next pull requests, in order (#582):
 
 1. add the field `at` of `Projection`, the matrix product that lets
    zero cancel NaN and the check of `compute` for free axes, and make the
-   OME-NGFF writer refuse a free axis;
+   OME-NGFF writer refuse a free axis, which is implemented;
 2. replace the restrictors of #104 with the rules that move projections
    towards the input and embeddings towards the output, so that
    `compute` reduces projections before it composes;
@@ -575,8 +580,8 @@ Part B, implemented:
     at once, counted from the end after `...`, and `index`, `indices`
     and `restrict` accept queries (#574).
 
-Part A, agreed with `restrict` and batched transformations, and not yet
-implemented:
+Part A, agreed with `restrict` and batched transformations. Decisions 24
+and 25 are implemented (#582), and the others are not implemented yet:
 
 24. `Projection.at` gives the value of each created axis. It is `0` by
     default, and NaN makes the axis free.

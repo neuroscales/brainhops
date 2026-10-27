@@ -45,7 +45,7 @@ from ..meta import (
 )
 from ..sequence import Sequence, _interpolates
 from .compose import compose, composer
-from .utils import axis_counts
+from .utils import affine_product, axis_counts
 
 # ----------------------------------------------------------------------
 #     SEQUENCE
@@ -86,12 +86,9 @@ def _(To: Sequence, Ti: Sequence) -> Transformation:
 
 @composer
 def _(To: Affine, Ti: Affine) -> Affine:
-    xp = array_backend(To.matrix)
-    No = To.matrix.shape[0]
-    Ni = Ti.matrix.shape[1] - 1
-    A = xp.empty_like(To.matrix, shape=(No, Ni + 1))
-    A[:, :-1] = To.matrix[:, :-1] @ Ti.matrix[:, :-1]
-    A[:, -1:] = To.matrix[:, :-1] @ Ti.matrix[:, -1:] + To.matrix[:, -1:]
+    # A NaN in the translation of `Ti` is a free axis, which only the
+    # outputs that read it inherit (see `affine_product`).
+    A = affine_product(To.matrix, Ti.matrix)
     return Affine(matrix=A, input=Ti.input, output=To.output)
 
 

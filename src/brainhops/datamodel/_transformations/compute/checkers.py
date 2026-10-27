@@ -60,6 +60,7 @@ from ..meta import (
     MetaTransformation,
     Projection,
     SubspaceTransformation,
+    _created_values,
 )
 from ..sequence import Sequence
 from .check import checker, is_kind, register_kind_alias
@@ -943,14 +944,15 @@ def _subspace_member(
 
 
 def _projection_member(proj: Projection, node: type, compute: bool) -> bool:
-    # A projection is linear, because created axes are zero. A projection
-    # that only drops axes is also surjective, one that only creates axes
-    # is injective, and one that does neither is the identity.
+    # A projection is affine, and linear when its created axes are at zero.
+    # A projection that only drops axes is also surjective, one that only
+    # creates axes is injective, and one that does neither is the identity.
     dropped = 0 if proj.dropped is None else len(proj.dropped)
     created = 0 if proj.created is None else len(proj.created)
     if not dropped and not created:
         return issubclass(kinds.Identity, node)
-    if issubclass(kinds.Linear, node):
+    at_zero = all(value == 0 for value in _created_values(proj))
+    if issubclass(kinds.Linear if at_zero else kinds.Affine, node):
         return True
     if dropped and not created:
         return issubclass(kinds.Surjection, node)

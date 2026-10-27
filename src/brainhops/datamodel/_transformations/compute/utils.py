@@ -1,8 +1,12 @@
+import contextlib
+import contextvars
+
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core.backends import array_backend
 from brainhops.datamodel._sugar import get_axes
-from brainhops.errors import ConversionError
+from brainhops.errors import ConversionError, RestrictionError
 
 if tx.TYPE_CHECKING:
     from brainhops.datamodel.systems import CoordinateSystem
@@ -260,3 +264,94 @@ def affine_matrix(t: "Transformation") -> tx.Any:
         return UNREADABLE
     matrix = affine.matrix
     return None if matrix is None else np.asarray(matrix)
+
+
+def affine_product(outer: tx.Any, inner: tx.Any) -> tx.Any:
+    """Return the matrix of an affine applied after another.
+
+    Both matrices are homogeneous without their last row, so that the last
+    column holds the translation. The translation of `inner` may hold NaN
+    for an axis created free by a projection. In the product, an exact
+    zero coefficient of `outer` cancels such a NaN, while a non-zero
+    coefficient carries it into the translation of the output. The
+    outputs of `outer` that do not read a free axis are therefore
+    unaffected by it.
+    """
+    xp = array_backend(outer)
+    linear, shift = outer[:, :-1], outer[:, -1:]
+    product = xp.empty_like(outer, shape=(outer.shape[0], inner.shape[1]))
+    product[:, :-1] = linear @ inner[:, :-1]
+    translation = inner[:, -1:]
+    free = xp.isnan(translation)
+    if not bool(xp.any(free)):
+        product[:, -1:] = linear @ translation + shift
+        return product
+    finite = xp.where(free, xp.zeros_like(translation), translation)
+    reads = (linear != 0) @ xp.astype(free, linear.dtype) > 0
+    product[:, -1:] = xp.where(
+        reads, xp.full_like(shift, float("nan")), linear @ finite + shift
+    )
+    return product
+
+
+# ----------------------------------------------------------------------
+#   FREE AXES
+# ----------------------------------------------------------------------
+# A projection may create an axis whose value is NaN, which the result of
+# `compute` must not depend on. Composers call `compute` on partial
+# products, in which such an axis may still reach an output that a later
+# projection drops, so only the outermost call checks its result, and only
+# when it composes, since `simplify` leaves the projections in place.
+
+_COMPUTE_DEPTH: contextvars.ContextVar = contextvars.ContextVar(
+    "compute_depth", default=0
+)
+
+
+@contextlib.contextmanager
+def outermost_compute() -> tx.Iterator[bool]:
+    """Track nested calls to `compute`, and tell whether this one is first."""
+    depth = _COMPUTE_DEPTH.get()
+    token = _COMPUTE_DEPTH.set(depth + 1)
+    try:
+        yield depth == 0
+    finally:
+        _COMPUTE_DEPTH.reset(token)
+
+
+def refuse_free_axes(t: "Transformation") -> None:
+    """Raise if a computed transformation depends on a free axis.
+
+    A free axis is created by a projection whose `at` holds NaN. The
+    result depends on it when such a projection is left in it, or when an
+    affine holds the NaN that the axis carries into the outputs that read
+    it. Fields are not inspected, because they may hold NaN for other
+    reasons.
+
+    Raises
+    ------
+    RestrictionError
+        If the transformation depends on a free axis.
+    """
+    from ..concrete import Affine
+    from ..meta import Projection, SubspaceTransformation, _has_free_axes
+    from ..sequence import Sequence
+
+    def depends(leaf: tx.Any) -> bool:
+        if isinstance(leaf, Sequence):
+            return any(depends(x) for x in leaf.transformations or [])
+        if isinstance(leaf, SubspaceTransformation):
+            return depends(leaf.transformation)
+        if isinstance(leaf, Projection):
+            return _has_free_axes(leaf)
+        if type(leaf) is Affine and leaf.matrix is not None:
+            xp = array_backend(leaf.matrix)
+            return bool(xp.any(xp.isnan(leaf.matrix)))
+        return False
+
+    if depends(t):
+        raise RestrictionError(
+            "The result depends on an axis that a projection creates free, "
+            "with NaN in `at`, so it has no defined value. Give the axis a "
+            "value, or keep only the outputs that do not read it."
+        )
