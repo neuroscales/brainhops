@@ -368,7 +368,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
     encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The stored vectors as an (X, Y, Z, 3) array.
 

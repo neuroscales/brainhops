@@ -224,7 +224,7 @@ class FnirtWarpField(
     encodes it into `rawdata`.
     """
 
-    @smartproperty
+    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The array of the file, as FSL stores it.
 

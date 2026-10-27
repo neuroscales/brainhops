@@ -344,6 +344,55 @@ def test_cached_value_reads_a_cache_without_computing_it() -> None:
     assert cached_value(box, "value") is None
 
 
+def _sourced_box() -> type:
+    # A class whose cached `view` is computed from `source`, which it names
+    # in `invalidated_by`, and which counts how often it is computed.
+    class Box:
+        computed = 0
+
+        def __init__(self, source: tx.Any) -> None:
+            self.source = source
+            self._view = None
+
+        @smartproperty(cache=True, invalidated_by=("source",))
+        def view(self) -> tx.Any:
+            type(self).computed += 1
+            return ("view of", self.source)
+
+    return Box
+
+
+def test_invalidated_by_computes_again_for_another_source() -> None:
+    cls = _sourced_box()
+    first, second = [1], [1]
+    box = cls(first)
+    view = box.view
+    assert box.view is view and cls.computed == 1
+    # The same object, even changed in place, keeps the cached value.
+    first.append(2)
+    assert box.view is view and cls.computed == 1
+    # Another object, even an equal one, computes the value again.
+    box.source = second
+    assert box.view is not view and cls.computed == 2
+    assert box.view[1] is second and cls.computed == 2
+
+
+def test_cached_value_is_none_for_another_source() -> None:
+    cls = _sourced_box()
+    box = cls([1])
+    view = box.view
+    assert cached_value(box, "view") is view
+    box.source = [1]
+    assert cached_value(box, "view") is None
+    drop_cache(box, "view")
+    assert cached_value(box, "view") is None
+
+
+def test_invalidated_by_needs_a_cache() -> None:
+    with pytest.raises(ValueError):
+        smartproperty(lambda self: None, invalidated_by=("source",))
+
+
 # smartsetter
 
 

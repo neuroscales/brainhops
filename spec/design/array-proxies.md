@@ -362,7 +362,16 @@ and cached.
 An object has no `dataobj` attribute besides `data`, since the
 two would be the same array. A file format gives the lazy array of its
 file through the getter of its `data` property, which returns instead
-an array that was assigned.
+an array that was assigned. The property caches the proxy, not its
+values, so that `image.data is image.data`. The format reassigns
+`rawdata` when it consolidates or writes, so the cache is declared with
+`invalidated_by=("rawdata", "metadata")`: it keeps the two objects that
+the proxy was built from, and builds the proxy again when either
+attribute holds another object.
+
+`to_device` reads a proxy onto the device that it is asked for, as
+`to_backend` reads it under `"native"`, so that a computation that moves
+its operands to a GPU never leaves a proxy among them.
 
 A computation finds the package of a proxy with `array_backend`, which
 gives the package of the array that `to_backend` makes of it: NumPy for

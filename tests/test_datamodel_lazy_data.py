@@ -177,3 +177,16 @@ def test_a_compressed_tiff_is_decoded_at_each_read(
     np.testing.assert_array_equal(image.data, pixels.T)
     np.testing.assert_array_equal(image.data, pixels.T)
     assert len(decodes) == 2
+
+
+def test_the_lazy_array_is_kept_until_the_file_changes(tmp_path) -> None:  # noqa: ANN001
+    # The lazy array of the file is built once, and built again when the
+    # image is given another lazy array of a file.
+    image = _nifti(tmp_path)
+    data = image.data
+    assert image.data is data
+    (tmp_path / "other").mkdir()
+    other = _nifti(tmp_path / "other", VOLUME + 1)
+    image.rawdata = other.rawdata
+    assert image.data is not data
+    np.testing.assert_array_equal(image.data, VOLUME + 1)

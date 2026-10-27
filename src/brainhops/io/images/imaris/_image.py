@@ -148,7 +148,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
     were assigned.
     """
 
-    @smartproperty
+    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The voxels, indexed `(x, y, z, t, c)`, assigned or decoded from
         `rawdata`.

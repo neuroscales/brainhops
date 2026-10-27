@@ -18,6 +18,7 @@ netcdf_file = pytest.importorskip("scipy.io").netcdf_file
 
 import brainhops.io as io  # noqa: E402
 from brainhops._core.backends import backend  # noqa: E402
+from brainhops._core.proxy import ArrayProxy  # noqa: E402
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
@@ -391,7 +392,8 @@ def test_header_only_until_data(anyminc) -> None:  # noqa: ANN001
         assert "_cache_data" not in vars(image)
         assert image.shape == (6, 5, 4)
         image.data  # noqa: B018
-        assert "_cache_data" not in vars(image)
+        # The cached data are the lazy array of the file, not its values.
+        assert isinstance(vars(image)["_cache_data"], ArrayProxy)
 
 
 def test_convert_to_nifti(tmp_path, anyminc) -> None:  # noqa: ANN001

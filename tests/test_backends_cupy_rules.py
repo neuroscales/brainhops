@@ -196,3 +196,13 @@ def test_a_proxy_is_read_before_it_meets_the_gpu(cp) -> None:  # noqa: ANN001
     _on_gpu(cp, to_backend_of(_proxy(VOLUME), gpu), VOLUME)
     converted = to_promoted_backend(gpu, _proxy(VOLUME), dtype=np.float64)
     assert all(x.dtype == np.float64 for x in converted)
+
+
+def test_to_device_reads_a_proxy_onto_the_device(cp) -> None:  # noqa: ANN001
+    from brainhops._core.backends import to_device
+
+    _on_gpu(cp, to_device(_proxy(VOLUME), "cuda"), VOLUME)
+    on_cpu = to_device(_proxy(VOLUME), "cpu")
+    assert isinstance(on_cpu, np.ndarray)
+    np.testing.assert_array_equal(on_cpu, VOLUME)
+    assert to_device(None, "cuda") is None

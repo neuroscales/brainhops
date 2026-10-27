@@ -447,12 +447,16 @@ def to_device(
     """Copy an array to a GPU or to memory, keeping its package kind.
 
     A Dask array stays a Dask array, with CuPy or NumPy chunks, and an
-    array in memory becomes a CuPy or a NumPy array. An array that is
-    already on that device, or that is not an array, is returned as it
-    is.
+    array in memory becomes a CuPy or a NumPy array. A lazy array, such
+    as the array of a file, is read onto the device: it becomes a NumPy
+    or a CuPy array when it is small, and a Dask array of NumPy or CuPy
+    chunks when it is large, as `"auto"` decides (see [`to_backend`][]).
+    An array that is already on that device, or a value that is not an
+    array, is returned as it is.
     """
-    if not _is_loaded(x):
+    if not hasattr(x, "shape"):
         return x
+    x = to_backend(x, "native")
     if _compatible_device(x, device):
         return x
     to_gpu, device = _normalize_device(device)
@@ -597,7 +601,7 @@ def to_promoted_backend(
     # Each array is first converted with the setting, which reads a lazy
     # array of a file and leaves a loaded array as it is under "native".
     arrays = tuple(to_backend(x, dtype=dtype) for x in arrays)
-    if any(_on_gpu(x) for x in arrays if _is_loaded(x)):
+    if any(_on_gpu(x) for x in arrays):
         arrays = tuple(to_device(x, "cuda") for x in arrays)
     return arrays
 
@@ -607,8 +611,8 @@ def to_backend_of(
 ) -> ArrayProtocol:
     """Move an array to the backend of a reference array.
 
-    A lazy array, such as the array of a file, is first converted as
-    [`to_backend`][] converts it under `"native"`.
+    A lazy array, such as the array of a file, is read onto that device
+    (see [`to_device`][]).
 
     Parameters
     ----------
@@ -625,10 +629,7 @@ def to_backend_of(
     Any
         The moved array.
     """
-    x = to_backend(x, "native")
-    if not _is_loaded(x) or not _is_loaded(reference):
-        return x
-    device = get_device(reference)
+    device = get_device(reference) if _is_loaded(reference) else None
     if device is None:
         device = "cpu"
     return to_device(x, device=device, **kwargs)

@@ -103,11 +103,13 @@ def test_read_plain_is_a_transposed_memory_map(tmp_path: Path) -> None:
 
 
 def test_read_is_lazy(tmp_path: Path) -> None:
-    # The data are the lazy array of the file, which is not cached.
+    # The data are the lazy array of the file, which is cached, and its
+    # values are read at each computation.
     image = load(_write(tmp_path, "a.tif", GREY))
-    assert not isinstance(image.data, np.ndarray)
-    np.testing.assert_array_equal(image.data, GREY.T)
     assert not hasattr(image, "_cache_data")
+    assert not isinstance(image.data, np.ndarray)
+    assert image.data is image.data
+    np.testing.assert_array_equal(image.data, GREY.T)
 
 
 def test_read_compressed_is_decoded(tmp_path: Path) -> None:

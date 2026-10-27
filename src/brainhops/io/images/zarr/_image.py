@@ -139,7 +139,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
     the transformations that were assigned.
     """
 
-    @smartproperty
+    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, assigned or decoded from `rawdata`.
 

@@ -159,7 +159,9 @@ Assigned data is pending. A format takes the private `_data` field of
 its model over, with `_data: ... = Inherit("_data", default=None)`.
 Its `data` property is a `smartproperty` whose getter returns the view
 `to_model(rawdata)`, and which returns instead the array stored in
-`_data` when there is one. `None` in `_data` means that `data` is the
+`_data` when there is one. The view is cached until `rawdata` or
+`metadata` holds another object (the option `invalidated_by` of
+`smartproperty`). `None` in `_data` means that `data` is the
 view of `rawdata`. Assigning `data` stores the array in `_data`, and it
 never changes `rawdata`. The data model of a transformation already stores its
 data in `_data`, and a format whose model is a chain, such as a NIfTI

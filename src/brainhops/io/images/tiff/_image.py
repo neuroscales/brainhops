@@ -258,7 +258,7 @@ class TiffImage(
     the whole series, in which it finds its level.
     """
 
-    @smartproperty
+    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The image data, assigned or decoded from `rawdata`.
 

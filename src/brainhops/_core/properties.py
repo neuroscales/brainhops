@@ -231,6 +231,7 @@ def smartproperty(
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
     convert: tx.Optional[_Converter] = None,
+    invalidated_by: tx.Sequence[str] = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -245,6 +246,7 @@ def smartproperty(
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
     convert: tx.Optional[_Converter] = None,
+    invalidated_by: tx.Sequence[str] = (),
 ) -> tx.Callable[[_Getter], property]: ...
 
 
@@ -259,6 +261,7 @@ def smartproperty(
     cache: bool = False,
     invalidates: _InvalidatesLike = (),
     convert: tx.Optional[_Converter] = None,
+    invalidated_by: tx.Sequence[str] = (),
 ) -> property:
     """Create a property backed by a private attribute.
 
@@ -287,6 +290,9 @@ def smartproperty(
     - `unset=` says which stored values read as unset.
     - `convert=` transforms the value at each read, without changing
       what is stored or cached.
+    - `invalidated_by=` names the attributes that a cached value is
+      computed from, so that it is computed again when one of them holds
+      another object.
 
     Every setter, whether it is the default setter, a setter given with
     `fset=`, or a setter added with `@name.setter`, deletes the cached
@@ -333,6 +339,12 @@ def smartproperty(
         stored or computed. Its result is returned and is neither stored
         nor cached, so the stored or cached value stays as it was. A
         value of `None` is returned as it is.
+    invalidated_by : sequence of str, default=()
+        Attributes of the object that the cached value is computed from.
+        The cache keeps the objects that they held when the value was
+        computed, and the value is computed again when one of them holds
+        another object. A change made to the same object in place is not
+        seen. It needs `cache=True`.
 
     Returns
     -------
@@ -343,7 +355,8 @@ def smartproperty(
     Raises
     ------
     ValueError
-        If `unset` is an empty tuple.
+        If `unset` is an empty tuple, or if `invalidated_by` is given
+        without `cache=True`.
     TypeError
         If `unset` has any other invalid type, or if an item of
         `invalidates` is neither a name nor an `Invalidator`.
@@ -359,6 +372,7 @@ def smartproperty(
     cache=False,
     invalidates=(),
     convert=None,
+    invalidated_by=(),
 ):
     # The form of unset is resolved once, at declaration, so that a wrong
     # value is refused there and the getter tests a single predicate.
@@ -377,6 +391,7 @@ def smartproperty(
                 cache=cache,
                 invalidates=invalidates,
                 convert=convert,
+                invalidated_by=invalidated_by,
             )
 
         return decorate
@@ -384,6 +399,9 @@ def smartproperty(
     # Like unset, invalidates is resolved at declaration, so that a wrong
     # item is refused there.
     invalidates = _invalidated_items(invalidates)
+    invalidated_by = tuple(invalidated_by)
+    if invalidated_by and not cache:
+        raise ValueError("invalidated_by needs cache=True.")
 
     if isinstance(fget, str):
         name = fget
@@ -391,7 +409,14 @@ def smartproperty(
     else:
         name = fget.__name__
 
-    fget = _make_fget(name, fget, is_unset, set=fset is not False, cache=cache)
+    fget = _make_fget(
+        name,
+        fget,
+        is_unset,
+        set=fset is not False,
+        cache=cache,
+        invalidated_by=invalidated_by,
+    )
     if convert is not None:
         fget = _converting_fget(fget, convert)
 
@@ -400,7 +425,9 @@ def smartproperty(
     if fset is not None:
         fset = _wrap_fset(name, fset, cache, invalidates)
 
-    return _SmartProperty(fget, fset, fdel, doc, name, cache, invalidates)
+    return _SmartProperty(
+        fget, fset, fdel, doc, name, cache, invalidates, invalidated_by
+    )
 
 
 class _SmartProperty(property):
@@ -426,11 +453,13 @@ class _SmartProperty(property):
         name: str = "",
         cache: bool = False,
         invalidates: tx.Tuple[tx.Union[str, Invalidator], ...] = (),
+        invalidated_by: tx.Tuple[str, ...] = (),
     ) -> None:
         super().__init__(fget, fset, fdel, doc)
         self.name = name
         self.cache = cache
         self.invalidates = invalidates
+        self.invalidated_by = invalidated_by
 
     def getter(self, fget: _Getter) -> property:
         """Return a copy of the property with another getter.
@@ -496,6 +525,7 @@ class _SmartProperty(property):
             self.name,
             self.cache,
             self.invalidates,
+            self.invalidated_by,
         )
 
 
@@ -505,13 +535,16 @@ def _make_fget(
     isunset_fn: _IsUnset,
     set: bool = True,
     cache: bool = False,
+    invalidated_by: tx.Tuple[str, ...] = (),
 ) -> _Getter:
     # Only caching changes how the value is read, so the set argument does
     # not select a different getter. With fset=False, the property cannot be
     # assigned, but a constructor may still write the private field _<name>,
     # and the read-only property must then return that value.
     if cache:
-        return _make_fget_settable_cacheable(name, make_fn, isunset_fn)
+        return _make_fget_settable_cacheable(
+            name, make_fn, isunset_fn, invalidated_by
+        )
     return _make_fget_settable(name, make_fn, isunset_fn)
 
 
@@ -534,7 +567,10 @@ def _make_fget_settable(
 
 
 def _make_fget_settable_cacheable(
-    name: str, make_fn: tx.Optional[_Getter], isunset_fn: _IsUnset
+    name: str,
+    make_fn: tx.Optional[_Getter],
+    isunset_fn: _IsUnset,
+    invalidated_by: tx.Tuple[str, ...] = (),
 ) -> _Getter:
     private_name = "_" + name
     cache_name = "_cache_" + name
@@ -544,12 +580,15 @@ def _make_fget_settable_cacheable(
         if not isunset_fn(value):
             return value
         value = getattr(self, cache_name, None)
-        if value is not None:
+        if value is not None and _cache_is_current(self, name, invalidated_by):
             return value
         if make_fn is None:
-            return value
+            return None
+        sources = tuple(getattr(self, attr) for attr in invalidated_by)
         value = make_fn(self)
         object.__setattr__(self, cache_name, value)
+        if invalidated_by:
+            object.__setattr__(self, _SOURCES + name, sources)
         return value
 
     fget.__name__ = name
@@ -643,6 +682,29 @@ def _wrap_fset(
     return fset_invalidator
 
 
+_SOURCES = "_cache_sources_"
+"""The prefix of the attribute that keeps the objects that a cached value
+was computed from (see the option `invalidated_by` of [`smartproperty`][]).
+"""
+
+
+def _cache_is_current(
+    obj: object, name: str, invalidated_by: tx.Tuple[str, ...]
+) -> bool:
+    # The objects themselves are kept and compared by identity, rather
+    # than their `id`, which a new object may reuse once the old one is
+    # collected.
+    if not invalidated_by:
+        return True
+    sources = obj.__dict__.get(_SOURCES + name)
+    if sources is None or len(sources) != len(invalidated_by):
+        return False
+    return all(
+        getattr(obj, attr) is source
+        for attr, source in zip(invalidated_by, sources)
+    )
+
+
 # --- drop_cache -------------------------------------------------------
 
 
@@ -664,6 +726,7 @@ def drop_cache(obj: object, *names: str) -> None:
     """
     for name in names:
         obj.__dict__.pop("_cache_" + name, None)
+        obj.__dict__.pop(_SOURCES + name, None)
 
 
 def cached_value(obj: object, name: str) -> tx.Any:
@@ -686,8 +749,15 @@ def cached_value(obj: object, name: str) -> tx.Any:
     Returns
     -------
     Any
-        The cached value, or `None` when the property has cached nothing.
+        The cached value, or `None` when the property has cached nothing,
+        or when one of the attributes that the value was computed from
+        holds another object (see the option `invalidated_by` of
+        [`smartproperty`][]).
     """
+    prop = getattr(type(obj), name, None)
+    invalidated_by = getattr(prop, "invalidated_by", ())
+    if not _cache_is_current(obj, name, invalidated_by):
+        return None
     return obj.__dict__.get("_cache_" + name)
 
 

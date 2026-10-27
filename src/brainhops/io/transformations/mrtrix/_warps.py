@@ -516,7 +516,11 @@ class MrtrixCoordinateField(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The RAS coordinates as an (X, Y, Z, 3) array.
 
@@ -804,7 +808,11 @@ class MrtrixDisplacementField(
     write encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The RAS displacements as an (X, Y, Z, 3) array.
 
@@ -1100,7 +1108,11 @@ class MrtrixWarpFull(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The four warps as an (X, Y, Z, 3, 4) array of RAS positions.
 

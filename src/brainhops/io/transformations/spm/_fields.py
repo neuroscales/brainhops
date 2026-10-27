@@ -100,7 +100,11 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
     write encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The RAS coordinates as an (X, Y, Z, 3) array.
 

@@ -162,7 +162,11 @@ class AfniNiftiWarp(
     encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
 

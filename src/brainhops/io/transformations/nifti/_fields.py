@@ -129,7 +129,11 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             return Confidence.MAYBE
         return Confidence.NO
 
-    @smartproperty(invalidates=_FORGET_VIEWS)
+    @smartproperty(
+        invalidates=_FORGET_VIEWS,
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The field as an (X, Y, Z, 3) array, which its `field` view reads.
 
@@ -324,7 +328,11 @@ StationaryVelocityField], integrated with `steps` squaring steps
     encodes them into `rawdata`.
     """
 
-    @smartproperty(invalidates="transformations")
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by=("rawdata", "metadata"),
+    )
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The stored vectors as an (X, Y, Z, 3) array.
 

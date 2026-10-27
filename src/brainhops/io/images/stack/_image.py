@@ -146,7 +146,7 @@ class StackImage(
     were assigned.
     """
 
-    @smartproperty
+    @smartproperty(cache=True, invalidated_by=("rawdata", "metadata"))
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The pixels as `(x, y, z[, c])`, assigned or decoded from `rawdata`.
 
