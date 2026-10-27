@@ -19,7 +19,7 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -140,6 +140,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         inplace: bool = False,
         like: tx.Any = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix into a new header.
@@ -179,6 +180,10 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description`, and
             header fields, which take precedence over the derived values

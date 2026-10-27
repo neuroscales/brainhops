@@ -26,7 +26,7 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -353,6 +353,7 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -381,6 +382,10 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -529,6 +534,7 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -557,6 +563,10 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -705,6 +715,7 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -733,6 +744,10 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -884,6 +899,7 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -912,6 +928,10 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1063,6 +1083,7 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1091,6 +1112,10 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1254,6 +1279,7 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1282,6 +1308,10 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1433,6 +1463,7 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1461,6 +1492,10 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 

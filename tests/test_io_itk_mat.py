@@ -36,7 +36,9 @@ def _expected(ndim: int) -> np.ndarray:
 
 
 def _affine(transform: xforms.Transformation) -> np.ndarray:
-    return np.asarray(transform.compute().to(xforms.Affine, lossy=True).matrix)
+    return np.asarray(
+        transform.compute().to(xforms.Affine, on_loss="ignore").matrix
+    )
 
 
 def _variable(

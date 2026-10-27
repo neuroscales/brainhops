@@ -347,7 +347,7 @@ def _linear_part(linear: tx.Any) -> np.ndarray:
     if not isinstance(linear, Transformation):
         return np.asarray(linear, dtype=float)
     affine = linear.to_affine(on_error=None)
-    if affine is None or affine.matrix is None:
+    if affine is None:
         raise TypeError(
             f"A direction is mapped by a linear map; {type(linear).__name__} "
             f"does not reduce to an affine."

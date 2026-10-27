@@ -29,6 +29,7 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.errors import (
     UNSET,
+    ErrorAction,
     ErrorPolicy,
     ParserContentError,
     WriterError,
@@ -345,6 +346,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         inplace: bool = False,
         like: tx.Any = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending vectors or chain into `rawdata` and a header.
@@ -376,6 +378,10 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the

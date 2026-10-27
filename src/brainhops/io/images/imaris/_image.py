@@ -21,7 +21,7 @@ from brainhops.datamodel.metadata._report import (
     takes_error_policy,
 )
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common._geometry import (
@@ -206,6 +206,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "ImarisImage":
         """Move the pending data into `rawdata`.
@@ -233,6 +234,10 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 

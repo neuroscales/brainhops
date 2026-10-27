@@ -155,9 +155,9 @@ def test_a_part_that_changes_the_number_of_axes_is_refused() -> None:
 def test_to_affine_ignores_the_fields_of_a_chain() -> None:
     chain = _chain()
     assert chain.to_affine(on_error=None) is None
-    affine = chain.to_affine(ignore=True, on_error=None)
+    affine = chain.to_affine(include="affine", on_error=None)
     np.testing.assert_allclose(affine.matrix, MATRIX)
-    affine = chain.to_affine(ignore=DisplacementField)
+    affine = chain.to_affine(exclude=DisplacementField)
     np.testing.assert_allclose(affine.matrix, MATRIX)
 
 
@@ -196,3 +196,85 @@ def test_to_kind_accepts_a_kind_and_refuses_one_without_a_class() -> None:
     assert isinstance(Scaling([2.0]).to_kind(kinds.Linear), Linear)
     with pytest.raises(ValueError):
         Scaling([2.0]).to_kind(kinds.Identity)
+
+
+# --- include= and exclude= --------------------------------------------
+
+
+def test_include_and_exclude_filter_before_the_conversion() -> None:
+    chain = _chain()
+    # Both may be given: the parts to keep, then the parts to drop.
+    affine = chain.to_affine(
+        include=["affine", DisplacementField], exclude=DisplacementField
+    )
+    np.testing.assert_allclose(affine.matrix, MATRIX)
+    # Excluding the affine leaves the field, which is not affine.
+    assert chain.to_affine(exclude="affine", on_error=None) is None
+
+
+def test_ignore_is_no_longer_a_filter() -> None:
+    # `ignore=` is not a keyword of the filters, so it reaches `to()`,
+    # which refuses it.
+    with pytest.raises(TypeError):
+        _chain().to_affine(ignore=True)
+
+
+# --- the collections of a matcher -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "match",
+    [["affine"], ("affine",), {"affine"}, frozenset({"affine"})],
+)
+def test_a_collection_selects_with_any_of_its_items(match: object) -> None:
+    filtered = _chain().with_only(match)
+    assert isinstance(filtered.transformations[1], Identity)
+
+
+@pytest.mark.parametrize(
+    "match",
+    [
+        Sequence(transformations=[Affine(MATRIX)]),
+        (item for item in ["affine"]),
+        iter(["affine"]),
+        3,
+    ],
+    ids=["sequence", "generator", "iterator", "int"],
+)
+def test_another_iterable_is_not_a_matcher(match: object) -> None:
+    with pytest.raises(TypeError):
+        _chain().without(match)
+
+
+# --- the parameters of the result -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "to_translation",
+        "to_scaling",
+        "to_permutation",
+        "to_rotation",
+        "to_linear",
+        "to_affine",
+    ],
+)
+@pytest.mark.parametrize(
+    "xform",
+    [Identity(), Inverse(forward=Affine())],
+    ids=["identity", "inverse-of-an-unset-affine"],
+)
+def test_a_result_without_parameters_is_refused(
+    method: str, xform: object
+) -> None:
+    # Without a dimension, the result would have no matrix or no data.
+    with pytest.raises(ConversionError):
+        getattr(xform, method)()
+    assert getattr(xform, method)(on_error=None) is None
+
+
+def test_to_makes_no_check_of_the_parameters() -> None:
+    affine = Identity().to(Affine)
+    assert type(affine) is Affine
+    assert affine.matrix is None

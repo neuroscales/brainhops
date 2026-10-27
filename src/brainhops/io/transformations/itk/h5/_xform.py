@@ -13,7 +13,7 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.common._geometry import held_transformations
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
@@ -259,6 +259,7 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
@@ -294,6 +295,10 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 

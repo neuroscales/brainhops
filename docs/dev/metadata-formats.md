@@ -61,7 +61,9 @@ class MyMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
     @takes_error_policy
-    def consolidate(self, *, inplace=False, on_error=UNSET, **fields):
+    def consolidate(
+        self, *, inplace=False, on_error=UNSET, on_loss=UNSET, **fields
+    ):
         return consolidated(
             self,
             _encode,
@@ -107,15 +109,17 @@ the record when nothing differs, encodes the changes into a copy of the
 record otherwise, reports what is lost and approximated, and decodes the
 result afresh, so that a second consolidation changes nothing.
 
-Every public method that takes `on_error=` is decorated with
-`takes_error_policy`, which applies the error policy of the call (see
-[`ErrorPolicy`][brainhops.errors.ErrorPolicy]) and still accepts the
-deprecated `on_loss=`. The decorator passes the method only the action
-that the policy takes for a loss of metadata, which `consolidated` and
-`apply_loss_policy` take where the loss happens, and it acts itself on
-every other error that the method raises. The default `UNSET` comes
-from `brainhops.errors` and means that no policy was given, so that a
-loss follows the policy in effect.
+Every public method that takes `on_error=` and `on_loss=` is decorated
+with `takes_error_policy`, which merges the two into the error policy
+of the call (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). The
+decorator passes the method only the action that the policy takes for
+a loss of metadata, which `consolidated` and `apply_loss_policy` take
+where the loss happens, and it acts itself on every other error that
+the method raises. The writers that the base classes of the formats
+define, and those that a format defines, are decorated by the base
+classes, so a format does not decorate them itself. The default
+`UNSET` comes from `brainhops.errors` and means that no policy was
+given, so that a loss follows the policy in effect.
 
 The writers of the metadata, `to_bytes`, `to_filename` or `to_h5`,
 consolidate first and write the record of the copy, and they take the

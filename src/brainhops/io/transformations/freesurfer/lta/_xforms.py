@@ -28,7 +28,7 @@ from brainhops.datamodel.metadata._report import (
     takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -387,6 +387,7 @@ class LtaTransformation(
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -420,6 +421,10 @@ class LtaTransformation(
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 

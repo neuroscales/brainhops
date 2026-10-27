@@ -1,10 +1,10 @@
 # Design: one policy for errors and losses
 
-Status: implemented (#590). This memo records how a caller
-says what should happen when a conversion fails or loses information. It
-replaces three conventions with one keyword, `on_error=`, and keeps
-`lossy=` as a shorter way to set the part of that policy that concerns
-losses. Decisions are tagged `E1` to `E7`.
+Status: implemented (#590). This memo records how a caller says what
+should happen when a conversion fails or loses information. It replaces
+three conventions with one policy, given as `on_error=`, whose half
+that concerns losses is also given as `on_loss=`. Decisions are tagged
+`E1` to `E7`.
 
 ## 1. The problem
 
@@ -65,38 +65,52 @@ what happens without a policy. An exception class or instance given as
 a single value stays an action, which raises that exception in place of
 an error of the scope. The value `True` or `False` is refused as a
 single value with a `TypeError`, because it reads as a yes or a no
-rather than as an action, and the deprecated `error=True` still reads
-as `"raise"` (E7). When an error is raised, the policy walks the
-classes of the error in method resolution order and applies the first
+rather than as an action. When an error is raised, the policy walks
+the classes of the error in method resolution order and applies the first
 one that has an entry. An error whose classes have no entry is raised.
 
 E4. A string is always read as an action, so a policy cannot return the
 string `"raise"`, `"warn"` or `"ignore"` as a value. No conversion
 needs to, and this rule keeps the common spellings short.
 
-## 3. The `lossy=` shortcut
+## 3. The loss half of the policy
 
-E5. `lossy=` stays on every conversion, because accepting a loss is the
-most common request and `lossy=True` is short. It takes the same values
-as `on_error=` and sets the entry for `LossyConversionError`. The
+E5. Every conversion and `io.save` take `on_loss=`, which is the half
+of the policy that concerns losses. It takes the same values as a
+single action of `on_error=`, and sets the entry for
+`LossyConversionError`, which also covers a `MetadataLossError`. The
 policy that a call applies is
 
 ```python
-{LossyConversionError: lossy, **on_error}
+{LossyConversionError: on_loss, **on_error}
 ```
 
-after a single value of `on_error` has been read as a mapping (E3). The
-value `lossy=True` means `"ignore"`. The default is `lossy=None`, which
-adds no entry, and `lossy=False` is kept with the same meaning. Because
-the entry of `lossy=` names a more specific class than the scope of a
-single value of `on_error=`, `lossy=True, on_error="raise"` accepts
-losses and raises every other error. An explicit entry for `LossyConversionError` in
-`on_error=` is merged last and wins over `lossy=`.
+after a single value of `on_error` has been read as a mapping (E3).
+Its default is `UNSET`, which adds no entry, so that a loss falls under
+`on_error=`. The value `None` is an action, which returns `None` in
+place of a lossy result. Because the entry of `on_loss=` names a more
+specific class than the scope of a single value of `on_error=`,
+`on_loss="raise", on_error="ignore"` raises on a loss and ignores the
+other conversion errors, and `on_loss="ignore", on_error="raise"`
+accepts a loss and raises every other error. An explicit entry for
+`LossyConversionError` in `on_error=` is merged last and wins over
+`on_loss=`. One consequence is a sharp edge: `on_error="ignore"` alone
+also returns the lossy result of a conversion that loses information,
+because a loss is a conversion error. A loss is accepted with
+`on_loss="ignore"`, and there is no shorter spelling.
+
+In `io.save`, a format that holds a transformation only approximately
+is a loss. `"ignore"` keeps such a format among the candidates, ranked
+after those that hold the transformation exactly, `"warn"` keeps it and
+warns when it is chosen, and a report keeps it and records the loss of
+the one that is chosen. Any other action drops such a format, which is
+also what happens by default, and a value to return, or an exception
+to raise, takes the place of the loss when only such formats remain.
 
 ## 4. The classes of errors
 
 E6. `MetadataLossError` becomes a subclass of `LossyConversionError`,
-so that `lossy=` and `on_error=` treat a loss of metadata as they treat
+so that `on_loss=` and `on_error=` treat a loss of metadata as they treat
 any other loss. `ConversionError` is a subclass of `TypeError`, and the
 field converters of the data model turn a `TypeError` or a
 `ValueError` into a conversion error of their own. `MetadataLossError`
@@ -108,17 +122,22 @@ metadata, so that it can record a loss of a transformation as well.
 
 ## 5. Migration
 
-E7. `error=` on `Transformation.to()` and `on_loss=` on the metadata
-methods become deprecated aliases of `on_error=`, through
-`_core/deprecation.py`. A `LossPolicy` keeps its three values, which
-are valid policies. `errors.raise_or_warn()` is rewritten on top of
-the new policy or removed, since it has no caller.
+E7. The old keywords are removed rather than deprecated, because the
+package has no users yet. `error=` on `Transformation.to()` and its
+overrides, and `lossy=` on the conversions and on `io.save`, are gone,
+and a call that still passes one fails as it fails for any other
+unknown keyword. `on_loss=` on the metadata methods is kept, with the
+meaning of E5, which is wider than its old one because it covers every
+`LossyConversionError`. A `LossPolicy` keeps its three values, which
+are valid actions. The strings `"raise"`, `"warn"` and `"ignore"` stay
+reserved for the actions (E4). `errors.raise_or_warn()` and its type
+`errors.OnError` are removed, since nothing calls them.
 
 ## 6. Implementation
 
 The policy lives in `brainhops.errors`. `ErrorPolicy` and `ErrorAction`
-are its types, `error_policy()` reads `on_error=` and `lossy=` into one
-mapping (E3, E5), `policy_action()` walks the method resolution order,
+are its types, `error_policy()` reads `on_error=` and `on_loss=` into
+one mapping (E3, E5), `policy_action()` walks the method resolution order,
 and `apply_error_policy()` acts on one error (E1, E2). Both functions
 take the scope of the call as `scope=`, whose default is
 `(ConversionError,)`. The decorator `takes_error_policy` takes a
@@ -135,10 +154,11 @@ behaves as it did before. `ConversionWarning` is the warning of the
 `MetadataLossError` adds its fields to `lost` and `approximated`, as
 before, and any other error is appended to `errors` (E6).
 
-The metadata methods that took `on_loss=` take `on_error=`, and the
-conversions among them, `Metadata.to()` and the `from_instance()` of
-metadata, also take `lossy=` (E5). The decorator `takes_error_policy`
-applies the policy around such a method. The body of the method acts on
+The metadata methods take `on_error=` and `on_loss=` (E5). The
+decorator `takes_error_policy` applies the policy around such a method,
+and the base class of the writers decorates the `save` and `to_*`
+entry points of every writer, so that the body of a writer never
+receives a value in place of consolidated metadata. The body of the method acts on
 a loss where the loss happens, because a warning or a report lets the
 method go on with its result, so the decorator passes it only the
 action for a `MetadataLossError`, and an action that the body cannot
@@ -163,10 +183,3 @@ result instead of walking it through. `io.save` acts on its report once
 the file is written, outside of the loops that try the candidate
 formats, because a refused loss is a `ConversionError`, which those
 loops take for a format that refuses the object.
-
-A deprecated alias keeps its old meaning, so that code that uses it
-does not change behaviour (E7). The value `v` of `error=` reads as
-`on_error={ConversionError: v}`, with `True` read as `"raise"`, and the
-value `v` of `on_loss=` reads as `on_error={MetadataLossError: v}`.
-`errors.raise_or_warn()` is removed, and its type `errors.OnError`
-imports as `ErrorPolicy` with a `DeprecationWarning`.

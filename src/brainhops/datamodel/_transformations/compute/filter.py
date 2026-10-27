@@ -21,14 +21,25 @@ MatchLike: tx.TypeAlias = tx.Union[
     str,  # a kind name, symbol or registered alias
     tx.Type["Transformation"],
     tx.Callable[["Transformation"], bool],
-    tx.Sequence[tx.Any],  # a sequence of the values above
+    # A collection of the values above.
+    tx.List[tx.Any],
+    tx.Tuple[tx.Any, ...],
+    tx.Set[tx.Any],
+    tx.FrozenSet[tx.Any],
 ]
 """Value that selects some parts of a transformation.
 
 A matcher is a kind or the name of a kind, a concrete class of
-transformation, a predicate, or a sequence of these values. A sequence
-selects a part when any of its items selects it.
+transformation, a predicate, or a collection of these values. A
+collection is a `list`, a `tuple`, a `set` or a `frozenset`, and it
+selects a part when any of its items selects it. No other iterable is
+unpacked: a transformation, such as a `Sequence`, is refused even
+though it is iterable and callable, and so is a generator, because
+either would be read in a way that the caller did not mean. A string
+must name a kind.
 """
+
+_COLLECTIONS = (list, tuple, set, frozenset)
 
 
 def matches(xform: "Transformation", match: MatchLike) -> bool:
@@ -40,13 +51,19 @@ def matches(xform: "Transformation", match: MatchLike) -> bool:
     xform : Transformation
         Transformation to test.
     match : MatchLike
-        Kind, kind name, concrete class, predicate, or sequence of
-        these values.
+        Kind, kind name, concrete class, predicate, or a `list`,
+        `tuple`, `set` or `frozenset` of these values.
 
     Returns
     -------
     bool
         Whether the matcher selects the transformation.
+
+    Raises
+    ------
+    TypeError
+        If `match` is not a matcher, such as a transformation, a
+        generator or another iterable.
     """
     from ..base import Transformation
 
@@ -56,11 +73,16 @@ def matches(xform: "Transformation", match: MatchLike) -> bool:
         if issubclass(match, Transformation):
             return isinstance(xform, match)
         return xform.is_kind(match)
-    if callable(match):
-        return bool(match(xform))
-    if isinstance(match, (list, tuple)):
+    if isinstance(match, _COLLECTIONS):
         return any(matches(xform, item) for item in match)
-    raise TypeError(f"Cannot select a transformation with {match!r}.")
+    # A transformation is callable, but calling it applies it.
+    if callable(match) and not isinstance(match, Transformation):
+        return bool(match(xform))
+    raise TypeError(
+        f"Cannot select a transformation with {match!r}. A matcher is a "
+        f"kind, the name of a kind, a class of transformation, a "
+        f"predicate, or a list, tuple, set or frozenset of these values."
+    )
 
 
 def replace_parts(

@@ -188,7 +188,7 @@ class Resampled(
         affine.
         """
         affine = self.transformation.inverse().to_affine(on_error=None)
-        if affine is None or affine.matrix is None:
+        if affine is None:
             return None
         return np.asarray(affine.matrix, dtype=float)[:, :-1]
 

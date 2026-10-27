@@ -1,7 +1,6 @@
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-from brainhops._core.deprecation import pop_renamed_keyword
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
@@ -458,7 +457,7 @@ class Transformation(
         self,
         cls: tx.Optional[tx.Type[tx.Self]] = None,
         *,
-        lossy: ErrorAction = None,
+        on_loss: ErrorAction = UNSET,
         on_error: ErrorPolicy = UNSET,
         copy: bool = False,
         **kwargs,
@@ -480,29 +479,25 @@ class Transformation(
         `(ConversionError,)`, so that a single action applies to these
         errors only, and any other error is raised unless a mapping
         names it. The policy that the call applies is
-        `{LossyConversionError: lossy, **on_error}`, so that
-        `lossy=True` returns the lossy result. A loss of metadata, in
-        the conversions of metadata that the conversion triggers,
-        follows the same policy, because a
+        `{LossyConversionError: on_loss, **on_error}`, so that
+        `on_loss="ignore"` returns the lossy result. Without
+        `on_loss=`, a loss falls under `on_error=`, so that
+        `on_error="ignore"` alone also returns the lossy result. A loss
+        of metadata, in the conversions of metadata that the conversion
+        triggers, follows the same policy, because a
         [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError]
         is a lossy conversion error.
-
-        !!! warning "Deprecated `error=`"
-            The `error=` keyword is a deprecated alias of `on_error=`.
-            The value `True` reads as `"raise"`, and any value `v`
-            applies to a [`ConversionError`][] only, as
-            `on_error={ConversionError: v}`.
 
         Parameters
         ----------
         cls : type of Transformation, optional
             Type to convert to. By default, the type is normally kept.
-        lossy : ErrorAction, optional
-            What to do with a conversion that loses information. `True`
-            or `"ignore"` returns the lossy result, `"warn"` warns and
+        on_loss : ErrorAction, optional
+            What to do with a conversion that loses information, with
+            the same values as a single action of `on_error`.
+            `"ignore"` returns the lossy result, `"warn"` warns and
             returns it, and a report records the loss and returns it.
-            By default, the loss is raised, unless `on_error` has an
-            entry for it.
+            By default, a loss falls under `on_error`.
         on_error : ErrorPolicy, optional
             What to do when the conversion fails. One action applies to
             a [`ConversionError`][], which includes a loss, and any
@@ -510,7 +505,7 @@ class Transformation(
             mapping chooses an action by the class of the error, and
             may name a class outside the conversion errors, as
             `{Exception: None}` does. An entry for a loss in `on_error`
-            takes precedence over `lossy`. `True` and `False` are
+            takes precedence over `on_loss`. `True` and `False` are
             refused. By default, every error is raised.
         copy : bool, default=False
             Whether to return a new object when the conversion has nothing
@@ -532,17 +527,16 @@ class Transformation(
         --------
         ```python
         # Accept a loss, and return None if no converter exists.
-        t.to(Rotation, lossy=True, on_error={ConversionError: None})
+        t.to(Rotation, on_loss="ignore", on_error=None)
         ```
         """
-        on_error = _deprecated_error(kwargs, on_error, type(self))
 
         def convert_to() -> Transformation:
             target = cls or self._target_class(kwargs)
             return _copied(self, convert(self, target, **kwargs), copy)
 
         return call_under_policy(
-            convert_to, on_error, lossy=lossy, scope=(ConversionError,)
+            convert_to, on_error, on_loss=on_loss, scope=(ConversionError,)
         )
 
     def _target_class(
@@ -754,16 +748,33 @@ class Transformation(
         self,
         kind: KindLike,
         *,
-        ignore: tx.Union["MatchLike", bool, None] = None,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to the class that represents a kind.
 
         A caller uses this method to obtain, for example, the affine
-        matrix of a chain. The transformation is first filtered with
-        `ignore`, then computed, because a chain must be composed before
-        it can be converted, and the result is converted with
-        [`to`][brainhops.datamodel.transformations.Transformation.to].
+        matrix of a chain. The transformation is first filtered: the
+        parts that `include` does not select are replaced by the
+        identity, as by `with_only(include)`, and then the parts that
+        `exclude` selects are replaced, as by `without(exclude)`. The
+        filtered transformation is computed, because a chain must be
+        composed before it can be converted, and the result is converted
+        with [`to`][brainhops.datamodel.transformations.Transformation.to].
+        For example, `to_affine(include="affine")` returns the affine
+        part of a chain whose other parts, such as fields, are dropped.
+
+        The result always has its parameters: a conversion whose result
+        has no matrix, or, for a translation, a scaling or a
+        permutation, no `data`, raises a [`ConversionError`][], because
+        its dimension is unknown. This happens to an `Identity()` or to
+        the inverse of an affine whose matrix is not set. Under
+        `on_error=None`, the method then returns `None`, so that a
+        caller only tests the result for `None`. Plain
+        [`to`][brainhops.datamodel.transformations.Transformation.to]
+        makes no such check. The policy given as `on_error=` and
+        `on_loss=` applies to the whole call.
 
         | Kind            | Kind tested by `is_*`     | Concrete class |
         | --------------- | ------------------------- | -------------- |
@@ -779,12 +790,16 @@ class Transformation(
         kind : KindLike
             Target kind, as a word of the table above or as one of the
             kinds of the table.
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion, as
-            in `without`. The value `True` means every part that is not
-            of the target kind, as in `with_only(kind)`.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`. They are
+            replaced after `include` is applied. By default, no part is
+            replaced.
         **kwargs : Any
-            Keyword arguments of `to`, such as `lossy=` and `on_error=`.
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
 
         Returns
         -------
@@ -796,20 +811,37 @@ class Transformation(
         ------
         ValueError
             If the kind has no concrete class.
+        ConversionError
+            If the transformation cannot be converted, or if the result
+            has no parameters, and the policy raises the error.
         """
         from . import concrete
 
-        kind_class, class_name = _kind_entry(kind)
-        xform = self
-        if ignore is True:
-            xform = xform.with_only(kind_class)
-        elif ignore is not None and ignore is not False:
-            xform = xform.without(ignore)
+        _, class_name = _kind_entry(kind)
         target = getattr(concrete, class_name)
-        return xform.compute().to(target, **kwargs)
+        on_error = kwargs.pop("on_error", UNSET)
+        on_loss = kwargs.pop("on_loss", UNSET)
+
+        def convert_to() -> "Transformation":
+            xform = self
+            if include is not None:
+                xform = xform.with_only(include)
+            if exclude is not None:
+                xform = xform.without(exclude)
+            result = xform.compute().to(target, **kwargs)
+            _check_parameters(result, target)
+            return result
+
+        return call_under_policy(
+            convert_to, on_error, on_loss=on_loss, scope=(ConversionError,)
+        )
 
     def to_translation(
-        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+        self,
+        *,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
+        **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a translation.
 
@@ -818,8 +850,10 @@ class Transformation(
 
         Parameters
         ----------
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`.
         **kwargs : Any
             Keyword arguments of `to`.
 
@@ -828,10 +862,16 @@ class Transformation(
         Transformation
             The converted transformation.
         """
-        return self.to_kind("translation", ignore=ignore, **kwargs)
+        return self.to_kind(
+            "translation", include=include, exclude=exclude, **kwargs
+        )
 
     def to_scaling(
-        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+        self,
+        *,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
+        **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a scaling.
 
@@ -840,8 +880,10 @@ class Transformation(
 
         Parameters
         ----------
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`.
         **kwargs : Any
             Keyword arguments of `to`.
 
@@ -850,10 +892,16 @@ class Transformation(
         Transformation
             The converted transformation.
         """
-        return self.to_kind("scaling", ignore=ignore, **kwargs)
+        return self.to_kind(
+            "scaling", include=include, exclude=exclude, **kwargs
+        )
 
     def to_permutation(
-        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+        self,
+        *,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
+        **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a permutation.
 
@@ -862,8 +910,10 @@ class Transformation(
 
         Parameters
         ----------
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`.
         **kwargs : Any
             Keyword arguments of `to`.
 
@@ -872,10 +922,16 @@ class Transformation(
         Transformation
             The converted transformation.
         """
-        return self.to_kind("permutation", ignore=ignore, **kwargs)
+        return self.to_kind(
+            "permutation", include=include, exclude=exclude, **kwargs
+        )
 
     def to_rotation(
-        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+        self,
+        *,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
+        **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a rotation.
 
@@ -884,8 +940,10 @@ class Transformation(
 
         Parameters
         ----------
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`.
         **kwargs : Any
             Keyword arguments of `to`.
 
@@ -894,10 +952,16 @@ class Transformation(
         Transformation
             The converted transformation.
         """
-        return self.to_kind("rotation", ignore=ignore, **kwargs)
+        return self.to_kind(
+            "rotation", include=include, exclude=exclude, **kwargs
+        )
 
     def to_linear(
-        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+        self,
+        *,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
+        **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a linear map.
 
@@ -906,8 +970,10 @@ class Transformation(
 
         Parameters
         ----------
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`.
         **kwargs : Any
             Keyword arguments of `to`.
 
@@ -916,23 +982,31 @@ class Transformation(
         Transformation
             The converted transformation.
         """
-        return self.to_kind("linear", ignore=ignore, **kwargs)
+        return self.to_kind(
+            "linear", include=include, exclude=exclude, **kwargs
+        )
 
     def to_affine(
-        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+        self,
+        *,
+        include: tx.Optional["MatchLike"] = None,
+        exclude: tx.Optional["MatchLike"] = None,
+        **kwargs,
     ) -> "Transformation":
         """Convert the transformation to an affine map.
 
         See `to_kind` for how the transformation is filtered and
         converted. `to_affine(on_error=None)` returns `None` when the
         transformation is not affine, and
-        `to_affine(ignore=True, on_error=None)` returns the affine part of
-        a chain whose other parts, such as fields, are ignored.
+        `to_affine(include="affine", on_error=None)` returns the affine
+        part of a chain whose other parts, such as fields, are dropped.
 
         Parameters
         ----------
-        ignore : MatchLike or bool, optional
-            Parts to replace by the identity before the conversion.
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`.
         **kwargs : Any
             Keyword arguments of `to`.
 
@@ -941,7 +1015,9 @@ class Transformation(
         Transformation
             The converted transformation.
         """
-        return self.to_kind("affine", ignore=ignore, **kwargs)
+        return self.to_kind(
+            "affine", include=include, exclude=exclude, **kwargs
+        )
 
     # --- operators ----------------------------------------------------
 
@@ -1090,25 +1166,16 @@ def _copied(
     return result
 
 
-def _deprecated_error(
-    kwargs: tx.Dict[str, tx.Any], on_error: ErrorPolicy, cls: type
-) -> ErrorPolicy:
-    """Return the policy of `to()`, read from `error=` as well.
+def _check_parameters(result: tx.Any, target: type) -> None:
+    """Refuse the result of `to_kind()` when its parameters are unknown.
 
-    `error=` was the keyword of `to()` before `on_error=`. It is removed
-    from `kwargs` with a `DeprecationWarning`, and read with its old
-    meaning: `True` raises, and any other value applies to a
-    `ConversionError` only. The stack level of the warning points at
-    the caller of `to()`.
+    The parameters are the matrix of a class that has one, and the
+    `data` of a translation, a scaling or a permutation.
     """
-    if "error" in kwargs and on_error is not UNSET:
-        raise TypeError(
-            f"{cls.__name__}.to() got both error= and on_error=; pass "
-            f"on_error= only."
+    name = "matrix" if "matrix" in dir(result) else "data"
+    if getattr(result, name, None) is None:
+        raise ConversionError(
+            f"The {target.__name__} that this {type(result).__name__} "
+            f"converts to has no {name}, because its dimension is not "
+            f"known."
         )
-    error = pop_renamed_keyword(
-        kwargs, "error", "on_error", f"{cls.__name__}.to", UNSET, stacklevel=4
-    )
-    if error is UNSET:
-        return on_error
-    return {ConversionError: "raise" if error is True else error}

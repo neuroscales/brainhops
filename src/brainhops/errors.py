@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 import typing_extensions as tx
 
-from brainhops._core.deprecation import external_stacklevel, renamed_attributes
+from brainhops._core.deprecation import external_stacklevel
 
 if tx.TYPE_CHECKING:
     # imported for the cross-references of mkdocstrings
@@ -75,8 +75,8 @@ class LossyConversionError(ConversionError):
     [`Transformation.to`][] raises this error when a conversion is lossy
     and the loss was not allowed. The `result` attribute holds the
     object that the conversion would have produced, or `None`. An error
-    policy that accepts the loss, such as `lossy=True`, returns that
-    object instead of raising (see [`ErrorPolicy`][]). A loss of
+    policy that accepts the loss, such as `on_loss="ignore"`, returns
+    that object instead of raising (see [`ErrorPolicy`][]). A loss of
     metadata is reported by a subclass,
     [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError].
     """
@@ -315,29 +315,40 @@ class that has an entry. An error whose classes have no entry is
 raised. For example, a [`LossyConversionError`][] matches its own entry
 before that of [`ConversionError`][], which it subclasses.
 
-The `lossy=` keyword of a conversion sets the entry of
-[`LossyConversionError`][], so that the policy that a call applies is
-`{LossyConversionError: lossy, **on_error}` (see [`error_policy`][]).
+The `on_loss=` keyword of a conversion is the half of the policy that
+concerns losses. It takes the same values as `on_error=`, except a
+mapping, and sets the entry of [`LossyConversionError`][], which also
+covers a loss of metadata, so that the policy that a call applies is
+`{LossyConversionError: on_loss, **on_error}` (see [`error_policy`][]).
+Because that class is more specific than the scope of a single value
+of `on_error=`, `on_loss="raise", on_error="ignore"` raises on a loss
+and ignores the other conversion errors. Without `on_loss=`, a loss
+falls under `on_error=`, so `on_error="ignore"` alone also returns the
+lossy result of a conversion that loses information.
+
+The strings `"raise"`, `"warn"` and `"ignore"` are reserved for the
+actions, so a policy cannot return one of them as a value.
 """
 
 
 def error_policy(
     on_error: ErrorPolicy = UNSET,
     *,
-    lossy: ErrorAction = None,
+    on_loss: ErrorAction = UNSET,
     scope: tx.Tuple[tx.Type[BaseException], ...] = (ConversionError,),
 ) -> tx.Dict[tx.Type[BaseException], ErrorAction]:
     """Return the policy that a conversion applies, as a mapping.
 
     A conversion takes a policy as its `on_error=` keyword, and the
-    action for a loss as its `lossy=` keyword. This function merges the
-    two into one mapping from exception classes to actions, which
+    action for a loss as its `on_loss=` keyword. This function merges
+    the two into one mapping from exception classes to actions, which
     [`policy_action`][] and [`apply_error_policy`][] read. A single
     action applies to each class of `scope` (see [`ErrorPolicy`][]).
-    The entry that `lossy` sets comes first, so that an entry for
+    The entry that `on_loss` sets comes first, so that an entry for
     [`LossyConversionError`][] in `on_error` replaces it. Because that
-    class is more specific than [`ConversionError`][], `lossy=True`
-    with `on_error="raise"` accepts a loss and raises any other error.
+    class is more specific than [`ConversionError`][],
+    `on_loss="ignore"` with `on_error="raise"` accepts a loss and
+    raises any other error.
 
     Parameters
     ----------
@@ -346,10 +357,11 @@ def error_policy(
         mapping from exception classes to actions, which is taken as
         written. By default, no class has an entry, so every error is
         raised.
-    lossy : ErrorAction, optional
-        The action for a [`LossyConversionError`][]. The value `True`
-        means `"ignore"`, and `None` (the default) or `False` adds no
-        entry.
+    on_loss : ErrorAction, optional
+        The action for a [`LossyConversionError`][], with the same
+        values as a single action of `on_error`. By default, it adds no
+        entry, and a loss falls under `on_error`. The value `None` is
+        an action, which returns `None` in place of a lossy result.
     scope : tuple of type, default=(ConversionError,)
         The exception classes that the conversion raises on purpose,
         to which a single action applies.
@@ -362,8 +374,9 @@ def error_policy(
     Raises
     ------
     TypeError
-        If `on_error` is `True` or `False`, if a key of `on_error` is
-        not an exception class, or if `lossy` is a mapping.
+        If `on_error` or `on_loss` is `True` or `False`, if a key of
+        `on_error` is not an exception class, or if `on_loss` is a
+        mapping.
     ValueError
         If an action is a string other than `"raise"`, `"warn"` and
         `"ignore"`.
@@ -371,18 +384,20 @@ def error_policy(
     Examples
     --------
     ```python
-    error_policy("raise", lossy=True)
+    error_policy("raise", on_loss="ignore")
     # {LossyConversionError: 'ignore', ConversionError: 'raise'}
     error_policy({Exception: None})
     # {Exception: None}
     ```
     """
-    if isinstance(on_error, bool):
-        raise TypeError(
-            f"on_error= takes an action or a mapping, not {on_error!r}. "
-            f"Pass on_error='raise' to raise, or a value to return in "
-            f"place of the result, such as on_error=None."
-        )
+    for name, value in (("on_error", on_error), ("on_loss", on_loss)):
+        if isinstance(value, bool):
+            raise TypeError(
+                f"{name}= takes an action or a mapping, not {value!r}. "
+                f"Pass {name}='raise' to raise, {name}='ignore' to return "
+                f"the result, or a value to return in its place, such as "
+                f"{name}=None."
+            )
     if on_error is UNSET:
         entries = {}
     elif isinstance(on_error, Mapping):
@@ -397,15 +412,14 @@ def error_policy(
     else:
         action = _checked_action(on_error)
         entries = {cls: action for cls in scope}
-    if lossy is None or lossy is False:
+    if on_loss is UNSET:
         return entries
-    if isinstance(lossy, Mapping):
+    if isinstance(on_loss, Mapping):
         raise TypeError(
-            "lossy= takes one action, which applies to a loss, not a "
+            "on_loss= takes one action, which applies to a loss, not a "
             "mapping. Pass a mapping as on_error= instead."
         )
-    action = "ignore" if lossy is True else _checked_action(lossy)
-    return {LossyConversionError: action, **entries}
+    return {LossyConversionError: _checked_action(on_loss), **entries}
 
 
 def policy_action(
@@ -440,7 +454,7 @@ def apply_error_policy(
     error: BaseException,
     on_error: ErrorPolicy = UNSET,
     *,
-    lossy: ErrorAction = None,
+    on_loss: ErrorAction = UNSET,
     scope: tx.Tuple[tx.Type[BaseException], ...] = (ConversionError,),
     stacklevel: int = 2,
 ) -> tx.Any:
@@ -458,7 +472,7 @@ def apply_error_policy(
         The error that the conversion raised.
     on_error : ErrorPolicy, optional
         The policy. By default, the error is raised again.
-    lossy : ErrorAction, optional
+    on_loss : ErrorAction, optional
         The action for a [`LossyConversionError`][], merged with
         `on_error` as [`error_policy`][] merges it.
     scope : tuple of type, default=(ConversionError,)
@@ -481,7 +495,7 @@ def apply_error_policy(
     BaseException
         The error itself, or the exception that the policy names.
     """
-    policy = error_policy(on_error, lossy=lossy, scope=scope)
+    policy = error_policy(on_error, on_loss=on_loss, scope=scope)
     action = policy_action(policy, type(error))
     if action is UNSET or _is_action(action, "raise"):
         raise error
@@ -542,8 +556,3 @@ def _as_warning(error: BaseException) -> Warning:
     if not isinstance(error, ConversionError):
         text = f"{type(error).__name__}: {text}"
     return ConversionWarning(text)
-
-
-# `OnError` was the type of the `on_error=` keyword of `raise_or_warn`,
-# which this policy replaces.
-__getattr__ = renamed_attributes(__name__, {"OnError": "ErrorPolicy"})

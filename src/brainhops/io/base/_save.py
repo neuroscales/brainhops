@@ -14,7 +14,6 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
-from brainhops._core.deprecation import pop_renamed_keyword
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -28,8 +27,11 @@ from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import (
     UNSET,
     ConversionError,
+    ErrorAction,
     LossyConversionError,
     apply_error_policy,
+    error_policy,
+    policy_action,
 )
 from brainhops.io.base._base import FileFormat, _takes_over
 from brainhops.io.base._dispatch import (
@@ -52,7 +54,7 @@ def save(
     file: path.FileLike,
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
     *,
-    lossy: bool = False,
+    on_loss: ErrorAction = UNSET,
     conversion: tx.Optional[tx.Mapping[str, tx.Any]] = None,
     **kwargs,
 ) -> tx.Any:
@@ -87,7 +89,8 @@ def save(
        affine of a NIfTI file only when that is what it maps, or when
        its coordinate systems are not known. An approximation, such as
        a field interpolated with cubic splines that a NIfTI file stores
-       as linearly interpolated values, is kept only with `lossy=True`.
+       as linearly interpolated values, is kept only when `on_loss`
+       accepts it.
 
     In step 3, the candidates are tried from the most specific, by the
     rules reading uses: the longest prefix, then the narrowest
@@ -119,9 +122,9 @@ def save(
 
     !!! note "Approximations are opted into"
         A transformation is written in a format that holds it only
-        approximately when `lossy=True` is given, and a format that
-        holds it exactly is still preferred. Without it, one that no
-        candidate holds exactly is refused with each candidate's
+        approximately when `on_loss` accepts the loss, and a format
+        that holds it exactly is still preferred. Without it, one that
+        no candidate holds exactly is refused with each candidate's
         reason.
 
     !!! note "One pass for a transformation"
@@ -147,12 +150,21 @@ def save(
         Hints that name the formats to choose from, such as
         `"neuroglancer.affine"`, as for `load`. A file without a name is
         written by `obj` itself, and the hint is not used.
-    lossy : bool, default=False
-        Whether a transformation may be written in a format that holds it
-        only approximately, such as a field interpolated with cubic
-        splines written as the linearly interpolated values of a NIfTI
-        file. A format that holds the transformation exactly is still
-        preferred.
+    on_loss : ErrorAction, optional
+        What to do with a loss, as for a conversion (see
+        [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A transformation
+        that a format holds only approximately, such as a field
+        interpolated with cubic splines written as the linearly
+        interpolated values of a NIfTI file, is a loss: `"ignore"` keeps
+        such a format among the candidates, ranked after those that hold
+        the transformation exactly, `"warn"` keeps it and warns when it
+        is chosen, and a report keeps it and records the loss of the one
+        that is chosen. Any other action drops such a format, and a
+        value to return, or an exception to raise, takes the place of
+        the error when only such formats remain. The action also
+        applies to the metadata that the file cannot hold. By default,
+        such a format is dropped, and a loss of metadata follows
+        `on_error`, or else the policy in effect.
     conversion : mapping, optional
         Options of the conversion of a transformation to the chosen
         format, as `obj.to(Format, **conversion)` takes them. A format
@@ -173,12 +185,13 @@ def save(
         conversion and the write lose. An object that is already of the
         chosen format passes `on_error` to its own `save`. The metadata
         of a format that does not hold metadata is not written, and its
-        fields are reported as lost. The deprecated `on_loss=v` reads as
-        `on_error={MetadataLossError: v}`. The `WriterError` that `save`
-        raises when no format can hold `obj` is not a conversion error,
-        so it is outside the scope of a single action, and it is raised
-        even under `on_error=None`. The `OSError` of a write that fails
-        is raised as well.
+        fields are reported as lost. `on_loss` takes precedence over
+        `on_error` for a loss, as in a conversion. The `WriterError`
+        that `save` raises when
+        no format can hold `obj` is not a conversion error, so it is
+        outside the scope of a single action, and it is raised even
+        under `on_error=None`. The `OSError` of a write that fails is
+        raised as well.
 
     Returns
     -------
@@ -202,10 +215,14 @@ def save(
     MetadataLossError
         If metadata is lost under the `"raise"` policy.
     """
+    # An object of the format passes the policy on to its own writer.
+    forward = dict(kwargs)
+    if on_loss is not UNSET:
+        forward["on_loss"] = on_loss
     name = _to_filename(file)
     if name is None:
         if isinstance(obj, FileFormat) and isinstance(obj, FileWriter):
-            return obj.save(file, **kwargs)
+            return obj.save(file, **forward)
         raise WriterError(
             f"Cannot choose a format to write {type(obj).__name__} in: the "
             f"file has no name to choose it from. Give the path of the "
@@ -242,13 +259,19 @@ def save(
     # Rebuilding the object would rerun its constructor and lose state that is
     # not a field, such as data already read.
     if any(isinstance(obj, fmt) for fmt, _ in claimed):
-        return obj.save(file, **kwargs)
+        return obj.save(file, **forward)
 
     # The policy acts once on the report of the conversion and the
     # write, after the file is written.
     kwargs = dict(kwargs)
-    on_error = _save_policy(kwargs)
+    on_error = _save_policy(kwargs, on_loss)
+    loss = (
+        UNSET
+        if on_error is UNSET
+        else policy_action(on_error, LossyConversionError)
+    )
     reasons: tx.List[str] = []
+    dropped: tx.List[LossyConversionError] = []
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
@@ -260,12 +283,27 @@ def save(
         own = {fmt for fmt, _ in holders}
         options = dict(conversion or {})
         report = _write_best(
-            file, name, obj, claimed, own, options, lossy, reasons, kwargs
+            file,
+            name,
+            obj,
+            claimed,
+            own,
+            options,
+            loss,
+            reasons,
+            dropped,
+            kwargs,
         )
     else:
         report = _write_first(file, name, obj, holders, _copy, reasons, kwargs)
     if report is not None:
         return _act_on_loss(report, on_error)
+    if dropped and not _drops_quietly(loss):
+        # Only formats that lose were left, and the policy returns a
+        # value, or raises an exception, in place of the loss.
+        return apply_error_policy(
+            dropped[0], {LossyConversionError: loss}, stacklevel=2
+        )
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
@@ -293,9 +331,9 @@ def _convert(
     The result is returned with the error that says what the conversion
     loses, or `None` when it is exact, and with the number of options
     that the format did not take. A lossy result is the one that
-    `obj.to(fmt, lossy=True)` returns. The options of the conversion are
-    given to every format, so a format that does not take some of them is
-    converted without them. A format without an exact converter for
+    `obj.to(fmt, on_loss="ignore")` returns. The options of the conversion
+    are given to every format, so a format that does not take some of them
+    is converted without them. A format without an exact converter for
     `obj` may relabel it (#312). Such a format is chosen only when `own`
     says that it is a file-backed version of the data model of `obj`, so
     that a format that converts `obj` is not made ambiguous by the formats
@@ -345,8 +383,9 @@ def _write_best(
     candidates: tx.List[tx.Tuple[type, tx.Any]],
     own: tx.Set[type],
     options: tx.Mapping[str, tx.Any],
-    lossy: bool,
+    loss: tx.Any,
     reasons: tx.List[str],
+    dropped: tx.List[LossyConversionError],
     save_options: tx.Dict[str, tx.Any],
 ) -> tx.Optional[ConversionReport]:
     """
@@ -359,7 +398,9 @@ def _write_best(
     FLIRT matrix given its images comes before another matrix, then by how
     closely the format keeps what `obj` holds (see [`_fidelity`][]), and
     last by the declared extensions and the `PRIORITY` of the format. A
-    lossy conversion is kept only when `lossy` is true. Several
+    lossy conversion is kept only when `loss`, the action of the policy
+    for a loss, keeps it (see `_keeps_lossy`), and the loss of one that
+    is dropped is added to `dropped`. Several
     conversions that rank first together are an ambiguity. A writer that
     refuses what it was given gives way to the next conversion.
 
@@ -389,8 +430,9 @@ def _write_best(
         except Exception as e:  # noqa: BLE001
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
-        if loses is not None and not lossy:
+        if loses is not None and not _keeps_lossy(loss):
             reasons.append(f"{fmt.__name__}: LossyConversionError: {loses}")
+            dropped.append(loses)
             continue
         extension, prefix = match or (0, 0)
         key = (
@@ -403,21 +445,27 @@ def _write_best(
             len(fmt.EXTENSIONS),
             -fmt.PRIORITY,
         )
-        ranked.append((key, fmt, writer, report))
+        ranked.append((key, fmt, writer, report, loses))
     ranked.sort(key=lambda item: item[0])
     while ranked:
         best = [item for item in ranked if item[0] == ranked[0][0]]
         if len(best) > 1:
             raise AmbiguousFormatError(
-                _ambiguity_message(name, obj, [fmt for _, fmt, _, _ in best])
+                _ambiguity_message(name, obj, [item[1] for item in best])
             )
-        _, fmt, writer, report = best[0]
+        _, fmt, writer, report, loses = best[0]
         ranked = ranked[1:]
         try:
             _write_once(obj, writer, file, report, save_options)
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
+        if loses is not None:
+            # The chosen format holds `obj` only approximately, which a
+            # warning or a report says.
+            apply_error_policy(
+                loses, {LossyConversionError: loss}, stacklevel=4
+            )
         return report
     return None
 
@@ -584,20 +632,36 @@ def _write_once(
         writer.save(file, **options)
 
 
-def _save_policy(kwargs: tx.Dict[str, tx.Any]) -> tx.Any:
+def _save_policy(kwargs: tx.Dict[str, tx.Any], on_loss: tx.Any) -> tx.Any:
     """Remove the policy of `save` from its options, and return it.
 
-    The deprecated `on_loss=v` is read as `on_error={MetadataLossError:
-    v}`, which keeps its old meaning. The stack level of its warning
-    points at the caller of `save`.
+    The policy merges `on_error=` and `on_loss=`, the action for a loss,
+    as a conversion merges them (see `error_policy`).
     """
-    loss = pop_renamed_keyword(
-        kwargs, "on_loss", "on_error", "save", UNSET, stacklevel=4
-    )
     on_error = kwargs.pop("on_error", UNSET)
-    if loss is not UNSET and loss is not None:
-        return {MetadataLossError: loss}
-    return on_error
+    if on_error is UNSET and on_loss is UNSET:
+        return UNSET
+    return error_policy(on_error, on_loss=on_loss)
+
+
+def _keeps_lossy(loss: tx.Any) -> bool:
+    """Whether the action for a loss keeps a format that loses.
+
+    `"ignore"`, `"warn"` and a report keep it, since they return the
+    result. The default, `"raise"`, a value and an exception drop it.
+    """
+    if isinstance(loss, str):
+        return loss in ("ignore", "warn")
+    return isinstance(loss, ConversionReport)
+
+
+def _drops_quietly(loss: tx.Any) -> bool:
+    """Whether the dropped formats leave `save` to raise its own error.
+
+    Without a policy, or under `"raise"`, `save` raises the
+    `WriterError` that gives the reason of each candidate.
+    """
+    return loss is UNSET or (isinstance(loss, str) and loss == "raise")
 
 
 def _act_on_loss(report: ConversionReport, on_error: tx.Any) -> tx.Any:

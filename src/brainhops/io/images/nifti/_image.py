@@ -34,7 +34,13 @@ from brainhops.datamodel.transformations import (
 )
 
 # errors
-from brainhops.errors import UNSET, ErrorPolicy, ParserExistsError, WriterError
+from brainhops.errors import (
+    UNSET,
+    ErrorAction,
+    ErrorPolicy,
+    ParserExistsError,
+    WriterError,
+)
 
 # io
 from brainhops.io.base._base import register_format
@@ -467,6 +473,7 @@ class NiftiImage(
         inplace: bool = False,
         like: tx.Any = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -523,6 +530,10 @@ class NiftiImage(
             default, an error is raised, and a loss follows the policy
             in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set

@@ -37,8 +37,16 @@ to. A matcher is one of the following values:
 - a concrete class of transformation, which matches its instances;
 - a predicate, which is a function that takes a transformation and
   returns a boolean;
-- a sequence of the values above, which matches a part when any item
-  of the sequence matches it.
+- a collection of the values above, which matches a part when any
+  item of the collection matches it.
+
+A collection is a `list`, a `tuple`, a `set` or a `frozenset`, and no
+other iterable is unpacked. A transformation such as a `Sequence` is
+both iterable and callable, and a generator can be read only once, so
+either would be read in a way that the caller did not mean. Such a
+value, and any other value that is not a matcher, raises a
+`TypeError`. A string that names no kind raises the `ValueError` of
+the lookup of kinds.
 
 Classes are needed because kinds cannot express every set of
 transformations. A kind is a set of properties, and the kinds form a
@@ -90,6 +98,16 @@ calls `Transformation.to` with the same keyword arguments as
 `to()`. The kinds that the `is_*` methods test map to concrete classes
 through a single table, which `is_*` and `to_*` share.
 
+The result of `to_kind` always has its parameters. A result that has
+no matrix, or, for a translation, a scaling or a permutation, no
+`data`, raises a `ConversionError`, because its dimension is unknown,
+as for `Identity()` or for the inverse of an affine whose matrix is not
+set. The error goes through the error policy of the call, so that
+`to_affine(on_error=None)` returns `None` and a caller tests only for
+`None`, rather than also for a missing matrix. Plain `to()` makes no
+such check, because a transformation without parameters is a valid
+object of its class.
+
 | Method             | Kind tested by `is_*`     | Concrete class |
 | ------------------ | ------------------------- | -------------- |
 | `to_translation()` | `kinds.Translation`       | `Translation`  |
@@ -104,11 +122,14 @@ Each `to_*` method is a one-line call to `to_kind()`. There is no
 nothing to convert, and a transformation that is not the identity
 cannot become one without losing all of its content.
 
-F6. Every `to_*` method takes an `ignore=` argument, which is a
-matcher, and applies `without(ignore)` before the conversion. The
-value `ignore=True` means every part that is not of the target kind,
-so that `to_affine(ignore=True)` is
-`with_only("affine").to_affine()`. That call replaces
+F6. `to_kind()` and every `to_*` method take two matchers,
+`include=` and `exclude=`. The method applies `with_only(include)` and
+then `without(exclude)` before it computes and converts the
+transformation, and either or both may be given. The two names say
+which way the matcher works, where a single `ignore=` argument had to
+take the value `True` to mean every part that is not of the target
+kind. The affine part of a chain is therefore
+`to_affine(include="affine")`. That call replaces
 `_as_affine_ignoring_fields`, and `to_affine(on_error=None)` replaces
 `_as_affine` (see [error-policy.md](error-policy.md) for `on_error=`).
 
@@ -118,4 +139,4 @@ F7. `_as_affine`, `_as_affine_ignoring_fields` and
 `_fields_as_identity` are removed once their callers use the public
 methods. The decision of `multiscale.py` about which level of a
 multiscale object to read keeps using the affine part, through
-`to_affine(ignore=True, on_error=None)`.
+`to_affine(include="affine", on_error=None)`.

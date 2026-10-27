@@ -14,7 +14,7 @@ from brainhops._core import path
 from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
@@ -103,6 +103,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "MghMetadata":
         """Encode the fields that differ from the record into a copy of it.
@@ -122,6 +123,10 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override before the encoding.
 
@@ -148,7 +153,11 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
 
     @takes_error_policy
     def to_bytes(
-        self, *, on_error: ErrorPolicy = UNSET, **fields: tx.Any
+        self,
+        *,
+        on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
+        **fields: tx.Any,
     ) -> bytes:
         """Return the fixed header of the consolidated record.
 
@@ -166,6 +175,10 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -183,6 +196,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         filename: path.FilenameLike,
         *,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> None:
         """Write the fixed header to a path, compressed for `.mgz` and `.gz`.
@@ -200,6 +214,10 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
         """

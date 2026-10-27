@@ -22,7 +22,7 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import same_file
@@ -444,6 +444,7 @@ class TiffImage(
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "TiffImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -493,6 +494,10 @@ class TiffImage(
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 

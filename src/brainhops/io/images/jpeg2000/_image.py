@@ -22,7 +22,7 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Affine, Transformation
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import write_file
@@ -381,6 +381,7 @@ class Jpeg2000Image(
         num_resolutions: tx.Optional[int] = None,
         comment: tx.Optional[str] = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options,
     ) -> "Jpeg2000Image":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -442,6 +443,10 @@ class Jpeg2000Image(
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, which encode the
             pixels again, such as `irreversible=True,

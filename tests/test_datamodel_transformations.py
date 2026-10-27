@@ -802,8 +802,8 @@ def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
     # A lossy conversion is refused by default.
     with pytest.raises(LossyConversionError):
         lin.to(Rotation)
-    # lossy=True returns the lossy result rather than the exception.
-    lossy = lin.to(Rotation, lossy=True)
+    # on_loss="ignore" returns the lossy result rather than the exception.
+    lossy = lin.to(Rotation, on_loss="ignore")
     assert type(lossy) is Rotation
     # on_error=<value> stands in for the result.
     assert lin.to(Rotation, on_error=None) is None

@@ -22,7 +22,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 
 # io
 from brainhops.io.base._base import register_format
@@ -428,6 +428,7 @@ class AfniBrikWarp(
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "AfniBrikWarp":
         """Encode the pending sub-bricks or chain into `rawdata` and a record.
@@ -468,6 +469,10 @@ class AfniBrikWarp(
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -542,6 +547,7 @@ class AfniBrikWarp(
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> None:
         """Write the `.HEAD` and `.BRIK` files of the dataset of the warp.
@@ -573,6 +579,10 @@ class AfniBrikWarp(
             and with any other conversion error, as for
             [`consolidate`][] (see
             [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override, as for [`consolidate`][].
             Any other option is refused.

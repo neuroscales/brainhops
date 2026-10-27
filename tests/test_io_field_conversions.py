@@ -7,7 +7,7 @@ file of the source is loaded, converted to the target, saved, loaded
 again, and the reloaded field must map the points inside the grid as
 the source does. A pair that is inherently lossy, because one side
 interpolates its field with cubic splines, is converted with
-`lossy=True` and compared at the nodes of the grid, where both agree.
+`on_loss="ignore"` and compared at the nodes of the grid, where both agree.
 A pair that is refused on purpose is listed with its reason, so that a
 missing converter fails the test.
 """
@@ -211,7 +211,7 @@ def _convert(t: xforms.Transformation, cls: type, lossy: bool) -> tx.Any:
         return t.to(cls)
     with pytest.raises(LossyConversionError):
         t.to(cls)
-    return t.to(cls, lossy=True)
+    return t.to(cls, on_loss="ignore")
 
 
 def _load(path: str, hint: tx.Optional[str]) -> xforms.Transformation:
@@ -257,7 +257,7 @@ def test_a_field_converts_between_formats(
     reason = _refusal(source, target)
     if reason:
         with pytest.raises(ConversionError, match=reason):
-            loaded.to(target_cls, lossy=True)
+            loaded.to(target_cls, on_loss="ignore")
         return
     converted = _convert(loaded, target_cls, _lossy(source, target))
     assert isinstance(converted, target_cls)
@@ -432,7 +432,7 @@ def test_an_oblique_field_is_sampled_for_afni(tmp_path: Path) -> None:
         oblique.to(AfniBrikWarp)
     with pytest.raises(LossyConversionError, match="oblique"):
         oblique.to(OmeZarrField)
-    assert isinstance(oblique.to(AfniBrikWarp, lossy=True), AfniBrikWarp)
+    assert isinstance(oblique.to(AfniBrikWarp, on_loss="ignore"), AfniBrikWarp)
 
 
 def test_m3z_takes_the_geometry_of_the_source_image(tmp_path: Path) -> None:
@@ -450,7 +450,7 @@ def test_m3z_takes_the_geometry_of_the_source_image(tmp_path: Path) -> None:
 
 def test_minc_writes_its_displacement_volume(tmp_path: Path) -> None:
     path = tmp_path / "warp.xfm"
-    io.save(_field().to(XfmTransform, lossy=True), str(path))
+    io.save(_field().to(XfmTransform, on_loss="ignore"), str(path))
     assert (tmp_path / "warp_grid_0.mnc").exists()
     assert "warp_grid_0.mnc" in path.read_text()
 

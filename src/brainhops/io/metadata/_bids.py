@@ -39,7 +39,7 @@ from brainhops.datamodel.metadata._report import (
     takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import GROUPS, VOCABULARY
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -118,6 +118,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "BidsSidecar":
         """Encode the fields that differ from the JSON object into a copy.
@@ -136,6 +137,10 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override before the encoding.
 
@@ -228,7 +233,13 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         return cls.from_raw(obj)
 
     @takes_error_policy
-    def to_text(self, *, on_error: ErrorPolicy = UNSET, **fields) -> str:
+    def to_text(
+        self,
+        *,
+        on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
+        **fields,
+    ) -> str:
         """Return the JSON text of the consolidated sidecar.
 
         The metadata is consolidated first, so a field that was changed
@@ -242,6 +253,10 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -255,7 +270,11 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
 
     @takes_error_policy
     def to_lines(
-        self, *, on_error: ErrorPolicy = UNSET, **fields
+        self,
+        *,
+        on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
+        **fields,
     ) -> tx.Iterator[str]:
         """Return the lines of the JSON text of the consolidated sidecar.
 
@@ -267,6 +286,10 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -302,6 +325,7 @@ def to_bids(
     metadata: Metadata,
     *,
     on_error: ErrorPolicy = UNSET,
+    on_loss: ErrorAction = UNSET,
 ) -> tx.Dict[str, tx.Any]:
     """
     Write metadata as the JSON object of a BIDS sidecar.
@@ -317,6 +341,10 @@ def to_bids(
         By default, an error is raised, and a loss follows the policy in
         effect. A report, `ConversionReport`, is filled instead of
         warning or raising.
+    on_loss : ErrorAction, optional
+        What to do with a loss of metadata, with the same values as a
+        single action of `on_error`, over which it takes precedence for
+        a loss. By default, a loss falls under `on_error`.
 
     Returns
     -------

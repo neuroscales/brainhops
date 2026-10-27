@@ -26,7 +26,7 @@ from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -431,6 +431,7 @@ class MghImage(
         inplace: bool = False,
         like: tx.Any = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> "MghImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -485,6 +486,10 @@ class MghImage(
             default, an error is raised, and a loss follows the policy
             in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `dtype`,
             `repetition_time` or `flip_angle`, and other header fields,

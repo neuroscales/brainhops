@@ -443,7 +443,7 @@ class OmeZarrField(
         if isinstance(placement, CartesianField):
             return
         affine = placement.to_affine(on_error=None)
-        if affine is None or affine.matrix is None:
+        if affine is None:
             raise OmeFieldError(
                 "This OME displacement field is placed by a transformation "
                 "that cannot be reduced to an affine, so the displacements "
@@ -533,7 +533,7 @@ def _spatial_part(
             ]
         )
     affine = placement.to_affine(on_error=None)
-    if affine is None or affine.matrix is None:
+    if affine is None:
         raise OmeFieldError(
             "This OME field is placed by a transformation that is not "
             "affine, so its spatial part cannot be told apart from its "
@@ -548,7 +548,7 @@ def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
     # stands in, so that the leading world-to-voxel element stays a defined
     # affine rather than a bare identity.
     affine = xform.to_affine(on_error=None)
-    if affine is not None and affine.matrix is not None:
+    if affine is not None:
         return xform
     return Affine(
         matrix=[

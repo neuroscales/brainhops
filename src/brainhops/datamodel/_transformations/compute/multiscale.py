@@ -20,7 +20,7 @@ def nearest_level(
     scales = multiscale.scales
     resolutions = [multiscale._level_resolution(i) for i in range(len(scales))]
     return _nearest_resolution_index(
-        resolutions, voxel2world.to_affine(ignore=True, on_error=None)
+        resolutions, voxel2world.to_affine(include="affine", on_error=None)
     )
 
 

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops import errors, io
+from brainhops import io
 from brainhops.datamodel.metadata import (
     ConversionReport,
     Metadata,
@@ -142,7 +142,7 @@ def test_a_policy_is_checked() -> None:
     with pytest.raises(TypeError):
         error_policy({"ConversionError": "raise"})
     with pytest.raises(TypeError):
-        error_policy("raise", lossy={LossyConversionError: "warn"})
+        error_policy("raise", on_loss={LossyConversionError: "warn"})
 
 
 def test_without_a_policy_every_error_is_raised() -> None:
@@ -209,35 +209,44 @@ def test_a_single_value_does_not_catch_what_is_not_an_exception() -> None:
 
 
 # ----------------------------------------------------------------------
-#   lossy=
+#   on_loss=
 # ----------------------------------------------------------------------
 
 
-def test_lossy_sets_the_entry_of_a_loss() -> None:
-    assert error_policy(lossy=True) == {LossyConversionError: "ignore"}
-    assert error_policy(lossy="warn") == {LossyConversionError: "warn"}
-    assert error_policy(lossy=None) == {}
-    assert error_policy(lossy=False) == {}
-    assert error_policy("raise", lossy=True) == {
+def test_on_loss_sets_the_entry_of_a_loss() -> None:
+    assert error_policy(on_loss="warn") == {LossyConversionError: "warn"}
+    assert error_policy(on_loss=None) == {LossyConversionError: None}
+    assert error_policy() == {}
+    assert error_policy("raise", on_loss="ignore") == {
         LossyConversionError: "ignore",
         ConversionError: "raise",
     }
+    for value in (True, False):
+        with pytest.raises(TypeError):
+            error_policy(on_loss=value)
 
 
-def test_an_entry_of_on_error_wins_over_lossy() -> None:
-    policy = error_policy({LossyConversionError: "raise"}, lossy=True)
+def test_an_entry_of_on_error_wins_over_on_loss() -> None:
+    policy = error_policy({LossyConversionError: "raise"}, on_loss="ignore")
     assert policy == {LossyConversionError: "raise"}
 
 
-def test_lossy_accepts_a_loss_and_on_error_raises_the_rest(
-    silent: None,
-) -> None:
-    lossy = _linear().to(Rotation, lossy=True, on_error="raise")
+def test_on_loss_takes_precedence_for_a_loss(silent: None) -> None:
+    lossy = _linear().to(Rotation, on_loss="ignore", on_error="raise")
     assert type(lossy) is Rotation
     with pytest.raises(LossyConversionError):
+        _linear().to(Rotation, on_loss="raise", on_error="ignore")
+    with pytest.raises(LossyConversionError):
         _linear().to(
-            Rotation, lossy=True, on_error={LossyConversionError: "raise"}
+            Rotation,
+            on_loss="ignore",
+            on_error={LossyConversionError: "raise"},
         )
+    # Without on_loss=, a loss falls under on_error=, so "ignore" returns
+    # the lossy result.
+    assert type(_linear().to(Rotation, on_error="ignore")) is Rotation
+    # None is an action, which returns None in place of the lossy result.
+    assert _linear().to(Rotation, on_loss=None) is None
 
 
 def test_to_takes_every_form_of_policy() -> None:
@@ -245,9 +254,9 @@ def test_to_takes_every_form_of_policy() -> None:
     with pytest.raises(LossyConversionError):
         lin.to(Rotation)
     with pytest.warns(ConversionWarning):
-        assert type(lin.to(Rotation, lossy="warn")) is Rotation
+        assert type(lin.to(Rotation, on_loss="warn")) is Rotation
     report = ConversionReport()
-    assert type(lin.to(Rotation, lossy=report)) is Rotation
+    assert type(lin.to(Rotation, on_loss=report)) is Rotation
     assert len(report.errors) == 1 and report.lossy
     assert lin.to(Rotation, on_error=None) is None
     # A loss is a conversion error, which the mapping finds by the order
@@ -257,62 +266,49 @@ def test_to_takes_every_form_of_policy() -> None:
         lin.to(Rotation, on_error=_Refused)
     # An error that is not a conversion error is acted on as well.
     with pytest.raises(TypeError):
-        lin.to(Rotation, lossy=True, nonsense=1)
+        lin.to(Rotation, on_loss="ignore", nonsense=1)
     assert lin.to(Rotation, nonsense=1, on_error={TypeError: 0}) == 0
 
 
 # ----------------------------------------------------------------------
-#   DEPRECATIONS
+#   on_loss= OF THE METADATA
 # ----------------------------------------------------------------------
 
 
-def test_error_is_a_deprecated_alias_of_on_error() -> None:
-    lin = _linear()
-    with pytest.warns(DeprecationWarning, match="on_error="):
-        assert lin.to(Rotation, error=False) is False
-    with pytest.warns(DeprecationWarning):
-        with pytest.raises(_Refused):
-            lin.to(Rotation, error=_Refused)
-    with pytest.warns(DeprecationWarning):
-        with pytest.raises(LossyConversionError):
-            lin.to(Rotation, error=True)
-    # As before, `error=` does not apply to an error that is not a
-    # conversion error.
-    with pytest.warns(DeprecationWarning):
-        with pytest.raises(TypeError):
-            lin.to(Rotation, nonsense=1, error=False)
-    with pytest.raises(TypeError, match="both"):
-        lin.to(Rotation, error=False, on_error=None)
-
-
-def test_on_loss_is_a_deprecated_alias_of_on_error() -> None:
+def test_on_loss_is_the_loss_half_of_a_metadata_policy(
+    silent: None,
+) -> None:
     meta = _lossy_metadata()
-    with pytest.warns(DeprecationWarning, match="on_error="):
-        with pytest.raises(MetadataLossError):
-            meta.to(MghMetadata, on_loss="raise")
+    with pytest.raises(MetadataLossError):
+        meta.to(MghMetadata, on_loss="raise")
     report = ConversionReport()
-    with pytest.warns(DeprecationWarning):
-        meta.to(MghMetadata, on_loss=report)
+    meta.to(MghMetadata, on_loss=report)
     assert set(report.lost) == {"description"}
-    with pytest.raises(TypeError, match="both"):
-        meta.to(MghMetadata, on_loss="raise", on_error="raise")
+    # on_loss= wins over on_error= for a loss.
+    with pytest.raises(MetadataLossError):
+        meta.to(MghMetadata, on_loss="raise", on_error="ignore")
+    assert meta.to(MghMetadata, on_loss=None, on_error="raise") is None
 
 
-def test_on_loss_is_deprecated_in_save(tmp_path: Path) -> None:
+def test_on_loss_fills_the_report_of_a_save(
+    tmp_path: Path, silent: None
+) -> None:
     from brainhops.datamodel.images import SingleScaleImage
 
     image = SingleScaleImage(
         np.zeros((2, 3, 4), np.float32), metadata=_lossy_metadata()
     )
     report = ConversionReport()
-    with pytest.warns(DeprecationWarning):
-        io.save(image, tmp_path / "image.mgz", on_loss=report)
+    io.save(image, tmp_path / "image.mgz", on_loss=report)
     assert "description" in report.lost
 
 
-def test_the_old_name_of_the_policy_type_still_imports() -> None:
-    with pytest.warns(DeprecationWarning):
-        assert errors.OnError is errors.ErrorPolicy
+def test_on_loss_applies_to_a_consolidation(silent: None) -> None:
+    with metadata_loss_policy("ignore"):
+        xform = C3dAffine(np.eye(4)[:-1], metadata=Metadata(description="r"))
+    with pytest.raises(MetadataLossError):
+        xform.consolidate(on_loss="raise", on_error="ignore")
+    assert xform.consolidate(on_loss=None) is None
 
 
 # ----------------------------------------------------------------------
@@ -326,14 +322,14 @@ def test_a_loss_of_metadata_is_a_lossy_conversion_error() -> None:
     assert issubclass(MetadataLossWarning, ConversionWarning)
 
 
-def test_lossy_accepts_a_loss_of_metadata(silent: None) -> None:
+def test_on_loss_accepts_a_loss_of_metadata(silent: None) -> None:
     meta = _lossy_metadata()
     with metadata_loss_policy("raise"):
         with pytest.raises(MetadataLossError):
             meta.to(MghMetadata)
-        assert type(meta.to(MghMetadata, lossy=True)) is MghMetadata
+        assert type(meta.to(MghMetadata, on_loss="ignore")) is MghMetadata
         report = ConversionReport()
-        meta.to(MghMetadata, lossy=report)
+        meta.to(MghMetadata, on_loss=report)
         assert set(report.lost) == {"description"}
         assert meta.to(MghMetadata, on_error={MetadataLossError: 7}) == 7
 
@@ -348,7 +344,7 @@ def test_on_error_applies_to_a_loss_of_metadata() -> None:
         meta.to(MghMetadata, on_error="warn")
 
 
-def test_lossy_accepts_a_loss_of_metadata_in_a_transformation(
+def test_on_loss_accepts_a_loss_of_metadata_in_a_transformation(
     silent: None,
 ) -> None:
     # Convert3D stores no field, so the description that the edit sets is
@@ -358,10 +354,10 @@ def test_lossy_accepts_a_loss_of_metadata_in_a_transformation(
     with metadata_loss_policy("raise"):
         with pytest.raises(MetadataLossError):
             xform.to(metadata=metadata)
-        edited = xform.to(metadata=metadata, lossy=True)
+        edited = xform.to(metadata=metadata, on_loss="ignore")
         assert type(edited) is C3dAffine
         report = ConversionReport()
-        xform.to(metadata=metadata, lossy=report)
+        xform.to(metadata=metadata, on_loss=report)
         assert set(report.lost) == {"description"}
 
 
@@ -491,8 +487,6 @@ def test_the_policy_of_a_lazy_wrapper_covers_the_edit_of_its_forward() -> None:
     with pytest.raises(ConversionError):
         wrapper.to(log=True)
     assert wrapper.to(log=True, on_error=None) is None
-    with pytest.warns(DeprecationWarning):
-        assert wrapper.to(log=True, error=None) is None
 
 
 # ----------------------------------------------------------------------
@@ -507,14 +501,14 @@ def test_a_warning_points_at_the_call_of_the_user() -> None:
         _lossy_metadata().to(MghMetadata, on_error="warn")
     assert caught[0].filename == __file__
     chain = Sequence(transformations=[_linear()])
-    with pytest.warns(DeprecationWarning) as caught:
-        chain.to(Rotation, error=None)
-    assert caught[0].filename == __file__
-    with pytest.warns(DeprecationWarning) as caught:
-        _linear().to_kind("rotation", error=None)
+    with pytest.warns(ConversionWarning) as caught:
+        chain.to(Rotation, on_loss="warn")
     assert caught[0].filename == __file__
     with pytest.warns(ConversionWarning) as caught:
-        _linear().to(Rotation, lossy="warn")
+        _linear().to_kind("rotation", on_loss="warn")
+    assert caught[0].filename == __file__
+    with pytest.warns(ConversionWarning) as caught:
+        _linear().to(Rotation, on_loss="warn")
     assert caught[0].filename == __file__
 
 

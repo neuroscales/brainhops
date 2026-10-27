@@ -179,7 +179,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
         cls,
         other: tx.Any,
         *args: tx.Any,
-        lossy: ErrorAction = None,
+        on_loss: ErrorAction = UNSET,
         on_error: ErrorPolicy = UNSET,
         **kwargs: tx.Any,
     ) -> tx.Self:
@@ -201,10 +201,10 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
         *args : Any
             Constructor arguments, which take precedence over the fields
             of `other`.
-        lossy : ErrorAction, optional
+        on_loss : ErrorAction, optional
             What to do with the fields that this format cannot store:
-            `True` or `"ignore"` accepts the loss, `"warn"` warns about
-            it, `"raise"` raises, and a report is filled instead of
+            `"ignore"` accepts the loss, `"warn"` warns about it,
+            `"raise"` raises, and a report is filled instead of
             warning or raising. By default, the action of `on_error`, or
             else the policy in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
@@ -212,7 +212,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
             What to do with a conversion error of the copy, including a
             loss (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A
             mapping may also name other errors. An entry for a loss in
-            `on_error` takes precedence over `lossy`. By default, an
+            `on_error` takes precedence over `on_loss`. By default, an
             error is raised.
         **kwargs : Any
             Fields to set on the result.
@@ -279,6 +279,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
         *,
         inplace: bool = False,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the fields of the metadata into its record.
@@ -299,6 +300,10 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override before the encoding, by
             name.

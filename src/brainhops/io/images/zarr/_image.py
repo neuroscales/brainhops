@@ -22,6 +22,7 @@ from brainhops.datamodel.metadata._report import (
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import (
     UNSET,
+    ErrorAction,
     ErrorPolicy,
     UnrepresentableTransformationError,
 )
@@ -306,6 +307,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         dimension_separator: tx.Optional[str] = None,
         zarr_version: tx.Optional[int] = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "ZarrImage":
         """Encode the pending data into `rawdata` and the record.
@@ -367,6 +369,10 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 

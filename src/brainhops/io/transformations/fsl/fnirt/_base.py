@@ -14,7 +14,6 @@ from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.base import _deprecated_error
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
@@ -26,6 +25,7 @@ from brainhops.datamodel.metadata._report import (
 from brainhops.errors import (
     UNSET,
     ConversionError,
+    ErrorAction,
     ErrorPolicy,
     LossyConversionError,
 )
@@ -337,6 +337,7 @@ class FnirtWarpField(
         inplace: bool = False,
         like: tx.Any = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending array into `rawdata` and a new header.
@@ -372,6 +373,10 @@ class FnirtWarpField(
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -459,9 +464,9 @@ class FnirtWarpField(
         deformation field on the grid of the reference. The cubic spline
         is then sampled at every voxel of the reference rather than at
         its knots only, which is a loss, so the conversion needs
-        `lossy=True`. A format that stores B-splines, such as a NiftyReg
-        grid of control points or an elastix B-spline, receives the
-        spline itself.
+        `on_loss="ignore"`. A format that stores B-splines, such as a
+        NiftyReg grid of control points or an elastix B-spline, receives
+        the spline itself.
 
         Parameters
         ----------
@@ -469,7 +474,7 @@ class FnirtWarpField(
             The type to convert to. By default, the type is kept.
         **kwargs : Any
             The options that `to` takes for any transformation, such as
-            `lossy=` and `on_error=`, and the geometry of the warp.
+            `on_loss=` and `on_error=`, and the geometry of the warp.
 
         Returns
         -------
@@ -1028,33 +1033,33 @@ def _through_deformation(
     The deformation field samples the spline at every voxel of the
     reference, which loses, so the result is carried by a
     `LossyConversionError`. The error policy of the call, given as
-    `lossy=` and `on_error=` among `kwargs`, acts on it as
-    `Transformation.to` acts on any other loss, so that `lossy=True`
-    returns the result.
+    `on_loss=` and `on_error=` among `kwargs`, acts on it as
+    `Transformation.to` acts on any other loss, so that
+    `on_loss="ignore"` returns the result.
     """
     from ._converters import to_fnirt
 
-    lossy = kwargs.pop("lossy", None)
-    on_error = _deprecated_error(
-        kwargs, kwargs.pop("on_error", UNSET), type(warp)
-    )
+    on_loss = kwargs.pop("on_loss", UNSET)
+    on_error = kwargs.pop("on_error", UNSET)
 
     def densified() -> _xforms.Transformation:
         try:
             dense = to_fnirt(warp, FnirtWarpField)
         except LossyConversionError as error:
             dense = error.result
-        result = dense.to(cls, lossy=True, **kwargs)
+        result = dense.to(cls, on_loss="ignore", **kwargs)
         raise LossyConversionError(
             f"The {getattr(cls, '__name__', cls)} that this FNIRT "
             f"coefficient field converts to is not the same map: the cubic "
             f"spline is sampled at the voxels of the reference, which are "
-            f"read back with linear interpolation. Pass lossy=True to "
+            f"read back with linear interpolation. Pass on_loss='ignore' to "
             f"accept it.",
             result=result,
         )
 
-    return call_under_policy(densified, on_error, lossy=lossy, stacklevel=3)
+    return call_under_policy(
+        densified, on_error, on_loss=on_loss, stacklevel=3
+    )
 
 
 def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:

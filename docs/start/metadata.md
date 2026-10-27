@@ -225,7 +225,7 @@ lose, from `SUPPORTED_FIELDS`:
 ```python
 >>> scan = Metadata(description="T1w", echo_time=0.0029, flip_angle=8.0)
 >>> report = ConversionReport()
->>> nifti = scan.to(NiftiMetadata, lossy=report)
+>>> nifti = scan.to(NiftiMetadata, on_loss=report)
 >>> report.lost
 {'echo_time': 0.0029, 'flip_angle': 8.0}
 >>> nifti.echo_time
@@ -244,10 +244,13 @@ What happens to a report is decided by an error policy (see
 policy acts on it as on any other loss: `"ignore"` drops it, `"warn"`
 issues one `MetadataLossWarning` that carries the report, `"raise"`
 raises the error, and a `ConversionReport` is filled instead of warning
-or raising. The `to()` method of metadata takes the action for a loss
-as its `lossy=` option. The `to()` method, `consolidate` and `save` take
-a whole policy as their `on_error=` option, which also decides what
-happens to their other conversion errors. A loss that no option covers
+or raising. The `to()` method of metadata, `consolidate` and `save`
+take the action for a loss as their `on_loss=` option, and a whole
+policy as their `on_error=` option, which also decides what happens to
+their other conversion errors. `on_loss=` takes precedence over
+`on_error=` for a loss, and without it a loss falls under `on_error=`,
+so that `on_error="ignore"` alone also accepts a loss. A loss that no
+option covers
 follows the policy in effect, which is `"warn"` unless the
 [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]
 context manager sets another one. That context manager also sets the

@@ -22,7 +22,7 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorPolicy
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import write_file
@@ -531,6 +531,7 @@ class PillowImage(
         format: tx.Optional[str] = None,
         dpi: _DpiLike = None,
         on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
         **options,
     ) -> "PillowImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -592,6 +593,10 @@ class PillowImage(
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss of metadata, with the same values as a
+            single action of `on_error`, over which it takes precedence for
+            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Options passed to `Image.save`, such as `quality=95` for JPEG.
             Only the options that Pillow reads for the format are taken.
