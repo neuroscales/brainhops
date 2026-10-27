@@ -6,7 +6,8 @@ and #115. Part A, on the public operations `compute`, `simplify`,
 read, compose and cancel projections, is implemented in #570, and the
 values of created axes, the free axes of `restrict`, the pruning of
 projections in `simplify` and the two ends of the normal form of
-`factor` are implemented for #582. The rest is not implemented yet.
+`factor` are implemented for #582. The single pass of `compute` is
+implemented for #602. The rest is not implemented yet.
 
 Part A defines a small set of public operations on transformations. Part B
 lets a coordinate system state that some of its axes are unknown, which
@@ -25,7 +26,8 @@ silent surprises. Passing tests is not sufficient.
   cheaper equivalent without composing anything, and `factor` rewrites it
   into independent groups of axes. `factor` composes nothing by default,
   and its `compute=` mode composes inside each group, as a convenience
-  that is equivalent to a call of `compute` with `factor=True`.
+  that is equivalent to a call of `compute` with `factor=True` on a
+  chain that `factor` does not decline (A.3).
   `t.restrict(...)`, like `t.inverse()`, only describes its result
   lazily. `compute` is the operation that composes.
 - Every operation returns an equivalent transformation or raises. It never
@@ -83,9 +85,11 @@ ends have different numbers of axes can therefore be factored. A
 transformation that does not split into at least two groups and has
 neither end is returned unchanged. By default nothing is composed, so
 each factor holds the pieces of its group. The `compute=` mode composes
-inside each group, never across groups, and is a convenience: a call of
-`compute` with `factor=True` and the same mode and policy gives the same
-factors. With the multi-block
+inside each group, never across groups, and is a convenience: on a
+chain that the pass does not decline, a call of `compute` with
+`factor=True` and the same mode and policy gives the same factors. A
+chain that the pass declines is factored by `compute` once it is
+composed (A.6). With the multi-block
 `SubspaceTransformation` of A.8, the normal form becomes
 `[grid?, δ?, SubspaceTransformation(blocks), κ?]`, the reordering `Π` is
 absorbed into `output_axes`, and restriction to whole blocks is
@@ -311,17 +315,33 @@ pass:
    pruning leaves and has no pass of its own.
 5. Compose once: outside the factors, compose the runs that `mode` admits;
    inside each factor, compose its chain recursively. Each product is
-   simplified as it is produced, and a product that collapses to
-   `Identity` is dropped, after which composition continues across the
+   simplified as it is produced and is tried against its left neighbour,
+   which may accept the product after it refused the first factor of the
+   product. Two transformations that a product brings together, such as
+   the two neighbours of a product that collapses to `Identity`, are
+   offered to the pair simplifiers, so composition continues across the
    gap.
 
-A fixed-point loop is unnecessary. In measurements at the time, every
-bridge was inserted in the first round, no second round changed anything
-over the test suite or over thousands of random chains, and the one case
-in which a second round helped is handled locally by step 5. `compute` is
-idempotent, which a test over the parity sweep and the test suite
-enforces in place of an iteration cap, and `compute(t, factor=True)` never
-fails where `compute(t)` succeeds.
+Every bridge is inserted by step 1, because the later steps only remove
+elements or replace neighbours by their product, which keeps the
+coordinate systems at each boundary. The only repeated work is in step 5
+and concerns `factor`. The pruning carries a created axis only through
+the elements that pass it through unchanged (decision 35), so step 4
+declines a chain in which an element shifts or scales such an axis, as a
+translation after a projection that creates an axis does. Composition
+folds these constants into a matrix, whose exact zeros the pruning
+reads, so step 5 applies `simplify` and `factor` once more to a chain
+that step 4 declined, when composing it changed it. A chain in normal
+form has nothing to compose outside its factors, so this never happens
+to one. Under `factor`, a subspace transformation that keeps its axes in
+place composes only with a factor over the same axes or with `Identity`,
+whereas one that moves its axes is never a factor and composes as any
+other transformation does.
+
+There is no fixed-point loop and no iteration cap. Tests over random
+chains enforce instead that `compute` is idempotent, with and without
+`factor`, and that `compute(t, factor=True)` succeeds wherever
+`compute(t)` succeeds.
 
 ### A.7 What stays internal
 
@@ -659,15 +679,15 @@ The next pull requests, in order (#582):
 3. add `Transformation.restrict`, which accepts the axis queries of #574,
    and remove the transformation-level `embed`.
 
-The remaining work makes `compute` a single pass, and adds the
-multi-block `SubspaceTransformation` and axis references by name. It
-will be checked by the parity sweep, the idempotence test and reslice
-timings. Cutting a field down to some of its own outputs, and taking the
-section of a field, need fields whose number of components differs from
-the dimension of their grid (#588). Until then, a projection that would
-cut a field stays next to it. Batched transformations (A.10) come after
-Part A, together with the readers and writers of the formats that
-store them (#576).
+The remaining work adds the multi-block `SubspaceTransformation` and
+axis references by name. It will be checked by the parity sweep, the
+tests of the idempotence of `compute` and reslice timings. Cutting a
+field down to some of its own outputs, and taking the section of a
+field, need fields whose number of components differs from the dimension
+of their grid (#588). Until then, a projection that would cut a field
+stays next to it. Batched transformations (A.10) come after Part A,
+together with the readers and writers of the formats that store them
+(#576).
 
 ## Decisions
 
@@ -768,10 +788,32 @@ and 35 to 37 are implemented (#582), and decision 34 is implemented
     with the restrictors of closed blocks.
 37. `factor` takes the policy of `simplify`, and its partition follows
     that policy. It keeps its `compute=` mode, which composes inside the
-    groups as a convenience equivalent to a call of `compute` with
-    `factor=True`. The reslice executor asks for the numeric policy.
+    groups as a convenience equivalent, on a chain that it does not
+    decline, to a call of `compute` with `factor=True`. The reslice
+    executor asks for the numeric policy.
+
+Part A, the single pass of `compute`. Decisions 38 and 39 are
+implemented (#602):
+
+38. `compute` makes a single pass of bridging, flattening,
+    simplification, factoring and composition (A.6), with no fixed-point
+    loop and no iteration cap. Its composition stage simplifies each
+    product as it is produced and tries it against its neighbours, so
+    nothing that a product makes possible needs a second pass.
+39. Under `factor`, the composition stage applies `simplify` and
+    `factor` once more to a chain that the factor stage declined, when
+    composing it changed it, because composition folds the constants
+    that the pruning cannot carry (decision 35). A subspace
+    transformation that moves its axes is not a factor, so it composes
+    as any other transformation does.
 
 ## Open questions
 
 1. `Axis.merge_with` has no consumer. Part A will either use it, for
    example when factors declare full-space systems, or remove it.
+2. The pruning could carry a created axis through a translation or a
+   scaling by updating the value of the axis. The factor stage would
+   then accept the chains that it declines today, and the composition
+   stage of `compute` would no longer need to simplify and factor them
+   again (decision 39). This would relax decision 35 for these two
+   types.
