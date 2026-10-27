@@ -363,7 +363,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             The version of the Zarr format to write, 2 or 3.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

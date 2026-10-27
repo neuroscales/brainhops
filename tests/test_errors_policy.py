@@ -76,12 +76,16 @@ def test_warn_warns_and_returns_the_result() -> None:
         assert apply_error_policy(_loss(), "warn") == "the result"
     # An error that carries no result returns None.
     with pytest.warns(ConversionWarning, match="ValueError: bad"):
-        assert apply_error_policy(ValueError("bad"), "warn") is None
+        assert (
+            apply_error_policy(ValueError("bad"), {ValueError: "warn"}) is None
+        )
 
 
 def test_ignore_returns_the_result_silently(silent: None) -> None:
     assert apply_error_policy(_loss(), "ignore") == "the result"
-    assert apply_error_policy(ValueError("bad"), "ignore") is None
+    assert (
+        apply_error_policy(ValueError("bad"), {ValueError: "ignore"}) is None
+    )
 
 
 def test_a_report_records_the_error_and_returns_the_result(
@@ -100,7 +104,7 @@ def test_a_report_records_the_error_and_returns_the_result(
     assert (report.source, report.target) == ("a", "b")
     # Another error is recorded, but it is not a loss.
     other = ConversionReport()
-    apply_error_policy(ValueError("bad"), other)
+    apply_error_policy(ValueError("bad"), {ValueError: other})
     assert not other.lossy and len(other.errors) == 1
 
 
@@ -122,9 +126,9 @@ def test_an_exception_instance_is_raised_from_the_error() -> None:
 
 def test_any_other_value_is_returned(silent: None) -> None:
     assert apply_error_policy(_loss(), None) is None
-    assert apply_error_policy(_loss(), False) is False
+    assert apply_error_policy(_loss(), 0) == 0
     marker = object()
-    assert apply_error_policy(ValueError(), marker) is marker
+    assert apply_error_policy(ConversionError(), marker) is marker
 
 
 def test_a_string_is_always_an_action() -> None:
@@ -154,9 +158,32 @@ def test_without_a_policy_every_error_is_raised() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_one_action_applies_to_every_exception() -> None:
-    assert error_policy(None) == {Exception: None}
-    assert error_policy("warn") == {Exception: "warn"}
+def test_one_action_applies_to_the_scope() -> None:
+    assert error_policy(None) == {ConversionError: None}
+    assert error_policy("warn") == {ConversionError: "warn"}
+    scope = (ConversionError, ValueError)
+    assert error_policy(None, scope=scope) == {
+        ConversionError: None,
+        ValueError: None,
+    }
+    # A mapping is taken as written, outside the scope too.
+    assert error_policy({Exception: None}) == {Exception: None}
+    # An error outside the scope is raised unchanged.
+    error = ValueError("bad")
+    with pytest.raises(ValueError) as info:
+        apply_error_policy(error, None)
+    assert info.value is error
+    assert apply_error_policy(error, {Exception: None}) is None
+
+
+def test_a_boolean_is_not_a_policy() -> None:
+    for value in (True, False):
+        with pytest.raises(TypeError):
+            error_policy(value)
+        with pytest.raises(TypeError):
+            _linear().to(Rotation, on_error=value)
+    # A boolean is still a value that a mapping may return.
+    assert _linear().to(Rotation, on_error={ConversionError: False}) is (False)
 
 
 def test_the_action_is_chosen_by_the_method_resolution_order(
@@ -193,7 +220,7 @@ def test_lossy_sets_the_entry_of_a_loss() -> None:
     assert error_policy(lossy=False) == {}
     assert error_policy("raise", lossy=True) == {
         LossyConversionError: "ignore",
-        Exception: "raise",
+        ConversionError: "raise",
     }
 
 
@@ -374,3 +401,63 @@ def test_a_save_acts_on_a_loss_once_the_file_is_written(
         image, tmp_path / "value.mgz", on_error={MetadataLossError: marker}
     )
     assert returned is marker
+
+
+# ----------------------------------------------------------------------
+#   THE SCOPE OF A CALL
+# ----------------------------------------------------------------------
+
+
+def test_an_error_outside_the_scope_of_to_is_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from brainhops.datamodel._transformations import base
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(base, "convert", broken)
+    lin = _linear()
+    for policy in (None, "ignore", "warn", 0):
+        with pytest.raises(RuntimeError, match="a bug"):
+            lin.to(Rotation, on_error=policy)
+    # A mapping may reach outside the scope.
+    assert lin.to(Rotation, on_error={Exception: None}) is None
+    assert lin.to(Rotation, on_error={RuntimeError: 1}) == 1
+
+
+def test_an_error_outside_the_scope_of_a_writer_is_raised(
+    tmp_path: Path,
+) -> None:
+    from brainhops.io.common.nifti import NiftiMetadata
+
+    missing = tmp_path / "missing" / "header.nii"
+    for policy in (None, "ignore"):
+        with pytest.raises(OSError):
+            NiftiMetadata().to_filename(missing, on_error=policy)
+    assert NiftiMetadata().to_filename(missing, on_error={OSError: 0}) == 0
+
+
+def test_an_error_outside_the_scope_of_a_consolidation_is_raised() -> None:
+    with metadata_loss_policy("ignore"):
+        xform = C3dAffine(np.eye(4)[:-1], metadata=Metadata(description="r"))
+    # An unknown field is a `TypeError`, which is not a conversion error.
+    with pytest.raises(TypeError):
+        xform.consolidate(on_error=None, nonsense=1)
+    assert xform.consolidate(on_error={TypeError: None}, nonsense=1) is None
+
+
+def test_to_affine_returns_none_for_a_field() -> None:
+    from brainhops.datamodel.axes import A, R, S
+    from brainhops.datamodel.systems import CoordinateSystem
+    from brainhops.datamodel.transformations import DisplacementField
+
+    def system(name: str) -> CoordinateSystem:
+        return CoordinateSystem(name=name, axes=[R(), A(), S()])
+
+    field = DisplacementField(
+        np.zeros((4, 5, 6, 3)), input=system("b"), output=system("c")
+    )
+    assert field.to_affine(on_error=None) is None
+    with pytest.raises(ConversionError):
+        field.to_affine()

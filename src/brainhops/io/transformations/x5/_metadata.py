@@ -109,7 +109,7 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
             Whether to change this metadata rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the fields that the record cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -203,7 +203,7 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
             The empty file, open for writing.
         on_error : ErrorPolicy, optional
             What to do with the fields that the record cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

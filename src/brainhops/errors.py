@@ -295,8 +295,19 @@ What a conversion does when it fails or loses information.
 A policy is the value that the `on_error=` keyword of a conversion
 takes. It is either one action (see [`ErrorAction`][]) or a mapping
 from exception classes to actions, such as
-`{LossyConversionError: "warn", ConversionError: None}`. A single
-action `v` is read as the mapping `{Exception: v}`.
+`{LossyConversionError: "warn", ConversionError: None}`.
+
+Each call that takes a policy declares its scope, which is the tuple
+of the exception classes that the call raises on purpose when it
+cannot convert. The scope of a conversion is `(ConversionError,)`,
+which covers a [`LossyConversionError`][] and a loss of metadata. A
+single action `v` is read as the mapping `{cls: v for cls in scope}`,
+so that `on_error=None` returns `None` when the conversion fails, and
+an error outside the scope, such as an `OSError` or a bug, is raised
+unchanged. A mapping is taken as written, and may name a class outside
+the scope, as `{Exception: None}` does to catch every error. The value
+`True` or `False` is refused as a single action, because it reads as a
+yes or a no rather than as an action.
 
 When a conversion raises an error, the policy walks the classes of the
 error in method resolution order and applies the action of the first
@@ -311,29 +322,37 @@ The `lossy=` keyword of a conversion sets the entry of
 
 
 def error_policy(
-    on_error: ErrorPolicy = UNSET, *, lossy: ErrorAction = None
+    on_error: ErrorPolicy = UNSET,
+    *,
+    lossy: ErrorAction = None,
+    scope: tx.Tuple[tx.Type[BaseException], ...] = (ConversionError,),
 ) -> tx.Dict[tx.Type[BaseException], ErrorAction]:
     """Return the policy that a conversion applies, as a mapping.
 
     A conversion takes a policy as its `on_error=` keyword, and the
     action for a loss as its `lossy=` keyword. This function merges the
     two into one mapping from exception classes to actions, which
-    [`policy_action`][] and [`apply_error_policy`][] read. The entry
-    that `lossy` sets comes first, so that an entry for
+    [`policy_action`][] and [`apply_error_policy`][] read. A single
+    action applies to each class of `scope` (see [`ErrorPolicy`][]).
+    The entry that `lossy` sets comes first, so that an entry for
     [`LossyConversionError`][] in `on_error` replaces it. Because that
-    class is more specific than `Exception`, `lossy=True` with
-    `on_error="raise"` accepts a loss and raises any other error.
+    class is more specific than [`ConversionError`][], `lossy=True`
+    with `on_error="raise"` accepts a loss and raises any other error.
 
     Parameters
     ----------
     on_error : ErrorPolicy, optional
-        One action, which applies to every exception, or a mapping from
-        exception classes to actions. By default, no class has an
-        entry, so every error is raised.
+        One action, which applies to every class of `scope`, or a
+        mapping from exception classes to actions, which is taken as
+        written. By default, no class has an entry, so every error is
+        raised.
     lossy : ErrorAction, optional
         The action for a [`LossyConversionError`][]. The value `True`
         means `"ignore"`, and `None` (the default) or `False` adds no
         entry.
+    scope : tuple of type, default=(ConversionError,)
+        The exception classes that the conversion raises on purpose,
+        to which a single action applies.
 
     Returns
     -------
@@ -343,8 +362,8 @@ def error_policy(
     Raises
     ------
     TypeError
-        If a key of `on_error` is not an exception class, or if `lossy`
-        is a mapping.
+        If `on_error` is `True` or `False`, if a key of `on_error` is
+        not an exception class, or if `lossy` is a mapping.
     ValueError
         If an action is a string other than `"raise"`, `"warn"` and
         `"ignore"`.
@@ -353,9 +372,17 @@ def error_policy(
     --------
     ```python
     error_policy("raise", lossy=True)
-    # {LossyConversionError: 'ignore', Exception: 'raise'}
+    # {LossyConversionError: 'ignore', ConversionError: 'raise'}
+    error_policy({Exception: None})
+    # {Exception: None}
     ```
     """
+    if isinstance(on_error, bool):
+        raise TypeError(
+            f"on_error= takes an action or a mapping, not {on_error!r}. "
+            f"Pass on_error='raise' to raise, or a value to return in "
+            f"place of the result, such as on_error=None."
+        )
     if on_error is UNSET:
         entries = {}
     elif isinstance(on_error, Mapping):
@@ -368,7 +395,8 @@ def error_policy(
                 )
             entries[cls] = _checked_action(action)
     else:
-        entries = {Exception: _checked_action(on_error)}
+        action = _checked_action(on_error)
+        entries = {cls: action for cls in scope}
     if lossy is None or lossy is False:
         return entries
     if isinstance(lossy, Mapping):
@@ -413,6 +441,7 @@ def apply_error_policy(
     on_error: ErrorPolicy = UNSET,
     *,
     lossy: ErrorAction = None,
+    scope: tx.Tuple[tx.Type[BaseException], ...] = (ConversionError,),
     stacklevel: int = 2,
 ) -> tx.Any:
     """Act on an error that a conversion raised, according to a policy.
@@ -432,6 +461,9 @@ def apply_error_policy(
     lossy : ErrorAction, optional
         The action for a [`LossyConversionError`][], merged with
         `on_error` as [`error_policy`][] merges it.
+    scope : tuple of type, default=(ConversionError,)
+        The exception classes that the conversion raises on purpose,
+        to which a single action applies.
     stacklevel : int, default=2
         The stack level of the warning, counted from the caller of this
         function, so that the default points at the caller of the
@@ -448,7 +480,7 @@ def apply_error_policy(
     BaseException
         The error itself, or the exception that the policy names.
     """
-    policy = error_policy(on_error, lossy=lossy)
+    policy = error_policy(on_error, lossy=lossy, scope=scope)
     action = policy_action(policy, type(error))
     if action is UNSET or _is_action(action, "raise"):
         raise error

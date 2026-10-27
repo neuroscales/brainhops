@@ -132,7 +132,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             Whether to change this metadata rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the fields that a sidecar cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -238,7 +238,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         ----------
         on_error : ErrorPolicy, optional
             What to do with the fields that a sidecar cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -263,7 +263,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         ----------
         on_error : ErrorPolicy, optional
             What to do with the fields that a sidecar cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

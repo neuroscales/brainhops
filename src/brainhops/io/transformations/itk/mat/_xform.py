@@ -384,7 +384,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             that is encoded again are written in double precision.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

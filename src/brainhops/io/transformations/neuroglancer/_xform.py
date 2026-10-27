@@ -305,7 +305,7 @@ class NeuroglancerTransform(
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with metadata that the format cannot store, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

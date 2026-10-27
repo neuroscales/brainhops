@@ -209,10 +209,11 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
             else the policy in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
         on_error : ErrorPolicy, optional
-            What to do with an error of the copy, including a loss (see
-            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). An entry for
-            a loss in `on_error` takes precedence over `lossy`. By
-            default, an error is raised.
+            What to do with a conversion error of the copy, including a
+            loss (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A
+            mapping may also name other errors. An entry for a loss in
+            `on_error` takes precedence over `lossy`. By default, an
+            error is raised.
         **kwargs : Any
             Fields to set on the result.
 
@@ -294,7 +295,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
             Whether to change this metadata rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the fields that the format cannot store, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

@@ -47,11 +47,28 @@ does in its `result` attribute. Any other error has no result, and the
 value returned is `None`.
 
 E3. A mapping chooses an action by the class of the error, for example
-`on_error={LossyConversionError: "warn", ConversionError: None}`. A
-single value `v` is read as the mapping `{Exception: v}`. When an error
-is raised, the policy walks the classes of the error in method
-resolution order and applies the first one that has an entry. An error
-whose classes have no entry is raised.
+`on_error={LossyConversionError: "warn", ConversionError: None}`. Each
+call that takes a policy declares a scope, which is the tuple of the
+exception classes that the call raises on purpose when it cannot
+convert. A single value `v` is read as the mapping
+`{cls: v for cls in scope}`. The scope of `Transformation.to()` and of
+its overrides is `(ConversionError,)`, which covers a
+`LossyConversionError` and a `MetadataLossError`. The metadata
+methods, the writers, `consolidate` and `io.save` have the same scope,
+so that a single value never applies to an `OSError`. An error outside
+the scope, such as an `OSError` or a bug, is raised unchanged, because
+a caller who writes `on_error=None` asks for `None` when the conversion
+fails, not for every error to be hidden. A mapping is taken as written,
+and may name a class outside the scope, as `{Exception: None}` does to
+catch every error. The value `"raise"` needs no scope, since raising is
+what happens without a policy. An exception class or instance given as
+a single value stays an action, which raises that exception in place of
+an error of the scope. The value `True` or `False` is refused as a
+single value with a `TypeError`, because it reads as a yes or a no
+rather than as an action, and the deprecated `error=True` still reads
+as `"raise"` (E7). When an error is raised, the policy walks the
+classes of the error in method resolution order and applies the first
+one that has an entry. An error whose classes have no entry is raised.
 
 E4. A string is always read as an action, so a policy cannot return the
 string `"raise"`, `"warn"` or `"ignore"` as a value. No conversion
@@ -71,9 +88,9 @@ policy that a call applies is
 after a single value of `on_error` has been read as a mapping (E3). The
 value `lossy=True` means `"ignore"`. The default is `lossy=None`, which
 adds no entry, and `lossy=False` is kept with the same meaning. Because
-the entry of `lossy=` names a more specific class than a single value
-of `on_error=`, `lossy=True, on_error="raise"` accepts losses and raises
-every other error. An explicit entry for `LossyConversionError` in
+the entry of `lossy=` names a more specific class than the scope of a
+single value of `on_error=`, `lossy=True, on_error="raise"` accepts
+losses and raises every other error. An explicit entry for `LossyConversionError` in
 `on_error=` is merged last and wins over `lossy=`.
 
 ## 4. The classes of errors
@@ -102,7 +119,11 @@ the new policy or removed, since it has no caller.
 The policy lives in `brainhops.errors`. `ErrorPolicy` and `ErrorAction`
 are its types, `error_policy()` reads `on_error=` and `lossy=` into one
 mapping (E3, E5), `policy_action()` walks the method resolution order,
-and `apply_error_policy()` acts on one error (E1, E2). The default of
+and `apply_error_policy()` acts on one error (E1, E2). Both functions
+take the scope of the call as `scope=`, whose default is
+`(ConversionError,)`. The decorator `takes_error_policy` takes a
+`scope=` argument with the same default, and `Transformation.to()`
+passes `(ConversionError,)` to `call_under_policy()`. The default of
 `on_error=` is the sentinel `UNSET` rather than `None`, because `None`
 is a policy that returns `None` (E1). Without a policy, every error is
 raised and a loss of metadata follows the policy in effect, which

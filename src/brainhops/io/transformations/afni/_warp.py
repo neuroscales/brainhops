@@ -464,7 +464,7 @@ class AfniBrikWarp(
             Attributes set last, as for an AFNI image.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -570,8 +570,9 @@ class AfniBrikWarp(
             Attributes set last, as for [`consolidate`][].
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error, as for [`consolidate`][]
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
+            and with any other conversion error, as for
+            [`consolidate`][] (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
         **fields : Any
             Fields of the metadata to override, as for [`consolidate`][].
             Any other option is refused.

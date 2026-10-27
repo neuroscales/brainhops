@@ -377,7 +377,7 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -553,7 +553,7 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -729,7 +729,7 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -908,7 +908,7 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -1087,7 +1087,7 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -1278,7 +1278,7 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -1457,7 +1457,7 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             Whether to change this transformation rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the record cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

@@ -195,7 +195,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             transformation are copied.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the header cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -579,7 +579,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
             It defaults to the `log` option of the field.
         on_error : ErrorPolicy, optional
             What to do with the metadata that the header cannot hold,
-            and with any other error
+            and with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

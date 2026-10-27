@@ -473,9 +473,11 @@ class Transformation(
         [`LossyConversionError`][brainhops.errors.LossyConversionError],
         which carries the lossy result. A conversion that cannot be
         made raises a [`ConversionError`][]. An error policy decides
-        what happens to these errors, and to any other error of the
-        conversion (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
-        The policy that the call applies is
+        what happens to these errors (see
+        [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). Its scope is
+        `(ConversionError,)`, so that a single action applies to these
+        errors only, and any other error is raised unless a mapping
+        names it. The policy that the call applies is
         `{LossyConversionError: lossy, **on_error}`, so that
         `lossy=True` returns the lossy result. A loss of metadata, in
         the conversions of metadata that the conversion triggers,
@@ -501,9 +503,13 @@ class Transformation(
             entry for it.
         on_error : ErrorPolicy, optional
             What to do when the conversion fails. One action applies to
-            every error, and a mapping chooses an action by the class
-            of the error. An entry for a loss in `on_error` takes
-            precedence over `lossy`. By default, every error is raised.
+            a [`ConversionError`][], which includes a loss, and any
+            other error, such as an `OSError`, is raised unchanged. A
+            mapping chooses an action by the class of the error, and
+            may name a class outside the conversion errors, as
+            `{Exception: None}` does. An entry for a loss in `on_error`
+            takes precedence over `lossy`. `True` and `False` are
+            refused. By default, every error is raised.
         copy : bool, default=False
             Whether to return a new object when the conversion has nothing
             to change. By default, a transformation converted to its own
@@ -533,7 +539,9 @@ class Transformation(
             target = cls or self._target_class(kwargs)
             return _copied(self, convert(self, target, **kwargs), copy)
 
-        return call_under_policy(convert_to, on_error, lossy=lossy)
+        return call_under_policy(
+            convert_to, on_error, lossy=lossy, scope=(ConversionError,)
+        )
 
     def _target_class(
         self, kwargs: tx.Dict[str, tx.Any]

@@ -118,7 +118,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             Whether to change this metadata rather than a copy.
         on_error : ErrorPolicy, optional
             What to do with the fields that the record cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -162,7 +162,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         on_error : ErrorPolicy, optional
             What to do with the fields that the record cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.
@@ -196,7 +196,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             The path of the file.
         on_error : ErrorPolicy, optional
             What to do with the fields that the record cannot hold, and
-            with any other error
+            with any other conversion error
             (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
             default, an error is raised, and a loss follows the policy
             in effect.

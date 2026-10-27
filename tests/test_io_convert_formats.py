@@ -246,7 +246,7 @@ def test_an_affine_between_other_spaces_is_refused(
         affine.to(NiftiVoxelToRAS)
     with pytest.raises(ConversionError, match="cannot be held exactly"):
         NiftiVoxelToRAS.from_any(affine)
-    assert affine.to(NiftiVoxelToRAS, on_error=False) is False
+    assert affine.to(NiftiVoxelToRAS, on_error=None) is None
 
 
 def test_a_chain_with_a_field_is_not_an_affine() -> None:

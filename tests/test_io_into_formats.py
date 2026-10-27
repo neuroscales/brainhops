@@ -283,7 +283,7 @@ def test_a_relabel_into_a_bound_class_is_a_conversion_error() -> None:
     scaling = xforms.Scaling([2.0, 3.0, 4.0], input=LPSmm(), output=LPSmm())
     with pytest.raises(ConversionError, match="not compatible"):
         scaling.to(VoxelToRAS)
-    assert scaling.to(VoxelToRAS, on_error=False) is False
+    assert scaling.to(VoxelToRAS, on_error=None) is None
 
 
 # ----------------------------------------------------------------------
@@ -309,7 +309,7 @@ def test_a_transformation_no_format_holds_is_refused(
     t = _families(VOXEL, VOXEL)[family]
     with pytest.raises(ConversionError):
         t.to(cls)
-    assert t.to(cls, on_error=False) is False
+    assert t.to(cls, on_error=None) is None
 
 
 @pytest.mark.parametrize(

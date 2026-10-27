@@ -135,9 +135,9 @@ class Metadata(
             The action for a loss, accepted for the symmetry with the
             metadata of a file format.
         on_error : ErrorPolicy, optional
-            What to do with an error of the copy (see
-            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By default,
-            an error is raised.
+            What to do with a conversion error of the copy (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A mapping
+            may also name other errors. By default, an error is raised.
         **kwargs : Any
             Fields to set on the result.
 
@@ -190,10 +190,11 @@ class Metadata(
             action of `on_error`, or else the policy in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
         on_error : ErrorPolicy, optional
-            What to do with an error of the conversion, including a loss
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). An
-            entry for a loss in `on_error` takes precedence over
-            `lossy`. By default, an error is raised.
+            What to do with a conversion error, including a loss (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A mapping
+            may also name other errors. An entry for a loss in
+            `on_error` takes precedence over `lossy`. By default, an
+            error is raised.
         **values : Any
             Fields to set on the result.
 

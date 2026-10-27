@@ -806,7 +806,7 @@ def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
     lossy = lin.to(Rotation, lossy=True)
     assert type(lossy) is Rotation
     # on_error=<value> stands in for the result.
-    assert lin.to(Rotation, on_error=False) is False
+    assert lin.to(Rotation, on_error=None) is None
     # on_error=<exception> raises that exception.
     with pytest.raises(TypeError):
         lin.to(Rotation, on_error=TypeError)

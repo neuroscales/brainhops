@@ -247,8 +247,8 @@ raises the error, and a `ConversionReport` is filled instead of warning
 or raising. The `to()` method of metadata takes the action for a loss
 as its `lossy=` option. The `to()` method, `consolidate` and `save` take
 a whole policy as their `on_error=` option, which also decides what
-happens to their other errors. A loss that no option covers follows the
-policy in effect, which is `"warn"` unless the
+happens to their other conversion errors. A loss that no option covers
+follows the policy in effect, which is `"warn"` unless the
 [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]
 context manager sets another one. That context manager also sets the
 policy of the conversions that take no option, such as those of the

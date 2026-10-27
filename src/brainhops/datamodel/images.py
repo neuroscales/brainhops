@@ -1008,7 +1008,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _get_voxel2world(self, geometry).to_affine(
-                ignore=True, error=None
+                ignore=True, on_error=None
             ),
         )
         return self.to_singlescale(level).reslice(geometry, **opt)
@@ -1069,7 +1069,7 @@ def _level_voxel_sizes(
     sizes = []  # type: tx.List[tx.Optional[ArrayProtocol]]
     for level in multiscale.images or ():
         affine = (multiscale.transformation @ level.transformation).to_affine(
-            ignore=True, error=None
+            ignore=True, on_error=None
         )
         if affine is None or affine.matrix is None:
             sizes.append(None)
