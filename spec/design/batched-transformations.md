@@ -108,13 +108,59 @@ for each batch axis, the coordinate of each element along that axis. Its
 default is the index of the element, which is what a file that knows
 nothing about the timing of the volumes can give.
 
-A batch can also be built from its elements with
+`b.element(k)` returns element `k` as an ordinary transformation of the
+element type, whose data is a view of the stack. It is the same map as
+`b.restrict(element_axes, element_axes, at={"t": positions[k]})`, and
+the restrictor of section 4 returns it.
+
+### Building a batch
+
+The constructor above is rarely called directly. Every concrete class
+has a class method `batch`, which takes the same keywords as the
+constructor of the class, with arrays that carry leading batch
+dimensions, together with `batch_axes` and `positions`. It returns a
+`BatchedTransformation` whose element type is that class.
+
+```python
+Affine.batch(matrices, batch_axes=["t"])
+Affine.batch(homogeneous_matrix=matrices, batch_axes=["t"])
+DisplacementField.batch(fields, batch_axes=["t"], degree=3)
+```
+
+Since `batch` accepts the views of the class, such as
+`homogeneous_matrix`, `field` and `coefficients`, the conversions between
+a view and the stored data must work on stacks, which the first step of
+section 9 provides. When `batch` is called on the class of a file
+format, the element type is the data-model class of that format,
+because the metadata of a format describes one record of a file and not
+one element of a batch. A class that holds no data, such as `Identity`,
+refuses `batch`, since a batch of identities is the identity.
+
+`batch` is a class method only. An instance method that would use the
+instance as a template, keeping its encoding and its systems and
+replacing its data with a stack, is rejected. The same call would then
+mean two different things depending on whether it is made on a class or
+on an instance, and the data of the instance would be discarded without
+an error. The meta transformations, whose parameters are other
+transformations, have no `batch` either.
+
+A batch of existing instances is built with
 `BatchedTransformation.stack(elements, batch_axes=...)`, which checks
 that the elements have the same type, the same encoding and the same
-shape. `b.element(k)` returns element `k` as an ordinary transformation
-of the element type, whose data is a view of the stack. It is the same
-map as `b.restrict(element_axes, element_axes, at={"t": positions[k]})`,
-and the restrictor of section 4 returns it.
+shape. `stack` also accepts meta transformations, and moves the batch
+inside them, so that a `BatchedTransformation` always holds stacked
+data directly.
+
+- Sequences of the same length, whose transformations have the same type
+  at each position, give a sequence of batches. This is exact, because
+  every batch carries its batch axes through, so that composing the
+  batches composes the chains element by element. A registration of
+  BigStitcher, which is a chain of affines for each time point, is read
+  in this way.
+- Subspace transformations that act on the same axes give a subspace
+  transformation of a batch, whose axes include the batch axes.
+- Lazy inverses give the lazy inverse of the batch of their forward
+  transformations.
 
 The class is not registered as any of the kinds of `kinds.py`. A batched
 affine is therefore never mistaken for an affine, and every rule that
@@ -381,9 +427,10 @@ components differs from the dimension of their grid need #588.
    index the last dimensions of a matrix. The ordinary types refuse
    data with leading dimensions. The NIfTI vector reader raises on a
    field with more than one volume.
-2. Add `BatchedTransformation`, with `stack`, `element`, the systems,
-   `inverse` and `sqrt`, the pattern reader, the restrictor, the
-   simplifier and the three composers of section 4.
+2. Add `BatchedTransformation`, with the class method `batch` of the
+   concrete classes, `stack`, `element`, the systems, `inverse` and
+   `sqrt`, the pattern reader, the restrictor, the simplifier and the
+   three composers of section 4.
 3. Add the resampling step of section 5, the check of discrete axes in
    the monolithic path, and the per-element Jacobian.
 4. Add the readers and writers of section 6, starting with X5, AFNI and
