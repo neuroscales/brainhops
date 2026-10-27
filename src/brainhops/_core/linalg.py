@@ -1,3 +1,5 @@
+import functools
+
 import numpy as np
 import scipy.linalg
 import typing_extensions as tx
@@ -55,14 +57,23 @@ def batch(
 def batched(dims: tx.Union[int, tx.Sequence[int]]) -> tx.Callable:
     """Return a decorator that applies a function to each batch of an array.
 
-    The decorated function receives a NumPy or CuPy array. Dask has no linear
-    algebra on batches of matrices, so the function is applied to each block,
-    with the last two axes in a single block.
+    The decorated function receives a NumPy or CuPy array. Dask has no
+    linear algebra on batches of matrices, so the function is applied to
+    each block, with the last two axes in a single block. The arguments
+    that follow the array are passed to the function unchanged, on every
+    backend.
     """
 
     def decorator(function: tx.Callable) -> tx.Callable:
+        @functools.wraps(function)
         def wrapper(array: ArrayProtocol, *a, **k) -> ArrayProtocol:
-            return batch(function, array, dims=dims)
+            # The extra arguments follow the array in the call, but
+            # `functools.partial` would place them before it, so a
+            # closure passes them instead.
+            def apply(block: ArrayProtocol) -> ArrayProtocol:
+                return function(block, *a, **k)
+
+            return batch(apply, array, dims=dims)
 
         return wrapper
 
