@@ -95,8 +95,8 @@ class NiftiImage(
     A NIfTI image holds the header of its file as [`NiftiMetadata`][] and
     the voxels as stored in `rawdata`. When the image is read from a
     file, `rawdata` is a lazy array, which reads the voxels only when
-    they are needed, and `data` is decoded from it on first access. The
-    transformations are decoded from the header in the same way.
+    they are needed, and `data` returns that lazy array. The
+    transformations are decoded from the header on first access.
 
     `rawdata` and the header describe the file as it was read, or as the image
     was last consolidated. Data assigned to the image are pending: they

@@ -101,8 +101,8 @@ class MghImage(
     as [`MghMetadata`][], whose record is an [`MghRaw`][], and the voxels
     as stored in `rawdata`. When the image is read from a file,
     `rawdata` is a lazy array, which reads the voxels only when they are
-    needed, and `data` is decoded from it on first access. The
-    voxels are in Fortran order, and the data are indexed `(x, y, z)` or
+    needed, and `data` returns that lazy array. The voxels are in
+    Fortran order, and the data are indexed `(x, y, z)` or
     `(x, y, z, frames)`, where the frames form a time axis.
 
     The transformations are decoded from the record on first access,

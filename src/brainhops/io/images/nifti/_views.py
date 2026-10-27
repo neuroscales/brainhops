@@ -15,9 +15,9 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the file stores.
 
     An image stores its data as it is, so the array is returned as it
-    is. The lazy array of a file therefore stays lazy and reads nothing,
-    and the `data` of the image reads it once, as the backend setting
-    says.
+    is. The lazy array of a file therefore stays lazy and reads nothing
+    until a computation needs its values, and the `data` of the image
+    returns that lazy array.
     """
     return raw
 
