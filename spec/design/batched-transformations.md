@@ -171,9 +171,9 @@ The systems that `batch` receives are those of one element. The batch
 axes are new axes, given as axes or as names, and a name stands for a
 discrete axis with that name. They are placed after the axes of the
 elements, which is the order of the axes of an image such as
-`(x, y, z, t)`, whereas the data always keeps the batch dimensions first. A batch
-whose axes are in another order is built with the constructor of
-`BatchedTransformation`, from systems of the whole space.
+`(x, y, z, t)`, whereas the data always keeps the batch dimensions
+first. A batch whose axes are in another order is built with the
+constructor of `BatchedTransformation`, from systems of the whole space.
 
 Since `batch` accepts the views of the class, the conversions between a
 view and the stored data must work on stacks, which the first step of
