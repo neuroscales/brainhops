@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from brainhops._core.affines import matmul
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -15,7 +16,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     SubspaceTransformation,
 )
-from brainhops.errors import ConversionError
+from brainhops.errors import ConversionError, RestrictionError
+from brainhops.io.transformations.zarr._map import (
+    OmeMappingError,
+    to_ome,
+)
 
 # ----------------------------------------------------------------------
 #   HELPERS
@@ -183,3 +188,107 @@ def test_the_inverse_of_an_embedding_cancels_after_it() -> None:
     embedding = Projection(created=[3])
     chain = Sequence([embedding, embedding.inverse()])
     assert isinstance(chain.simplify(), Identity)
+
+
+# ----------------------------------------------------------------------
+#   VALUES OF THE CREATED AXES
+# ----------------------------------------------------------------------
+
+
+def _xy() -> CoordinateSystem:
+    return CoordinateSystem(axes=[Axis(name=n) for n in "xy"])
+
+
+def _restricted(affine: Affine, at: float) -> Sequence:
+    # The affine of (x, y, t) read from (x, y) to (x, y), with t at `at`.
+    return Sequence(
+        [Projection(created=[2], at=[at]), affine, Projection(dropped=[2])]
+    )
+
+
+_A1 = Affine(matrix=np.array([[2, 0, 0, 1], [0, 3, 0, 2], [0, 0, 1, 5.0]]))
+_A2 = Affine(matrix=np.array([[2, 0, 0.5, 1], [0, 3, 0, 2], [0, 0, 1, 5.0]]))
+_A3 = Affine(matrix=np.array([[2, 0, 0, 1], [0, 3, 0, 2], [0, 0.1, 1, 5.0]]))
+
+
+def test_the_created_axes_are_at_zero_by_default() -> None:
+    assert np.array_equal(Projection(created=[2]).at, [0.0])
+    matrix = Projection(created=[2], input=_xy()).to(Affine).matrix
+    assert np.array_equal(matrix[:, -1], [0.0, 0.0, 0.0])
+
+
+def test_at_needs_one_value_per_created_axis() -> None:
+    with pytest.raises(ValueError, match="one value in `at`"):
+        Projection(created=[2], at=[1.0, 2.0])
+
+
+def test_at_is_the_translation_of_the_created_rows() -> None:
+    projection = Projection(created=[1], at=[4.0], input=_xy())
+    expected = np.array([[1.0, 0, 0], [0, 0, 4], [0, 1, 0]])
+    assert np.array_equal(projection.to(Affine).matrix, expected)
+    assert projection.is_kind("affine")
+    assert not projection.is_kind("linear")
+    with pytest.raises(ConversionError, match="not linear"):
+        projection.to(Linear)
+
+
+def test_a_section_reads_the_value_of_the_created_axis() -> None:
+    expected = np.array([[2.0, 0, 3], [0, 3, 2]])
+    assert np.allclose(_restricted(_A2, 4.0).compute().matrix, expected)
+
+
+def test_a_free_axis_that_no_kept_output_reads_disappears() -> None:
+    expected = np.array([[2.0, 0, 1], [0, 3, 2]])
+    # In A1, nothing reads t. In A3, only the dropped output t' reads it.
+    for affine in (_A1, _A3):
+        result = _restricted(affine, np.nan).compute()
+        assert np.array_equal(result.matrix, expected)
+
+
+def test_a_free_axis_that_a_kept_output_reads_raises() -> None:
+    with pytest.raises(RestrictionError, match="free"):
+        _restricted(_A2, np.nan).compute()
+
+
+def test_a_free_axis_created_then_dropped_cancels() -> None:
+    chain = Sequence(
+        [Projection(created=[2], at=[np.nan]), Projection(dropped=[2])]
+    )
+    assert isinstance(chain.compute(), Identity)
+
+
+def test_a_free_axis_left_in_the_result_raises() -> None:
+    with pytest.raises(RestrictionError):
+        Projection(created=[2], at=[np.nan]).compute()
+    # Without composition, the free axis stays in place and is not checked.
+    kept = _restricted(_A1, np.nan).compute(False)
+    assert isinstance(kept.transformations[0], Projection)
+
+
+def test_the_merge_keeps_the_values_of_the_created_axes() -> None:
+    chain = Sequence(
+        [Projection(dropped=[2]), Projection(created=[2], at=[3.0])]
+    )
+    merged = chain.simplify()
+    assert list(merged.created) == [2]
+    assert list(merged.at) == [3.0]
+    chain = Sequence(
+        [Projection(created=[0], at=[np.nan]), Projection(dropped=[2])]
+    )
+    merged = chain.simplify()
+    assert list(merged.created) == [0] and np.isnan(merged.at[0])
+
+
+def test_zero_cancels_nan_in_the_affine_product() -> None:
+    inner = np.array([[1.0, 0, 0], [0, 1, 0], [0, 0, np.nan]])
+    outer = np.array([[2.0, 0, 0, 1], [0, 3, 0.5, 2]])
+    product = matmul(outer, inner, zero_cancels_nan=True)
+    assert np.array_equal(product[0], [2.0, 0, 1])
+    assert np.isnan(product[1, -1])
+    assert np.array_equal(product[1, :-1], [0.0, 3.0])
+
+
+def test_the_ome_writer_refuses_a_free_axis() -> None:
+    projection = Projection(created=[2], at=[np.nan], input=_xy())
+    with pytest.raises(OmeMappingError, match="free"):
+        to_ome(projection, [0, 1, 2], 3)
