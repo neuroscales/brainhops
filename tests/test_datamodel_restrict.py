@@ -18,7 +18,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Inverse,
@@ -346,7 +346,7 @@ def _system(n: int) -> CoordinateSystem:
         (Translation(translation=np.zeros(4)), (4, 4)),
         (Permutation(permutation=np.asarray([1, 0])), (2, 2)),
         (DisplacementField(field=np.zeros((3, 3, 2))), (2, 2)),
-        (CoordinatesField(field=np.zeros((3, 3, 4))), (2, 4)),
+        (CoordinateField(field=np.zeros((3, 3, 4))), (2, 4)),
         (CartesianField(shape=(3, 4, 5)), (3, 3)),
         (Scaling(scale=None, input=_system(3), output=_system(3)), (3, 3)),
         (Identity(input=_system(2), output=_system(2)), (2, 2)),

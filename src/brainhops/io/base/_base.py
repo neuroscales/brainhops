@@ -7,8 +7,7 @@ __all__ = [
 import typing_extensions as tx
 from bagof.magic import Field, fields
 
-from brainhops import backends
-from brainhops._core import path
+from brainhops._core import backends, path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
 from brainhops.io.base._dispatch import Source, parse, sniff

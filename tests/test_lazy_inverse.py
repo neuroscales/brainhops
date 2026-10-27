@@ -20,12 +20,12 @@ from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Inverse,
     InverseAffine,
-    InverseCoordinatesField,
+    InverseCoordinateField,
     InverseDisplacementField,
     InverseLinear,
     InversePermutation,
@@ -70,10 +70,10 @@ def test_displacement_field_inverse_is_lazy() -> None:
 
 
 def test_coordinates_field_inverse_is_lazy() -> None:
-    cf = CoordinatesField(field=_small_field())
+    cf = CoordinateField(field=_small_field())
     inv = cf.inverse()
-    assert isinstance(inv, InverseCoordinatesField)
-    assert isinstance(inv, CoordinatesField)
+    assert isinstance(inv, InverseCoordinateField)
+    assert isinstance(inv, CoordinateField)
     assert inv.forward is cf
 
 
@@ -82,9 +82,9 @@ def test_empty_field_inverse_stays_eager() -> None:
     df = DisplacementField()
     assert not isinstance(df.inverse(), Inverse)
     assert type(df.inverse()) is DisplacementField
-    cf = CoordinatesField()
+    cf = CoordinateField()
     assert not isinstance(cf.inverse(), Inverse)
-    assert type(cf.inverse()) is CoordinatesField
+    assert type(cf.inverse()) is CoordinateField
 
 
 def test_meta_families_stay_eager() -> None:
@@ -177,7 +177,7 @@ def test_displacement_inverse_preserves_degree_store_bound() -> None:
 
 
 def test_coordinates_inverse_preserves_degree_store_bound() -> None:
-    cf = CoordinatesField(
+    cf = CoordinateField(
         data=_small_field(), degree=2, bound=1.0, store="coefficients"
     )
     inv = cf.inverse()
@@ -248,7 +248,7 @@ def _coordinate_field(seed: int = 0) -> tuple:
         np.meshgrid(*[np.arange(s) for s in values.shape[:-1]], indexing="ij"),
         -1,
     )
-    return CoordinatesField(field=grid + values), grid, values
+    return CoordinateField(field=grid + values), grid, values
 
 
 def test_coordinate_inverse_matches_the_displacement_inverse() -> None:
@@ -262,7 +262,7 @@ def test_coordinate_inverse_matches_the_displacement_inverse() -> None:
 def test_coordinate_inverse_materializes_to_a_plain_instance() -> None:
     cf, grid, values = _coordinate_field(seed=1)
     computed = cf.inverse().compute()
-    assert type(computed) is CoordinatesField
+    assert type(computed) is CoordinateField
     np.testing.assert_allclose(
         np.asarray(computed.field), grid + inverse_disp(values)
     )
@@ -342,7 +342,7 @@ def test_cancellation_does_not_materialize() -> None:
 
 
 def test_cancellation_of_coordinate_field() -> None:
-    cf = CoordinatesField(field=_small_field())
+    cf = CoordinateField(field=_small_field())
     result = Sequence(transformations=[cf, cf.inverse()]).compute()
     assert isinstance(result, Identity)
 
@@ -460,7 +460,7 @@ def test_is_identity_compute_false_does_not_materialize() -> None:
     # materialized here anyway (#63).
     for operand in (
         DisplacementField(data=_small_field(), degree=3, store="coefficients"),
-        CoordinatesField(field=_small_field()),
+        CoordinateField(field=_small_field()),
     ):
         inv = operand.inverse()
         assert is_identity(inv, compute=False) is False
@@ -683,7 +683,7 @@ def test_inverse_classes_are_public() -> None:
         "InverseLinear",
         "InverseAffine",
         "InverseDisplacementField",
-        "InverseCoordinatesField",
+        "InverseCoordinateField",
     ):
         assert name in _xf.__all__, name
         assert isinstance(getattr(_xf, name), type), name
@@ -940,9 +940,9 @@ def test_an_equal_subspace_product_does_not_cancel() -> None:
 
 
 def test_the_coordinates_inverse_has_the_displacement_signature() -> None:
-    # The inverse of a coordinates field takes only `forward`, `input`
+    # The inverse of a coordinate field takes only `forward`, `input`
     # and `output`, like the other lazy inverses.
-    coords = inspect.signature(InverseCoordinatesField).parameters
+    coords = inspect.signature(InverseCoordinateField).parameters
     disp = inspect.signature(InverseDisplacementField).parameters
     assert list(coords) == list(disp)
 
@@ -961,13 +961,13 @@ def test_a_grid_inverse_keeps_the_flags_of_the_grid() -> None:
 
 
 def test_the_inverse_of_an_unset_coordinates_field_is_unset() -> None:
-    # The inverse of a coordinates field without data has no data
+    # The inverse of a coordinate field without data has no data
     # either.
-    inverse = InverseCoordinatesField(CoordinatesField())
+    inverse = InverseCoordinateField(CoordinateField())
     assert inverse.data is None
 
 
-@pytest.mark.parametrize("cls", [DisplacementField, CoordinatesField])
+@pytest.mark.parametrize("cls", [DisplacementField, CoordinateField])
 def test_a_computed_identity_inverse_is_computed(cls: type) -> None:
     # The call `inverse(compute=True)` computes the inverse of an
     # identity, as `inverse().compute()` does.

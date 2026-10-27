@@ -1,22 +1,30 @@
+# stdlib
 import math
 import re
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 
+# core
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend, to_backend
 from brainhops._core.enum import StrEnum
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend, to_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
+
+# io
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
+# this format
 from ._systems import _make_grid_system, _make_system
 
 # An ITK transform type name is `{Class}_{Precision}_{InputDim}_{OutputDim}`.
@@ -361,7 +369,7 @@ class ItkDisplacementBase(ItkBlockBase):
             # chunks of the dataset when it has some, and is not read.
             parameters = to_backend(parameters)
         elif not hasattr(parameters, "reshape"):
-            parameters = get_array_backend(parameters).asarray(parameters)
+            parameters = array_backend(parameters).asarray(parameters)
 
         # The buffer is C-ordered with x varying fastest, so the spatial axes
         # come out reversed in both layouts and are flipped back. The two
@@ -376,7 +384,7 @@ class ItkDisplacementBase(ItkBlockBase):
 
         # Only the linear part of the affine rotates a displacement.
         lps2vox = _affines.inv(vox2lps)
-        xp = get_array_backend(disp)
+        xp = array_backend(disp)
         rotate = xp.asarray(lps2vox[:, :ndim], dtype=disp.dtype)
         return xp.matmul(rotate, disp[..., None])[..., 0]
 

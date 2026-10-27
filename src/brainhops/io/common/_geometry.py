@@ -10,7 +10,6 @@ of the helpers needs nibabel.
 """
 
 __all__ = [
-    "CHANNEL_TYPES",
     "RAS_FROM_ORIENTATION",
     "STORAGE_GROUPS",
     "Arrangement",
@@ -29,13 +28,17 @@ __all__ = [
     "split_spatial",
 ]
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import cached_value
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel._sugar import get_axes
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -43,8 +46,10 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.errors import ConversionError
-from brainhops.io.base.parsers import (
+
+# errors
+from brainhops.errors import (
+    ConversionError,
     UnrepresentableTransformationError,
     WriterError,
 )
@@ -283,9 +288,6 @@ Spatial axes come first, then time, then channels or vector components, and
 then any other axis.
 """
 
-CHANNEL_TYPES = ("channel", "displacement", "coordinate")
-"""Axis types that are stored in the channel group, after time."""
-
 _SPACE_NAMES = ("x", "y", "z")
 """Axis names by which [`plan_axes`][] sorts spatial axes."""
 
@@ -293,9 +295,14 @@ _INDEX = "index"
 
 
 def axis_group(axis: tx.Any) -> str:
-    """Return the storage group of an axis, one of [`STORAGE_GROUPS`][]."""
+    """Return the storage group of an axis, one of [`STORAGE_GROUPS`][].
+
+    Channel axes and component axes, which hold the components of points,
+    vectors or tensors, belong to the channel group, which is stored
+    after time.
+    """
     type_ = getattr(axis, "type", None)
-    if type_ in CHANNEL_TYPES:
+    if type_ == "channel" or is_component_type(type_):
         return "channel"
     if type_ in ("space", "time"):
         return str(type_)
@@ -370,9 +377,9 @@ class AxisLayout(tx.NamedTuple):
         operations return views, so lazy arrays such as dask arrays stay lazy.
         """
         if self.order != sorted(self.order):
-            data = get_array_backend(data).transpose(data, self.order)
+            data = array_backend(data).transpose(data, self.order)
         for position in self.inserted:
-            data = get_array_backend(data).expand_dims(data, axis=position)
+            data = array_backend(data).expand_dims(data, axis=position)
         return data
 
 

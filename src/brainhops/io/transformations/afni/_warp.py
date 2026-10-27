@@ -10,11 +10,13 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
-# internals
+# core
 from brainhops._core import path
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._backends import (
@@ -25,6 +27,8 @@ from brainhops.datamodel._backends import (
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.datamodel.metadata._vocabulary import FIELDS
+
+# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -689,7 +693,7 @@ def _dicom_vectors(data: tx.Optional[ArrayProtocol]) -> ArrayProtocol:
     """
     if data is None:
         raise ParserContentError("This warp has no data to read.")
-    xp = get_array_backend(data)
+    xp = array_backend(data)
     shape = tuple(int(d) for d in data.shape)
     if len(shape) == _NDIM + 2 and shape[_NDIM] == 1:
         # The NIfTI layout, (X, Y, Z, 1, n), keeps a singleton axis.
@@ -713,7 +717,7 @@ def _dicom_chain(
     read-only.
     """
     vox2ras = DICOM_TO_RAS @ np.asarray(vox2dicom, dtype=np.float64)
-    xp = get_array_backend(vectors)
+    xp = array_backend(vectors)
     flip = xp.asarray(_DICOM_RAS_VECTOR.astype(vectors.dtype))
     chain = ras_displacement_chain(
         vectors * flip,
@@ -757,7 +761,7 @@ def _dicom_field(
             "the DICOM axes, and the grid of this warp is oblique. Resample "
             "it on a cardinal grid first."
         )
-    xp = get_array_backend(vectors)
+    xp = array_backend(vectors)
     rotate = xp.asarray(to_dicom[:3, :3].astype(vectors.dtype))
     vectors = xp.matmul(rotate, vectors[..., None])[..., 0]
     return vox2dicom, vectors

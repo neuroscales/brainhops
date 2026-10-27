@@ -16,9 +16,9 @@ The NIfTI-1 standard (`nifti1.h`) gives vector fields two intent codes with
 different meanings. `DISPVECT` (1006) is "specifically for displacements" and
 is read and written by [`NiftiRASDisplacementField`][]. `VECTOR` (1007) is "for
 any other type of vector" and is read and written by
-[`NiftiRASCoordinatesField`][].
+[`NiftiRASCoordinateField`][].
 
-A displacement field maps `x` to `x + u(x)`, while a coordinates field maps
+A displacement field maps `x` to `x + u(x)`, while a coordinate field maps
 each voxel to the position that its vector holds. Reading one kind as the other
 shifts every point by the world position of its voxel, so the intent code
 decides. `DISPVECT` fields are read as RAS displacements in millimetres, as ITK
@@ -34,7 +34,7 @@ brainhops included, would misread a grid written with it.
 __all__ = [
     "NiftiBasedTransformation",
     "NiftiMetadata",
-    "NiftiRASCoordinatesField",
+    "NiftiRASCoordinateField",
     "NiftiRASDisplacementField",
     "NiftiRASToVoxel",
     "NiftiRaw",
@@ -45,9 +45,24 @@ from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 
 from ._affines import NiftiRASToVoxel, NiftiVoxelToRAS
 from ._base import NiftiBasedTransformation
-from ._fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
+from ._fields import NiftiRASCoordinateField, NiftiRASDisplacementField
 
 # The converters into these formats register themselves when this module
 # is imported, here, so that importing the formats makes `t.to(Format)`
 # work. The SPM converters import theirs from it too, and rely on it.
 from . import _converters  # noqa: E402, F401  isort: skip
+
+
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "NiftiRASCoordinatesField": "NiftiRASCoordinateField",
+    },
+)

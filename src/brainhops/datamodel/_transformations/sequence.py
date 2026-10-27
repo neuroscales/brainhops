@@ -1,11 +1,16 @@
+# stdlib
 from collections.abc import MutableSequence as AbcMutableSequence
 from collections.abc import Sequence as AbcSequence
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
 
+# core
+from brainhops._core.backends import BackendLike, DeviceLike
 from brainhops._core.properties import smartproperty
-from brainhops.backends import BackendLike, DeviceLike
+
+# datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _BackendsMixin,
@@ -15,6 +20,7 @@ from brainhops.datamodel._backends import (
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
+# transformations
 from . import nocycles
 from .base import Transformation, _copied
 from .compute.check import is_kind
@@ -25,7 +31,7 @@ from .compute.simplify import simplify as _simplify
 from .compute.utils import require_endomorphism
 from .concrete import (
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
 )
@@ -883,7 +889,7 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 def _interpolates(xform: Transformation) -> bool:
     # Whether applying a transformation resamples through a spline, that is,
-    # whether it reaches a displacement or coordinates field. A
+    # whether it reaches a displacement or coordinate field. A
     # `CartesianField` is the identity over its grid, so it does not
     # interpolate.
     if xform is None:
@@ -896,7 +902,7 @@ def _interpolates(xform: Transformation) -> bool:
         return _interpolates(xform.transformation)
     if isinstance(xform, CartesianField):
         return False
-    if isinstance(xform, (DisplacementField, CoordinatesField)):
+    if isinstance(xform, (DisplacementField, CoordinateField)):
         return True
     return False
 

@@ -296,7 +296,7 @@ def test_a_permuted_proxy_reads_the_transposed_array(tmp_path: Path) -> None:
 
 def test_the_dask_backend_keeps_the_array_lazy(tmp_path: Path) -> None:
     da = pytest.importorskip("dask.array")
-    from brainhops.backends import get_backend, set_backend
+    from brainhops._core.backends import get_backend, set_backend
 
     path = str(tmp_path / "a.zarr")
     _native(path, 3)

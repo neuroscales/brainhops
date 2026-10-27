@@ -1,17 +1,20 @@
 __all__ = [
+    "AxisQuery",
     "AxisSequence",
+    "AxisSequenceLike",
     "AxisTuple",
     "AxisList",
 ]
 
 import abc
 import sys
+from collections.abc import Mapping
 from numbers import Integral
 
 import typing_extensions as tx
 from bagof.magic import fields
 
-from .base import Axis
+from .base import Axis, AxisLike
 
 if tx.TYPE_CHECKING:
     from types import EllipsisType as _Ellipsis
@@ -23,6 +26,29 @@ else:
 
 # Type of the items of an `AxisSequence`.
 AXIS = tx.TypeVar("AXIS")
+
+AxisQuery: tx.TypeAlias = tx.Union[
+    Axis,
+    str,
+    tx.Type[Axis],
+    tx.Mapping[str, tx.Any],
+    tx.Callable[[Axis], bool],
+]
+"""A description of the axes to find in an [`AxisSequence`][].
+
+A query is one of the following:
+
+- a name, which stands for `Axis(name=...)`;
+- an axis used as a template, which matches the axes that are instances
+  of its class and have the same value for every field that it sets;
+- an axis class, which matches its instances, so that `ComponentAxis`
+  matches every point, vector, displacement and tensor axis;
+- a dictionary of axis fields, which stands for `Axis(**fields)`, so that
+  `{"type": "space"}` is the template `SpaceAxis()`;
+- a function that receives an axis and returns whether it matches.
+
+The `...` of a variadic sequence matches no query.
+"""
 
 # Types of the items of an `AxisTuple`, in order.
 AXES = tx.TypeVarTuple("AXES")
@@ -47,8 +73,8 @@ class AxisSequence(tx.Sequence[AXIS]):
     items are all axes, is finite.
 
     !!! note "Entries and axes"
-        Length, iteration, equality, `axes[i]` and [`index`][] work on
-        entries, including `...`. [`ndim`][] counts axes, and [`at`][],
+        Length, iteration, equality and `axes[i]` work on entries,
+        including `...`. [`ndim`][] counts axes, and [`at`][],
         [`expand`][], [`restrict`][], [`embed`][] and [`compatible_with`][]
         work on positions in the space, where `...` stands for as many axes
         as needed. Non-negative positions count from the first axis and
@@ -57,14 +83,17 @@ class AxisSequence(tx.Sequence[AXIS]):
         `axes.at(2)` is one of the axes that `...` stands for.
 
     !!! note "Finding an axis"
-        [`index`][] finds the first entry that matches a query, given as an
-        axis or as a name, which stands for `Axis(name=...)`. An entry
-        matches when it is an instance of the class of the query and has
-        the same value for every field that the query sets. Thus
+        [`index`][] finds the first axis that matches a query, and
+        [`indices`][] finds every axis that matches it. A query is a name,
+        a template axis, an axis class, a dictionary of axis fields or a
+        function, as [`AxisQuery`][] describes. Thus
         `axes.index(TimeAxis())` finds the first time axis whatever its
-        unit, and `axes.index(Axis())` finds the first axis. The `...`
-        matches nothing, and an unknown `Axis()` matches no query that sets
-        a field.
+        unit, and `axes.indices(SpaceAxis)` finds every spatial axis. Both
+        methods return numbers that are entries and positions at once:
+        an axis before `...` is counted from the start and an axis after
+        `...` from the end, so that `axes[i]` and `axes.at(i)` give the
+        same axis. The `...` matches nothing, and an unknown `Axis()`
+        matches no query that sets a field.
 
     !!! note "Names"
         `axes["t"]` returns the explicit axis named `"t"`, `"t" in axes`
@@ -79,7 +108,7 @@ class AxisSequence(tx.Sequence[AXIS]):
         >>> axes.ndim is None, axes.is_variadic
         (True, True)
         >>> axes.index("t"), axes.index(TimeAxis()), axes["t"] is t
-        (2, 2, True)
+        (-1, -1, True)
         >>> "x" in axes, axes.names
         (True, ('x', Ellipsis, 't'))
         >>> axes[2] is t, axes.at(2), axes.at(-1) is t
@@ -143,23 +172,27 @@ class AxisSequence(tx.Sequence[AXIS]):
 
     def index(
         self,
-        query: tx.Union[Axis, str],
+        query: AxisQuery,
         start: tx.SupportsIndex = 0,
         stop: tx.SupportsIndex = sys.maxsize,
     ) -> int:
-        """Return the index of the first entry that matches an axis or a name.
+        """Return the index of the first axis that matches a query.
 
-        The test is looser than equality: unset fields of the query are not
-        compared, as described in the class documentation.
+        The test is looser than equality: unset fields of a template are
+        not compared, as described in the class documentation. The index
+        of an axis after `...` counts from the end, so that it is both
+        an entry and a position in the space.
 
         !!! example
             ```pycon
             >>> x, t = SpaceAxis(name="x"), TimeAxis(name="t", unit="s")
             >>> axes = AxisList([x, ..., t])
             >>> axes.index("t"), axes.index(SpaceAxis())
-            (2, 0)
+            (-1, 0)
             >>> axes.index(Axis(unit="second")), axes.index(Axis())
-            (2, 0)
+            (-1, 0)
+            >>> axes.index({"type": "time"}), axes.index(TimeAxis)
+            (-1, -1)
             >>> axes.index("y")
             Traceback (most recent call last):
               ...
@@ -168,38 +201,81 @@ class AxisSequence(tx.Sequence[AXIS]):
 
         Parameters
         ----------
-        query : Axis or str
-            An axis, or the name of an axis.
+        query : AxisQuery
+            A name, a template axis, an axis class, a dictionary of axis
+            fields or a function, as [`AxisQuery`][] describes.
         start : int, default=0
-            Start of the search window, as for `list.index`.
+            Start of the search window among the entries, as for
+            `list.index`.
         stop : int, default=sys.maxsize
-            End of the search window, as for `list.index`.
+            End of the search window among the entries, as for
+            `list.index`.
 
         Returns
         -------
         int
-            Index of the entry, which is a position in the space only
-            when the sequence is finite.
+            Index of the axis. It is non-negative for an axis before `...`
+            or in a finite sequence, and negative for an axis after `...`.
 
         Raises
         ------
         ValueError
-            If no entry matches.
+            If no axis matches.
         TypeError
-            If the query is neither an axis nor a string.
+            If the query is not one of the forms of [`AxisQuery`][].
         """
-        if isinstance(query, str):
-            query = Axis(name=query)
-        elif not isinstance(query, Axis):
-            raise TypeError(
-                f"An axis is found by an Axis or by its name (str), not by "
-                f"a {type(query).__name__}."
-            )
+        matches, label = _matcher(query)
         entries = list(self)
         for i in range(*slice(start, stop).indices(len(entries))):
-            if entries[i] is not ... and _matches(entries[i], query):
-                return i
-        raise ValueError(f"{query!r} is not in list")
+            if entries[i] is not ... and matches(entries[i]):
+                return self._position_of_entry(i)
+        raise ValueError(f"{label} is not in list")
+
+    def indices(self, query: AxisQuery) -> tx.List[int]:
+        """Return the indices of every axis that matches a query.
+
+        The axes are found as by [`index`][], and their indices follow the
+        order of the sequence. An index is both an entry and a position in
+        the space: it counts from the start for an axis before `...`, or
+        in a finite sequence, and from the end for an axis after `...`.
+        The indices can therefore be passed to [`restrict`][] and
+        [`at`][].
+
+        !!! example
+            ```pycon
+            >>> x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+            >>> t = TimeAxis(name="t")
+            >>> AxisList([x, y, t]).indices(SpaceAxis)
+            [0, 1]
+            >>> AxisList([x, ..., y, t]).indices({"type": "space"})
+            [0, -2]
+            >>> AxisList([x, y, t]).indices(lambda axis: axis.name != "y")
+            [0, 2]
+            ```
+
+        Parameters
+        ----------
+        query : AxisQuery
+            A name, a template axis, an axis class, a dictionary of axis
+            fields or a function, as [`AxisQuery`][] describes.
+
+        Returns
+        -------
+        list of int
+            The indices of the matching axes, which is empty when no axis
+            matches.
+
+        Raises
+        ------
+        TypeError
+            If the query is not one of the forms of [`AxisQuery`][].
+        """
+        matches, _ = _matcher(query)
+        return [
+            self._position_of_entry(i)
+            for i, entry in enumerate(self)
+            if entry is not ... and matches(entry)
+        ]
 
     @property
     def names(self) -> tx.Tuple[tx.Union[str, None, _Ellipsis], ...]:
@@ -280,29 +356,43 @@ class AxisSequence(tx.Sequence[AXIS]):
         fill = [Axis() for _ in range(ndim - explicit)]
         return type(self)(prefix + fill + suffix)
 
-    def restrict(self, refs: tx.Iterable[tx.Union[int, str]]) -> tx.Self:
-        """
-        Return the axes at some positions or with some names, in that order.
+    def restrict(
+        self,
+        refs: tx.Union[AxisQuery, tx.Iterable[tx.Union[int, AxisQuery]]],
+    ) -> tx.Self:
+        """Return the axes that some references designate, in that order.
 
-        A position is an integer in the space, and a name refers to an
-        explicit axis as in `axes[name]`. In a finite sequence of `n` axes,
-        positions lie in `[-n, n)`. In a variadic sequence, every position
-        is valid, and the positions that fall among the axes of `...`
-        give unknown axes.
+        This is how a subspace is described, for example the spatial axes
+        of an image. A reference is a position in the space, the name of
+        an explicit axis as in `axes[name]`, or any other query of
+        [`AxisQuery`][], which designates every axis that it matches, in
+        the order of the sequence. A single query may be given instead of
+        a list. In a finite sequence of `n` axes, positions lie in
+        `[-n, n)`. In a variadic sequence, every position is valid, and
+        the positions that fall among the axes of `...` give unknown axes.
 
         !!! example
             ```pycon
-            >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
-            >>> AxisList([x, y, z]).restrict(["z", 0])
-            [Axis(name='z'), Axis(name='x')]
+            >>> x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+            >>> t = TimeAxis(name="t")
+            >>> AxisList([x, y, t]).restrict(["t", 0])
+            [TimeAxis(name='t'), SpaceAxis(name='x')]
+            >>> AxisList([x, y, t]).restrict(SpaceAxis)
+            [SpaceAxis(name='x'), SpaceAxis(name='y')]
             >>> AxisList([x, ...]).restrict([0, 1])
-            [Axis(name='x'), Axis()]
+            [SpaceAxis(name='x'), Axis()]
             ```
+
+        Parameters
+        ----------
+        refs : AxisQuery or iterable of (int or AxisQuery)
+            The positions, names and other queries that designate the axes
+            to keep.
 
         Returns
         -------
         AxisSequence
-            A new finite sequence with one axis per reference.
+            A new finite sequence with the designated axes.
 
         Raises
         ------
@@ -313,14 +403,17 @@ class AxisSequence(tx.Sequence[AXIS]):
         ValueError
             If a name is shared, or two references designate the same axis.
         TypeError
-            If a reference is neither an integer nor a string, or `refs` is a
-            string.
+            If a reference is neither an integer nor a query.
         """
+        if _is_query(refs) or isinstance(refs, str):
+            refs = [refs]
         positions = []
         for ref in _as_list(refs, "refs"):
             if isinstance(ref, str):
                 entry = self._entry_named(ref)
                 positions.append(self._position_of_entry(entry))
+            elif _is_query(ref):
+                positions.extend(self.indices(ref))
             else:
                 positions.append(self._position(ref))
         _check_unique(positions, "refs")
@@ -599,6 +692,15 @@ class AxisList(AxisSequence[AXIS], list):
     _entry = list.__getitem__
 
 
+AXIS_LIKE = tx.Union[AXIS, AxisLike, tx.Literal[...]]
+
+AxisSequenceLike: tx.TypeAlias = tx.Union[
+    AxisSequence[AXIS], tx.Sequence[AXIS_LIKE]
+]
+"""
+A value that is a [`AxisSequence`][] or that can be converted to one.
+"""
+
 # ---- private helpers -------------------------------------------------
 
 
@@ -620,6 +722,37 @@ def _split(
         )
     i = ellipses[0]
     return entries[:i], entries[i + 1 :]
+
+
+def _is_query(value: tx.Any) -> bool:
+    # Return whether a value is a query other than a name. A string is left
+    # out because a name is also a reference of its own in `restrict`.
+    if isinstance(value, (Axis, Mapping)):
+        return True
+    if isinstance(value, type):
+        return issubclass(value, Axis)
+    return callable(value)
+
+
+def _matcher(query: tx.Any) -> tx.Tuple[tx.Callable[[tx.Any], bool], str]:
+    # Return a function that tests an axis against a query, and a label of
+    # the query for error messages.
+    if isinstance(query, str):
+        query = Axis(name=query)
+    elif isinstance(query, Mapping):
+        query = Axis(**query)
+    if isinstance(query, Axis):
+        template = query
+        return (lambda axis: _matches(axis, template)), repr(template)
+    if isinstance(query, type) and issubclass(query, Axis):
+        cls = query
+        return (lambda axis: isinstance(axis, cls)), cls.__name__
+    if callable(query) and not isinstance(query, type):
+        return query, repr(query)
+    raise TypeError(
+        f"An axis is found by a name, an Axis, an Axis class, a dict of "
+        f"axis fields or a function, not by a {type(query).__name__}."
+    )
 
 
 def _matches(candidate: tx.Any, query: Axis) -> bool:

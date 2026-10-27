@@ -9,7 +9,7 @@ from scipy.ndimage import map_coordinates
 nb = pytest.importorskip("nibabel")
 
 from brainhops import io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 
 SHAPE = (7, 9, 5)
@@ -97,7 +97,7 @@ def test_loaded_dense_field_uses_its_own_grid(
         points = _world(nb.load(ref_path).affine, _grid(SHAPE))
         sequence = xforms.Sequence(
             transformations=[
-                xforms.CoordinatesField(field=points),
+                xforms.CoordinateField(field=points),
                 *warp.transformations,
             ]
         )

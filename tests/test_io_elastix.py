@@ -45,9 +45,9 @@ FILES["euler3d_toml"] = data_dir / "euler3d.toml"
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
     """Map LPS points through an LPS-to-LPS transformation."""
-    source = xforms.CoordinatesField(field=np.asarray(points, float))
+    source = xforms.CoordinateField(field=np.asarray(points, float))
     out = xforms.Sequence(transformations=[source, *xform]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _grid_points(vox2lps: np.ndarray, shape: tuple) -> np.ndarray:

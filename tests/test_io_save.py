@@ -23,7 +23,7 @@ from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Scaling,
 )
@@ -539,13 +539,13 @@ def test_a_nifti_affine_round_trips(tmp_path) -> None:  # noqa: ANN001
 
 @needs_nibabel
 def test_a_nifti_coordinate_field_round_trips(tmp_path) -> None:  # noqa: ANN001
-    from brainhops.io.transformations.nifti import NiftiRASCoordinatesField
+    from brainhops.io.transformations.nifti import NiftiRASCoordinateField
 
     field = np.zeros((2, 3, 4, 3), dtype="float32")
     field[..., 0] = 1.0
-    io.save(NiftiRASCoordinatesField(field=field), tmp_path / "field.nii")
+    io.save(NiftiRASCoordinateField(field=field), tmp_path / "field.nii")
     back = io.transformations.load(tmp_path / "field.nii")
-    assert isinstance(back, NiftiRASCoordinatesField)
+    assert isinstance(back, NiftiRASCoordinateField)
     np.testing.assert_array_equal(np.asarray(back.field), field)
 
 
@@ -657,7 +657,7 @@ def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: A
     [
         Affine(MATRIX, input=RASmm(), output=RASmm()),
         Scaling([1.0, 2.0, 3.0], input=LPSmm(), output=LPSmm()),
-        CoordinatesField(field=np.zeros((2, 3, 4, 3)), degree=2),
+        CoordinateField(field=np.zeros((2, 3, 4, 3)), degree=2),
         DisplacementField(field=np.zeros((2, 3, 4, 3)), degree=2),
     ],
     ids=[

@@ -5,14 +5,18 @@ The encoding, the NiftyReg sources and the limits of the support are described
 in [`brainhops.io.transformations.niftyreg`][].
 """
 
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._backends import (
@@ -27,12 +31,11 @@ from brainhops.datamodel._transformations.compute.converters import (
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.errors import ConversionError
+from brainhops.errors import ConversionError, ParserContentError
+
+# io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
-)
+from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NAME_NIFTYREG,
@@ -62,6 +65,8 @@ from brainhops.io.transformations.base._converters import (
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
+    COORDINATE_HINTS,
+    DISPLACEMENT_HINTS,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -74,6 +79,7 @@ from brainhops.io.transformations.nifti._views import (
     _field_to_model,
 )
 
+# this format
 from ._formats import NiftyRegTransformationFormat
 
 # ----------------------------------------------------------------------
@@ -209,7 +215,7 @@ def _field_index(chain: tx.Sequence[_xforms.Transformation]) -> int:
     """
     for i, element in enumerate(chain):
         if isinstance(
-            element, (_xforms.DisplacementField, _xforms.CoordinatesField)
+            element, (_xforms.DisplacementField, _xforms.CoordinateField)
         ):
             return i
     return 1
@@ -707,7 +713,7 @@ class NiftyRegDisplacementField(NiftyRegSequence):
     field maps `x` to `x + u(x)`. See [`NiftyRegSequence`][].
     """
 
-    HINTS = ("displacement", "disp")
+    HINTS = DISPLACEMENT_HINTS
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DISP_FIELD})
 
     PRIORITY: tx.ClassVar[int] = -1
@@ -757,7 +763,7 @@ class NiftyRegDeformationField(NiftyRegSequence):
     [`NiftyRegDisplacementField`][].
     """
 
-    HINTS = ("deformation", "def")
+    HINTS = ("deformation", "def", *COORDINATE_HINTS)
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({DEF_FIELD})
 
     PRIORITY: tx.ClassVar[int] = -1
@@ -769,7 +775,7 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        xp = get_array_backend(positions)
+        xp = array_backend(positions)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
@@ -801,7 +807,7 @@ class NiftyRegDeformationField(NiftyRegSequence):
         if image is not None:
             return image
         vox2world, vectors = self._split(self.transformations)
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
@@ -871,7 +877,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        xp = get_array_backend(positions)
+        xp = array_backend(positions)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
@@ -944,7 +950,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             degree=degree,
             bound=self.bound,
         )
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
@@ -1083,7 +1089,7 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        xp = get_array_backend(positions)
+        xp = array_backend(positions)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
         )
@@ -1119,7 +1125,7 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
             return image
         chain, extensions = self._velocity_slots()
         vox2world, vectors = self._split(chain)
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
@@ -1160,7 +1166,7 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         vectors = self._stored_vectors()
         if self.niftyreg_type == DISP_VEL_FIELD:
             return vectors
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )
@@ -1196,7 +1202,7 @@ class NiftyRegVelocityField(NiftyRegVelocity):
             return image
         chain, extensions = self._velocity_slots()
         vox2world, vectors = self._split(chain)
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         grid = voxel_grid_coordinates(
             tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
         )

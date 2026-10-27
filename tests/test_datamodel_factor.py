@@ -800,8 +800,11 @@ def test_rectangular_chain_left_unfactored() -> None:
     assert list(nf.transformations) == list(seq.transformations)
 
 
-def test_projection_chain_left_unfactored() -> None:
-    # A projection has no affine reading, so it is kept rather than dropped.
+def test_a_chain_that_drops_an_axis_is_composed_but_not_factored() -> None:
+    # The two ends of the chain have different numbers of axes, so the
+    # chain is not factored. The projection is linear, so it composes with
+    # the scaling into an affine that keeps the first two axes, and it is
+    # never dropped.
     grid = CartesianField(shape=(4, 5, 6))
     seq = Sequence(
         [
@@ -811,7 +814,13 @@ def test_projection_chain_left_unfactored() -> None:
         ]
     )
     nf = seq.compute(factor=True)
-    assert any(isinstance(t, Projection) for t in nf.transformations)
+    first, last = nf.transformations
+    assert first is grid
+    assert not any(
+        isinstance(t, SubspaceTransformation) for t in nf.transformations
+    )
+    expected = np.array([[2.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0]])
+    assert np.allclose(last.to(Affine).matrix, expected)
 
 
 def test_default_compute_unchanged_by_factor_flag() -> None:

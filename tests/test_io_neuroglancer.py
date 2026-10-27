@@ -282,6 +282,37 @@ def test_units_are_converted_exactly() -> None:
     np.testing.assert_array_equal(back.matrix, affine.matrix)
 
 
+@pytest.mark.parametrize(
+    ("unit", "dimension"),
+    [
+        ("Hz", [1, "Hz"]),
+        ("kHz", [1000, "Hz"]),
+        ("1/s", [1, "Hz"]),
+        ("rad/s", [1, "rad/s"]),
+        ("radian/second", [1, "rad/s"]),
+        ("mrad/s", [0.001, "rad/s"]),
+        ("rad/ms", [1000, "rad/s"]),
+        ("rad*Hz", [1, "rad/s"]),
+    ],
+)
+def test_a_frequency_is_written_in_hertz_or_radians_per_second(
+    unit: str, dimension: list
+) -> None:
+    # pint converts hertz into radians per second, so the choice between
+    # the two Neuroglancer units depends on the radian in the axis unit.
+    affine = Affine(np.eye(4)[:-1], input=_system(unit), output=_system(unit))
+    content = json.loads(NeuroglancerTransform.from_any(affine).to_text())
+    assert content["outputDimensions"]["x"] == dimension
+    assert content["inputDimensions"]["x"] == dimension
+
+
+@pytest.mark.parametrize("unit", ["sr/s", "rad**2/s"])
+def test_a_frequency_with_a_squared_radian_is_refused(unit: str) -> None:
+    affine = Affine(np.eye(4)[:-1], input=_system(unit), output=_system(unit))
+    with pytest.raises(ConversionError, match="no Neuroglancer equivalent"):
+        NeuroglancerTransform.from_any(affine)
+
+
 def test_a_chain_of_affines_is_reduced_to_one() -> None:
     first = Scaling(
         [2.0, 3.0, 4.0], input=_systems.RASmm(), output=_systems.RASmm()

@@ -53,7 +53,7 @@ from brainhops.io.transformations.niftyreg import (  # noqa: E402
     NiftyRegControlPointGrid,
     NiftyRegVelocityGrid,
 )
-from brainhops.io.transformations.spm import SpmCoordinatesField  # noqa: E402
+from brainhops.io.transformations.spm import SpmCoordinateField  # noqa: E402
 
 DATA = os.path.join(os.path.dirname(__file__), "data", "fsl")
 REF = os.path.join(DATA, "ref.nii.gz")
@@ -111,9 +111,9 @@ def _in_ras(t: xforms.Transformation) -> xforms.Transformation:
 
 
 def _apply(t: xforms.Transformation, points: np.ndarray) -> np.ndarray:
-    points = xforms.CoordinatesField(field=points[:, None, None, :])
+    points = xforms.CoordinateField(field=points[:, None, None, :])
     chain = xforms.Sequence(transformations=[points, _in_ras(t)])
-    out = chain.compute().to(xforms.CoordinatesField)
+    out = chain.compute().to(xforms.CoordinateField)
     return np.asarray(out.field)[:, 0, 0, :]
 
 
@@ -220,7 +220,7 @@ def test_the_images_of_a_fnirt_warp_are_load_options_given_as_paths() -> None:
     "cls",
     [
         NiftiRASDisplacementField,
-        SpmCoordinatesField,
+        SpmCoordinateField,
         ItkNiftiDisplacementField,
         MrtrixDisplacementField,
     ],

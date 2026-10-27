@@ -66,9 +66,9 @@ def _homog(matrix: np.ndarray) -> np.ndarray:
 
 def _apply(xform, points: np.ndarray, space) -> np.ndarray:  # noqa: ANN001
     """Map points (in `space`) through a transformation."""
-    field = T.CoordinatesField(field=np.asarray(points, float), output=space)
+    field = T.CoordinateField(field=np.asarray(points, float), output=space)
     out = T.Sequence(transformations=[field, xform]).compute()
-    return np.asarray(out.to(T.CoordinatesField).field)
+    return np.asarray(out.to(T.CoordinateField).field)
 
 
 # ----------------------------------------------------------------------
@@ -188,14 +188,6 @@ def test_ras_points_are_mapped_with_x_and_y_negated() -> None:
     _check_ras_mapping(plain)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "An affine whose matrix lives in its record, such as an LTA or an "
-        "AFNI matrix read from a file, converts to a plain Affine without "
-        "its matrix, so the data model composes it as the identity."
-    ),
-)
 def test_a_read_affine_is_composed_with_its_matrix() -> None:
     _check_ras_mapping(AfniAffine.from_text(ALLINEATE + _row(M1)))
 

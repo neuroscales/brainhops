@@ -20,7 +20,7 @@ aff = io.load("affine.lta")  # -> LtaTransformation
 dsp = io.load(  # -> NiftiRASDisplacementField
     "disp.nii.gz", hint="displacements"
 )
-wrp = io.load("warp.nii.gz", hint="spm")  # -> SpmCoordinatesField
+wrp = io.load("warp.nii.gz", hint="spm")  # -> SpmCoordinateField
 ```
 
 The format classes can also be used directly:
@@ -29,13 +29,13 @@ The format classes can also be used directly:
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.freesurfer.lta import LtaTransformation
 from brainhops.io.transformations.nifti import NiftiRASDisplacementField
-from brainhops.io.transformations.spm import SpmCoordinatesField
+from brainhops.io.transformations.spm import SpmCoordinateField
 
 src = NiftiImage.load("source.nii.gz")
 dst = NiftiImage.load("dest.nii.gz")
 aff = LtaTransformation.load("affine.lta")
 dsp = NiftiRASDisplacementField.load("disp.nii.gz")
-wrp = SpmCoordinatesField.load("warp.nii.gz")
+wrp = SpmCoordinateField.load("warp.nii.gz")
 ```
 
 When the kind of object is known, the loaders of `io.images` and
@@ -112,7 +112,7 @@ in how they are extended outside it, which each format decides:
 ```python
 io.save(affine, "affine.nii.gz")  # -> NiftiVoxelToRAS
 io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
-io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
+io.save(deformation, "y_deformation.nii")  # -> SpmCoordinateField
 ```
 
 Several formats may claim the same name, as NiftyReg, MRtrix and elastix

@@ -8,21 +8,26 @@ are compatible, which the `adaptors` module ensures. They also assume
 that both transformations are fully defined, with no unset parameters.
 """
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import replace
 
-from brainhops._core.bsplines import pull_field
-from brainhops.backends import (
-    get_array_backend,
+# core
+from brainhops._core.backends import (
+    array_backend,
     to_promoted_backend,
 )
-from brainhops.datamodel._sugar import get_axes
-from brainhops.errors import CompositionError
+from brainhops._core.bsplines import pull_field
 
+# api
+from brainhops.datamodel._sugar import get_axes
+from brainhops.errors import CompositionError, ConversionError
+
+# transformations
 from ..base import Transformation
 from ..concrete import (
     Affine,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -32,7 +37,12 @@ from ..concrete import (
     Translation,
     _grid_like,
 )
-from ..meta import SubspaceTransformation, _close_subspace
+from ..meta import (
+    Projection,
+    SubspaceTransformation,
+    _close_projection,
+    _close_subspace,
+)
 from ..sequence import Sequence, _interpolates
 from .compose import compose, composer
 from .utils import axis_counts
@@ -76,7 +86,7 @@ def _(To: Sequence, Ti: Sequence) -> Transformation:
 
 @composer
 def _(To: Affine, Ti: Affine) -> Affine:
-    xp = get_array_backend(To.matrix)
+    xp = array_backend(To.matrix)
     No = To.matrix.shape[0]
     Ni = Ti.matrix.shape[1] - 1
     A = xp.empty_like(To.matrix, shape=(No, Ni + 1))
@@ -143,11 +153,11 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 
 
 @composer
-def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Translation, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field, translation = to_promoted_backend(Ti.field, To.translation)
     field = field + translation
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -158,11 +168,11 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Scaling, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     data, scale = to_promoted_backend(Ti.data, To.scale)
     data = data * scale
-    return CoordinatesField(
+    return CoordinateField(
         data=data,
         input=Ti.input,
         output=To.output,
@@ -173,10 +183,10 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Permutation, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     data = Ti.data[..., To.permutation]
-    return CoordinatesField(
+    return CoordinateField(
         data=data,
         input=Ti.input,
         output=To.output,
@@ -187,11 +197,11 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Linear, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field, matrix = to_promoted_backend(Ti.field, To.matrix)
     field = field @ matrix.T
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -202,11 +212,11 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: Affine, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field, matrix = to_promoted_backend(Ti.field, To.matrix)
     field = field @ matrix[:, :-1].T + matrix[:, -1]
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -333,7 +343,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     # anything is computed from them.
     coeffs, coords, field = to_promoted_backend(
         To.to(log=False, store="coefficients").data,
-        Ti.to(CoordinatesField).field,
+        Ti.to(CoordinateField).field,
         Ti.field,
     )
     moved = pull_field(
@@ -355,11 +365,11 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 
 
 @composer
-def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: DisplacementField, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     coeffs, coords = to_promoted_backend(
         To.to(log=False, store="coefficients").data,
-        Ti.to(CoordinatesField).field,
+        Ti.to(CoordinateField).field,
     )
     moved = pull_field(
         coeffs,
@@ -369,7 +379,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
         coeff=True,
     )
     field = moved + coords
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -380,7 +390,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: CoordinateField, Ti: CoordinateField) -> CoordinateField:
     Ti = Ti.compute()
     field = pull_field(
         To.to(store="coefficients").data,
@@ -389,7 +399,7 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
         bound=To.bound,
         coeff=True,
     )
-    return CoordinatesField(
+    return CoordinateField(
         field=field,
         input=Ti.input,
         output=To.output,
@@ -405,14 +415,14 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
-def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
+def _(To: SubspaceTransformation, Ti: CoordinateField) -> CoordinateField:
     # The components that the subspace acts on go through the inner
     # transformation, and the other components pass through unchanged. The
     # inner transformation is evaluated only at the coordinates of the axes
     # it acts on, so the other axes are never tiled to the full size.
     Ti = Ti.compute()
     x = Ti.field
-    xp = get_array_backend(x)
+    xp = array_backend(x)
     if To.input_axes is None or To.output_axes is None:
         raise CompositionError(
             "A subspace transform composes with a field only when it names "
@@ -444,7 +454,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
                             or getattr(axis, "type", None)
                         )
                     )
-        domain = CoordinatesField(
+        domain = CoordinateField(
             field=x[..., in_axes],
             degree=Ti.degree,
             bound=Ti.bound,
@@ -452,8 +462,8 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         )
         result = Sequence([domain, To.transformation]).compute()
         if isinstance(result, DisplacementField):
-            result = result.to(CoordinatesField)
-        if not isinstance(result, CoordinatesField):
+            result = result.to(CoordinateField)
+        if not isinstance(result, CoordinateField):
             raise CompositionError(
                 "The inner transform of a subspace transform did not reduce "
                 "to a field of coordinates, so it cannot be applied to a "
@@ -476,7 +486,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         columns[o] = x[..., i]
     y = xp.stack(columns, axis=-1)
 
-    return CoordinatesField(
+    return CoordinateField(
         field=y,
         input=Ti.input,
         output=To.output,
@@ -514,6 +524,52 @@ def _(To: SubspaceTransformation, Ti: _AffineIsh) -> Affine:
         )
     To = _close_subspace(To, n_in=axis_counts(Ti)[1])
     return compose(To.to(Affine), Ti)
+
+
+# ----------------------------------------------------------------------
+#     PROJECTION o AFFINE
+# ----------------------------------------------------------------------
+# A projection is composed as its matrix, which selects the kept axes and has
+# a row of zeros for each created axis. The size of the matrix comes from the
+# systems of the projection or, when they are missing, from the neighbour,
+# since the space between two transformations is a single space. Two
+# projections never reach these composers, because a pair simplifier merges
+# them first.
+
+
+def _projection_matrix(t: Projection) -> Affine:
+    # Without a number of axes, the projection stays next to its neighbour,
+    # which the sequence engine does on a CompositionError.
+    try:
+        return t.to(Affine)
+    except ConversionError as error:
+        raise CompositionError(str(error)) from error
+
+
+@composer
+def _(To: Projection, Ti: _AffineIsh) -> Affine:
+    To = _close_projection(To, n_in=axis_counts(Ti)[1])
+    return compose(_projection_matrix(To), Ti)
+
+
+@composer
+def _(To: _AffineIsh, Ti: Projection) -> Affine:
+    Ti = _close_projection(Ti, n_out=axis_counts(To)[0])
+    return compose(To, _projection_matrix(Ti))
+
+
+@composer
+def _(To: Projection, Ti: SubspaceTransformation) -> Transformation:
+    # The subspace composer that receives the matrix of the projection
+    # refuses a subspace that wraps a field, and closes an open subspace.
+    To = _close_projection(To, n_in=axis_counts(Ti)[1])
+    return compose(_projection_matrix(To), Ti)
+
+
+@composer
+def _(To: SubspaceTransformation, Ti: Projection) -> Transformation:
+    Ti = _close_projection(Ti, n_out=axis_counts(To)[0])
+    return compose(To, _projection_matrix(Ti))
 
 
 @composer
@@ -561,7 +617,7 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
     # Read the displacements as coordinates, apply the subspace, and subtract
     # the grid again.
     Ti = Ti.compute()
-    y = compose(To, Ti.to(CoordinatesField))
+    y = compose(To, Ti.to(CoordinateField))
     field = y.field - _grid_like(y.field)
     return DisplacementField(
         field=field,

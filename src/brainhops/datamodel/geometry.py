@@ -11,7 +11,7 @@ from bagof.magic import Factory, NoRepr, NotKwOnly
 from brainhops._core.typing import CartesianIndex, Shape
 
 from ._sugar import get_axes
-from .axes import Axis
+from .axes import Axis, ChannelAxis, is_component_type
 from .base import DataModelBase
 from .systems import (
     AxisSequence,
@@ -252,11 +252,28 @@ def _index2transform(
     if input_axes:
         output_axes = []
         axis_walker = list(input_axes)
+        dim = 0
         for idx in index:
             if isinstance(idx, int):
                 axis_walker.pop(0)
+                dim += 1
             elif isinstance(idx, slice):
-                output_axes.append(axis_walker.pop(0))
+                axis = axis_walker.pop(0)
+                # The entries of a component axis are the components of one
+                # object only when the axis keeps all of them, in order.
+                # Otherwise they are independent values, as on a channel
+                # axis.
+                kept = range(*idx.indices(shape[dim]))
+                if is_component_type(getattr(axis, "type", None)) and (
+                    kept != range(shape[dim])
+                ):
+                    axis = ChannelAxis(
+                        name=axis.name,
+                        unit=axis.unit,
+                        discrete=axis.discrete,
+                    )
+                output_axes.append(axis)
+                dim += 1
             else:
                 # The element is `None`, which inserts a new axis.
                 output_axes.append(Axis())

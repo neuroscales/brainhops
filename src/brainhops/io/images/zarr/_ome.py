@@ -12,6 +12,7 @@ flattened into an affine. The conventions are described in
 [`brainhops.io.images.zarr`][].
 """
 
+# dependencies
 import typing_extensions as tx
 from abczarr.abc.sync import ZarrGroup
 from abczarr.ome import v0_6 as _v06
@@ -20,11 +21,14 @@ from abczarr.ome.v0_6.ome import OME
 from abczarr.ome.v0_6.transformations import CoordinateTransformation
 from bagof.magic import replace
 
-from brainhops.backends import get_array_backend
+# core
+from brainhops._core.backends import array_backend
+
+# datamodel
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Projection,
@@ -32,6 +36,8 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Transformation,
 )
+
+# io
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
@@ -446,7 +452,7 @@ def _field_array(
     raw = _node.read_array(field_node)
     typed = _node.typed_axes(field_node, field_node.ndim)
     if typed is not None:
-        data = get_array_backend(raw).transpose(
+        data = array_backend(raw).transpose(
             raw, _axisorder.to_canonical(typed)
         )
     else:
@@ -462,7 +468,7 @@ def _field_array(
     if list(target) != list(range(len(target))):
         data = data[..., list(target)]
     field_cls = (
-        DisplacementField if kind == "displacements" else CoordinatesField
+        DisplacementField if kind == "displacements" else CoordinateField
     )
     return field_cls(field=data, degree=degree)
 
@@ -514,7 +520,7 @@ def _field_from_names(
     )
     by_name = {names[i]: i for i in spatial_dims}
     target = [by_name[axis.name] for axis in canonical_axes] + component_dims
-    return get_array_backend(raw).transpose(raw, target)
+    return array_backend(raw).transpose(raw, target)
 
 
 def _map_transform(

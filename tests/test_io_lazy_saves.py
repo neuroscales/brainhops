@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops.backends import backend
+from brainhops._core.backends import backend
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.nrrd import (
@@ -27,7 +27,7 @@ try:
 
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
-    from brainhops.io.transformations.nifti import NiftiRASCoordinatesField
+    from brainhops.io.transformations.nifti import NiftiRASCoordinateField
 except ImportError:
     nb = None
 
@@ -90,14 +90,14 @@ def test_a_nifti_field_saved_over_itself_keeps_its_values(
         pytest.importorskip("dask")
     values = np.arange(72, dtype="float32").reshape(2, 3, 4, 3)
     target = tmp_path / filename
-    NiftiRASCoordinatesField(field=values).save(target)
+    NiftiRASCoordinateField(field=values).save(target)
     with backend(name):
-        field = NiftiRASCoordinatesField.load(target)
+        field = NiftiRASCoordinateField.load(target)
         cached = field.data.to_numpy()
         field.save(target, dtype="float64")
         assert np.array_equal(np.asarray(field.data), values)
         assert np.array_equal(cached, values)
-    back = NiftiRASCoordinatesField.load(target)
+    back = NiftiRASCoordinateField.load(target)
     assert np.array_equal(np.asarray(back.data), values)
 
 

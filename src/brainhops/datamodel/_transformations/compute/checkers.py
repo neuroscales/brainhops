@@ -25,21 +25,27 @@ wrappers rely on, and it registers names for the field and wrapper
 kinds.
 """
 
+# stdlib
 from contextvars import ContextVar
 from functools import lru_cache, wraps
 
+# dependencies
 import typing_extensions as tx
 
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# api
 from brainhops.datamodel import kinds
 from brainhops.errors import AdaptationError
 
+# transformations
 from ..base import Transformation
 from ..concrete import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Linear,
     Permutation,
@@ -131,7 +137,7 @@ def _(query: Linear, kind: IdentityType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         return bool((matrix == xp.eye(rows)).all())
     return False
 
@@ -144,7 +150,7 @@ def _(query: Affine, kind: IdentityType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         return bool((matrix == xp.eye(rows + 1)[:-1]).all())
     return False
 
@@ -159,7 +165,7 @@ def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
 
 @checker
 @identity_from("data")
-def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
+def _(query: CoordinateField, kind: IdentityType, compute: bool) -> bool:
     return False
 
 
@@ -231,7 +237,7 @@ def _(query: Affine, kind: TranslationType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         return bool((matrix[:, :-1] == xp.eye(rows)).all())
     return False
 
@@ -259,7 +265,7 @@ def _(query: Linear, kind: ScaleType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if rows != cols:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         return not bool((matrix * (1 - xp.eye(rows))).any())
     return False
 
@@ -272,7 +278,7 @@ def _(query: Affine, kind: ScaleType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         # The mask keeps the off-diagonal entries and the translation column,
         # both of which vanish for a diagonal affine.
         return not bool((matrix * (1 - xp.eye(rows + 1)[:-1])).any())
@@ -299,7 +305,7 @@ def _diag_pos(scale: ArrayProtocol) -> bool:
 
 
 def _diag_spec(scale: ArrayProtocol) -> bool:
-    xp = get_array_backend(scale)
+    xp = array_backend(scale)
     return bool((xp.abs(scale) == 1).all())
 
 
@@ -350,7 +356,7 @@ def _diagonal_values(
     matrix = getattr(query, "matrix", None)
     if matrix is None:
         return None
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     if isinstance(query, Affine):
         if bool(matrix[:, -1].any()):
             return None  # a translation, which is not diagonal
@@ -401,7 +407,7 @@ def _(query: Linear, kind: PermType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if rows != cols:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         is_binary = bool(xp.isin(matrix, [0, 1]).all())
         is_perm = bool(
             (matrix.sum(0) == 1).all() and (matrix.sum(1) == 1).all()
@@ -418,7 +424,7 @@ def _(query: Affine, kind: PermType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         no_translation = bool((matrix[:, -1] == 0).all())
         if not no_translation:
             return False
@@ -471,7 +477,7 @@ def _(query: Linear, kind: RotType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if rows != cols:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         is_orthogonal = bool((matrix @ matrix.T == xp.eye(rows)).all())
         is_posdef = bool(xp.linalg.det(matrix) > 0)
         return is_orthogonal and is_posdef
@@ -486,7 +492,7 @@ def _(query: Affine, kind: RotType, compute: bool) -> bool:
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
-        xp = get_array_backend(matrix)
+        xp = array_backend(matrix)
         no_translation = bool((matrix[:, -1] == 0).all())
         if not no_translation:
             return False
@@ -539,7 +545,7 @@ def _(query: Linear, kind: PosLinType, compute: bool) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return bool(xp.linalg.det(matrix) > 0)
 
 
@@ -552,7 +558,7 @@ def _(query: Linear, kind: SLType, compute: bool) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return bool(xp.linalg.det(matrix) == 1)
 
 
@@ -563,7 +569,7 @@ def _is_conformal(matrix: ArrayProtocol) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     fro = xp.linalg.norm(matrix, ord="fro")
     if bool(fro == 0):
         return False
@@ -590,7 +596,7 @@ def _(query: Linear, kind: CSOType, compute: bool) -> bool:
     # The conformal test normalizes the matrix by a positive factor, which
     # does not change the sign of the determinant, so the determinant of the
     # matrix itself decides the orientation.
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return bool(xp.linalg.det(matrix) > 0)
 
 
@@ -603,7 +609,7 @@ def _(query: Linear, kind: OType, compute: bool) -> bool:
     rows, cols = matrix.shape
     if rows != cols:
         return False
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return bool((matrix @ matrix.T == xp.eye(rows)).all())
 
 
@@ -631,7 +637,7 @@ def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
     matrix = query.matrix
     if not _is_monomial(matrix):
         return False
-    xp = get_array_backend(matrix)
+    xp = array_backend(matrix)
     return bool(xp.isin(matrix, [-1, 0, 1]).all())
 
 
@@ -669,7 +675,7 @@ def _linear_part(t: Transformation) -> tx.Optional[ArrayProtocol]:
     if isinstance(t, Scaling):
         if t.scale is None:
             return None
-        xp = get_array_backend(t.scale)
+        xp = array_backend(t.scale)
         return xp.diag(t.scale)
     return None
 
@@ -678,7 +684,7 @@ def _matrix_rank(linear: ArrayProtocol) -> int:
     # When the backend has no matrix_rank, the determinant of a square matrix
     # can still tell full rank from rank deficiency, and that distinction is
     # all the callers need.
-    xp = get_array_backend(linear)
+    xp = array_backend(linear)
     matrix_rank = getattr(getattr(xp, "linalg", None), "matrix_rank", None)
     if matrix_rank is not None:
         return int(matrix_rank(linear))
@@ -937,12 +943,15 @@ def _subspace_member(
 
 
 def _projection_member(proj: Projection, node: type, compute: bool) -> bool:
-    # A projection that only drops axes is surjective, one that only creates
-    # axes is injective, and one that does neither is the identity.
+    # A projection is linear, because created axes are zero. A projection
+    # that only drops axes is also surjective, one that only creates axes
+    # is injective, and one that does neither is the identity.
     dropped = 0 if proj.dropped is None else len(proj.dropped)
     created = 0 if proj.created is None else len(proj.created)
     if not dropped and not created:
         return issubclass(kinds.Identity, node)
+    if issubclass(kinds.Linear, node):
+        return True
     if dropped and not created:
         return issubclass(kinds.Surjection, node)
     if created and not dropped:
@@ -1033,4 +1042,4 @@ register_kind_alias("projection", Projection)
 register_kind_alias("meta", MetaTransformation)
 register_kind_alias("field", TransformationField)
 register_kind_alias("displacements", DisplacementField)
-register_kind_alias("coordinates", CoordinatesField)
+register_kind_alias("coordinates", CoordinateField)

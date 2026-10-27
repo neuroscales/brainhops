@@ -54,9 +54,9 @@ import typing_extensions as tx
 from bagof.magic import HideIfDefault, Magic
 from numpy.lib.mixins import NDArrayOperatorsMixin
 
-# internals
-from brainhops import backends
-from brainhops._core.linalg import ArrayProtocol
+# core
+from . import backends
+from .linalg import ArrayProtocol
 
 _Box: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 """The box that [`StoredProxy._read`][brainhops._core.proxy.StoredProxy._read]
@@ -140,10 +140,9 @@ class ArrayProxy(
     `proxy.sum()`, all compute on the values. Asking for the shape, the
     type of the values or a transposition reads nothing, through the
     proxy or through NumPy, as in `np.shape(proxy)`, and so does a
-    reshape, which returns another proxy. A computation runs
-    in the backend that
-    [`promote_backends`][brainhops.backends.promote_backends] chooses
-    for its operands: next to a CuPy array, the proxy is read
+    reshape, which returns another proxy. A computation runs in the
+    backend that `promote_backends` of `brainhops._core.backends`
+    chooses for its operands: next to a CuPy array, the proxy is read
     onto the GPU, next to a Dask array, it becomes a Dask array that
     reads nothing yet, and alone, it becomes what
     [`to_backend`][brainhops._core.proxy.ArrayProxy.to_backend] makes of
@@ -452,9 +451,8 @@ class ArrayProxy(
         converted to the backend of the computation, and so are the
         arrays of other backends. When the computation writes into the
         arrays given as `out`, it runs in their backend. Otherwise, the
-        backend is the one that
-        [`promote_backends`][brainhops.backends.promote_backends] chooses
-        for the operands.
+        backend is the one that `promote_backends` chooses for the
+        operands.
 
         Parameters
         ----------
@@ -503,9 +501,8 @@ class ArrayProxy(
         `np.reshape` return proxies, and `np.mean` calls the method of
         the proxy, which reads the values. In any other backend, the
         proxies and the arrays of other backends are converted to the
-        backend that
-        [`promote_backends`][brainhops.backends.promote_backends] chooses
-        for them, and the function of that backend runs.
+        backend that `promote_backends` chooses for them, and the
+        function of that backend runs.
 
         Parameters
         ----------

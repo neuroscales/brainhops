@@ -335,9 +335,9 @@ def test_the_dask_backend_needs_only_dask() -> None:
     """The dask backend is available whenever dask is, without dask_image."""
     import sys
 
-    from brainhops.backends import available_backends, get_ndimage_backend
+    from brainhops._core.backends import backends, ndimage_backend
 
-    assert "dask" in available_backends()
-    assert get_ndimage_backend(da.zeros(3)) is dask_ndimage
-    assert get_ndimage_backend("dask") is dask_ndimage
+    assert "dask" in backends()
+    assert ndimage_backend(da.zeros(3)) is dask_ndimage
+    assert ndimage_backend("dask") is dask_ndimage
     assert "dask_image" not in sys.modules

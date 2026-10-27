@@ -1,19 +1,23 @@
 """
-ITK displacement and coordinates fields stored as LPS NIfTI vector images.
+ITK displacement and coordinate fields stored as LPS NIfTI vector images.
 
 The encoding and the way these files are told apart from RAS NIfTI fields are
 described in [`brainhops.io.transformations.itk.nifti`][].
 """
 
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
+# core
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._backends import (
@@ -25,12 +29,11 @@ from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.errors import ParserContentError, WriterError
+
+# io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import (
-    Confidence,
-    ParserContentError,
-    WriterError,
-)
+from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
@@ -60,10 +63,15 @@ from brainhops.io.metadata._base import (
     requested_fields,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
-from brainhops.io.transformations.base.fields import LPSCoordinatesField
+from brainhops.io.transformations.base.fields import (
+    COORDINATE_HINTS,
+    DISPLACEMENT_HINTS,
+    LPSCoordinateField,
+)
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
+# this_format
 from .._systems import _make_system
 from ._views import _itk_field_to_disk, _itk_field_to_model
 
@@ -160,7 +168,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     The vectors are expressed in the LPS physical space of ITK, while the
     header holds the usual voxel-to-RAS affine. Subclasses decide whether the
     vectors are displacements ([`ItkNiftiDisplacementField`][]) or absolute
-    coordinates ([`ItkNiftiCoordinatesField`][]).
+    coordinates ([`ItkNiftiCoordinateField`][]).
 
     The dimension of the field is read from the header, and its endpoints are
     the ITK spaces of that dimension: (L, P) in 2-D and `LPSmm` in 3-D. The
@@ -315,7 +323,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         data = _stored_data(self)
         if data is None:
             raise ParserContentError("This field has no data to read.")
-        xp = get_array_backend(data)
+        xp = array_backend(data)
         shape = tuple(int(d) for d in data.shape)
         if len(shape) != ndim + 1:
             data = xp.reshape(data, (*shape[:ndim], ndim))
@@ -505,7 +513,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         header, and its fields that describe the layout and the geometry are
         encoded again.
         """
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         vectors = xp.asarray(vectors)
         ndim = int(vectors.shape[-1])
         if ndim not in _NDIMS or vectors.ndim != ndim + 1:
@@ -557,7 +565,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
     reaches a file in the ITK layout with any other intent code.
     """
 
-    HINTS = ("displacements",)
+    HINTS = DISPLACEMENT_HINTS
 
     INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_DISPLACEMENT
 
@@ -613,7 +621,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         # of the
         # world-to-voxel affine.
         vectors = self._lps_vectors(ndim)
-        xp = get_array_backend(vectors)
+        xp = array_backend(vectors)
         lps2vox = np.linalg.inv(vox2lps[:, :ndim])
         rotate = xp.asarray(lps2vox, dtype=vectors.dtype)
         field = xp.matmul(rotate, vectors[..., None])[..., 0]
@@ -693,7 +701,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         vox2lps = _homogeneous(chain[2])
         ndim = vox2lps.shape[0] - 1
         field = displacement.data
-        xp = get_array_backend(field)
+        xp = array_backend(field)
         field = xp.asarray(field)
         rotate = xp.asarray(vox2lps[:ndim, :ndim], dtype=field.dtype)
         vectors = xp.matmul(rotate, field[..., None])[..., 0]
@@ -701,7 +709,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
 
 @register_format
-class ItkNiftiCoordinatesField(ItkNiftiField):
+class ItkNiftiCoordinateField(ItkNiftiField):
     """
     Field of absolute LPS coordinates stored as an ITK NIfTI vector image.
 
@@ -720,7 +728,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
     using the class directly.
     """
 
-    HINTS = ("coordinates",)
+    HINTS = COORDINATE_HINTS
 
     INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_COORDINATES
 
@@ -767,7 +775,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
             LPSToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
             ),
-            LPSCoordinatesField(
+            LPSCoordinateField(
                 field=self._lps_vectors(ndim), input=voxel, output=world
             ),
         )
@@ -783,7 +791,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
         self, like: tx.Any = None, **overrides
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
-        Encode the coordinates field.
+        Encode the coordinate field.
 
         The coordinates are encoded unconverted under the `VECTOR` intent, and
         the inverse of the `lps2voxel` affine becomes the voxel-to-RAS sform
@@ -810,11 +818,11 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
             return image
         chain = tuple(self.transformations or ())
         if len(chain) != 2 or not isinstance(
-            chain[1], _xforms.CoordinatesField
+            chain[1], _xforms.CoordinateField
         ):
             raise WriterError(
-                "An ITK coordinates field is written from a chain of two "
-                "transformations: LPS to voxel, and a coordinates field."
+                "An ITK coordinate field is written from a chain of two "
+                "transformations: LPS to voxel, and a coordinate field."
             )
         # ITK stores sampled vectors.
         coordinates = chain[1].to(store="values")

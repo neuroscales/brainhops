@@ -150,8 +150,22 @@ class Projection(MetaTransformation):
 
     A projection removes the axes listed in `dropped` and therefore maps a
     space to one of lower dimension. An embedding adds the axes listed in
-    `created`. Each is the inverse of the other, and the inverse is obtained
-    by swapping the two lists.
+    `created`, whose coordinates are zero. The axes that are kept stay in
+    the same order, so a projection is a linear map whose matrix selects
+    the kept axes and has a row of zeros for each created axis.
+
+    The positions in `dropped` refer to the input axes and the positions
+    in `created` to the output axes, so a projection does not need to know
+    how many axes the space has. When one of its systems is closed, the
+    system on the other side is derived from it. When neither system is
+    known, a neighbour in a composition gives the number of axes.
+
+    An embedding followed by the projection that drops the same axes is
+    the identity, but a projection followed by the embedding that creates
+    the same axes sets these axes to zero. A projection that drops axes
+    therefore has no inverse, and the inverse of an embedding is the
+    projection that drops its axes, which undoes the embedding only on
+    the points that the embedding reaches.
 
     Parameters
     ----------
@@ -163,9 +177,11 @@ class Projection(MetaTransformation):
     Other Parameters
     ----------------
     input : CoordinateSystem, optional
-        Input coordinate system of the full space.
+        Input coordinate system of the full space. If not given, it is
+        derived from the output system when that system is closed.
     output : CoordinateSystem, optional
-        Output coordinate system of the full space.
+        Output coordinate system of the full space. If not given, it is
+        derived from the input system when that system is closed.
     """
 
     # --- class attributes ---------------------------------------------
@@ -180,16 +196,43 @@ class Projection(MetaTransformation):
     created: NotKwOnly[npvector[Integral]] = ()
     """Axes of the output coordinate system to add."""
 
+    # --- properties ---------------------------------------------------
+
+    @smartproperty
+    def input(self) -> tx.Optional[CoordinateSystem]:
+        if self._input is not None:
+            return self._input
+        return _projected_system(self._output, self.created, self.dropped)
+
+    @smartproperty
+    def output(self) -> tx.Optional[CoordinateSystem]:
+        if self._output is not None:
+            return self._output
+        return _projected_system(self._input, self.dropped, self.created)
+
     # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
-        # Swapping the dropped and created axes is the exact inverse, so there
-        # is nothing to defer.
+        """Return the projection that drops the axes this one creates.
+
+        Raises
+        ------
+        ValueError
+            If the projection drops axes, because the coordinates along
+            these axes are lost.
+        """
+        if axis_list(self.dropped):
+            raise ValueError(
+                "A projection that drops axes has no inverse, because the "
+                "coordinates along the dropped axes are lost. The embedding "
+                "that creates these axes again at zero is only a right "
+                "inverse."
+            )
         return self.to(
             dropped=self.created,
             created=self.dropped,
-            input=self.output,
-            output=self.input,
+            input=self._output,
+            output=self._input,
         )
 
 
@@ -396,6 +439,93 @@ def _close_subspace(
     except ValueError as error:
         raise CompositionError(
             f"The systems of a subspace transform do not fit the space its "
+            f"neighbour states: {error}"
+        ) from error
+    return t.to(**changes) if changes else t
+
+
+def _projected_system(
+    system: tx.Optional[CoordinateSystem],
+    removed: tx.Any,
+    added: tx.Any,
+) -> tx.Optional[CoordinateSystem]:
+    """Return the system on the other side of a projection.
+
+    The axes of `system` at the positions `removed` are removed, and
+    unknown axes are added at the positions `added` of the result. The
+    other axes keep their order. `None` is returned when `system` is
+    missing or open, because the number of axes on the other side is then
+    unknown, and when a position does not fit.
+    """
+    axes = get_axes(system)
+    if system is None or axes.ndim is None:
+        return None
+    removed, added = axis_list(removed), axis_list(added)
+    ndim = axes.ndim - len(removed) + len(added)
+    if any(not 0 <= i < axes.ndim for i in removed) or any(
+        not 0 <= i < ndim for i in added
+    ):
+        return None
+    kept = [i for i in range(axes.ndim) if i not in removed]
+    positions = [i for i in range(ndim) if i not in added]
+    if len(kept) != len(positions):
+        return None
+    return system.restrict(kept).embed(positions, ndim=ndim)
+
+
+def _close_projection(
+    t: Projection,
+    n_in: tx.Optional[int] = None,
+    n_out: tx.Optional[int] = None,
+) -> Projection:
+    """Fix the number of axes in the systems of a projection, when known.
+
+    A neighbour in a composition may say how many axes the space between
+    them has, as for [`_close_subspace`][]. The number on one side gives
+    the number on the other, because a projection removes `len(dropped)`
+    axes and adds `len(created)` axes. A number that `t` states itself is
+    never overridden. If no number is known, `t` is returned unchanged.
+
+    Raises
+    ------
+    CompositionError
+        If the numbers of axes do not fit the axes that `t` drops and
+        creates.
+    """
+    dropped, created = axis_list(t.dropped), axis_list(t.created)
+    own_in, own_out = get_axes(t.input).ndim, get_axes(t.output).ndim
+    n_in = own_in if own_in is not None else n_in
+    n_out = own_out if own_out is not None else n_out
+    if n_in is None and n_out is not None:
+        n_in = n_out - len(created) + len(dropped)
+    if n_out is None and n_in is not None:
+        n_out = n_in - len(dropped) + len(created)
+    if n_in is None or n_out is None:
+        return t
+    if (
+        n_out != n_in - len(dropped) + len(created)
+        or any(not 0 <= i < n_in for i in dropped)
+        or any(not 0 <= i < n_out for i in created)
+    ):
+        raise CompositionError(
+            f"A projection that drops the axes {dropped} and creates the "
+            f"axes {created} cannot map {n_in} axes onto {n_out} axes, as "
+            f"its neighbour states."
+        )
+    # An open system that is stored is closed. When no system is stored,
+    # only the input system is set, and the output system is derived from
+    # it, so that it keeps the axes that the input system describes.
+    changes = {}
+    try:
+        if own_in is None and t._input is not None:
+            changes["input"] = t._input.expand(n_in)
+        if own_out is None and t._output is not None:
+            changes["output"] = t._output.expand(n_out)
+        if t._input is None and t._output is None:
+            changes["input"] = CoordinateSystem().expand(n_in)
+    except ValueError as error:
+        raise CompositionError(
+            f"The systems of a projection do not fit the space its "
             f"neighbour states: {error}"
         ) from error
     return t.to(**changes) if changes else t

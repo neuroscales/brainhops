@@ -17,7 +17,7 @@ h5py = pytest.importorskip("h5py")
 netcdf_file = pytest.importorskip("scipy.io").netcdf_file
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,

@@ -1,8 +1,10 @@
 """Format-independent fields of world coordinates and displacements."""
 
 __all__ = [
-    "LPSCoordinatesField",
-    "RASCoordinatesField",
+    "COORDINATE_HINTS",
+    "DISPLACEMENT_HINTS",
+    "LPSCoordinateField",
+    "RASCoordinateField",
     "homogeneous_matrix",
     "ras_displacement_chain",
     "split_ras_displacement_chain",
@@ -14,13 +16,16 @@ import typing_extensions as tx
 from bagof.magic import KwOnly
 
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.io.base.parsers import WriterError
+from brainhops.errors import WriterError
 
+# this format
 from .affines import (
     _LPS,
     _RAS,
@@ -30,9 +35,32 @@ from .affines import (
     _check_endpoint,
 )
 
+DISPLACEMENT_HINTS: tx.Tuple[str, ...] = (
+    "displacements",
+    "displacement",
+    "disp",
+)
+"""The format hints that every reader of displacement fields accepts.
 
-class RASCoordinatesField(_xforms.CoordinatesField):
-    """Coordinates field from voxel space to RAS millimetres."""
+A format hint is the word written after the path of a source, as in
+`warp.nii.gz|displacements`, that tells brainhops which reader to use.
+A format may add its own hints after these ones.
+"""
+
+COORDINATE_HINTS: tx.Tuple[str, ...] = (
+    "coordinates",
+    "coordinate",
+    "coord",
+)
+"""The format hints that every reader of coordinate fields accepts.
+
+A format may add its own hints after these ones, as NiftyReg does with
+`deformation`.
+"""
+
+
+class RASCoordinateField(_xforms.CoordinateField):
+    """Coordinate field from voxel space to RAS millimetres."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -45,8 +73,8 @@ class RASCoordinatesField(_xforms.CoordinatesField):
         _check_endpoint(self, "output", _RAS)
 
 
-class LPSCoordinatesField(_xforms.CoordinatesField):
-    """Coordinates field from voxel space to LPS millimetres."""
+class LPSCoordinateField(_xforms.CoordinateField):
+    """Coordinate field from voxel space to LPS millimetres."""
 
     _input: KwOnly[_systems.CoordinateSystem] = (
         _systems.VoxelCoordinateSystem()
@@ -121,7 +149,7 @@ def ras_displacement_chain(
     vox2ras = np.asarray(vox2ras, dtype=np.float64)
     ndim = vox2ras.shape[0] - 1
     compact = vox2ras[:ndim]
-    xp = get_array_backend(vectors)
+    xp = array_backend(vectors)
     ras2vox = np.linalg.inv(vox2ras[:ndim, :ndim])
     # The matrix is cast by NumPy, because Dask ignores the `dtype` of
     # `asarray` and would compute a single-precision field in double
@@ -226,7 +254,7 @@ def split_ras_displacement_chain(
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
     field = displacement.data
-    xp = get_array_backend(field)
+    xp = array_backend(field)
     field = xp.asarray(field)
     if field.ndim != ndim + 1 or field.shape[-1] != ndim:
         raise WriterError(
@@ -249,7 +277,7 @@ def voxel_grid_coordinates(
     Formats that store world positions, such as FSL absolute warps and
     NiftyReg deformation or control-point grids, are read as displacements
     by subtracting these coordinates and written by adding them. A
-    [`CoordinatesField`][brainhops.datamodel.transformations.CoordinatesField]
+    [`CoordinateField`][brainhops.datamodel.transformations.CoordinateField]
     is not used because no boundary condition extends positions beyond the
     grid as these tools do, by keeping the edge displacement, which is what
     `nearest` does on a displacement field.
@@ -346,3 +374,19 @@ def homogeneous_matrix(
             f"{matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
         )
     return matrix
+
+
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "RASCoordinatesField": "RASCoordinateField",
+        "LPSCoordinatesField": "LPSCoordinateField",
+    },
+)

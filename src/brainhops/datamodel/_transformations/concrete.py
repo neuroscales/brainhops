@@ -1,6 +1,6 @@
 __all__ = [
     "ConcreteTransformation",
-    "CoordinatesField",
+    "CoordinateField",
     "CartesianField",
     "DisplacementField",
     "Affine",
@@ -12,14 +12,25 @@ __all__ = [
     "Identity",
 ]
 
+# stdlib
 from numbers import Integral, Real
 
+# dependencies
 import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
+# core
 from brainhops._core.affines import inv as affine_inv
 from brainhops._core.affines import sqrtm as affine_sqrtm
 from brainhops._core.affines import to_compact, to_homogeneous
+from brainhops._core.backends import (
+    _creation_options,
+    _is_loaded,
+    array_backend,
+    backend,
+    resolve_backend,
+    to_backend,
+)
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._core.linalg import inv as invm
 from brainhops._core.linalg import require_positive, sqrtm
@@ -36,14 +47,8 @@ from brainhops._core.typing import (
     npvector,
 )
 from brainhops._ext.invfield import inverse as inverse_disp
-from brainhops.backends import (
-    _creation_options,
-    _is_loaded,
-    backend,
-    get_array_backend,
-    resolve_backend,
-    to_backend,
-)
+
+# datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import (
     _FrozenBackendMixin,
@@ -90,7 +95,7 @@ def _read_data(obj: tx.Any) -> tx.Optional[ArrayProtocol]:
     """Return the values of the stored `data` of a field.
 
     A lazy array, such as the array of a file, is read as the setting in
-    effect says (see [`to_backend`][brainhops.backends.to_backend]), so
+    effect says (see `to_backend` in `brainhops._core.backends`), so
     that the views that a field caches, such as its values, hold values
     rather than a lazy array that each read would read again. A NumPy,
     CuPy or Dask array is returned as it is.
@@ -419,7 +424,7 @@ class DisplacementField(TransformationField, polymorphic=True):
     Other Parameters
     ----------------
     field : ArrayLike, optional
-        The displacements field, always encoded as values.
+        The displacement field, always encoded as values.
         It is decoded into `data` according to `store`, `degree` and `log`.
     values : ArrayLike, optional
         The displacements or velocity field, always encoded as values.
@@ -501,8 +506,8 @@ class DisplacementField(TransformationField, polymorphic=True):
         return super().sqrt(compute, **kwargs)
 
 
-class CoordinatesField(TransformationField):
-    """Coordinates field on a regular grid, whose input space is the grid.
+class CoordinateField(TransformationField):
+    """Coordinate field on a regular grid, whose input space is the grid.
 
     !!! note "Mutually exclusive arguments"
         Only one of `data=`, `field=`, `values=` or `coefficients=` may
@@ -518,13 +523,13 @@ class CoordinatesField(TransformationField):
     Other Parameters
     ----------------
     field : ArrayLike, optional
-        The coordinates field, always encoded as values.
+        The coordinate field, always encoded as values.
         It is decoded into `data` according to `store`, `degree`.
     values : ArrayLike, optional
-        The coordinates field, always encoded as values.
+        The coordinate field, always encoded as values.
         It is encoded into `data` according to `store` and `degree`.
     coefficients : ArrayLike, optional
-        The coordinates field, always encoded as spline coefficients.
+        The coordinate field, always encoded as spline coefficients.
         It is encoded into `data` according to `store` and `degree`.
     store : StoreEnum | str | None, optional
         Whether `data` holds the values or the spline coefficients.
@@ -555,13 +560,13 @@ class CoordinatesField(TransformationField):
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         raise NotImplementedError(
-            "The square root of a coordinates field is not implemented. "
+            "The square root of a coordinate field is not implemented. "
             "A map to take the square root of is stored as a "
             "StationaryVelocityField."
         )
 
 
-class CartesianField(_FrozenBackendMixin, CoordinatesField):
+class CartesianField(_FrozenBackendMixin, CoordinateField):
     """Identity over a regular grid of coordinates.
 
     A grid stores only its `shape`. The coordinates of its points (`field`) and
@@ -591,7 +596,7 @@ class CartesianField(_FrozenBackendMixin, CoordinatesField):
     # re-encode.
     map_field: tx.ClassVar[tx.Optional[str]] = None
 
-    _base_derivied_fields: _FieldNames = CoordinatesField.derived_fields
+    _base_derivied_fields: _FieldNames = CoordinateField.derived_fields
     derived_fields: _FieldNames = (*_base_derivied_fields, "data")
     data_fields: _FieldNames = ("shape",)
 
@@ -626,7 +631,7 @@ class CartesianField(_FrozenBackendMixin, CoordinatesField):
             return None
         # The grid is created in the backend of the setting in effect,
         # which a computation sets to the backend of its result.
-        xp = get_array_backend()
+        xp = array_backend()
         options = _creation_options()
         grid = [xp.arange(s, dtype=float, **options) for s in self.shape]
         return xp.stack(xp.meshgrid(*grid, indexing="ij"), -1)
@@ -962,7 +967,7 @@ class Permutation(_CompactTransformation):
         perm = self.permutation
         if perm is None:
             return None
-        xp = get_array_backend(perm)
+        xp = array_backend(perm)
         inverse_permutation = [0] * len(perm)
         for i, p in enumerate(perm):
             inverse_permutation[p] = i
@@ -1054,14 +1059,14 @@ class Scaling(_CompactTransformation, polymorphic=True):
             return None
         what = f"The square root of this {type(self).__name__}"
         require_positive(self.scale, what)
-        xp = get_array_backend(self.scale)
+        xp = array_backend(self.scale)
         return xp.sqrt(self.scale)
 
     @lazyproperty
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
         if self.scale is None:
             return None
-        xp = get_array_backend(self.scale)
+        xp = array_backend(self.scale)
         return xp.reciprocal(self.scale)
 
 

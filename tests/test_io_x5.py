@@ -27,7 +27,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
 from brainhops.io.common.hdf5 import H5ArrayProxy  # noqa: E402
 from brainhops.io.transformations.x5 import (  # noqa: E402
     X5BSplineField,
-    X5CoordinatesField,
+    X5CoordinateField,
     X5DisplacementField,
     X5Metadata,
     X5Raw,
@@ -77,10 +77,10 @@ def _ras(ijk: np.ndarray) -> np.ndarray:
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    points = xforms.CoordinatesField(field=np.asarray(points, float))
+    points = xforms.CoordinateField(field=np.asarray(points, float))
     chain = list(xform) if isinstance(xform, xforms.Sequence) else [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
-    return np.asarray(out.to(xforms.CoordinatesField).field)
+    return np.asarray(out.to(xforms.CoordinateField).field)
 
 
 def _affine_apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
@@ -286,7 +286,7 @@ def test_deformations_map_each_voxel_centre_to_its_coordinates(
 ) -> None:
     path = _write_x5(tmp_path / "def.x5", [_field("deformations")])
     xform = io.load(path)
-    assert isinstance(xform[0], X5CoordinatesField)
+    assert isinstance(xform[0], X5CoordinateField)
     points = _ras(IJK)
     expected = _ramp()[tuple(IJK.T)]
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
@@ -339,6 +339,24 @@ def test_no_open_file_is_kept(field_x5: Path) -> None:
     assert not [
         value for value in vars(xform).values() if isinstance(value, h5py.File)
     ]
+
+
+@pytest.mark.parametrize("reassign", [False, True])
+def test_saving_over_its_own_file_keeps_the_fields(
+    chain_x5: Path, reassign: bool
+) -> None:
+    # The fields of the chain are read lazily from the file that is
+    # replaced, so the new file must be written beside it (#429).
+    points = _ras(IJK)
+    xform = X5Transform.load(chain_x5)
+    expected = _apply(xform, points)
+    if reassign:
+        xform.transformations = list(xform)
+    xform.save(chain_x5)
+    back = X5Transform.load(chain_x5)
+    np.testing.assert_allclose(_apply(back, points), expected, atol=1e-5)
+    np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
+    assert not list(chain_x5.parent.glob(".*"))
 
 
 def test_decoded_matrices_are_read_only(linear_x5: Path) -> None:
@@ -795,7 +813,7 @@ def test_reused_nodes_keep_their_metadata(
 def test_a_coordinates_field_is_written_as_deformations(
     tmp_path: Path,
 ) -> None:
-    field = X5CoordinatesField.from_ras(_ramp(), VOX2RAS)
+    field = X5CoordinateField.from_ras(_ramp(), VOX2RAS)
     out = tmp_path / "def.x5"
     X5Transform(transformations=[field]).save(out)
     with h5py.File(out, "r") as f:
@@ -811,7 +829,7 @@ def test_coordinate_coefficients_are_written_as_deformations(
 ) -> None:
     # X5 stores sampled coordinates, so a coefficient field is written as
     # values.
-    ras2vox, field = X5CoordinatesField.from_ras(_ramp(), VOX2RAS)
+    ras2vox, field = X5CoordinateField.from_ras(_ramp(), VOX2RAS)
     spline = field.to(degree=3).to(store="coefficients")
     chain = xforms.Sequence(
         transformations=[ras2vox, spline],
@@ -825,7 +843,7 @@ def test_coordinate_coefficients_are_written_as_deformations(
         assert node.attrs["Representation"] == "deformations"
         np.testing.assert_allclose(node["Transform"], _ramp(), atol=1e-6)
     again = io.load(out)
-    assert isinstance(again[0], X5CoordinatesField)
+    assert isinstance(again[0], X5CoordinateField)
     np.testing.assert_allclose(
         np.asarray(again[0][1].field), np.asarray(field.field), atol=1e-6
     )
@@ -1129,7 +1147,7 @@ def test_a_selected_chain_is_encoded_as_the_only_chain(
 
 
 def test_decoded_fields_are_read_only(field_x5: Path) -> None:
-    from brainhops.backends import backend
+    from brainhops._core.backends import backend
 
     with backend("numpy"):
         vectors = io.load(field_x5)[0].displacement.data

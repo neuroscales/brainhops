@@ -54,18 +54,23 @@ __all__ = [
     "read_series",
 ]
 
+# stdlib
 import math
 import weakref
 import xml.etree.ElementTree as ElementTree
 from io import BytesIO
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
 
+# core
 from brainhops._core import path
+from brainhops._core.backends import is_lazy
 from brainhops._core.dependencies import tifffile
-from brainhops.backends import _is_lazy
+
+# io
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.images.base import _utils_raster as raster
 
@@ -769,7 +774,7 @@ def read_series(
                 order="C",
             )
         if lazy is None:
-            lazy = _is_lazy(one)
+            lazy = is_lazy(one)
         if lazy:
             array = _read_lazily(source, series, level)
             if array is not None:

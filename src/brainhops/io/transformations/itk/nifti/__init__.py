@@ -44,7 +44,7 @@ The header alone does not always reveal which frame a field uses:
 - A hint settles the question. With `load(path, hint="itk")`, or with
   `hint="ants"`, the file is read as an ITK displacement field whatever its
   intent, and with `hint="itk.coordinates"` it is read as an ITK
-  coordinates field. Calling
+  coordinate field. Calling
   `ItkNiftiDisplacementField.from_file(path)` does the same. A
   three-component `DISPVECT` file read this way has its RAS vectors
   converted to LPS, as ITK does.
@@ -75,13 +75,13 @@ Sources
 """
 
 __all__ = [
-    "ItkNiftiCoordinatesField",
+    "ItkNiftiCoordinateField",
     "ItkNiftiDisplacementField",
     "ItkNiftiField",
 ]
 
 from ._fields import (
-    ItkNiftiCoordinatesField,
+    ItkNiftiCoordinateField,
     ItkNiftiDisplacementField,
     ItkNiftiField,
 )
@@ -91,3 +91,18 @@ from ._fields import (
 # `t.to(Format)`, fails with a reason instead of building a wrong
 # object.
 from . import _converters  # noqa: E402, F401  isort: skip
+
+
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "ItkNiftiCoordinatesField": "ItkNiftiCoordinateField",
+    },
+)

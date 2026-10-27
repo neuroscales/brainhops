@@ -39,11 +39,15 @@ knot grid is held exactly, and any other field is evaluated at the
 knots and interpolated, which loses.
 """
 
+# dependencies
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-from brainhops.backends import get_array_backend
+# core
+from brainhops._core.backends import array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
@@ -51,6 +55,8 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.errors import ConversionError, LossyConversionError
+
+# io
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._raw import NiftiRaw
 from brainhops.io.transformations.base._conversions import (
@@ -66,6 +72,7 @@ from brainhops.io.transformations.base._conversions import (
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 
+# this format
 from .._affines import _ImageGeometry
 from ._base import (
     FSL_CUBIC_SPLINE_COEFFICIENTS,
@@ -177,7 +184,7 @@ def _deformation(
     shape = tuple(int(n) for n in ref.shape[:3])
     parts = sample_on_grid(t, ref.ras2vox, shape, RAS, RAS, cls)
     positions = parts.field.data
-    backend = get_array_backend(positions)
+    backend = array_backend(positions)
     scaled = apply_affine(mov.ras2fsl, positions)
     nodes = voxel_grid_coordinates(shape, ref.vox2fsl, backend)
     displacements = scaled - backend.asarray(nodes, dtype=scaled.dtype)

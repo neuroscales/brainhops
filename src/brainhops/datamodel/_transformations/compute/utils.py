@@ -122,8 +122,9 @@ def axis_counts(
       homogeneous column of an affine;
     * the length of `scale`, `translation` or `permutation`;
     * a field: the last dimension of a displacement field, the spatial rank and
-      last dimension of a coordinates field, the rank of a grid;
+      last dimension of a coordinate field, the rank of a grid;
     * a lazy inverse: the counts of its forward transformation, swapped;
+    * a projection: its systems, the count on one side giving the other;
     * a lazy square root, exponential or logarithm: the counts of its
       forward transformation;
     * a sequence: its ends, reading past any leading (or trailing) member that
@@ -138,7 +139,7 @@ def axis_counts(
     from ..concrete import (
         Affine,
         CartesianField,
-        CoordinatesField,
+        CoordinateField,
         DisplacementField,
         Linear,
         Permutation,
@@ -147,6 +148,7 @@ def axis_counts(
     )
     from ..derived import DerivedTransformation
     from ..inverse import Inverse
+    from ..meta import Projection
     from ..sequence import Sequence
     from .checkers import _matrix_dims
 
@@ -170,6 +172,15 @@ def axis_counts(
         dims = _matrix_dims(t)
         if dims is not None:
             ni, no = dims
+    elif isinstance(t, Projection):
+        # The count on one side gives the count on the other, because a
+        # projection removes and adds a known number of axes.
+        ni, no = get_axes(t.input).ndim, get_axes(t.output).ndim
+        change = len(axis_list(t.created)) - len(axis_list(t.dropped))
+        if ni is None and no is not None:
+            ni = no - change
+        if no is None and ni is not None:
+            no = ni + change
     else:
         for name, cls in (
             ("scale", Scaling),
@@ -182,7 +193,7 @@ def axis_counts(
         if isinstance(t, CartesianField):
             if t.shape is not None:
                 ni = no = len(t.shape)
-        elif isinstance(t, (DisplacementField, CoordinatesField)):
+        elif isinstance(t, (DisplacementField, CoordinateField)):
             # Only the shape is read, so a spline-coefficient field is never
             # decoded.
             field = t.data

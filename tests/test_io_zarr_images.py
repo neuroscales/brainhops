@@ -1559,7 +1559,7 @@ def test_reader_refuses_a_field_that_does_not_name_its_axes(
 
 
 def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
-    from brainhops.datamodel.transformations import CoordinatesField
+    from brainhops.datamodel.transformations import CoordinateField
 
     path = _authored_pyramid(
         tmp_path,
@@ -1569,7 +1569,7 @@ def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
         arrays={"coord": (_field_array(), ("d", "z", "y", "x"))},
     )
     geometry = OmeZarrImage.from_store(path).transformation
-    assert isinstance(geometry, CoordinatesField)
+    assert isinstance(geometry, CoordinateField)
     assert np.asarray(geometry.field).shape == (4, 5, 6, 3)
 
 
@@ -1917,7 +1917,7 @@ def test_reader_reads_a_displacement_field_group_of_version_0_6(
     tmp_path: Path,
 ) -> None:
     from brainhops.datamodel.transformations import (
-        CoordinatesField,
+        CoordinateField,
         Permutation,
     )
 
@@ -1943,7 +1943,7 @@ def test_reader_reads_a_displacement_field_group_of_version_0_6(
     assert isinstance(last, Permutation)
     # A point is carried by (dx, dy, dz) = (3, 2, 1), in brainhops order.
     points = np.asarray([[[[0.5, 1.0, 1.5]]]])
-    moved = placement(CoordinatesField(field=points), compute=True)
+    moved = placement(CoordinateField(field=points), compute=True)
     np.testing.assert_allclose(
         np.asarray(moved.field)[0, 0, 0], [3.5, 3.0, 2.5]
     )

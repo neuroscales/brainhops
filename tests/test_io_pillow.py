@@ -23,7 +23,7 @@ PIL = pytest.importorskip("PIL")
 from PIL import Image  # noqa: E402
 
 import brainhops.io as bio  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.transformations import Scaling  # noqa: E402

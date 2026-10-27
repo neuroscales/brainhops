@@ -20,7 +20,7 @@ Image = pytest.importorskip("PIL.Image")
 da = pytest.importorskip("dask.array")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.transformations import Scaling  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,

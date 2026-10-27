@@ -1,7 +1,7 @@
 __all__ = [
     "Transformation",
     "MultiscaleField",
-    "CoordinatesField",
+    "CoordinateField",
     "CartesianField",
     "DisplacementField",
     "StationaryVelocityField",
@@ -24,7 +24,7 @@ __all__ = [
     "InverseLinear",
     "InverseAffine",
     "InverseDisplacementField",
-    "InverseCoordinatesField",
+    "InverseCoordinateField",
     "InverseAffineExponential",
     "InverseLinearExponential",
     "InverseRotationExponential",
@@ -51,6 +51,13 @@ __all__ = [
     "is_linear",
 ]
 
+# -- deprecated names ----------------------------------------------------
+# The old spellings of the coordinate fields (#547) still import, with a
+# DeprecationWarning, for one release.
+from brainhops._core.deprecation import (  # noqa: E402
+    renamed_attributes as _renamed_attributes,
+)
+
 from .base import Transformation
 
 # Imported for their side effect: each of these modules registers its
@@ -66,7 +73,7 @@ from .compute.simplify import SimplifyLike, SimplifyPolicy, SimplifyTable
 from .concrete import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -86,7 +93,7 @@ from .inverse import (
     Inverse,
     InverseAffine,
     InverseAffineExponential,
-    InverseCoordinatesField,
+    InverseCoordinateField,
     InverseDisplacementField,
     InverseLinear,
     InverseLinearExponential,
@@ -113,4 +120,12 @@ from .tangents import (
     RotationExponential,
     ScalingExponential,
     StationaryVelocityField,
+)
+
+__getattr__ = _renamed_attributes(
+    __name__,
+    {
+        "CoordinatesField": "CoordinateField",
+        "InverseCoordinatesField": "InverseCoordinateField",
+    },
 )

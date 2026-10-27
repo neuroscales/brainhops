@@ -27,7 +27,7 @@ axes of that system (`brainhops.io.images.zarr._ome`).
 
 import typing_extensions as tx
 
-from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.axes import Axis, is_component_type
 
 _T = tx.TypeVar("_T")
 
@@ -37,10 +37,6 @@ CANONICAL_ORDER = ("space", "time", "channel", "other")
 # In the stored order, the non-spatial axes come first and the spatial axes
 # last, which gives (t, c, z, y, x) for a plain image.
 STORAGE_ORDER = ("time", "channel", "other", "space")
-
-# These axis types hold the vector components of a field, which the field
-# stores where a channel axis would sit.
-_VECTOR_TYPES = ("displacement", "coordinate")
 
 # These ranks break ties between named spatial axes to sort them as x, y, z.
 _CANONICAL_SPACE = {"x": 0, "y": 1, "z": 2}
@@ -53,11 +49,12 @@ def _group(axis: Axis) -> str:
     """Return the group of an axis, as named in `CANONICAL_ORDER` and
     `STORAGE_ORDER`.
 
-    Component axes of displacement and coordinate fields are grouped with
-    channels, since a field stores its components where a channel would sit.
+    Component axes, such as the axes of displacement and coordinate fields
+    or the axes of vectors and tensors, are grouped with channels, since
+    an array stores its components where a channel would sit.
     """
     type_ = getattr(axis, "type", None)
-    if type_ in _VECTOR_TYPES or type_ == "channel":
+    if type_ == "channel" or is_component_type(type_):
         return "channel"
     if type_ in ("space", "time"):
         return type_

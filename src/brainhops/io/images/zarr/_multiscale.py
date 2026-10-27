@@ -1,10 +1,14 @@
+# dependencies
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
 from bagof.magic import Inherit, replace
 
+# core
+from brainhops._core.backends import array_backend
 from brainhops._core.properties import smartproperty
-from brainhops.backends import get_array_backend
+
+# datamodel
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -22,6 +26,8 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+
+# io
 from brainhops.io.base import register_format
 from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import Confidence, WriterError
@@ -42,6 +48,7 @@ from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map
 
+# this format
 from ._image import ZarrImage
 from ._ome import (
     OmeImageError,
@@ -493,7 +500,7 @@ class OmeZarrImage(
                 entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
                 moved_placement = True
             rich = rich or _map.needs_rich_version(entry)
-            xp = get_array_backend(data)
+            xp = array_backend(data)
             stored = xp.transpose(data, storage_perm)
             options = dict(kwargs)
             if stored_chunks is not None:

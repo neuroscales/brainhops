@@ -39,10 +39,14 @@ A field that is already of this format is changed by the rules of its
 family, which keep its type.
 """
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 
-from brainhops.backends import get_array_backend
+# core
+from brainhops._core.backends import array_backend
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
@@ -50,11 +54,13 @@ from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
 )
 from brainhops.datamodel.transformations import Identity
+
+# io
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
     FieldParts,
     cardinal_parts,
-    coordinates_parts,
+    coordinate_parts,
     displacement_parts,
     displacements_of,
     format_options,
@@ -63,6 +69,7 @@ from brainhops.io.transformations.base._conversions import (
     split_field_chain,
 )
 
+# this format
 from . import _map
 from ._axes import _to_axis
 from ._xforms import OmeZarrField, _dataset_placement
@@ -83,9 +90,9 @@ def _(
     cls = OmeZarrField
     format_options(t, cls, kwargs)
     _, field, _ = split_field_chain(t, RAS, RAS, cls)
-    if isinstance(field, _xforms.CoordinatesField):
+    if isinstance(field, _xforms.CoordinateField):
         kind = "coordinate"
-        parts = coordinates_parts(t, RAS, RAS, cls)
+        parts = coordinate_parts(t, RAS, RAS, cls)
         parts = cardinal_parts(parts, t, RAS, RAS, cls)
         values = parts.field.values
     else:
@@ -116,7 +123,7 @@ def _world_vectors(parts: FieldParts) -> tx.Any:
     only the linear part of the grid-to-world affine acts on them.
     """
     values = parts.field.values
-    backend = get_array_backend(values)
+    backend = array_backend(values)
     ndim = len(parts.grid2world) - 1
     linear = parts.grid2world[:ndim, :ndim].astype(values.dtype)
     return backend.matmul(backend.asarray(linear), values[..., None])[..., 0]
@@ -143,7 +150,7 @@ def _along_world(
     translation : array, shape `(D,)`
         The world position of the first node.
     """
-    backend = get_array_backend(values)
+    backend = array_backend(values)
     ndim = len(grid2world) - 1
     linear = grid2world[:ndim, :ndim]
     shape = [int(n) for n in values.shape[:-1]]
@@ -182,7 +189,7 @@ def _field(
     """
     from abczarr.ome import v0_6
 
-    backend = get_array_backend(values)
+    backend = array_backend(values)
     stored = backend.moveaxis(values, -1, 0)
     ndim = len(scale)
     axes = [{"name": "c", "type": kind, "discrete": True}] + [

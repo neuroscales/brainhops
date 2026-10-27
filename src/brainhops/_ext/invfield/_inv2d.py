@@ -1,7 +1,7 @@
 import numpy as np
 import typing_extensions as _tx
 
-from brainhops.backends import get_array_backend, get_ndimage_backend
+from brainhops._core.backends import array_backend, ndimage_backend
 
 
 def inverse2d(disp: np.ndarray) -> np.ndarray:
@@ -30,8 +30,8 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     ValueError
         If the last axis of `disp` does not have length 2.
     """
-    xp = get_array_backend(disp)
-    ndi = get_ndimage_backend(xp)
+    xp = array_backend(disp)
+    xd = ndimage_backend(xp)
     disp = xp.asanyarray(disp)
     out = xp.full_like(disp, np.nan)
 
@@ -60,8 +60,8 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
         wgt = msk.astype(np.float64)
         sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM of one voxel
         sigma = (sigma, sigma, 0)
-        smo = ndi.gaussian_filter(out, sigma=sigma, mode="nearest")
-        wgt = ndi.gaussian_filter(wgt, sigma=sigma, mode="nearest")
+        smo = xd.gaussian_filter(out, sigma=sigma, mode="nearest")
+        wgt = xd.gaussian_filter(wgt, sigma=sigma, mode="nearest")
         smo /= wgt
         out[~msk0] = smo[~msk0]
         msk = xp.isfinite(out)
@@ -81,7 +81,7 @@ def _process_triangle(
     The vertices `src` and `dst`, in the source and target domains, have
     shape `(N, 3, 2)`, and `out` has shape `(Nx, Ny, 2)`.
     """
-    xp = get_array_backend(src)
+    xp = array_backend(src)
     idx = xp.argsort(dst[:, :, Y : Y + 1], axis=VERTEX_AXIS)
     tri = xp.take_along_axis(dst, idx, axis=VERTEX_AXIS)
 
@@ -130,7 +130,7 @@ def _process_segment(
     coordinates of the end points of each segment in the target domain.
     The output `out` has shape `(Nx, Ny, 2)` and is written in place.
     """
-    xp = get_array_backend(src)
+    xp = array_backend(src)
 
     idx = xp.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
     seg = xp.take_along_axis(seg, idx, axis=VERTEX_AXIS)
@@ -157,7 +157,7 @@ def _process_segment(
 def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
     # Compute the barycentric coordinates, of shape (N, 3), of the points
     # x, of shape (N, 2), in the triangles tri, of shape (N, 3, 2).
-    xp = get_array_backend(x)
+    xp = array_backend(x)
 
     v0 = tri[:, 0]
     v1 = tri[:, 1]
@@ -181,7 +181,7 @@ def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
 
 
 def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
-    xp = get_array_backend(tri)
+    xp = array_backend(tri)
     out = xp.empty_like(tri, shape=(len(tri), 2, 1))
 
     p1x, p1y = tri[:, 0].T
@@ -204,7 +204,7 @@ def _truncate_and_stack2d(
     The result has shape `(N, 3, 2)`, with one triangle per point of the
     common `(Nx, Ny)` grid.
     """
-    xp = get_array_backend(a)
+    xp = array_backend(a)
     vertices = (a, b, c)
     nx, ny = (min(x.shape[i] for x in vertices) for i in range(2))
     vertices = (vertex[:nx, :ny].reshape(-1, 2) for vertex in vertices)

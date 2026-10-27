@@ -29,7 +29,7 @@ from brainhops.datamodel._transformations.concrete import (
 from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Inverse,
     InverseAffine,
@@ -311,7 +311,7 @@ def test_field_inverse_never_inverts_and_never_raises() -> None:
             assert not _M(df.inverse(), "AffineTransformation", policy)
             # Membership of a coordinates-field inverse must never raise.
             _M(
-                CoordinatesField(field=df.field).inverse(),
+                CoordinateField(field=df.field).inverse(),
                 "AffineTransformation",
                 policy,
             )
@@ -339,7 +339,10 @@ def test_projection_membership() -> None:
     assert _M(Projection(), "IdentityTransformation")
     assert _M(Projection(dropped=[2]), "SurjectiveTransformation")
     assert not _M(Projection(dropped=[2]), "InjectiveTransformation")
-    assert not _M(Projection(dropped=[2]), "AffineTransformation")
+    assert _M(Projection(dropped=[2]), "LinearTransformation")
+    assert _M(Projection(dropped=[2]), "AffineTransformation")
+    assert not _M(Projection(dropped=[2]), "InvertibleAffineTransformation")
+    assert _M(Projection(dropped=[2], created=[0]), "LinearTransformation")
     assert _M(Projection(created=[2]), "InjectiveTransformation")
     assert not _M(
         Projection(dropped=[2], created=[0]), "InjectiveTransformation"
@@ -362,7 +365,7 @@ def test_class_kinds() -> None:
     # One kind is one class, so both field types share a base.
     assert is_kind(df, TransformationField)
     assert is_kind(
-        CoordinatesField(field=np.zeros((4, 4, 2))), TransformationField
+        CoordinateField(field=np.zeros((4, 4, 2))), TransformationField
     )
     assert not is_kind(Affine(matrix=np.eye(4)[:3]), TransformationField)
     assert issubclass(InverseAffine, Inverse)
@@ -372,7 +375,7 @@ def test_kind_alias_refuses_a_tuple() -> None:
     # A tuple used to be accepted, and only its last kind was kept
     # under the name.
     with pytest.raises(TypeError):
-        register_kind_alias("demo-384", (DisplacementField, CoordinatesField))
+        register_kind_alias("demo-384", (DisplacementField, CoordinateField))
     assert "demo-384" not in KIND_ALIASES
 
 

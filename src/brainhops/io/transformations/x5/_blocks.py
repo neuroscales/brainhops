@@ -5,19 +5,23 @@ The rules are described in [`brainhops.io.transformations.x5`][].
 
 __all__ = [
     "X5BSplineField",
-    "X5CoordinatesField",
+    "X5CoordinateField",
     "X5DisplacementField",
     "node_to_transformation",
     "transformation_to_nodes",
 ]
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
+# core
 from brainhops._core import affines as _affines
+from brainhops._core.backends import array_backend, to_backend, to_numpy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import get_array_backend, to_backend, to_numpy
+
+# datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
@@ -29,12 +33,13 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common.hdf5 import H5ArrayProxy
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
-    RASCoordinatesField,
+    RASCoordinateField,
     homogeneous_matrix,
     ras_displacement_chain,
     split_ras_displacement_chain,
 )
 
+# this format
 from ._raw import X5Domain, X5Node
 
 _NDIM = 3
@@ -147,7 +152,7 @@ class X5BSplineField(_X5RASDisplacements):
     store: tx.ClassVar[StoreEnum] = StoreEnum.coefficients
 
 
-class X5CoordinatesField(_xforms.ImmutableSequence):
+class X5CoordinateField(_xforms.ImmutableSequence):
     """A nonlinear X5 transform that holds absolute coordinates.
 
     Each sample holds the RAS coordinates, in millimetres, to which the world
@@ -183,7 +188,7 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
         return cls(
             (
                 RASToVoxel(matrix=_affines.inv(compact)),
-                RASCoordinatesField(field=coordinates),
+                RASCoordinateField(field=coordinates),
             )
         )
 
@@ -232,7 +237,7 @@ def _read(stored: tx.Any) -> ArrayProtocol:
     if isinstance(stored, H5ArrayProxy):
         array = to_backend(stored)
     else:
-        array = get_array_backend(stored).asarray(stored)
+        array = array_backend(stored).asarray(stored)
     if isinstance(array, np.ndarray):
         array = array.view()
         array.flags.writeable = False
@@ -347,7 +352,7 @@ def _decode_nonlinear(node: X5Node) -> _xforms.Transformation:
     if representation in DISPLACEMENTS:
         return _read_only_field(X5DisplacementField.from_ras(field, vox2ras))
     if representation in COORDINATES:
-        return X5CoordinatesField.from_ras(field, vox2ras)
+        return X5CoordinateField.from_ras(field, vox2ras)
     raise ParserContentError(
         f"A nonlinear X5 transform must say whether it stores "
         f"displacements or coordinates, and its Representation is "
@@ -423,7 +428,7 @@ def _field_to_model(
     if kinds and len(kinds) == field.ndim and "vector" in kinds:
         axis = list(kinds).index("vector")
         if axis != field.ndim - 1:
-            field = get_array_backend(field).moveaxis(field, axis, -1)
+            field = array_backend(field).moveaxis(field, axis, -1)
     return field
 
 
@@ -483,7 +488,7 @@ def transformation_to_nodes(
       zero boundary.
     - A RAS coordinate chain, which is an affine followed by a coordinate
       field, becomes a node of deformations. Examples are an
-      [`X5CoordinatesField`][] and an SPM `y_` field.
+      [`X5CoordinateField`][] and an SPM `y_` field.
     - A transformation that converts to an affine becomes a linear node.
     - Any other sequence becomes the nodes of its elements.
 
@@ -508,7 +513,7 @@ def transformation_to_nodes(
             if chain[1].store is StoreEnum.coefficients:
                 return [_encode_bspline(xform, chain)]
             return [_encode_displacements(xform, chain)]
-        if len(chain) == 2 and isinstance(chain[1], _xforms.CoordinatesField):
+        if len(chain) == 2 and isinstance(chain[1], _xforms.CoordinateField):
             return [_encode_coordinates(xform, chain)]
     try:
         affine = xform.to(_xforms.Affine)
@@ -591,8 +596,8 @@ def _encode_bspline(
 def _encode_coordinates(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
-    _check_ras(xform, "coordinates field")
-    what = "An X5 coordinates field"
+    _check_ras(xform, "coordinate field")
+    what = "An X5 coordinate field"
     ras2vox = homogeneous_matrix(chain[0], what, ndim=_NDIM)
     field = chain[1].to(store=StoreEnum.values)
     if field.data is None:

@@ -8,10 +8,9 @@ same paths in memory.
 
 import numpy as np
 import pytest
-from dask.callbacks import Callback
 
 from brainhops._core import bsplines
-from brainhops.backends import (
+from brainhops._core.backends import (
     backend,
     promote_backends,
     to_backend_of,
@@ -21,6 +20,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Affine, DisplacementField
 
 da = pytest.importorskip("dask.array")
+Callback = pytest.importorskip("dask.callbacks").Callback
 
 RNG = np.random.default_rng(0)
 VOLUME = RNG.random((12, 13, 14)).astype(np.float32)

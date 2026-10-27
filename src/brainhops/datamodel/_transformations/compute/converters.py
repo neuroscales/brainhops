@@ -1,9 +1,13 @@
+# stdlib
 import numpy as np
 import typing_extensions as tx
 
+# core
+from brainhops._core.backends import _creation_options, array_backend
 from brainhops._core.magic import replace, stores
 from brainhops._core.typing import ArrayProtocol
-from brainhops.backends import _creation_options, get_array_backend
+
+# api
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import (
     CompositionError,
@@ -11,11 +15,12 @@ from brainhops.errors import (
     LossyConversionError,
 )
 
+# transformations
 from ..base import Transformation
 from ..concrete import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
     Linear,
@@ -27,7 +32,7 @@ from ..concrete import (
     _is_tangent,
     _values2data,
 )
-from ..meta import SubspaceTransformation, _close_subspace
+from ..meta import Projection, SubspaceTransformation, _close_subspace
 from ..sequence import Sequence
 from ..tangents import (
     AffineExponential,
@@ -37,11 +42,12 @@ from ..tangents import (
     StationaryVelocityField,
 )
 from .convert import convert, converter
-from .utils import get_ndim
+from .utils import axis_counts, axis_list, get_ndim
 
+# typing
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 DISP = tx.TypeVar("DISP", bound=DisplacementField)
-COORD = tx.TypeVar("COORD", bound=CoordinatesField)
+COORD = tx.TypeVar("COORD", bound=CoordinateField)
 AFFINE = tx.TypeVar("AFFINE", bound=Affine)
 LINEAR = tx.TypeVar("LINEAR", bound=Linear)
 ROTATION = tx.TypeVar("ROTATION", bound=Rotation)
@@ -142,11 +148,28 @@ def _convert_withlog(
                 kwargs[_fallback] = getattr(t, _fallback)
             elif getattr(t, "_data", None) is None:
                 kwargs["data"] = t.data
-        if crossing:
-            # The rebuild would otherwise carry the flag over from `t`, but
-            # changing the encoding is the purpose of this conversion, so
-            # the flag is set explicitly.
-            kwargs["log"] = out_log
+    if changes_class:
+        # The input and output systems follow the same rule as the data.
+        # A file format such as LTA leaves the stored system empty and
+        # decodes it from its record, so the rebuild would carry over
+        # nothing. The public system is transferred in that case.
+        for name in ("input", "output"):
+            private = "_" + name
+            if (
+                name in kwargs
+                or private in kwargs
+                or not stores(cls, private)
+                or getattr(t, private, None) is not None
+            ):
+                continue
+            system = getattr(t, name)
+            if system is not None:
+                kwargs[name] = system
+    if crossing:
+        # The rebuild would otherwise carry the flag over from `t`, but
+        # changing the encoding is the purpose of this conversion, so the
+        # flag is set explicitly.
+        kwargs["log"] = out_log
     return _convert_withdata(t, cls, **kwargs)
 
 
@@ -274,7 +297,7 @@ def _(t: StationaryVelocityField, cls: tx.Type[DISP], **kwargs) -> DISP:
 
 
 @converter
-def _(t: CoordinatesField, cls: tx.Type[COORD], **kwargs) -> COORD:
+def _(t: CoordinateField, cls: tx.Type[COORD], **kwargs) -> COORD:
     return _convert_withsplines(t, cls, **kwargs)
 
 
@@ -416,7 +439,7 @@ def _(t: Linear, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
     if "matrix" not in kwargs:
         # Append a zero translation column. The result does not depend on
         # the endpoints, which may be unspecified.
-        xp = get_array_backend(t.matrix)
+        xp = array_backend(t.matrix)
         zeros = xp.zeros((*t.matrix.shape[:-1], 1), dtype=t.matrix.dtype)
         kwargs["matrix"] = xp.concatenate([t.matrix, zeros], axis=-1)
     return _convert_withdata(t, cls, **kwargs)
@@ -458,7 +481,7 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
                 "affine"
             )
         inner_matrix = inner_affine.matrix
-        xp = get_array_backend(inner_matrix)
+        xp = array_backend(inner_matrix)
     matrix = xp.zeros((n_out, n_in + 1))
     acted_in = set(input_axes)
     acted_out = set(output_axes)
@@ -476,6 +499,50 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
                 matrix[out_axis, in_axis] = inner_matrix[r, c]
             matrix[out_axis, n_in] = inner_matrix[r, m_in]
     return cls(matrix=matrix, input=t.input, output=t.output)
+
+
+@converter
+def _(t: Projection, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
+    return _projection_to_matrix(t, cls, homogeneous=True, **kwargs)
+
+
+@converter
+def _(t: Projection, cls: tx.Type[LINEAR], **kwargs) -> LINEAR:
+    return _projection_to_matrix(t, cls, homogeneous=False, **kwargs)
+
+
+def _projection_to_matrix(
+    t: Projection, cls: tx.Type[TRANSFORMATION], homogeneous: bool, **kwargs
+) -> TRANSFORMATION:
+    # The matrix of a projection selects the kept input axes, in order,
+    # and has a row of zeros for each created axis, whose coordinate is
+    # zero. Its size is read from the systems of the projection, which a
+    # composer closes from a neighbour when they are missing.
+    if t.is_identity():
+        return convert(convert(t, Identity), cls, **kwargs)
+    n_in, n_out = axis_counts(t)
+    if n_in is None or n_out is None:
+        raise ConversionError(
+            "The number of axes of this projection is unknown, so it "
+            "cannot be written as a matrix, whose size is read from it. "
+            "Declare a closed input or output system, or compose the "
+            "projection with a neighbour that states the number of axes."
+        )
+    dropped, created = axis_list(t.dropped), axis_list(t.created)
+    kept = [i for i in range(n_in) if i not in dropped]
+    rows = [o for o in range(n_out) if o not in created]
+    if len(kept) != len(rows):
+        raise ConversionError(
+            f"A projection that drops the axes {dropped} and creates the "
+            f"axes {created} cannot map {n_in} axes onto {n_out} axes."
+        )
+    if "matrix" not in kwargs:
+        matrix = np.zeros((n_out, n_in + 1 if homogeneous else n_in))
+        matrix[rows, kept] = 1.0
+        kwargs["matrix"] = matrix
+    kwargs.setdefault("input", t.input)
+    kwargs.setdefault("output", t.output)
+    return cls(**kwargs)
 
 
 @converter
@@ -518,7 +585,7 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
         if matrix is None:
             matrix = block
             continue
-        xp = get_array_backend(block)
+        xp = array_backend(block)
         product = xp.empty_like(block, shape=(block.shape[0], matrix.shape[1]))
         product[:, :-1] = block[:, :-1] @ matrix[:, :-1]
         product[:, -1:] = block[:, :-1] @ matrix[:, -1:] + block[:, -1:]
@@ -545,7 +612,7 @@ def _(t: DisplacementField, cls: tx.Type[COORD], **kwargs) -> COORD:
 
 
 @converter
-def _(t: CoordinatesField, cls: tx.Type[DISP], **kwargs) -> DISP:
+def _(t: CoordinateField, cls: tx.Type[DISP], **kwargs) -> DISP:
     # The displacement is the coordinates minus the grid, in the encoding of
     # `t`: the inverse of the converter above, with the same caveat (#313).
     flags = dict(store=t.store, degree=t.degree, bound=t.bound)
@@ -558,7 +625,7 @@ def _(t: CoordinatesField, cls: tx.Type[DISP], **kwargs) -> DISP:
 
 
 @converter
-def _(t: CoordinatesField, cls: tx.Type[SVF], **kwargs) -> SVF:
+def _(t: CoordinateField, cls: tx.Type[SVF], **kwargs) -> SVF:
     # Coordinates minus the grid are a displacement, not a velocity.
     raise ConversionError(
         f"A {type(t).__name__} converts to a DisplacementField, not to a "
@@ -570,7 +637,7 @@ def _(t: CoordinatesField, cls: tx.Type[SVF], **kwargs) -> SVF:
 def _encoded_grid(t: TransformationField) -> ArrayProtocol:
     """Return the identity grid of the nodes of `t`, encoded like its data."""
     data = t.data
-    xp = get_array_backend(data)
+    xp = array_backend(data)
     # The grid is created in the backend of the data, with CuPy chunks when
     # its chunks are CuPy arrays.
     options = _creation_options(data)
@@ -600,7 +667,7 @@ def _(t: Transformation, cls: tx.Type[IDENTITY], **kwargs) -> IDENTITY:
 def _(t: Linear, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
     if t.is_identity():
         return convert(convert(t, Identity), Permutation, **kwargs)
-    xp = get_array_backend(t.matrix)
+    xp = array_backend(t.matrix)
     matrix = xp.round(xp.abs(t.matrix))
     permutation = xp.argmax(matrix, axis=1)
     kwargs.setdefault("permutation", permutation)
@@ -614,7 +681,7 @@ def _(t: Linear, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
 def _(t: Linear, cls: tx.Type[SCALING], **kwargs) -> SCALING:
     if t.is_identity():
         return convert(convert(t, Identity), Scaling, **kwargs)
-    xp = get_array_backend(t.matrix)
+    xp = array_backend(t.matrix)
     scale = xp.diagonal(t.matrix)  # TODO: use SVD instead?
     kwargs.setdefault("scale", scale)
     u = _convert_withdata(t, cls, **kwargs)

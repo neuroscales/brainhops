@@ -18,10 +18,10 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
-    CoordinatesField,
+    CoordinateField,
     DisplacementField,
     Identity,
-    InverseCoordinatesField,
+    InverseCoordinateField,
     InverseDisplacementField,
     Linear,
     Permutation,
@@ -37,7 +37,7 @@ from brainhops.errors import ConversionError
 
 DEGREE = 3
 BOUND = "nearest"
-FIELDS = (DisplacementField, CoordinatesField)
+FIELDS = (DisplacementField, CoordinateField)
 
 
 def _values(shape: tuple = (12, 13, 2), seed: int = 0) -> np.ndarray:
@@ -246,9 +246,9 @@ def test_a_displacement_inverse_keeps_the_encoding(store: str) -> None:
 def test_a_coordinates_inverse_keeps_the_encoding(store: str) -> None:
     shape = (8, 9)
     coords = _grid(shape) + _small(shape + (2,))
-    forward = CoordinatesField(field=coords, degree=DEGREE).to(store=store)
+    forward = CoordinateField(field=coords, degree=DEGREE).to(store=store)
     inverse = forward.inverse()
-    assert isinstance(inverse, InverseCoordinatesField)
+    assert isinstance(inverse, InverseCoordinateField)
     assert inverse.store == store
     grid = _grid(shape)
     expected = grid + inverse_disp(np.asarray(forward.field) - grid)
@@ -300,7 +300,7 @@ def test_the_map_of_a_lazy_inverse_cannot_be_set(
     cls: type, view: str, values: np.ndarray, keyword: str
 ) -> None:
     # The map of an inverse derives from its forward and cannot be set.
-    if cls is CoordinatesField:
+    if cls is CoordinateField:
         values = values + _grid(values.shape[:-1])
     inverse = cls(values).inverse()
     name = view if keyword == "view" else "data"
@@ -443,9 +443,9 @@ def test_an_instance_of_another_class_is_converted() -> None:
     t = DisplacementField(
         data=_coefficients(_values()), degree=3, store="coefficients"
     )
-    copy = CoordinatesField.from_instance(t)
+    copy = CoordinateField.from_instance(t)
     np.testing.assert_allclose(
-        np.asarray(copy.data), np.asarray(t.to(CoordinatesField).data)
+        np.asarray(copy.data), np.asarray(t.to(CoordinateField).data)
     )
     assert (copy.store, copy.degree) == ("coefficients", 3)
 
@@ -603,8 +603,8 @@ def test_coordinates_from_coefficients_match_those_from_values() -> None:
     u = np.random.default_rng(0).normal(size=(12, 13, 2))
     d = DisplacementField(field=u, degree=3)
     c = d.to(store="coefficients")
-    a = d.to(CoordinatesField)
-    b = c.to(CoordinatesField)
+    a = d.to(CoordinateField)
+    b = c.to(CoordinateField)
     np.testing.assert_allclose(
         np.asarray(b.field), np.asarray(a.field), atol=1e-10
     )
@@ -621,8 +621,8 @@ def test_coordinates_keep_the_encoding_of_the_displacements(
     c = DisplacementField(field=u, degree=DEGREE, bound=bound).to(
         store="coefficients"
     )
-    b = c.to(CoordinatesField)
-    assert type(b) is CoordinatesField
+    b = c.to(CoordinateField)
+    assert type(b) is CoordinateField
     assert (b.store, b.degree, b.bound) == ("coefficients", DEGREE, c.bound)
     np.testing.assert_allclose(
         np.asarray(b.field), u + _grid(u.shape[:-1]), atol=1e-10
@@ -636,7 +636,7 @@ def test_coordinates_keep_the_encoding_of_the_displacements(
 
 def test_an_unset_displacement_converts_to_unset_coordinates() -> None:
     d = DisplacementField(degree=DEGREE, store="coefficients")
-    c = d.to(CoordinatesField)
+    c = d.to(CoordinateField)
     assert c.data is None
     assert (c.store, c.degree) == ("coefficients", DEGREE)
 
@@ -649,9 +649,9 @@ def test_an_unset_displacement_converts_to_unset_coordinates() -> None:
 def _evaluate(field, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
     """Return the coordinates that a field maps the given points to."""
     computed = Sequence(
-        transformations=[CoordinatesField(field=points), field]
+        transformations=[CoordinateField(field=points), field]
     ).compute()
-    return np.asarray(computed.to(CoordinatesField).field)
+    return np.asarray(computed.to(CoordinateField).field)
 
 
 @pytest.mark.parametrize("shape", [(6, 7, 5, 3), (8, 9, 2)], ids=["3d", "2d"])
@@ -661,7 +661,7 @@ def test_displacements_round_trip_through_coordinates(
     store: str, degree: int, shape: tuple
 ) -> None:
     d = DisplacementField(field=_values(shape), degree=degree).to(store=store)
-    c = d.to(CoordinatesField)
+    c = d.to(CoordinateField)
     back = c.to(DisplacementField)
     assert type(back) is DisplacementField
     assert (back.store, back.degree, back.bound) == (store, d.degree, d.bound)
@@ -675,7 +675,7 @@ def test_displacements_round_trip_through_coordinates(
 def test_a_grid_of_coordinates_converts_to_zero_displacements(
     store: str, degree: int
 ) -> None:
-    c = CoordinatesField(field=_grid((5, 6, 4)), degree=degree).to(store=store)
+    c = CoordinateField(field=_grid((5, 6, 4)), degree=degree).to(store=store)
     d = c.to(DisplacementField)
     assert (d.store, d.degree) == (store, c.degree)
     np.testing.assert_allclose(np.asarray(d.data), 0, atol=1e-10)
@@ -684,7 +684,7 @@ def test_a_grid_of_coordinates_converts_to_zero_displacements(
 
 
 def test_the_docstring_example_converts_coordinates_to_displacements() -> None:
-    coords = CoordinatesField(field=_grid((4, 5)) + 0.5, store="coefficients")
+    coords = CoordinateField(field=_grid((4, 5)) + 0.5, store="coefficients")
     d = coords.to(DisplacementField, store="values")
     assert type(d) is DisplacementField
     assert d.store == "values"
@@ -692,7 +692,7 @@ def test_the_docstring_example_converts_coordinates_to_displacements() -> None:
 
 
 def test_unset_coordinates_convert_to_unset_displacements() -> None:
-    c = CoordinatesField(degree=DEGREE, store="coefficients")
+    c = CoordinateField(degree=DEGREE, store="coefficients")
     d = c.to(DisplacementField)
     assert d.data is None
     assert (d.store, d.degree) == ("coefficients", DEGREE)
@@ -700,7 +700,7 @@ def test_unset_coordinates_convert_to_unset_displacements() -> None:
 
 def test_coordinates_do_not_convert_to_a_velocity() -> None:
     with pytest.raises(ConversionError):
-        CoordinatesField(field=_grid((4, 5))).to(StationaryVelocityField)
+        CoordinateField(field=_grid((4, 5))).to(StationaryVelocityField)
 
 
 @pytest.mark.parametrize("degree", [1, 3])
@@ -712,7 +712,7 @@ def test_coordinates_and_displacements_agree_as_maps_in_the_interior(
     # the cubic spline of the grid misses it by an error that decays by
     # about 0.27 per node away from the border, so the points stay far.
     shape = (32, 33)
-    c = CoordinatesField(
+    c = CoordinateField(
         field=_grid(shape) + _small(shape + (2,)), degree=degree
     ).to(store=store)
     d = c.to(DisplacementField)
