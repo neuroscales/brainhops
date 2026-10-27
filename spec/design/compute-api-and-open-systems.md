@@ -26,11 +26,14 @@ silent surprises. Passing tests is not sufficient.
   operation that composes.
 - Every operation returns an equivalent transformation or raises. It never
   silently drops a piece, changes a value or approximates.
-- One policy argument, with the same meaning everywhere, governs how much
-  an operation may read parameter values. `"analytic"` reads only types
-  and structure (axes, kinds, and the identity of lazy-inverse links),
-  `"numeric"` may also read values for exact tests without tolerance, and
-  `"none"` does nothing.
+- One policy argument, with the same meaning everywhere, governs how
+  much an operation may read parameter values. `"analytic"` reads only
+  types and structure (axes, kinds, and the identity of lazy-inverse
+  links), `"numeric"` may also read values for exact tests without
+  tolerance, and `"none"` does nothing. A bare `"numeric"` reads the
+  values of matrix transformations only, because reading a dense field
+  costs a scan of the whole array. The table `{None: "numeric"}` extends
+  it to every transformation, fields included (#584).
 - When there is nothing to do, the same object is returned, and leaves
   that are not rewritten keep their identity, so that a transformation and
   its lazy inverse keep cancelling.
@@ -41,25 +44,60 @@ silent surprises. Passing tests is not sufficient.
 
 ### A.2 `simplify(t, policy="analytic")`
 
-`simplify` already exists as `Transformation.simplify`. Its contract is to
-return a transformation equivalent to `t`, of the cheapest type that the
-policy can prove, without composing: no matrix is multiplied, no field is
-sampled and no lazy inverse is materialised. Under the analytic policy it
-downcasts by structure and cancels a transformation that is adjacent to
-its own lazy inverse. Under the numeric policy it also downcasts on exact
-tests, so that an exactly diagonal `Affine` becomes a `Scaling`. It never
-lengthens a sequence.
+`simplify` already exists as `Transformation.simplify`. Its contract is
+to return a transformation equivalent to `t`, of the cheapest type that
+the policy can prove, without composing: no matrix is multiplied and no
+field is sampled. Under the analytic policy it downcasts by structure
+and cancels a transformation that is adjacent to its own lazy inverse.
+Under the numeric policy it also downcasts on exact tests, so that an
+exactly diagonal `Affine` becomes a `Scaling`. It never lengthens a
+sequence.
+
+`simplify` also removes the axes that a chain does not need (A.4), which
+requires knowing which outputs of each element read which inputs. A lazy
+inverse is never materialised to answer a question about its type,
+because the forward transformation answers it exactly: the sets that a
+downcast targets, such as scalings, rotations and permutations, are
+closed under inversion. The numeric policy may read the coefficients of
+the lazy inverse of a matrix transformation to find which of them are
+exactly zero. The lazy inverse then stays in place, and it is replaced
+by a concrete transformation only when it is cut down to fewer axes,
+after the pass that cancels each transformation against its own lazy
+inverse, so that no cancellation is lost.
 
 ### A.3 `factor(t, policy="analytic")`
 
 `factor` becomes public. It rewrites `t`, without composing, into the
-axis-group normal form `[grid?, F_1, …, F_m, Π?]`, in which each
+axis-group normal form `[grid?, δ?, F_1, …, F_m, Π?, κ?]`, in which each
 `F_i = SubspaceTransformation(chain_i, A_i, A_i)` acts on the group of
-axes `A_i` and `chain_i` is `t` restricted to that group. A transformation
-that does not split into at least two groups is returned unchanged. With
-the multi-block `SubspaceTransformation` of A.8, the normal form becomes
-`[grid?, SubspaceTransformation(blocks)]`, the reordering `Π` is absorbed
-into `output_axes`, and restriction to whole blocks is structural.
+axes `A_i` and `chain_i` is `t` restricted to that group. The two
+optional ends come from the reduction of A.4. The projection `δ` drops
+the inputs that no output reads, and the projection `κ` creates the
+outputs that read no input, at their constant values. A chain whose two
+ends have different numbers of axes can therefore be factored. A
+transformation that does not split into at least two groups and has
+neither end is returned unchanged. With the multi-block
+`SubspaceTransformation` of A.8, the normal form becomes
+`[grid?, δ?, SubspaceTransformation(blocks), κ?]`, the reordering `Π` is
+absorbed into `output_axes`, and restriction to whole blocks is
+structural.
+
+The two ends let the resampler avoid work along whole axes. A 3D mask
+resampled onto the grid of a 4D series `(x, y, z, t)` gives
+`[grid, δ_t, F_xyz]`, so the resampler interpolates once in 3D and
+repeats the result along `t`, instead of interpolating in 4D. The
+axis-aligned slice `k = 40` of a volume, shown on a 2D grid, gives
+`[grid, F_ij, κ_k]`, so the resampler reads that slice and interpolates
+in 2D. Volume 4 of a series with one affine per volume (A.10) is
+reduced in the same way: the value of `t` becomes a constant of each
+element that reads it, and `κ_t` selects the volume.
+
+The groups are the connected components of the graph that links two axes
+when one reads the other, whatever the direction of the dependence. For
+the lazy inverse of a transformation, the pass reads the transpose of
+the pattern of the forward transformation. This is not the pattern of
+the inverse, but it has the same links, and an inverse couples the same
+groups of axes as its forward transformation, so the groups are exact.
 
 The implementation from #104 changes in four ways. First, `factor` no
 longer composes and loses its `mode` argument, so a group whose pieces
@@ -99,29 +137,93 @@ and it is free when `at` does not name it, which means that the result
 must not depend on it. No new type is needed, and the keywords match
 those of `SubspaceTransformation`.
 
-`compute` reduces the projections before it composes anything, so that
-no transformation is built over axes that are dropped afterwards. The
-projection `π` moves towards the input side by commutation,
-`π ∘ T → T' ∘ π'`: `T` is cut down to the outputs that `π` keeps, and
-`π'` drops the inputs that these outputs do not read. An embedding `ι`
-moves towards the output side through every transformation that carries
-its created axes through unchanged, such as a subspace that does not act
-on them, a permutation or an identity. When they meet, the pair rule of
-#570 merges them, and an embedding followed by the projection that drops
-the same axes cancels. The reduction keeps the type (`π ∘ Scaling` is a
-smaller `Scaling`), keeps lazy inverses lazy, and returns `t` itself when
-the block covers all axes. Under a composing mode, `compute` then
-composes what remains. A projection that cannot move through a
-transformation, because no rule applies or because the transformation
-is a lazy inverse whose structure is unknown, is composed with it as a
-matrix instead.
+`simplify` reduces the projections, so that `compute`, which simplifies
+before it composes (A.6), never builds a transformation over axes that
+are dropped afterwards. The reduction needs no rule per pair of types.
+Each element of a flattened chain has a dependency pattern, which says
+which of its outputs read which of its inputs. A projection is an
+element like any other: the axes that it creates are outputs that read
+no input, and the axes that it drops are inputs that no output reads.
+Two passes read these patterns.
+
+1. The backward pass starts from the outputs that the end of the chain
+   keeps. At each element, going towards the input, an input is needed
+   when a needed output reads it. An input that is not needed is dropped
+   as early as possible.
+2. The forward pass follows each created axis, and its value, from its
+   embedding towards the output, through the elements that carry it
+   through unchanged. When a needed output reads an axis that has a
+   value, the value becomes a constant of that element, which is the
+   translation of the section. When a needed output reads a free axis,
+   the embedding stays where it is (see below).
+
+Each element is then cut down to its needed outputs and to the inputs
+that they read. A cut only requires the block to be closed, which the
+backward pass guarantees, whereas the restrictors of #104 require it to
+be decoupled. An embedding followed by the projection that drops the
+same axes cancels, and the pair rule of #570 merges two projections that
+end up next to each other. The reduction keeps the type (a cut `Scaling`
+is a smaller `Scaling`), and it returns `t` itself when nothing is
+dropped. Uncoupling that appears only in a product, such as an affine
+that adds `y` to `x` followed by another that subtracts it, is found by
+the same passes when `compute` simplifies each product as it is produced
+(A.6).
+
+The knowledge about each type is registered through two dispatched
+functions. A pattern reader returns the dependency pattern of a
+transformation under a policy, and a restrictor cuts a transformation
+down to a closed block, or declines. An element whose pattern cannot be
+read, such as a transformation of an unknown type, counts as fully
+coupled. An element whose restrictor declines keeps all its axes, so
+that a drop happens after it and an embedding stays before it. A
+projection that stays next to an element in this way is multiplied into
+it as a matrix by a composing `compute`, through the composers of #570.
+
+The policy decides what a pattern shows. The analytic policy reads the
+structure of each type, and the numeric policy also reads the exact
+zeros of matrices. A lazy inverse needs the pattern of its own map, in
+which an output reads an input, and the transpose of the pattern of its
+forward transformation does not give it (A.3). Under the analytic
+policy, the pattern of the inverse of a matrix is bounded by the
+reflexive and transitive closure of the forward pattern. By the
+Cayley-Hamilton theorem, the inverse of a matrix is a polynomial in that
+matrix, so an output of the inverse can read an input only along a path
+of the forward pattern. Under the numeric policy, the exact zeros of the
+coefficients of the inverse are read, for matrix transformations only
+(A.2). Rounding can leave a residue where the true coefficient is zero,
+which keeps an axis that could be dropped. It can also, more rarely,
+round a small coefficient to an exact zero, which is the same risk that
+the matrix product of free axes takes (see below).
+
+A pattern does not depend on how the chain was built. An affine whose
+linear part has a zero column reads the same as an affine after a
+projection that drops that input, and an affine whose linear part has a
+zero row reads the same as an embedding of a constant output. The passes
+therefore also split such affines. This recovers the structure of a
+projection after it has been multiplied into a matrix, and that of a
+rectangular affine, which OME-NGFF 0.6 allows. The passes run only when
+there may be something to drop: when some element has different numbers
+of input and output axes, or, under the numeric policy, when the linear
+part of a matrix transformation has a zero row or a zero column.
+
+A field is read as fully coupled, and its restrictor declines for now,
+because a field cannot yet hold a number of components different from
+the dimension of its grid (#588). Two reductions therefore wait for that
+work. A drop after a field does not cut the field, so the field computes
+outputs that are discarded afterwards. An embedding before a field is
+not absorbed into the field, so the resampler interpolates the field at
+the points of the section instead of reading one slice of it. Both
+results are correct. A field inside a subspace is not affected, because
+its pattern shows that it carries the other axes through unchanged.
 
 A free axis is a created axis whose value is NaN (see below). A kept
 output that reads a free axis has no defined value, and `compute` raises
-`RestrictionError` (decision 6). When `π` meets `ι`, the inputs that the
-kept outputs read are known, so the test is structural. When a
-projection is composed as a matrix, the NaN carries the test through the
-product.
+`RestrictionError` (decision 6). `simplify` never raises. A structural
+pattern can claim a dependence that the values cancel, so `simplify`
+drops an axis only when it can prove that nothing reads it, and
+otherwise it leaves the embedding in place. The outermost composing
+`compute` performs the test, and the NaN carries it through the matrix
+products.
 
 `Projection` has a field `at`, which holds one value per created axis.
 Its default is `0`, the value of `projectAxis`. A number places the
@@ -138,17 +240,16 @@ would cancel exactly, or that a coefficient left by rounding lets
 through, and `restrict` then refuses a block that is in fact closed.
 
 This requires the following additions: the field `at` of `Projection`
-and the matrix product that lets zero cancel NaN; a third kind of rule,
-the terminating pair rewrite; one commutation rule per type, replacing
-the restrictors of #104, and the rules that move an embedding through the
-transformations that carry its axes; coordinate systems on `Projection`,
-through `CoordinateSystem.restrict` and `embed`; and composers for
-`Projection`, of which the last two are implemented in #570. The contract
-is that `t.restrict(I, O, at).compute()` is equivalent to `t` read from
-`I` to `O` with the inputs that `at` names at their values, that it
-raises when an output in `O` reads an input outside `I` that `at` does
-not name, and that `restrict(SubspaceTransformation(t, a, b), a, b)`
-reduces to `t`.
+and the matrix product that lets zero cancel NaN; the pattern readers
+and the restrictors of closed blocks, which replace the restrictors of
+#104, and the two passes in `simplify`; coordinate systems on
+`Projection`, through `CoordinateSystem.restrict` and `embed`; and
+composers for `Projection`, of which the last two are implemented in
+#570. The contract is that `t.restrict(I, O, at).compute()` is
+equivalent to `t` read from `I` to `O` with the inputs that `at` names
+at their values, that it raises when an output in `O` reads an input
+outside `I` that `at` does not name, and that
+`restrict(SubspaceTransformation(t, a, b), a, b)` reduces to `t`.
 
 ### A.5 No separate `embed`
 
@@ -167,8 +268,10 @@ pass:
 
 1. Bridge every boundary at which adjacent systems disagree.
 2. Flatten.
-3. Apply `simplify(·, policy)`.
-4. If `factor` is set, apply `factor(·, policy)`.
+3. Apply `simplify(·, policy)`, which also drops the axes that are not
+   needed (A.4).
+4. If `factor` is set, apply `factor(·, policy)`, which groups what the
+   reduction leaves and has no pass of its own.
 5. Compose once: outside the factors, compose the runs that `mode` admits;
    inside each factor, compose its chain recursively. Each product is
    simplified as it is produced, and a product that collapses to
@@ -504,7 +607,7 @@ Part A lands in several pull requests. The first one, #570, wires
 - a pair rule merges two adjacent projections into one, so that a drop
   after the creation of the same axes cancels.
 
-Until the commutation rules exist, a composing `compute` multiplies a
+Until the passes of A.4 exist, a composing `compute` multiplies a
 projection into its affine neighbours, and the factor pass still leaves
 unfactored a chain whose two ends have different numbers of axes.
 
@@ -513,9 +616,9 @@ The next pull requests, in order:
 1. add the field `at` of `Projection`, the matrix product that lets
    zero cancel NaN and the check of `compute` for free axes, and make the
    OME-NGFF writer refuse a free axis;
-2. replace the restrictors of #104 with the rules that move projections
-   towards the input and embeddings towards the output, so that
-   `compute` reduces projections before it composes;
+2. replace the restrictors of #104 with the pattern readers, the
+   restrictors of closed blocks and the two passes of A.4 in `simplify`,
+   and add the two ends of the normal form to the factor pass;
 3. add `Transformation.restrict`, which accepts the axis queries of #574,
    and remove the transformation-level `embed`.
 
@@ -523,12 +626,12 @@ The remaining work makes `factor` a public pure rewrite and `compute` a
 single pass, makes reslice ask for `simplify="numeric"`, and adds the
 multi-block `SubspaceTransformation` and axis references by name. It
 will be checked by the parity sweep, the idempotence test and reslice
-timings. Cutting a field down to some of its own outputs needs fields
-whose input and output spaces have different numbers of axes, which are
-planned separately. Until then, a projection that would cut a field
-stays next to it. Batched transformations (A.10) come after Part A,
-together with the readers and writers of the formats that store them
-(#576).
+timings. Cutting a field down to some of its own outputs, and taking the
+section of a field, need fields whose number of components differs from
+the dimension of their grid (#588). Until then, a projection that would
+cut a field stays next to it. Batched transformations (A.10) come after
+Part A, together with the readers and writers of the formats that
+store them (#576).
 
 ## Decisions
 
@@ -539,7 +642,7 @@ others are not implemented yet:
    `simplify`.
 2. The registration decorators are private.
 3. Restriction follows `inverse`: it is a lazy composition with
-   projections, reduced by `compute` through analytic rewrite rules.
+   projections, reduced by `simplify` and therefore by `compute`.
 4. Created axes are `0`, as in `projectAxis`.
 5. `restrict` is the only method that removes axes. Its `at` argument
    fixes removed inputs at values, and an input that `at` does not name
@@ -581,14 +684,40 @@ implemented:
 24. `Projection.at` gives the value of each created axis. It is `0` by
     default, and NaN makes the axis free.
 25. Matrix products let an exact zero coefficient cancel a NaN.
-26. `compute` moves projections towards the input and embeddings towards
-    the output before it composes, and composes a projection that cannot
-    move as a matrix.
+26. `simplify` reduces projections with two passes over the dependency
+    patterns of the elements of a chain. A backward pass drops the
+    inputs that no needed output reads, and a forward pass carries
+    created axes and their values. A projection that cannot be reduced
+    is composed as a matrix by `compute`.
 27. A batch axis is an axis that a transformation carries through
     unchanged while its other outputs may depend on it, and a batched
     transformation reports that dependence.
 28. One element of a batched transformation is the restriction with `at`
     set on the batch axis.
+
+Part A, agreed with the reduction of projections, and not yet
+implemented:
+
+29. The knowledge about each type is registered through two dispatched
+    functions, a pattern reader and a restrictor of closed blocks, and
+    there are no commutation rules for pairs of types.
+30. The normal form of `factor` has two optional ends, a projection that
+    drops the unread inputs and a projection that creates the constant
+    outputs.
+31. `simplify` never raises. It drops an axis only when it can prove
+    that nothing reads it, and only the outermost composing `compute`
+    raises for a free axis.
+32. The passes run only when an element has different numbers of input
+    and output axes or, under the numeric policy, when a matrix has a
+    zero row or column, and they split such affines as they would
+    projections.
+33. Under the analytic policy, the pattern of the lazy inverse of a
+    matrix is bounded by the closure of the forward pattern. Under the
+    numeric policy, the coefficients of the inverse of a matrix
+    transformation may be read, and the inverse is materialised only to
+    be cut, after the cancellation pass.
+34. A bare `"numeric"` policy reads the values of matrix transformations
+    only, and `{None: "numeric"}` reads every transformation (#584).
 
 ## Open questions
 
