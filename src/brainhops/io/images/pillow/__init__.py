@@ -38,10 +38,11 @@ the exception: their colours are looked up in the palette, unless
 bits.
 
 After a read, `rawdata` is a lazy array of the frame, `(rows, columns[,
-samples])`, which Pillow decodes only when `data` is first accessed. Its shape
-and type are known from the header, so `image.shape` decodes nothing. The data
-that it gives is read-only, since the writer writes `rawdata` and would lose an
-edit made in place: assign `data` to change the pixels.
+samples])`, which Pillow decodes only when a computation needs the
+values of `data`. Its shape and type are known from the header, so
+`image.shape` decodes nothing. The data that it gives is read-only,
+since the writer writes `rawdata` and would lose an edit made in place:
+assign `data` to change the pixels.
 
 ## Geometry
 
@@ -149,8 +150,8 @@ not read for the format, so the writer refuses such a keyword with a
   179 million pixels) with a `PIL.Image.DecompressionBombError`, and warns
   above the limit itself. Raising `MAX_IMAGE_PIXELS`, or setting it to `None`,
   allows a trusted larger image.
-* The whole frame is decoded when `data` is first read, so there is no access
-  to a part of the frame.
+* The whole frame is decoded whenever the values of `data` are read,
+  even when only a part of the frame is needed.
 * A stream given to the reader must stay open while the data may be read.
 * `.tif` and `.tiff` files are left to the dedicated TIFF reader. The Pillow
   reader claims TIFF only as a fallback, when tifffile (the `tiff` extra) is

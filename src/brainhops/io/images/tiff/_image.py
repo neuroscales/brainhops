@@ -186,8 +186,8 @@ class TiffImage(
     record, as `image.metadata.raw.dialect`.
 
     The data is F-ordered as x, y and z, then time, channels and other
-    axes, and is read on first access. The image has a single
-    transformation, which scales pixels to `"physical"`, with a
+    axes, and is read when a computation needs its values. The image has
+    a single transformation, which scales pixels to `"physical"`, with a
     translation if the file records an origin or if the level is coarser
     than the finest one. This transformation is the identity, with no
     unit, when the pixel size is unknown. It is decoded from the record
@@ -355,7 +355,8 @@ class TiffImage(
         """Read one level of one series.
 
         The record of the series is read at once, from the IFDs of the
-        file, and the pixels are read when the data is first accessed.
+        file, and the pixels are read when a computation needs the
+        values of the data.
 
         Parameters
         ----------

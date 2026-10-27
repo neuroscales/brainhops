@@ -223,7 +223,7 @@ class _BrikProxy(StridedProxy):
     otherwise. Its values are the stored values: when `BRICK_FLOAT_FACS`
     scales a sub-brick, the reader wraps the proxy in a
     [`ScaledProxy`][brainhops._core.proxy.ScaledProxy] that applies the
-    factors, as nibabel's proxy applies the scaling of a NIfTI header.
+    factors, as the NIfTI reader does with the scaling of a NIfTI header.
 
     When the sub-bricks share a type, the BRIK is one Fortran-ordered
     array, and a read gets only the bytes that its selection needs (see

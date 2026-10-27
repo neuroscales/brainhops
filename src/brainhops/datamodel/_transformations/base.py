@@ -206,8 +206,10 @@ class Transformation(
         simplify : SimplifyLike, default="analytic"
             How much effort to spend on simplification. `"analytic"` (the
             default) decides from the types of the transformations alone,
-            `"numeric"` (or `True`) also reads their parameter values, and
-            `False`, `"none"` or `None` disables simplification.
+            `"numeric"` (or `True`) also reads the parameter values of
+            matrix transformations, `{None: "numeric"}` reads the values
+            of every transformation, including fields, and `False`,
+            `"none"` or `None` disables simplification.
         factor : bool, default=False
             Whether to rewrite the result as independent factors, one for each
             group of axes that transform together. Nothing is composed across

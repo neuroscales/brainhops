@@ -8,7 +8,7 @@ every transformation in the run is admitted by some entry of the mode.
 The mode is independent of the simplify policy, which decides how closely each
 concrete transformation is inspected. For example,
 `compute(mode=False, simplify="numeric")` reads parameter values to convert
-each concrete transformation to a cheaper type but composes nothing, whereas
+each matrix transformation to a cheaper type but composes nothing, whereas
 `compute(mode=True, simplify=False)` composes everything and converts nothing.
 """
 

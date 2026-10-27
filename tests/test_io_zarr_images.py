@@ -867,6 +867,44 @@ def test_from_store_accepts_a_pathlike(tmp_path: Path) -> None:
     assert np.array_equal(np.asarray(back.data), data)
 
 
+@pytest.mark.parametrize("kind", ["array", "pyramid"])
+def test_from_filename_reads_a_store_as_load_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    # A store is a directory, so `from_filename` must not open it as a
+    # file. The dispatcher calls `from_filename` by name, and the path is
+    # relative, as in the report of the bug.
+    monkeypatch.chdir(tmp_path)
+    if kind == "array":
+        cls = ZarrImage
+        ZarrImage(data=np.arange(6, dtype="float32").reshape(2, 3)).save(
+            "z.zarr"
+        )
+    else:
+        cls = OmeZarrImage
+        _small_pyramid().save("z.zarr")
+    expected = cls.load("z.zarr")
+
+    assert cls.sniff_filename("z.zarr") > 0
+    for back in (
+        cls.from_filename("z.zarr"),
+        cls.from_filename(Path("z.zarr")),
+        images.ImageFormat.from_filename("z.zarr"),
+    ):
+        assert type(back) is cls
+        if kind == "array":
+            assert np.array_equal(
+                np.asarray(back.data), np.asarray(expected.data)
+            )
+        else:
+            assert back.nscales == expected.nscales
+            for level in range(back.nscales):
+                assert np.array_equal(
+                    np.asarray(back.images[level].data),
+                    np.asarray(expected.images[level].data),
+                )
+
+
 def test_from_node_reads_an_opened_abczarr_node(tmp_path: Path) -> None:
     data = np.arange(6, dtype="float32").reshape(2, 3)
     path = str(tmp_path / "node.zarr")

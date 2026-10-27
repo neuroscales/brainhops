@@ -15,7 +15,6 @@ holds them with shapes (X, Y, 2) and (X, Y, Z, 3).
 # internals
 from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.common.nifti._files import _read
 
 
 def _itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
@@ -28,7 +27,7 @@ def _itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     lazy array of a file stays lazy and reads nothing. Any other array is
     returned as it is.
     """
-    data = _read(raw)
+    data = raw
     shape = tuple(int(d) for d in data.shape)
     if len(shape) != 5 or shape[4] not in (2, 3):
         return data

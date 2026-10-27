@@ -211,9 +211,9 @@ class AfniImage(
     whose record is an [`AfniRaw`][], and the voxels as stored in
     `rawdata`. When the image is read from a file, `rawdata` is a lazy
     array that reads the BRIK only when the voxels are needed, and
-    `data` is decoded from it on first access. The data are indexed
-    `[x, y, z]`, or `[x, y, z, sub-brick]`, in Fortran order and scaled
-    by `BRICK_FLOAT_FACS`.
+    `data` returns that lazy array. The data are indexed `[x, y, z]`, or
+    `[x, y, z, sub-brick]`, in Fortran order and scaled by
+    `BRICK_FLOAT_FACS`.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They lead to `physical`,

@@ -61,7 +61,10 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import _field_to_model
+from brainhops.io.transformations.nifti._views import (
+    _check_single_field,
+    _field_to_model,
+)
 
 # this format
 from .._affines import _ImageGeometry
@@ -388,7 +391,8 @@ class FnirtWarpField(
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
-            If the field has no array.
+            If the field has no array, or if its array holds a field for
+            each of several volumes.
         UnrepresentableTransformationError
             If a chain was assigned to the field.
         """
@@ -408,6 +412,7 @@ class FnirtWarpField(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            _check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, on_error, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -645,7 +650,9 @@ class FnirtWarpField(
 
     def _raw_field(self) -> tx.Any:
         # A 5-D vector field in the layout of the NIfTI standard is
-        # collapsed to `(*grid, 3)`.
+        # collapsed to `(*grid, 3)`. A field per volume, whose fourth
+        # axis is longer than one, is refused with `ParserContentError`
+        # because batched transformations are not supported yet (#576).
         return _field_to_model(self.data)
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
@@ -810,7 +817,8 @@ def _fnirt_encoded(
     Raises
     ------
     WriterError
-        If the field has no array.
+        If the field has no array, or if its array holds a field for
+        each of several volumes.
     UnrepresentableTransformationError
         If a chain was assigned to the field.
     """
@@ -826,6 +834,7 @@ def _fnirt_encoded(
         stored = field.rawdata
     if stored is None:
         raise WriterError("A FNIRT file needs its field data to be written.")
+    _check_single_field(stored, WriterError)
     record = None if base is None else base.copy()
     image = _record_image(stored, record, overrides=overrides)
     if _header(field) is None:

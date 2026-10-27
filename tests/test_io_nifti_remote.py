@@ -1,8 +1,9 @@
 """Tests of NIfTI reading and writing at remote paths, without a network.
 
 nibabel treats every name as local, so a remote path is opened through its
-own backend and nibabel receives the open file. A local path is still
-passed by name so that it can be memory-mapped.
+own backend. nibabel receives the open file when it writes, and the voxels
+of a remote file are read from memory. A local path is read by its name,
+so that its voxels can be memory-mapped.
 """
 
 import gzip
@@ -18,7 +19,6 @@ nb = pytest.importorskip("nibabel")
 from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.common.nifti import _files as nifti_base  # noqa: E402
 from brainhops.io.common.nifti import _header as nifti_header  # noqa: E402
 from brainhops.io.common.nifti import _raw as nifti_raw  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
@@ -154,7 +154,7 @@ def test_streams_are_read_and_written_without_the_stream_api(
     monkeypatch,  # noqa: ANN001
     ext: str,
 ) -> None:
-    # Without nibabel 5.0 to_stream and from_stream, a file map is used.
+    # Without the to_stream of nibabel 5.0, a file map is used to write.
     source, target = f"s3://bucket/in{ext}", f"s3://bucket/out{ext}"
     remote.store[source] = _encode(ext)
     for name in ("from_stream", "to_stream"):
@@ -191,28 +191,16 @@ def test_reader_options_reach_only_the_calls_that_take_them(
     target = tmp_path / "image.nii"
     target.write_bytes(raw)
     image = NiftiImage.load(target, **options)
-    assert not isinstance(image.rawdata.get_unscaled(), np.memmap)
-
-
-def test_only_accepted_keywords_are_passed_on() -> None:
-    def named(a, *, b=None):  # noqa: ANN001, ANN202
-        pass
-
-    def anything(a, **kwargs):  # noqa: ANN001, ANN003, ANN202
-        pass
-
-    kwargs = {"a": 1, "b": 2, "c": 3}
-    assert nifti_base._accepted(named, kwargs) == {"a": 1, "b": 2}
-    assert nifti_base._accepted(anything, kwargs) == kwargs
+    assert not isinstance(np.asanyarray(image.rawdata), np.memmap)
 
 
 # ----------------------------------------------------------------------
-#   A LOCAL PATH STILL GOES TO NIBABEL BY NAME
+#   A LOCAL PATH IS READ BY ITS NAME
 # ----------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("ext", EXTENSIONS)
-def test_a_local_path_is_loaded_by_name(
+def test_a_local_path_is_read_by_name(
     tmp_path,  # noqa: ANN001
     monkeypatch,  # noqa: ANN001
     ext: str,
@@ -220,24 +208,14 @@ def test_a_local_path_is_loaded_by_name(
     target = tmp_path / f"image{ext}"
     target.write_bytes(_encode(ext))
 
-    from_filename = nb.Nifti1Image.from_filename
-    calls = []
-
-    def spy(klass, filename, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-        calls.append(filename)
-        return from_filename.__func__(klass, filename, *args, **kwargs)
-
     def no_stream(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         raise AssertionError("a local path was read as a stream")
 
-    monkeypatch.setattr(nb.Nifti1Image, "from_filename", classmethod(spy))
-    monkeypatch.setattr(nifti_base, "_nifti_from_stream", no_stream)
-    monkeypatch.setattr(nifti_raw, "_nifti_from_stream", no_stream)
+    monkeypatch.setattr(nifti_raw, "_read_nifti_stream", no_stream)
 
     for file in (str(target), target, Path(target), f"file://{target}"):
-        calls.clear()
         image = NiftiImage.load(file)
-        assert calls == [str(target)]
+        assert image.rawdata.root.source == str(target)
         assert np.array_equal(np.asarray(image.data), DATA)
 
 
@@ -256,7 +234,7 @@ def test_a_local_uncompressed_image_is_memory_mapped(tmp_path) -> None:  # noqa:
     target = tmp_path / "image.nii"
     target.write_bytes(_encode(".nii"))
     image = NiftiImage.load(target)
-    assert isinstance(image.rawdata.get_unscaled(), np.memmap)
+    assert isinstance(np.asanyarray(image.rawdata), np.memmap)
 
 
 # ----------------------------------------------------------------------

@@ -53,6 +53,7 @@ from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
 )
+from brainhops.io.common.nifti._data import _NiftiProxy
 from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
     _keep_given_fields,
@@ -96,9 +97,9 @@ class NiftiImage(
 
     A NIfTI image holds the header of its file as [`NiftiMetadata`][] and
     the voxels as stored in `rawdata`. When the image is read from a
-    file, `rawdata` is a nibabel proxy, which reads the voxels only when
-    they are needed, and `data` is decoded from it on first access. The
-    transformations are decoded from the header in the same way.
+    file, `rawdata` is a lazy array, which reads the voxels only when
+    they are needed, and `data` returns that lazy array. The
+    transformations are decoded from the header on first access.
 
     `rawdata` and the header describe the file as it was read, or as the image
     was last consolidated. Data assigned to the image are pending: they
@@ -109,15 +110,15 @@ class NiftiImage(
     those that the header decodes to, so that they are encoded only when
     they differ. A write encodes the image in the same way, into a copy,
     and leaves the image as it was, except when the image is written
-    over the file that its proxy reads.
+    over the file that its lazy array reads.
 
     When the image is consolidated, the header of its file is the base of
     the new header. The fields that describe the layout of the voxels and
     the geometry are encoded again from the image, and the other fields,
     such as the description, the intent and the extensions, are kept. An
     image that is read and written again without changes is written from
-    its proxy and its header as they are, so the file is copied byte for
-    byte.
+    its lazy array and its header as they are, so the file is copied
+    byte for byte.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
@@ -126,11 +127,11 @@ class NiftiImage(
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
 
-    After a read, `rawdata` is a nibabel proxy, which applies the
-    scaling of the header when it is read. `rawdata` describes the file
-    as it was read, or as the image was last consolidated, so assigning
-    `data` leaves it as it is until [`consolidate`][] encodes the data
-    into a copy.
+    After a read, `rawdata` is a lazy array of the voxels of the file,
+    which applies the scaling of the header when it is read, as nibabel
+    applies it. `rawdata` describes the file as it was read, or as the
+    image was last consolidated, so assigning `data` leaves it as it is
+    until [`consolidate`][] encodes the data into a copy.
     """
 
     _data: tx.Optional[ArrayProtocol] = Inherit("_data", default=None)
@@ -348,18 +349,21 @@ class NiftiImage(
     ) -> "NiftiImage":
         """Read an image from the path of a NIfTI file.
 
-        A local file is handed to nibabel by name, so that nibabel opens
-        it whenever the voxels are read and can memory-map them. A remote
-        file is read into memory instead. The keyword arguments `mmap` and
-        `keep_file_open` are passed to nibabel.
+        A local file is kept by its name, so that the lazy array of the
+        voxels opens it whenever they are read, and memory-maps them when
+        the file is not compressed. A remote file is read into memory
+        instead.
 
         Parameters
         ----------
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of the nibabel readers, which are `mmap` and
-            `keep_file_open`. Other options are refused.
+            The reader options, which nibabel's readers also take.
+            `mmap` tells whether the voxels of a local file that is not
+            compressed are memory-mapped. `keep_file_open` is accepted
+            and ignored, because the lazy array never keeps a file open.
+            Other options are refused.
 
         Returns
         -------
@@ -385,18 +389,20 @@ class NiftiImage(
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiImage":
         """Read an image from an open NIfTI stream.
 
-        The proxy reads the voxels from the stream when they are needed,
-        so the stream must stay open while the data may be read. The
-        keyword arguments `mmap` and `keep_file_open` are passed to
-        nibabel, which ignores them for a stream.
+        The lazy array reads the voxels from the stream when they are
+        needed, so the stream must stay open while the data may be read.
+        A stream is never memory-mapped.
 
         Parameters
         ----------
         file : BinaryIO
             The stream, which may be compressed with gzip.
         **kwargs : Any
-            Options of the nibabel readers, which are `mmap` and
-            `keep_file_open`. Other options are refused.
+            The reader options, which nibabel's readers also take.
+            `mmap` tells whether the voxels of a local file that is not
+            compressed are memory-mapped. `keep_file_open` is accepted
+            and ignored, because the lazy array never keeps a file open.
+            Other options are refused.
 
         Returns
         -------
@@ -416,9 +422,11 @@ class NiftiImage(
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> "NiftiImage":
         """Build an image from a nibabel image or header.
 
-        The voxels of an image become `rawdata` as they are, and a copy of its
-        header becomes the record of the metadata. A header alone gives an
-        image without data.
+        The voxels of an image become `rawdata`, and a copy of its header
+        becomes the record of the metadata. A header alone gives an image
+        without data. The array proxy of an image that nibabel read from
+        a file is replaced by the lazy array that [`from_filename`][]
+        builds for that file, and any other array is kept as it is.
 
         Parameters
         ----------
@@ -439,7 +447,8 @@ class NiftiImage(
             If `nifti` is neither a NIfTI image nor a NIfTI header.
         """
         if isinstance(nifti, nb.Nifti1Image):
-            raw, header = nifti.dataobj, nifti.header
+            raw = _NiftiProxy.from_nibabel(nifti.dataobj)
+            header = nifti.header
         elif isinstance(nifti, nb.Nifti1Header):
             raw, header = None, nifti
         else:

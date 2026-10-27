@@ -178,6 +178,36 @@ def test_load_discovers_the_field_format(tmp_path: Path) -> None:
     assert isinstance(transformations.load(path), OmeZarrField)
 
 
+def test_from_filename_reads_a_field_store(tmp_path: Path) -> None:
+    import brainhops.io.transformations as transformations
+
+    # A store is a directory, so `from_filename` must not open it as a
+    # file. The dispatcher calls `from_filename` by name.
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    field[..., 0] = 5.0
+    path = _write_field_store(
+        tmp_path,
+        field,
+        [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
+        {"type": "identity"},
+        name="by_name.zarr",
+    )
+    expected = OmeZarrField.load(path)
+
+    assert OmeZarrField.sniff_filename(path) > 0
+    for back in (
+        OmeZarrField.from_filename(path),
+        OmeZarrField.from_filename(Path(path)),
+        transformations.TransformationFormat.from_filename(path),
+    ):
+        assert type(back) is OmeZarrField
+        assert isinstance(back.transformations[-1], CoordinateField)
+        np.testing.assert_allclose(
+            np.asarray(back.raw_levels[0]),
+            np.asarray(expected.raw_levels[0]),
+        )
+
+
 def test_coordinate_field_round_trips_through_a_store(tmp_path: Path) -> None:
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 7.0
