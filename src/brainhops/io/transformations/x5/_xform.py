@@ -13,7 +13,6 @@ from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._report import (
-    MetadataLossError,
     apply_loss_policy,
     takes_error_policy,
 )
@@ -488,17 +487,13 @@ class X5Transform(
             decoded = self.__dict__.get("_cache_decoded_nodes", {})
             base = _encode(self.transformations, record, decoded)
         if self.metadata is not None and base is record:
-            metadata = self.metadata.consolidate(
-                on_error={MetadataLossError: report}, **fields
-            )
+            metadata = self.metadata.consolidate(on_loss=report, **fields)
         else:
             # The fields that changed are encoded over the record that the
             # chain gives, whose transforms keep their own JSON metadata.
             cls = X5Metadata if self.metadata is None else type(self.metadata)
             fresh = cls.from_raw(base)
-            metadata = fresh.consolidate(
-                on_error={MetadataLossError: report}, **requested
-            )
+            metadata = fresh.consolidate(on_loss=report, **requested)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, on_error, stacklevel=2)
         if not assigned and not declared and record is not None:

@@ -20,7 +20,6 @@ from brainhops._core.compare import differs
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import (
-    MetadataLossError,
     apply_loss_policy,
     short,
     takes_error_policy,
@@ -581,7 +580,7 @@ def metadata_to_write(
         if not fields:
             return None
         metadata = cls()
-    return metadata.consolidate(on_error={MetadataLossError: report}, **fields)
+    return metadata.consolidate(on_loss=report, **fields)
 
 
 def requested_fields(

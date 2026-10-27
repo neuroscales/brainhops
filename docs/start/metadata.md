@@ -231,7 +231,7 @@ lose, from `SUPPORTED_FIELDS`:
 >>> nifti.echo_time
 0.0029
 >>> report = ConversionReport()
->>> nifti.consolidate(on_error=report).echo_time is None
+>>> nifti.consolidate(on_loss=report).echo_time is None
 True
 >>> report.lost
 {'echo_time': 0.0029, 'flip_angle': 8.0}
@@ -244,14 +244,14 @@ What happens to a report is decided by an error policy (see
 policy acts on it as on any other loss: `"ignore"` drops it, `"warn"`
 issues one `MetadataLossWarning` that carries the report, `"raise"`
 raises the error, and a `ConversionReport` is filled instead of warning
-or raising. The `to()` method of metadata, `consolidate` and `save`
-take the action for a loss as their `on_loss=` option, and a whole
-policy as their `on_error=` option, which also decides what happens to
-their other conversion errors. `on_loss=` takes precedence over
-`on_error=` for a loss, and without it a loss falls under `on_error=`,
-so that `on_error="ignore"` alone also accepts a loss. A loss that no
-option covers
-follows the policy in effect, which is `"warn"` unless the
+or raising. The `to()` method of metadata, `consolidate` and `save` take
+this action as their `on_loss=` option, as in the examples above and
+below. They also take an `on_error=` option, which decides what happens
+to the conversions that fail rather than lose fields. `on_loss=` takes
+precedence over `on_error=` for a loss, and without it a loss falls
+under `on_error=`, so that `on_error="ignore"` alone also accepts a
+loss. A loss that no option covers follows the policy in effect, which
+is `"warn"` unless the
 [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]
 context manager sets another one. That context manager also sets the
 policy of the conversions that take no option, such as those of the
@@ -273,7 +273,7 @@ and the policy acts on it once:
 >>> io.load(os.path.join(tmp, "memory.nii")).metadata.description
 'T1w'
 >>> try:
-...     io.save(image, os.path.join(tmp, "raise.nii"), on_error="raise")
+...     io.save(image, os.path.join(tmp, "raise.nii"), on_loss="raise")
 ... except MetadataLossError as error:
 ...     print(sorted(error.report.lost))
 ['echo_time', 'flip_angle']

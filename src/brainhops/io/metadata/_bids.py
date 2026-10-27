@@ -34,7 +34,6 @@ from brainhops.datamodel.metadata import (
     Metadata,
 )
 from brainhops.datamodel.metadata._report import (
-    MetadataLossError,
     apply_loss_policy,
     takes_error_policy,
 )
@@ -357,10 +356,8 @@ def to_bids(
         If a field is reported under the `"raise"` policy.
     """
     report = ConversionReport()
-    sidecar = BidsSidecar.from_instance(
-        metadata, on_error={MetadataLossError: report}
-    )
-    record = sidecar.consolidate(on_error={MetadataLossError: report}).raw
+    sidecar = BidsSidecar.from_instance(metadata, on_loss=report)
+    record = sidecar.consolidate(on_loss=report).raw
     apply_loss_policy(report, on_error, stacklevel=2)
     return {} if record is None else record
 
