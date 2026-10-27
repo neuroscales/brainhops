@@ -17,12 +17,12 @@ and output through the class of the header.
 
 A file format that holds data, such as an image, keeps its metadata in a
 `metadata` field and the data as stored in the file in a `rawdata`
-field. The `rawdata` field of such an object is usually a lazy proxy that
-reads the file on demand. The `data` of the object is a cached view of
-that `rawdata` field, decoded by a pair of functions that the format
-defines. On write, the record of the metadata is the base of the header,
-the geometry of the object is encoded over it, and the data is written
-last.
+field. The `rawdata` field of such an object is usually a lazy proxy
+that reads the file on demand. The `data` of the object is a view of
+that `rawdata` field, which a pair of functions of the format build, and
+it reads nothing until a computation needs its values. On write, the
+record of the metadata is the base of the header, the geometry of the
+object is encoded over it, and the data is written last.
 
 A format whose `rawdata` field is a proxy overrides `from_filename` or
 `from_file`, because the generic `from_filename` opens the file, passes

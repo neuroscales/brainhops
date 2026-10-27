@@ -26,10 +26,10 @@ io.save(image, "epi.nii.gz")           # or any other image format
     every view and names the world space after it.
 
 The array is indexed `[x, y, z]`, or `[x, y, z, sub-brick]` in Fortran
-order. The fourth axis is `t` if the dataset has `TAXIS_NUMS`, and `brick`
-otherwise. After a read, `rawdata` is a lazy array of the BRIK, which
-reads the voxels only when `data` is first accessed and applies the
-scale factors of `BRICK_FLOAT_FACS` to them.
+order. The fourth axis is `t` if the dataset has `TAXIS_NUMS`, and
+`brick` otherwise. After a read, `rawdata` is a lazy array of the BRIK,
+which reads the voxels only when a computation needs the values of
+`data` and applies the scale factors of `BRICK_FLOAT_FACS` to them.
 
 The AFNI world is LPS in millimeters, and an image carries three
 transformations, the last of which is preferred:

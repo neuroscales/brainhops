@@ -35,14 +35,15 @@ while the format object exists. When the caller passed a stream rather
 than a path, the proxy keeps the stream and its starting position, and
 the caller must keep the stream open.
 
-## What the code had before the base class
+## The proxies of brainhops
 
-brainhops defines fifteen proxy classes, and NIfTI and MGH use the
-`ArrayProxy` of nibabel. They fall in two groups.
+Each format that reads its data lazily has its own proxy class, and the
+classes fall in two groups.
 
 The first group holds formats whose voxels are an array of fixed-size
 values stored at an offset of a file that may be compressed. The
-proxies of this group decode the bytes themselves or ask nibabel to.
+proxies of this group decode the bytes themselves, except the MINC
+proxy, which asks nibabel to read them.
 
 | Format    | Class                  | Partial reads | Scaling         |
 |-----------|------------------------|---------------|-----------------|
@@ -50,8 +51,8 @@ proxies of this group decode the bytes themselves or ask nibabel to.
 | NRRD      | `_NrrdProxy`           | yes, for raw, gzip and bzip2 in one file | no |
 | AFNI      | `_BrikProxy`           | yes, for sub-bricks of one type | yes, per volume |
 | MINC      | `_MincProxy` (nibabel) | yes, for a local file that is not compressed | yes, per slice |
-| NIfTI     | nibabel `ArrayProxy`   | yes           | yes, global     |
-| MGH       | nibabel `ArrayProxy`   | yes           | no              |
+| NIfTI     | `_NiftiProxy`          | yes           | yes, global     |
+| MGH       | `_MghProxy`            | yes           | no              |
 
 The second group wraps a library that already reads chunks or tiles:
 Zarr (`_ZarrProxy`), N5 (`_N5Proxy`), Neuroglancer precomputed
@@ -59,61 +60,36 @@ Zarr (`_ZarrProxy`), N5 (`_N5Proxy`), Neuroglancer precomputed
 `_ImarisProxy`), OpenSlide (`_SlideArray`), TIFF (`_TiffProxy`), image
 stacks (`_StackProxy`), JPEG 2000 (`_Jpeg2000Proxy`) and Pillow
 (`_PillowProxy`). Most of these proxies read only the part of the file
-that an index selects. TIFF does so only when it memory-maps the file,
-and JPEG 2000 and Pillow always decode the whole image.
+that an index selects. TIFF does so only when it memory-maps the file
+or reads it as a Dask array, and JPEG 2000 and Pillow always decode the
+whole image.
 
-None of these classes shared a base class or a protocol, and each one
-is recognized by `isinstance` checks against its own class. They
-repeated the same code:
+Every proxy derives from the base class that the second layer below
+describes, which holds the code that each class would otherwise
+repeat: the properties that follow from the shape and the type, the
+normalization of an index, the answer to an empty selection without a
+read of the file, and the conversions to the array backends.
 
-- the `shape`, `ndim` and `dtype` properties, read from the record;
-- an `__array__` method that ignores its `copy` argument;
-- a shortcut, copied in thirteen classes, that answers an empty
-  selection without reading the file, because Dask asks for one to
-  learn the type of an array;
-- four variants of a `_basic_index` function, which turns an index made
-  of integers, slices and an ellipsis into explicit bounds;
-- a context manager that opens a path or reuses a stream, and a test
-  of whether the file is compressed;
-- a method that returns the bytes of the file as they are stored, so
-  that a writer can copy them without decoding them (`read_stored`,
-  `read_bytes`, `copy_to`);
-- a function that tells whether a proxy reads a given file, so that a
-  writer does not empty a file before the proxy has read it
-  (`reads_brik`, `reads_file`, `reads_from`, `reads_store`).
+## Problems that the design solves
 
-Each of the format views (`_views.py`) also turned the proxy into an
-array in its own way: some call `asarray` of the backend, some call
-`da.from_array` with the chunks of the proxy, and others call a method
-such as `to_dask`, `view` or `read`.
-
-## Problems
-
-The proxies of the first group that brainhops wrote decode the whole
-file each time their values are read, and then select the values in
-memory. Dask
-splits an array into chunks and reads the proxy once for each chunk, so
-the file is read once per chunk. The base class does not change this,
-because the proxies of the first group still implement `_read` by
-decoding the whole file, and the third layer is what fixes it. A float32
-image of shape `(256, 256, 256, 4)`, which takes 256 MiB, is split into
-eight chunks by the default settings of Dask 2026.8, so it is
-decompressed eight times when it is stored with gzip. A local file that
-is not compressed is memory-mapped, which makes the repeated read cheap,
-but the MRtrix and AFNI proxies then apply the intensity scaling to the
-whole volume before they select a chunk, which costs as much as reading
-it. Only the nibabel proxy and the proxies of the second group avoid the
-problem.
+A proxy that decodes the whole file each time its values are read, and
+then selects the values in memory, is read once for each chunk that
+Dask makes. A float32 image of shape `(256, 256, 256, 4)`, which takes
+256 MiB, is split into eight chunks by the default settings of Dask
+2026.8, so it would be decompressed eight times if it were stored with
+gzip. A scaling applied to the whole volume before a chunk is selected
+would cost as much as reading it. The third layer avoids both: a
+strided proxy reads only the bytes that a selection needs, and a scaled
+proxy scales only the values that it reads. The formats that still
+decode the whole file are listed in "What is implemented of the third
+layer" below.
 
 A writer recognizes a proxy that it can copy without decoding by
-checking for its own class. A NIfTI image whose `rawdata` is an MRtrix
-proxy is therefore always decoded and encoded again, even when the two
-files store the same bytes.
-
-There are two models of the same thing in the first group: the
-`ArrayProxy` of nibabel for NIfTI and MGH, and hand-written proxies for
-the other formats. The second model does not read partially, and the
-first one cannot be used without nibabel.
+checking for the proxy class of its own format. A NIfTI image whose
+`rawdata` is an MRtrix proxy is therefore always decoded and encoded
+again, even when the two files store the same bytes. The member
+`stored` of the second layer, which is not implemented yet, would let
+a writer copy the bytes of any proxy that stores them as it needs.
 
 ## Decision
 
@@ -124,7 +100,8 @@ and each format uses the highest layer that fits its storage.
 
 `ArrayProxyProtocol` is a runtime-checkable `typing.Protocol` that
 states what a consumer may rely on. A NumPy array, a Dask array and a
-nibabel `ArrayProxy` satisfy it, which keeps the transition gradual.
+nibabel `ArrayProxy` satisfy it as well, so a consumer accepts any of
+them.
 
 ```python
 import numpy as np
@@ -150,13 +127,14 @@ class ArrayProxyProtocol(tx.Protocol):
 ```
 
 A proxy is always lazy. Indexing it, as in `proxy[index]`, returns
-another proxy that reads only the selected values, and only
-`np.asarray(proxy)` reads the file. Indexing a NumPy array or a nibabel
-`ArrayProxy` returns a NumPy array instead, which also satisfies the
-protocol, so a consumer must call `np.asarray` on the result of an index
-whenever it needs the values. Dask accepts lazy indexing: the function
-that reads a chunk calls `np.asarray` on whatever indexing returns, and
-each chunk then reads only its own part of the file.
+another proxy that reads only the selected values, and the file is read
+only by `np.asarray(proxy)` or by a computation that needs the values
+(see "Computing with a proxy" below). Indexing a NumPy array or a
+nibabel `ArrayProxy` returns a NumPy array instead, which also satisfies
+the protocol, so a consumer must call `np.asarray` on the result of an
+index whenever it needs the values. Dask accepts lazy indexing: the
+function that reads a chunk calls `np.asarray` on whatever indexing
+returns, and each chunk then reads only its own part of the file.
 
 A proxy indexes lazily with integers, slices of any step, the ellipsis,
 `None`, and an array of integers along a single axis. Several integer
@@ -167,8 +145,8 @@ them raises an `IndexError` that tells the caller to write
 
 ### Second layer: a base class and three kinds of proxy
 
-`ArrayProxy` is an abstract class that implements everything the
-proxies repeated: `ndim`, `size`, `nbytes`, `len()`, `T`, and the
+`ArrayProxy` is an abstract class that implements what every proxy
+needs: `ndim`, `size`, `nbytes`, `len()`, `T`, and the
 conversions `to_numpy`, `to_cupy`, `to_backend` and `to_dask`. Its
 subclasses fall in three kinds, and each kind does one thing.
 
@@ -180,8 +158,8 @@ subclasses fall in three kinds, and each kind does one thing.
   may also define `chunks`, the block shape that the storage prefers,
   such as the chunks of a Zarr array or one slice of a stack.
 - An `IndexedProxy` presents a part of a stored proxy. Indexing a
-  stored proxy returns one, and it reads nothing, so the shortcut for
-  an empty selection is no longer needed. It holds the stored proxy as
+  stored proxy returns one, and it reads nothing, so a stored proxy
+  needs no shortcut for an empty selection. It holds the stored proxy as
   `base` and the index as `selection`, a NumPy index normalized to one
   entry for each stored axis: an integer, which drops the axis, a
   slice, or an array of integers. A `NewAxis` entry stands for each
@@ -350,7 +328,7 @@ A proxy is read-only, so assigning values into it and using it as the
 its values with `==`, as a NumPy array does, so it cannot be hashed.
 
 The values that a computation reads are not kept, so a second
-computation reads them again. Caching was left out for now: a cache in
+computation reads them again. The values are not cached: a cache in
 the proxy would keep the memory of a large file without the user
 knowing, and a cache in the image would make `data` change type after
 the first computation. The `as_*` methods with `inplace=True` keep the

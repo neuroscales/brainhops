@@ -5075,9 +5075,10 @@ def _stored(exemplar: Exemplar, obj: tx.Any) -> tx.Any:
 def _caches(obj: tx.Any, name: str) -> bool:
     """Tell whether an object caches a view.
 
-    The `data` of an image or a field returns the lazy array of the file
-    and caches nothing, whereas the views decoded from a record, such as
-    the matrix of an affine, are cached.
+    A view is cached when its property is declared with a cache. The
+    `data` of a file format caches the lazy array of the file rather
+    than its values, and the views decoded from a record, such as the
+    matrix of an affine, are cached as well.
     """
     return getattr(getattr(type(obj), name, None), "cache", True)
 
@@ -5371,8 +5372,10 @@ def test_02_load_is_lazy(cls: type, exemplar: Exemplar, tmp_path) -> None:  # no
     assert isinstance(loaded.metadata, exemplar.metadata)
     data = _data(exemplar, loaded)
     assert np.array_equal(np.asarray(data), exemplar.sample())
-    # A cached view is decoded once, whereas the `data` of an image or a
-    # field is not cached, and reading either leaves the proxy in place.
+    # A cached view is built once, so that a second access returns the
+    # same array, and reading its values leaves the proxy in place. The
+    # `data` of a file format caches the lazy array of the file, not its
+    # values.
     if _caches(loaded, exemplar.view):
         assert _data(exemplar, loaded) is data
     else:

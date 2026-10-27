@@ -29,9 +29,10 @@ from ._raw import PLANES
 def _image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     """Return the data of an image from the stacked files.
 
-    The axes are permuted with a transpose, so that the lazy array
-    of the files stays lazy and reads nothing. The `data` of the
-    object reads it once, as the backend setting says.
+    The axes are permuted with a transpose, so that the lazy array of
+    the files stays lazy and reads nothing. The `data` of the object
+    returns that lazy array, which reads its values only when a
+    computation needs them.
     """
     return raw.transpose(_permutation(raw.ndim, axis))
 

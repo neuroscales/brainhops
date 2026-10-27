@@ -117,13 +117,13 @@ class MrtrixImage(
 ):
     """An image stored in an MRtrix file (`.mif`, `.mif.gz` or `.mih`).
 
-    An MRtrix image holds the header of its file as [`MrtrixMetadata`][],
-    whose record is an [`MrtrixRaw`][], and the voxels as stored in `rawdata`.
-    When the image is read from a file, `rawdata` is a lazy array that
-    reads the voxels only when they are needed, and `data` is decoded
-    from it on first access. The data are indexed `[x, y, z, ...]` in
-    Fortran order, whatever `layout` the file uses, and the intensity
-    `scaling` of the header is applied to them.
+    An MRtrix image holds the header of its file as
+    [`MrtrixMetadata`][], whose record is an [`MrtrixRaw`][], and the
+    voxels as stored in `rawdata`. When the image is read from a file,
+    `rawdata` is a lazy array that reads the voxels only when they are
+    needed, and `data` returns that lazy array. The data are indexed
+    `[x, y, z, ...]` in Fortran order, whatever `layout` the file uses,
+    and the intensity `scaling` of the header is applied to them.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. They are a [`Scaling`][]

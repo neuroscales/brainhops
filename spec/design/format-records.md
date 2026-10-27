@@ -648,11 +648,12 @@ format.
    `rawdata`, `metadata` and the options the format declares. None of
    them is named `image`, `header`, `struct`, `_header`, `dataobj` or
    `node`.
-2. Loading is lazy. After a load, `rawdata` is a proxy and no decoded
-   data is cached yet.
+2. Loading is lazy. After a load, `rawdata` is a proxy and the view
+   of the data is not built yet. Reading the values of the data leaves
+   the proxy in place.
 3. Setting `data` leaves the stored data and the record as they are,
-   clears the cached data and the views derived from it, and is
-   pending. `consolidate()` stores `to_disk(value)` in a copy.
+   clears the cached view of the data and the views derived from it,
+   and is pending. `consolidate()` stores `to_disk(value)` in a copy.
 4. `to_model(to_disk(x))` equals `x`.
 5. An object that is loaded and saved without changes gives the same
    bytes, after decompression.
@@ -2749,13 +2750,13 @@ pyramid of the conformance test and the checks P1 to P12.
      `image_format`, `mode`, `info` and `n_frames` are removed from the
      constructor and the attributes in favor of `metadata.raw.format`,
      `metadata.raw.mode`, `metadata.raw.info` and
-     `metadata.raw.n_frames`. `frame` is 0, not `None`, for an image built
-     from data, and `palette` and `dpi` become fields. The data decoded
-     from a file are read-only, and a Dask array when Dask is installed,
-     where they were a writable NumPy array. A frame whose pixels cannot
-     be decoded raises `ParserContentError` when `data` is first read,
-     not when the file is loaded. A writer option that Pillow does not
-     read raises `TypeError` (item 334). A stream given to the reader must
+     `metadata.raw.n_frames`. `frame` is 0, not `None`, for an image
+     built from data, and `palette` and `dpi` become fields. The data
+     of a file are a read-only lazy array, where they were a
+     writable NumPy array. A frame whose pixels cannot be decoded raises
+     `ParserContentError` when the values of `data` are read, not when
+     the file is loaded. A writer option that Pillow does not read
+     raises `TypeError` (item 334). A stream given to the reader must
      stay open while the data may be read. Status: open, as for item 13.
 338. The conformance harness has a new field, `Exemplar.read`, which
      gives the options with which the checks read every file of a format.
