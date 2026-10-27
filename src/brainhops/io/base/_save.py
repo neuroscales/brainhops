@@ -14,14 +14,23 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
+from brainhops._core.deprecation import pop_renamed_keyword
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
     ConversionReport,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    MetadataLossError,
+    apply_loss_policy,
+)
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import ConversionError, LossyConversionError
+from brainhops.errors import (
+    UNSET,
+    ConversionError,
+    LossyConversionError,
+    apply_error_policy,
+)
 from brainhops.io.base._base import FileFormat, _takes_over
 from brainhops.io.base._dispatch import (
     _match_name,
@@ -46,7 +55,7 @@ def save(
     lossy: bool = False,
     conversion: tx.Optional[tx.Mapping[str, tx.Any]] = None,
     **kwargs,
-) -> None:
+) -> tx.Any:
     """Write an object to a file in the format that the file name calls for.
 
     The format is chosen from the registered writable formats, in four
@@ -153,13 +162,25 @@ def save(
         Options passed to the `save` method of the chosen format. An
         option named after a field of the metadata, such as `dtype`,
         overrides that field (see the `consolidate` method of the
-        format). `on_loss` is the loss policy of the metadata, as
-        `"ignore"`, `"warn"` or `"raise"`, or a
+        format). `on_error` is an error policy (see
+        [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), whose action for a
+        [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError]
+        decides what happens to the metadata that the file cannot hold,
+        such as `"ignore"`, `"warn"`, `"raise"`, or a
         [`ConversionReport`][brainhops.datamodel.metadata.ConversionReport]
         to fill. An object that is converted, then written, is acted on
-        once, with one report of what the conversion and the write lose.
-        The metadata of a format that does not hold metadata is not
-        written, and its fields are reported as lost.
+        once, after the file is written, with one report of what the
+        conversion and the write lose. An object that is already of the
+        chosen format passes `on_error` to its own `save`. The metadata
+        of a format that does not hold metadata is not written, and its
+        fields are reported as lost. The deprecated `on_loss=v` reads as
+        `on_error={MetadataLossError: v}`.
+
+    Returns
+    -------
+    Any
+        `None`, or the value that the error policy returns in place of a
+        refused loss.
 
     Raises
     ------
@@ -221,6 +242,10 @@ def save(
         obj.save(file, **kwargs)
         return
 
+    # The policy acts once on the report of the conversion and the
+    # write, after the file is written.
+    kwargs = dict(kwargs)
+    on_error = _save_policy(kwargs)
     reasons: tx.List[str] = []
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
@@ -232,12 +257,13 @@ def save(
         # a transformation" above).
         own = {fmt for fmt, _ in holders}
         options = dict(conversion or {})
-        if _write_best(
+        report = _write_best(
             file, name, obj, claimed, own, options, lossy, reasons, kwargs
-        ):
-            return
-    elif _write_first(file, name, obj, holders, _copy, reasons, kwargs):
-        return
+        )
+    else:
+        report = _write_first(file, name, obj, holders, _copy, reasons, kwargs)
+    if report is not None:
+        return _act_on_loss(report, on_error)
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
@@ -320,7 +346,7 @@ def _write_best(
     lossy: bool,
     reasons: tx.List[str],
     save_options: tx.Dict[str, tx.Any],
-) -> bool:
+) -> tx.Optional[ConversionReport]:
     """
     Write a transformation in the candidate format that holds it best.
 
@@ -337,8 +363,9 @@ def _write_best(
 
     Returns
     -------
-    bool
-        Whether `obj` was written.
+    ConversionReport or None
+        The report of what the write of `obj` lost, or `None` when
+        `obj` was not written.
 
     Raises
     ------
@@ -389,8 +416,8 @@ def _write_best(
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
-        return True
-    return False
+        return report
+    return None
 
 
 def _fidelity(obj: Transformation, converted: Transformation) -> int:
@@ -453,7 +480,7 @@ def _write_first(
     build: tx.Callable[[tx.Any, type], tx.Any],
     reasons: tx.List[str],
     options: tx.Dict[str, tx.Any],
-) -> bool:
+) -> tx.Optional[ConversionReport]:
     """
     Write `obj` in the most specific candidate format that takes it.
 
@@ -474,8 +501,9 @@ def _write_first(
 
     Returns
     -------
-    bool
-        Whether `obj` was written.
+    ConversionReport or None
+        The report of what the write of `obj` lost, or `None` when
+        `obj` was not written.
 
     Raises
     ------
@@ -509,8 +537,8 @@ def _write_first(
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
-        return True
-    return False
+        return report
+    return None
 
 
 def _write_once(
@@ -520,11 +548,14 @@ def _write_once(
     report: ConversionReport,
     options: tx.Mapping[str, tx.Any],
 ) -> None:
-    """Write a converted object, and act once on what the save loses.
+    """Write a converted object, and report what the write loses.
 
-    The report of the conversion is given to the write as its `on_loss`,
-    so that the consolidation of the metadata adds to it, and the loss
-    policy of the save acts on the one report once the file is written.
+    The report of the conversion is given to the write as the action of
+    its `on_error` for a loss of metadata, so that the consolidation of
+    the metadata adds to it. The policy of the save acts on the one
+    report once the file is written (see `_act_on_loss`), outside of
+    the loops that try the candidates, so that a refused loss is not
+    taken for a format that refuses `obj`.
     A format that does not take the metadata of its data model over does
     not write it, so its fields that are set are reported as lost, and so
     are those of `obj` when the conversion gave the writer no metadata,
@@ -539,18 +570,48 @@ def _write_once(
     )
 
     options = dict(options)
-    on_loss = options.pop("on_loss", None)
     source = getattr(obj, "metadata", None)
     if source is not None and getattr(writer, "metadata", None) is None:
         lost_fields(unsupported_values(MetadataFormat, source), report)
     if _takes_over(type(writer), "metadata"):
-        writer.save(file, on_loss=report, **options)
+        writer.save(file, on_error={MetadataLossError: report}, **options)
     else:
         metadata = getattr(writer, "metadata", None)
         if metadata is not None:
             lost_fields(unsupported_values(MetadataFormat, metadata), report)
         writer.save(file, **options)
-    apply_loss_policy(report, on_loss, stacklevel=4)
+
+
+def _save_policy(kwargs: tx.Dict[str, tx.Any]) -> tx.Any:
+    """Remove the policy of `save` from its options, and return it.
+
+    The deprecated `on_loss=v` is read as `on_error={MetadataLossError:
+    v}`, which keeps its old meaning. The stack level of its warning
+    points at the caller of `save`.
+    """
+    loss = pop_renamed_keyword(
+        kwargs, "on_loss", "on_error", "save", UNSET, stacklevel=4
+    )
+    on_error = kwargs.pop("on_error", UNSET)
+    if loss is not UNSET and loss is not None:
+        return {MetadataLossError: loss}
+    return on_error
+
+
+def _act_on_loss(report: ConversionReport, on_error: tx.Any) -> tx.Any:
+    """Act on the report of a save that wrote its file.
+
+    The action of `on_error` for a loss of metadata is taken by
+    `apply_loss_policy`, which warns or fills a report and returns, and
+    raises a `MetadataLossError` for any other action. That error is
+    then handed to the policy, which may raise it, raise another
+    exception, or return a value, which `save` returns.
+    """
+    try:
+        apply_loss_policy(report, on_error, stacklevel=2)
+    except MetadataLossError as error:
+        return apply_error_policy(error, on_error, stacklevel=3)
+    return None
 
 
 def _model(cls: type) -> tx.Optional[type]:

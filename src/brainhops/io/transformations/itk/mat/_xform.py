@@ -12,7 +12,11 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -329,13 +333,14 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
         byteorder: tx.Optional[str] = None,
         precision: tx.Optional[tx.Union[ItkPrecision, str]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain, systems and options into a new record.
@@ -362,7 +367,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an ITK
         MATLAB file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -377,9 +382,12 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             which also appears in the name of each block. By default, each
             block keeps its precision. The fixed parameters of a block
             that is encoded again are written in double precision.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -409,7 +417,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         metadata = metadata_to_write(
             self.metadata, MatMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         byteorder = _byteorder(byteorder)

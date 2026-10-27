@@ -36,7 +36,7 @@ it.
 |---|---|
 | `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `FIELDS`, `GROUPS`, `BIDS_KEYS`, `SCOPES` and `ALONG` |
 | `brainhops.datamodel.metadata._derive` | `Indexed` and `Resampled`, which an image operation builds for `derive` |
-| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `OnLoss` and `LossPolicy` |
+| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `takes_error_policy`, `call_under_policy`, `OnLoss` and `LossPolicy` |
 | `brainhops.io.metadata._base` | `consolidated`, `lost_fields` and `unsupported_values`, and, for the format objects, `metadata_to_write`, `requested_fields`, `overruled_fields` and `metadata_options` |
 | `brainhops.io.metadata._json` | the codec of the JSON stores, which BIDS and X5 share |
 | `brainhops.io.metadata._storage` | `preferred_storage` and `stored_values` |
@@ -60,13 +60,14 @@ class MyMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     def from_raw(cls, raw, **kwargs):
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    def consolidate(self, *, inplace=False, on_loss=None, **fields):
+    @takes_error_policy
+    def consolidate(self, *, inplace=False, on_error=UNSET, **fields):
         return consolidated(
             self,
             _encode,
             MyRaw,
             inplace=inplace,
-            on_loss=on_loss,
+            on_error=on_error,
             fields=fields,
         )
 ```
@@ -106,14 +107,24 @@ the record when nothing differs, encodes the changes into a copy of the
 record otherwise, reports what is lost and approximated, and decodes the
 result afresh, so that a second consolidation changes nothing.
 
+Every public method that takes `on_error=` is decorated with
+`takes_error_policy`, which applies the error policy of the call (see
+[`ErrorPolicy`][brainhops.errors.ErrorPolicy]) and still accepts the
+deprecated `on_loss=`. The decorator passes the method only the action
+that the policy takes for a loss of metadata, which `consolidated` and
+`apply_loss_policy` take where the loss happens, and it acts itself on
+every other error that the method raises. The default `UNSET` comes
+from `brainhops.errors` and means that no policy was given, so that a
+loss follows the policy in effect.
+
 The writers of the metadata, `to_bytes`, `to_filename` or `to_h5`,
 consolidate first and write the record of the copy, and they take the
-same overrides and `on_loss=` as `consolidate`. The metadata itself is
+same overrides and `on_error=` as `consolidate`. The metadata itself is
 never changed by a write.
 
 An image or a transformation of the format consolidates its metadata
 first, as step 2 of the precedence on write, whether or not the format
-stores a vocabulary. Its `consolidate` takes `on_loss=` and the fields
+stores a vocabulary. Its `consolidate` takes `on_error=` and the fields
 of the metadata by keyword. It asks `requested_fields` which fields the
 write is asked to store, consolidates the metadata with
 `metadata_to_write` and the report of the write, encodes its geometry
@@ -121,7 +132,7 @@ and its data over the record of the result, and acts on the report once
 with `apply_loss_policy`. A format whose model owns a slot, such as the
 time step of a NIfTI image, reports a field that it encoded over with
 `overruled_fields`. A writer that writes the record of a consolidated
-copy splits its options with `metadata_options`, so that `on_loss` and
+copy splits its options with `metadata_options`, so that `on_error` and
 the fields go to `consolidate` and the other options to the writer of
 the record.
 

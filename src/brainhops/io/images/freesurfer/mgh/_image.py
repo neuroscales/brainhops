@@ -18,12 +18,16 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import same_file, write_file
 from brainhops.io.base.parsers import (
@@ -411,12 +415,13 @@ class MghImage(
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **options: tx.Any,
     ) -> "MghImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -454,7 +459,7 @@ class MghImage(
         The voxels are stored with the type given as `dtype=`, or else
         with the nearest type to `metadata.dtype` that MGH stores, or else
         with the nearest type to that of the data. What the write loses
-        or approximates is acted on once, by `on_loss`.
+        or approximates is acted on once, by `on_error`.
 
         Parameters
         ----------
@@ -464,9 +469,12 @@ class MghImage(
             Template whose MRI parameters override those of the metadata.
             The fields given by keyword, and a TR stated by the
             transformations, override them.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect (see
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
         **options : Any
             Fields of the metadata to override, such as `dtype`,
@@ -520,7 +528,7 @@ class MghImage(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, on_error, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
@@ -531,7 +539,7 @@ class MghImage(
         else:
             metadata = type(metadata or MghMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -572,8 +580,8 @@ class MghImage(
             Template whose MRI parameters override those of this image. A
             TR stated by the transformation overrides both.
         **overrides : Any
-            `on_loss`, and the fields of the metadata and of the header,
-            as for [`consolidate`][].
+            `on_error`, and the fields of the metadata and of the
+            header, as for [`consolidate`][].
 
         Returns
         -------
@@ -607,7 +615,7 @@ class MghImage(
         compress : bool, default=False
             Whether to gzip the result into MGZ.
         **kwargs : Any
-            The template `like`, `on_loss` and the options of
+            The template `like`, `on_error` and the options of
             [`consolidate`][].
 
         Returns

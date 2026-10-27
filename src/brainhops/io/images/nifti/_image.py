@@ -17,7 +17,10 @@ from brainhops._core.typing import ArrayProtocol
 # datamodel
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -31,7 +34,7 @@ from brainhops.datamodel.transformations import (
 )
 
 # errors
-from brainhops.errors import ParserExistsError, WriterError
+from brainhops.errors import UNSET, ErrorPolicy, ParserExistsError, WriterError
 
 # io
 from brainhops.io.base._base import register_format
@@ -448,12 +451,13 @@ class NiftiImage(
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -494,7 +498,7 @@ class NiftiImage(
         disagrees. The data are stored with the type given as `dtype=`,
         or else with `metadata.dtype`, or else with the type of the data,
         and nibabel scales them into an integer type. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        loses or approximates is acted on once, by `on_error`.
 
         Parameters
         ----------
@@ -503,9 +507,13 @@ class NiftiImage(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect (see [`metadata_loss_policy`][]).
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the header cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set
@@ -551,7 +559,7 @@ class NiftiImage(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, on_error, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
@@ -561,7 +569,7 @@ class NiftiImage(
         )
         metadata = type(metadata or NiftiMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -592,8 +600,8 @@ class NiftiImage(
             Template whose description and intent are copied, as in
             [`consolidate`][].
         **overrides : Any
-            `on_loss`, and the fields of the metadata and of the header,
-            as in [`consolidate`][].
+            `on_error`, and the fields of the metadata and of the
+            header, as in [`consolidate`][].
 
         Returns
         -------
@@ -625,7 +633,7 @@ class NiftiImage(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The template `like`, `on_loss` and the options of
+            The template `like`, `on_error` and the options of
             [`consolidate`][].
 
         Raises
@@ -659,7 +667,7 @@ class NiftiImage(
         file : file object
             The stream to write to, open in binary mode.
         **kwargs : Any
-            The template `like`, `on_loss` and the options of
+            The template `like`, `on_error` and the options of
             [`consolidate`][].
 
         Raises
@@ -678,7 +686,7 @@ class NiftiImage(
         Parameters
         ----------
         **kwargs : Any
-            The template `like`, `on_loss` and the options of
+            The template `like`, `on_error` and the options of
             [`consolidate`][].
 
         Returns

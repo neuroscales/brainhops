@@ -15,9 +15,16 @@ from brainhops._core.typing import ArrayProtocol
 # internals
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UnrepresentableTransformationError
+from brainhops.errors import (
+    UNSET,
+    ErrorPolicy,
+    UnrepresentableTransformationError,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import (
@@ -284,6 +291,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
 
     # --- consolidate --------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
@@ -297,7 +305,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         fill_value: tx.Optional[tx.Any] = None,
         dimension_separator: tx.Optional[str] = None,
         zarr_version: tx.Optional[int] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> "ZarrImage":
         """Encode the pending data into `rawdata` and the record.
@@ -328,7 +336,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a Zarr
         array holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`.
+        is reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -353,9 +361,12 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             `"."`.
         zarr_version : int, optional
             The version of the Zarr format to write, 2 or 3.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -380,7 +391,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, ZarrMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         options = {

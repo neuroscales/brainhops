@@ -12,7 +12,11 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -194,12 +198,13 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """
@@ -224,7 +229,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         the base of the new header. The fields given by keyword take
         precedence over `like`, and a `dtype` that is given, or changed
         in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        loses or approximates is acted on once, by `on_error`.
 
         Parameters
         ----------
@@ -233,9 +238,12 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the header cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -273,7 +281,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, on_error, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -283,7 +291,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not inplace:
             return replace(
                 self,

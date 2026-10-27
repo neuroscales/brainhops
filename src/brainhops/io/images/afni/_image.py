@@ -24,7 +24,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -33,6 +36,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Transformation,
 )
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -561,6 +565,7 @@ class AfniImage(
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
@@ -568,7 +573,7 @@ class AfniImage(
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> "AfniImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -619,7 +624,7 @@ class AfniImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an AFNI
         dataset holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -638,9 +643,12 @@ class AfniImage(
             the grid and the view (`SCENE_DATA`) are refused, because the
             data, `datatype`, the transformations and `view` decide them.
             A string must be Latin-1 text.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -669,7 +677,7 @@ class AfniImage(
         metadata = metadata_to_write(
             self.metadata, AfniMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -715,13 +723,14 @@ class AfniImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> None:
         """Write the `.HEAD` and `.BRIK` files of a dataset.
@@ -754,9 +763,10 @@ class AfniImage(
             The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
             Attributes set last, as for [`consolidate`][].
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold, as
-            for [`consolidate`][].
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error, as for [`consolidate`][]
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
         **fields : Any
             Fields of the metadata to override, as for [`consolidate`][].
             Any other option is refused.
@@ -778,7 +788,7 @@ class AfniImage(
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
-        options.update(fields, on_loss=on_loss)
+        options.update(fields, on_error=on_error)
         reading = reads_brik(self.rawdata, brik) or any(
             reads_brik(self.rawdata, sibling) for sibling, _ in stale
         )

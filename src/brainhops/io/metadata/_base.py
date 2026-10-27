@@ -20,11 +20,13 @@ from brainhops._core.compare import differs
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import (
-    OnLoss,
+    MetadataLossError,
     apply_loss_policy,
     short,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import (
     FileFormat,
     _FileBasedModelMixin,
@@ -172,11 +174,13 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
         return super().from_any(other, *args, **kwargs)
 
     @classmethod
+    @takes_error_policy
     def from_instance(
         cls,
         other: tx.Any,
         *args: tx.Any,
-        on_loss: tx.Optional[OnLoss] = None,
+        lossy: ErrorAction = None,
+        on_error: ErrorPolicy = UNSET,
         **kwargs: tx.Any,
     ) -> tx.Self:
         """Copy metadata into this format, field by field.
@@ -197,11 +201,18 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
         *args : Any
             Constructor arguments, which take precedence over the fields
             of `other`.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that this format cannot store. By
-            default, the policy in effect (see
+        lossy : ErrorAction, optional
+            What to do with the fields that this format cannot store:
+            `True` or `"ignore"` accepts the loss, `"warn"` warns about
+            it, `"raise"` raises, and a report is filled instead of
+            warning or raising. By default, the action of `on_error`, or
+            else the policy in effect (see
             [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
-            A report is filled instead of warning or raising.
+        on_error : ErrorPolicy, optional
+            What to do with an error of the copy, including a loss (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). An entry for
+            a loss in `on_error` takes precedence over `lossy`. By
+            default, an error is raised.
         **kwargs : Any
             Fields to set on the result.
 
@@ -225,7 +236,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
             source=type(other).__name__, target=cls.__name__
         )
         report.lost.update(unsupported_values(cls, obj))
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         return obj
 
     def derive(
@@ -261,11 +272,12 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
                 setattr(derived, name, getattr(self, name))
         return derived
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the fields of the metadata into its record.
@@ -280,9 +292,12 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the format cannot store. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the fields that the format cannot store, and
+            with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override before the encoding, by
             name.
@@ -300,7 +315,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
             If a field is reported under the `"raise"` policy.
         """
         return consolidated(
-            self, None, None, inplace=inplace, on_loss=on_loss, fields=fields
+            self, None, None, inplace=inplace, on_error=on_error, fields=fields
         )
 
 
@@ -315,7 +330,7 @@ def consolidated(
     new_record: tx.Optional[tx.Callable[[], tx.Any]],
     *,
     inplace: bool,
-    on_loss: tx.Optional[OnLoss],
+    on_error: ErrorPolicy,
     fields: tx.Mapping[str, tx.Any],
 ) -> tx.Any:
     """Return metadata whose record holds its fields.
@@ -353,9 +368,10 @@ def consolidated(
         nothing.
     inplace : bool
         Whether to change `metadata` rather than a copy.
-    on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-        What to do with what was not stored. By default, the policy in
-        effect.
+    on_error : ErrorPolicy
+        The policy of the caller, whose action for a loss decides what
+        happens to what was not stored (see [`apply_loss_policy`][]).
+        `UNSET` means the policy in effect.
     fields : mapping
         Fields to override before the encoding.
 
@@ -409,7 +425,7 @@ def consolidated(
         held = getattr(decoded, name)
         if not _agrees(held, value):
             report.approximated[name] = f"the record holds {short(held)}"
-    apply_loss_policy(report, on_loss, stacklevel=3)
+    apply_loss_policy(report, on_error, stacklevel=3)
     if inplace:
         metadata.raw = record
         for name in FIELDS:
@@ -490,8 +506,9 @@ def metadata_options(
     """Split the options of a writer into those of the metadata and the rest.
 
     A writer that writes the record of a consolidated copy gives the
-    options of the metadata, `on_loss` and the fields of the vocabulary,
-    to `consolidate`, and the other options to the writer of the record.
+    options of the metadata, `on_error` and the fields of the
+    vocabulary, to `consolidate`, and the other options to the writer
+    of the record.
 
     Parameters
     ----------
@@ -501,14 +518,14 @@ def metadata_options(
     Returns
     -------
     metadata : dict
-        `on_loss` and the fields of the metadata among `kwargs`.
+        `on_error` and the fields of the metadata among `kwargs`.
     others : dict
         The other options.
     """
     metadata = {
         name: value
         for name, value in kwargs.items()
-        if name in FIELDS or name == "on_loss"
+        if name in FIELDS or name in ("on_error", "on_loss")
     }
     others = {
         name: value for name, value in kwargs.items() if name not in metadata
@@ -558,7 +575,7 @@ def metadata_to_write(
         if not fields:
             return None
         metadata = cls()
-    return metadata.consolidate(on_loss=report, **fields)
+    return metadata.consolidate(on_error={MetadataLossError: report}, **fields)
 
 
 def requested_fields(

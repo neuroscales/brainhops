@@ -225,27 +225,34 @@ lose, from `SUPPORTED_FIELDS`:
 ```python
 >>> scan = Metadata(description="T1w", echo_time=0.0029, flip_angle=8.0)
 >>> report = ConversionReport()
->>> nifti = scan.to(NiftiMetadata, on_loss=report)
+>>> nifti = scan.to(NiftiMetadata, lossy=report)
 >>> report.lost
 {'echo_time': 0.0029, 'flip_angle': 8.0}
 >>> nifti.echo_time
 0.0029
 >>> report = ConversionReport()
->>> nifti.consolidate(on_loss=report).echo_time is None
+>>> nifti.consolidate(on_error=report).echo_time is None
 True
 >>> report.lost
 {'echo_time': 0.0029, 'flip_angle': 8.0}
 
 ```
 
-What happens to a report is the loss policy: `"ignore"`, `"warn"` (the
-default, one `MetadataLossWarning` that carries the report) or
-`"raise"` (a `MetadataLossError`). It is the `on_loss=` option of `to()`,
-of `consolidate` and of `save`, which also takes a `ConversionReport`:
-the report is then filled, and nothing is warned or raised. The
+What happens to a report is decided by an error policy (see
+[`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A loss of metadata is a
+`MetadataLossError`, which is a kind of `LossyConversionError`, and the
+policy acts on it as on any other loss: `"ignore"` drops it, `"warn"`
+issues one `MetadataLossWarning` that carries the report, `"raise"`
+raises the error, and a `ConversionReport` is filled instead of warning
+or raising. The `to()` method of metadata takes the action for a loss
+as its `lossy=` option. The `to()` method, `consolidate` and `save` take
+a whole policy as their `on_error=` option, which also decides what
+happens to their other errors. A loss that no option covers follows the
+policy in effect, which is `"warn"` unless the
 [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]
-context manager sets the policy of the conversions that take no
-`on_loss=`, such as those of the fields of an image.
+context manager sets another one. That context manager also sets the
+policy of the conversions that take no option, such as those of the
+fields of an image.
 
 `io.save` converts an object into the format that the file name calls
 for, and then writes it. The conversion and the write fill one report,
@@ -263,7 +270,7 @@ and the policy acts on it once:
 >>> io.load(os.path.join(tmp, "memory.nii")).metadata.description
 'T1w'
 >>> try:
-...     io.save(image, os.path.join(tmp, "raise.nii"), on_loss="raise")
+...     io.save(image, os.path.join(tmp, "raise.nii"), on_error="raise")
 ... except MetadataLossError as error:
 ...     print(sorted(error.report.lost))
 ['echo_time', 'flip_angle']

@@ -1,14 +1,20 @@
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
+from brainhops._core.deprecation import pop_renamed_keyword
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
 from brainhops.datamodel.base import DataModelBase, _ComparesByIdMixin
 from brainhops.datamodel.metadata import Metadata
+from brainhops.datamodel.metadata._report import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.errors import ConversionError, LossyConversionError
+from brainhops.errors import (
+    UNSET,
+    ConversionError,
+    ErrorAction,
+    ErrorPolicy,
+)
 
 from . import nocycles
 from .compute.check import is_kind
@@ -431,8 +437,8 @@ class Transformation(
         self,
         cls: tx.Optional[tx.Type[tx.Self]] = None,
         *,
-        lossy: bool = False,
-        error: tx.Union[tx.Type[Exception], Exception, bool] = True,
+        lossy: ErrorAction = None,
+        on_error: ErrorPolicy = UNSET,
         copy: bool = False,
         **kwargs,
     ) -> tx.Self:
@@ -444,16 +450,41 @@ class Transformation(
         * within a type: `displacement.to(store="coefficients")`   ; or
         * both: `coords.to(DisplacementField, store="values")`     .
 
+        A conversion that would lose information raises a
+        [`LossyConversionError`][brainhops.errors.LossyConversionError],
+        which carries the lossy result. A conversion that cannot be
+        made raises a [`ConversionError`][]. An error policy decides
+        what happens to these errors, and to any other error of the
+        conversion (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
+        The policy that the call applies is
+        `{LossyConversionError: lossy, **on_error}`, so that
+        `lossy=True` returns the lossy result. A loss of metadata, in
+        the conversions of metadata that the conversion triggers,
+        follows the same policy, because a
+        [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError]
+        is a lossy conversion error.
+
+        !!! warning "Deprecated `error=`"
+            The `error=` keyword is a deprecated alias of `on_error=`.
+            The value `True` reads as `"raise"`, and any value `v`
+            applies to a [`ConversionError`][] only, as
+            `on_error={ConversionError: v}`.
+
         Parameters
         ----------
         cls : type of Transformation, optional
             Type to convert to. By default, the type is normally kept.
-        lossy : bool, default=False
-            Whether to allow a conversion that loses information.
-        error : type of Exception or Exception or bool, default=True
-            What to do when the conversion fails. `True` (the default) raises
-            the original error again, an exception or exception type is raised
-            from it, and any other value is returned in place of the result.
+        lossy : ErrorAction, optional
+            What to do with a conversion that loses information. `True`
+            or `"ignore"` returns the lossy result, `"warn"` warns and
+            returns it, and a report records the loss and returns it.
+            By default, the loss is raised, unless `on_error` has an
+            entry for it.
+        on_error : ErrorPolicy, optional
+            What to do when the conversion fails. One action applies to
+            every error, and a mapping chooses an action by the class
+            of the error. An entry for a loss in `on_error` takes
+            precedence over `lossy`. By default, every error is raised.
         copy : bool, default=False
             Whether to return a new object when the conversion has nothing
             to change. By default, a transformation converted to its own
@@ -467,26 +498,23 @@ class Transformation(
         Returns
         -------
         Transformation
-            The converted transformation.
+            The converted transformation, or what the policy returns in
+            its place.
+
+        Examples
+        --------
+        ```python
+        # Accept a loss, and return None if no converter exists.
+        t.to(Rotation, lossy=True, on_error={ConversionError: None})
+        ```
         """
-        cls = cls or self._target_class(kwargs)
-        try:
-            return _copied(self, convert(self, cls, **kwargs), copy)
-        except LossyConversionError as e:
-            if lossy:
-                # The caller accepts a lossy result, which the exception
-                # carries.
-                return e.result
-            failure = e
-        except ConversionError as e:
-            failure = e
-        # The conversion failed and no loss was accepted, so `error` decides
-        # what happens.
-        if error is True:
-            raise failure
-        if is_instance_or_subclass(error, Exception):
-            raise error from failure
-        return error
+        on_error = _deprecated_error(kwargs, on_error, type(self))
+
+        def convert_to() -> Transformation:
+            target = cls or self._target_class(kwargs)
+            return _copied(self, convert(self, target, **kwargs), copy)
+
+        return call_under_policy(convert_to, on_error, lossy=lossy)
 
     def _target_class(
         self, kwargs: tx.Dict[str, tx.Any]
@@ -729,3 +757,27 @@ def _copied(
     if copy and result is original:
         return type(original).from_instance(original)
     return result
+
+
+def _deprecated_error(
+    kwargs: tx.Dict[str, tx.Any], on_error: ErrorPolicy, cls: type
+) -> ErrorPolicy:
+    """Return the policy of `to()`, read from `error=` as well.
+
+    `error=` was the keyword of `to()` before `on_error=`. It is removed
+    from `kwargs` with a `DeprecationWarning`, and read with its old
+    meaning: `True` raises, and any other value applies to a
+    `ConversionError` only. The stack level of the warning points at
+    the caller of `to()`.
+    """
+    if "error" in kwargs and on_error is not UNSET:
+        raise TypeError(
+            f"{cls.__name__}.to() got both error= and on_error=; pass "
+            f"on_error= only."
+        )
+    error = pop_renamed_keyword(
+        kwargs, "error", "on_error", f"{cls.__name__}.to", UNSET, stacklevel=4
+    )
+    if error is UNSET:
+        return on_error
+    return {ConversionError: "raise" if error is True else error}

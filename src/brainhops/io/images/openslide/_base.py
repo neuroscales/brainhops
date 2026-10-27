@@ -18,8 +18,12 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.transformations import Transformation
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -435,11 +439,12 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
 
     # --- consolidating ------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Move the pending data into `rawdata`.
@@ -454,15 +459,18 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a slide
         holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_loss`.
+        reported as lost, once, by `on_error`.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -485,7 +493,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, OpenSlideMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         # The record cannot be encoded, so a copy is given the list that
@@ -768,11 +776,12 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
 
     # --- consolidating ------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Move the pending data of the levels into `rawdata`.
@@ -796,15 +805,18 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a slide
         holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_loss`.
+        reported as lost, once, by `on_error`.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this pyramid rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -832,7 +844,7 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
         metadata = metadata_to_write(
             self.metadata, OpenSlideMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         # The record stores no placement, so a copy is given the list that

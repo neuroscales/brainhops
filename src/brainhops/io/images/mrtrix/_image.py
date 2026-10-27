@@ -18,7 +18,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -29,6 +32,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -345,7 +349,7 @@ class MrtrixImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an MRtrix
         image holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`.
+        is reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -418,6 +422,7 @@ class MrtrixImage(
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
@@ -426,7 +431,7 @@ class MrtrixImage(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> "MrtrixImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -487,9 +492,12 @@ class MrtrixImage(
             Header keys merged into those of the base. A value of `None`
             removes a key. The keys that the other options, the data and
             the geometry decide are refused.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -520,7 +528,7 @@ class MrtrixImage(
         metadata = metadata_to_write(
             self.metadata, MrtrixMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -675,9 +683,9 @@ class MrtrixImage(
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
-    The options of the writer are read by `writer_options`, and `on_loss`
-    and the fields of the metadata, which go to the consolidation of the
-    metadata, are passed on.
+    The options of the writer are read by `writer_options`, and
+    `on_error` and the fields of the metadata, which go to the
+    consolidation of the metadata, are passed on.
 
     Raises
     ------
@@ -687,7 +695,7 @@ def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     metadata = {
         name: value
         for name, value in kwargs.items()
-        if name in FIELDS or name == "on_loss"
+        if name in FIELDS or name in ("on_error", "on_loss")
     }
     options = writer_options(
         {name: v for name, v in kwargs.items() if name not in metadata}

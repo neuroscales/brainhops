@@ -1,6 +1,6 @@
 # Design: one policy for errors and losses
 
-Status: decided, not implemented (#590). This memo records how a caller
+Status: implemented (#590). This memo records how a caller
 says what should happen when a conversion fails or loses information. It
 replaces three conventions with one keyword, `on_error=`, and keeps
 `lossy=` as a shorter way to set the part of that policy that concerns
@@ -96,3 +96,56 @@ methods become deprecated aliases of `on_error=`, through
 `_core/deprecation.py`. A `LossPolicy` keeps its three values, which
 are valid policies. `errors.raise_or_warn()` is rewritten on top of
 the new policy or removed, since it has no caller.
+
+## 6. Implementation
+
+The policy lives in `brainhops.errors`. `ErrorPolicy` and `ErrorAction`
+are its types, `error_policy()` reads `on_error=` and `lossy=` into one
+mapping (E3, E5), `policy_action()` walks the method resolution order,
+and `apply_error_policy()` acts on one error (E1, E2). The default of
+`on_error=` is the sentinel `UNSET` rather than `None`, because `None`
+is a policy that returns `None` (E1). Without a policy, every error is
+raised and a loss of metadata follows the policy in effect, which
+`metadata_loss_policy()` sets, so that a call that names no policy
+behaves as it did before. `ConversionWarning` is the warning of the
+`"warn"` action, and `MetadataLossWarning` is a subclass of it.
+
+`ConversionReport` gains an `errors` list and a `record()` method. A
+`MetadataLossError` adds its fields to `lost` and `approximated`, as
+before, and any other error is appended to `errors` (E6).
+
+The metadata methods that took `on_loss=` take `on_error=`, and the
+conversions among them, `Metadata.to()` and the `from_instance()` of
+metadata, also take `lossy=` (E5). The decorator `takes_error_policy`
+applies the policy around such a method. The body of the method acts on
+a loss where the loss happens, because a warning or a report lets the
+method go on with its result, so the decorator passes it only the
+action for a `MetadataLossError`, and an action that the body cannot
+take there, such as a value to return, is passed as `"raise"` and then
+applied by the decorator. Because the body receives a mapping that only
+concerns losses, it can pass its `on_error` on to another method
+without widening the policy. `Transformation.to()` runs its conversion
+with `call_under_policy()`, which makes the action for a loss the policy
+in effect while the conversion runs, so that the conversions of metadata
+that it triggers follow the policy of the call.
+
+The field converter of the data model, `DataModelConverter`, lets a
+`LossyConversionError` through before it handles a `TypeError` (E6).
+It narrows E6, which names any `ConversionError`, because the converter
+of a union and the callers of the converter rely on the wrapping of any
+other conversion error: a class refuses a sibling instance with a
+`ConversionError` of brainhops, and the converter of a union moves on to
+its next member only after a conversion error of bagof. A refused loss
+is the error that a policy must see as itself, and it still does. The
+walk of a chain of converters raises a loss that carries no
+result instead of walking it through. `io.save` acts on its report once
+the file is written, outside of the loops that try the candidate
+formats, because a refused loss is a `ConversionError`, which those
+loops take for a format that refuses the object.
+
+A deprecated alias keeps its old meaning, so that code that uses it
+does not change behaviour (E7). The value `v` of `error=` reads as
+`on_error={ConversionError: v}`, with `True` read as `"raise"`, and the
+value `v` of `on_loss=` reads as `on_error={MetadataLossError: v}`.
+`errors.raise_or_warn()` is removed, and its type `errors.OnError`
+imports as `ErrorPolicy` with a `DeprecationWarning`.

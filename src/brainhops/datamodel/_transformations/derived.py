@@ -31,6 +31,7 @@ from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import alias, smartproperty
+from brainhops.errors import ErrorAction
 
 from . import nocycles
 from .base import Transformation, _copied
@@ -168,7 +169,7 @@ class DerivedTransformation(MetaTransformation):
         self,
         cls: tx.Optional[tx.Type[Transformation]] = None,
         *,
-        lossy: bool = False,
+        lossy: ErrorAction = None,
         copy: bool = False,
         **kwargs,
     ) -> Transformation:
@@ -196,7 +197,7 @@ class DerivedTransformation(MetaTransformation):
     def _to(
         self,
         cls: tx.Optional[tx.Type[Transformation]],
-        lossy: bool,
+        lossy: ErrorAction,
         kwargs: tx.Dict[str, tx.Any],
     ) -> Transformation:
         if cls is None or cls is type(self):
@@ -209,7 +210,8 @@ class DerivedTransformation(MetaTransformation):
                     f"t.forward.to({derived[0]}=...)."
                 )
             own = {f.public_name for f in fields(type(self)) if f.init}
-            own.add("error")
+            # The policy of the conversion does not edit the forward.
+            own.update(("error", "on_error"))
             others = {k: kwargs.pop(k) for k in list(kwargs) if k not in own}
             if others:
                 front = nocycles.DERIVED[type(self)._operator]
@@ -219,7 +221,7 @@ class DerivedTransformation(MetaTransformation):
                     output=self._output,
                 )
                 return obj.to(**kwargs) if kwargs else obj
-            return super().to(cls, **kwargs)
+            return super().to(cls, lossy=lossy, **kwargs)
         # Converting to any other type, even the family's own, resolves the
         # operator first.
         return self._materialize().to(cls, lossy=lossy, **kwargs)

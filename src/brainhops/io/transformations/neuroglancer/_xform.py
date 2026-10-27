@@ -12,7 +12,8 @@ from brainhops._core import path
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
@@ -277,11 +278,12 @@ class NeuroglancerTransform(
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -301,9 +303,12 @@ class NeuroglancerTransform(
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with metadata that the format cannot store. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with metadata that the format cannot store, and
+            with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Metadata fields to override before encoding the transform.
 
@@ -321,12 +326,12 @@ class NeuroglancerTransform(
         metadata = self.metadata
         requested = requested_fields(metadata, fields)
         if metadata is not None:
-            metadata = metadata.consolidate(on_loss=on_loss, **fields)
+            metadata = metadata.consolidate(on_error=on_error, **fields)
             if not requested:
                 metadata = self.metadata
         elif fields:
             metadata = NeuroglancerTransformMetadata().consolidate(
-                on_loss=on_loss, **fields
+                on_error=on_error, **fields
             )
         record = _record(self)
         overridden = (

@@ -29,6 +29,8 @@ from brainhops.datamodel.metadata import (
     MetadataLossWarning,
     metadata_loss_policy,
 )
+from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.errors import UNSET
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     TextFileReader,
@@ -125,13 +127,14 @@ class DictMetadata(MetadataFormat):
     def from_raw(cls, raw, **kwargs) -> "DictMetadata":  # noqa: ANN001
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    def consolidate(self, *, inplace=False, on_loss=None, **fields):  # noqa: ANN001, ANN003, ANN201
+    @takes_error_policy
+    def consolidate(self, *, inplace=False, on_error=UNSET, **fields):  # noqa: ANN001, ANN003, ANN201
         return consolidated(
             self,
             _encode,
             DictRaw,
             inplace=inplace,
-            on_loss=on_loss,
+            on_error=on_error,
             fields=fields,
         )
 
@@ -351,7 +354,7 @@ def test_a_field_without_a_slot_is_lost() -> None:
     meta = _read()
     meta.echo_time = 0.03
     report = ConversionReport()
-    copy = meta.consolidate(on_loss=report)
+    copy = meta.consolidate(on_error=report)
     assert report.lost == {"echo_time": 0.03}
     assert copy.echo_time is None
     # The other fields are decoded afresh, and the record is shared,
@@ -360,7 +363,7 @@ def test_a_field_without_a_slot_is_lost() -> None:
     with pytest.warns(MetadataLossWarning):
         meta.consolidate()
     with pytest.raises(MetadataLossError) as info:
-        meta.consolidate(on_loss="raise")
+        meta.consolidate(on_error="raise")
     assert info.value.report.lost == {"echo_time": 0.03}
     with warnings.catch_warnings(), metadata_loss_policy("ignore"):
         warnings.simplefilter("error")
@@ -371,7 +374,7 @@ def test_a_value_a_slot_cannot_take_is_lost() -> None:
     meta = _read()
     meta.slice_timing = (0.0, 0.1, 0.2, 0.3, 0.4)
     report = ConversionReport()
-    copy = meta.consolidate(on_loss=report)
+    copy = meta.consolidate(on_error=report)
     assert report.lost == {"slice_timing": (0.0, 0.1, 0.2, 0.3, 0.4)}
     assert copy.slice_timing is None
     assert "slices" not in copy.raw
@@ -381,7 +384,7 @@ def test_an_approximation_reads_back_as_stored() -> None:
     meta = _read()
     meta.description = "much too long"
     report = ConversionReport()
-    copy = meta.consolidate(on_loss=report)
+    copy = meta.consolidate(on_error=report)
     assert report.approximated == {"description": "truncated to 8"}
     assert copy.description == "much too"
     assert copy.consolidate().raw is copy.raw
@@ -408,7 +411,7 @@ def test_metadata_without_a_record() -> None:
     assert empty.consolidate().raw is None
     meta = DictMetadata(description="d", echo_time=0.03)
     report = ConversionReport()
-    copy = meta.consolidate(on_loss=report)
+    copy = meta.consolidate(on_error=report)
     assert copy.raw == {"desc": "d"}
     assert report.lost == {"echo_time": 0.03}
 
@@ -416,7 +419,7 @@ def test_metadata_without_a_record() -> None:
 def test_the_base_class_stores_nothing() -> None:
     meta = MetadataFormat(raw=object(), description="d")
     report = ConversionReport()
-    copy = meta.consolidate(on_loss=report)
+    copy = meta.consolidate(on_error=report)
     assert report.lost == {"description": "d"}
     assert copy.raw is meta.raw and copy.description is None
     assert MetadataFormat.SUPPORTED_FIELDS == ()
@@ -454,7 +457,7 @@ def test_unsupported_values_reads_the_constant() -> None:
 
 def test_conversion_carries_every_field_and_reports_a_lower_bound() -> None:
     report = ConversionReport()
-    target = _rich().to(DictMetadata, on_loss=report)
+    target = _rich().to(DictMetadata, on_error=report)
     assert type(target) is DictMetadata
     assert target.description == "a scan"
     # The value rides along, and the next consolidation drops it.
@@ -466,7 +469,7 @@ def test_conversion_carries_every_field_and_reports_a_lower_bound() -> None:
     with pytest.warns(MetadataLossWarning):
         _rich().to(DictMetadata)
     with pytest.raises(MetadataLossError):
-        _rich().to(DictMetadata, on_loss="raise")
+        _rich().to(DictMetadata, on_error="raise")
 
 
 def test_the_record_stays_within_its_format() -> None:
@@ -557,19 +560,19 @@ def test_diffusion_is_not_a_sidecar_key() -> None:
     assert len(record) == 1
     assert sidecar == {"Description": "dwi"}
     with pytest.raises(MetadataLossError):
-        to_bids(meta, on_loss="raise")
+        to_bids(meta, on_error="raise")
     assert "bvalues" not in BidsSidecar.SUPPORTED_FIELDS
 
 
 def test_an_oblique_direction_is_lost_in_a_sidecar() -> None:
     meta = Metadata(phase_encoding_direction=(1, 1, 0))
     with pytest.raises(MetadataLossError) as info:
-        to_bids(meta, on_loss="raise")
+        to_bids(meta, on_error="raise")
     assert set(info.value.report.lost) == {"phase_encoding_direction"}
     sidecar = BidsSidecar.from_raw({"PhaseEncodingDirection": "j"})
     report = ConversionReport()
     copy = sidecar.consolidate(
-        phase_encoding_direction=(1, 1, 0), on_loss=report
+        phase_encoding_direction=(1, 1, 0), on_error=report
     )
     assert "PhaseEncodingDirection" not in copy.raw
     assert set(report.lost) == {"phase_encoding_direction"}

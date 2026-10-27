@@ -302,7 +302,7 @@ def test_to_copies_generic_metadata() -> None:
     with warnings.catch_warnings(), metadata_loss_policy("raise"):
         warnings.simplefilter("error")
         report = ConversionReport()
-        Metadata(echo_time=0.03).to(Metadata, on_loss=report)
+        Metadata(echo_time=0.03).to(Metadata, on_error=report)
     assert not report.lossy
 
 
@@ -331,7 +331,7 @@ def test_the_policies() -> None:
         apply_loss_policy(_lossy(), "loud")
 
 
-def test_a_report_as_on_loss_is_filled_silently() -> None:
+def test_a_report_as_the_policy_is_filled_silently() -> None:
     sink = ConversionReport()
     with warnings.catch_warnings(), metadata_loss_policy("raise"):
         warnings.simplefilter("error")

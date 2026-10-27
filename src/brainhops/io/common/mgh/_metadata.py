@@ -13,7 +13,8 @@ from bagof.magic import NoRepr, replace
 from brainhops._core import path
 from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
@@ -96,11 +97,12 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         """
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> "MghMetadata":
         """Encode the fields that differ from the record into a copy of it.
@@ -114,9 +116,12 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the fields that the record cannot hold, and
+            with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields to override before the encoding.
 
@@ -137,12 +142,13 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             _encode,
             MghRaw,
             inplace=inplace,
-            on_loss=on_loss,
+            on_error=on_error,
             fields=fields,
         )
 
+    @takes_error_policy
     def to_bytes(
-        self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any
+        self, *, on_error: ErrorPolicy = UNSET, **fields: tx.Any
     ) -> bytes:
         """Return the fixed header of the consolidated record.
 
@@ -154,8 +160,12 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
 
         Parameters
         ----------
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the record cannot hold.
+        on_error : ErrorPolicy, optional
+            What to do with the fields that the record cannot hold, and
+            with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -164,14 +174,15 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         bytes
             The fixed header.
         """
-        raw = self.consolidate(on_loss=on_loss, **fields).raw
+        raw = self.consolidate(on_error=on_error, **fields).raw
         return (MghRaw() if raw is None else raw).to_bytes()
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
         *,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> None:
         """Write the fixed header to a path, compressed for `.mgz` and `.gz`.
@@ -183,12 +194,16 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         filename : path-like
             The path of the file.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the record cannot hold.
+        on_error : ErrorPolicy, optional
+            What to do with the fields that the record cannot hold, and
+            with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields to override, as in [`consolidate`][].
         """
-        raw = self.consolidate(on_loss=on_loss, **fields).raw
+        raw = self.consolidate(on_error=on_error, **fields).raw
         (MghRaw() if raw is None else raw).to_filename(filename)
 
 

@@ -708,7 +708,7 @@ class ToyImage(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Any = None,
+        on_error: tx.Any = None,
         note: tx.Optional[str] = None,
         **fields: tx.Any,
     ) -> "ToyImage":
@@ -720,7 +720,7 @@ class ToyImage(
         consolidated = metadata_to_write(
             self.metadata, ToyMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss)
+        apply_loss_policy(report, on_error)
         options = {} if note is None else {"note": note}
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
@@ -1055,7 +1055,7 @@ class ToyLevel(
         return ()
 
     def consolidate(
-        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+        self, *, inplace: bool = False, on_error: tx.Any = None, **options
     ) -> "ToyLevel":
         # The metadata is consolidated first, and the toy record holds no
         # field of the vocabulary, so a field that is set is reported as
@@ -1066,7 +1066,7 @@ class ToyLevel(
         consolidated = metadata_to_write(
             self.metadata, ToyPyramidMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss)
+        apply_loss_policy(report, on_error)
         # A level whose record describes it alone, at index 0, with nothing
         # pending, keeps its `rawdata` and its metadata. Any other level
         # is encoded into a record of its level alone.
@@ -1246,7 +1246,7 @@ class ToyPyramid(
         return ()
 
     def consolidate(
-        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+        self, *, inplace: bool = False, on_error: tx.Any = None, **options
     ) -> "ToyPyramid":
         # The metadata is consolidated first, and the toy record holds no
         # field of the vocabulary, so a field that is set is reported as
@@ -1257,7 +1257,7 @@ class ToyPyramid(
         consolidated = metadata_to_write(
             self.metadata, ToyPyramidMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss)
+        apply_loss_policy(report, on_error)
         # Nothing is encoded for a pyramid that has a record, whose levels
         # are those of its file, and whose placements are never read or the
         # same as a fresh decode of the record, so its copy shares
@@ -6800,11 +6800,11 @@ def test_23_a_field_without_a_slot_is_lost(
     name = unsupported[0]
     value = _FIELD_SAMPLES[name]
     report = ConversionReport()
-    copy = metadata.consolidate(on_loss=report, **{name: value})
+    copy = metadata.consolidate(on_error=report, **{name: value})
     assert report.lost == {name: value}
     assert getattr(copy, name) == ({} if name == "extra" else None)
     with pytest.raises(MetadataLossError):
-        metadata.consolidate(on_loss="raise", **{name: value})
+        metadata.consolidate(on_error="raise", **{name: value})
 
 
 @pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
@@ -6836,7 +6836,7 @@ def test_24_a_conversion_carries_the_vocabulary(
     report = ConversionReport()
     if exemplar.source is not None:
         return
-    converted.save(path, on_loss=report)
+    converted.save(path, on_error=report)
     written = cls.load(path).metadata
     for name, value in exemplar.vocabulary.items():
         assert getattr(written, name) == value or name in report.lost, name

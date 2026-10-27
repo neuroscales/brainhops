@@ -86,6 +86,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
+from brainhops.errors import ConversionError
 from brainhops.io.transformations.zarr import _node
 
 
@@ -613,7 +614,7 @@ def to_dataset_ome(
     entry = to_ome(transform, storage_perm, ndim)
     if is_dataset_transform(entry):
         return entry
-    affine = transform.to(Affine, error=None)
+    affine = transform.to(Affine, on_error={ConversionError: None})
     if affine is None:
         return None
     matrix = permute_affine(affine.matrix, storage_perm)
@@ -649,7 +650,7 @@ def diagonal_signs(
         One sign per axis, `-1.0` or `1.0`, or `None` when the geometry is
         not an affine that only scales and translates each axis.
     """
-    affine = transform.to(Affine, error=None)
+    affine = transform.to(Affine, on_error={ConversionError: None})
     if affine is None:
         return None
     decomposed = scale_translation_from_affine(affine.matrix, ndim)
@@ -803,7 +804,7 @@ def _affine_to_ome(
 ) -> tx.Dict[str, tx.Any]:
     # A diagonal affine is written as a scale and a translation, and any
     # other affine is written as an affine.
-    affine = transform.to(Affine, error=None)
+    affine = transform.to(Affine, on_error={ConversionError: None})
     if affine is None:
         raise OmeMappingError(
             "This image is placed by a transformation that is not an affine, "
@@ -853,7 +854,7 @@ def _(
 def _(
     transform: Rotation, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
-    affine = transform.to(Affine, error=None)
+    affine = transform.to(Affine, on_error={ConversionError: None})
     if affine is None:
         raise OmeMappingError(
             "This rotation has no matrix, so it cannot be written as OME-Zarr "

@@ -15,7 +15,11 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -364,6 +368,7 @@ class M3zMorph(
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
@@ -371,7 +376,7 @@ class M3zMorph(
         spacing: tx.Optional[int] = None,
         image_shape: tx.Optional[tx.Sequence[int]] = None,
         atlas_shape: tx.Optional[tx.Sequence[int]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain into a new record.
@@ -401,7 +406,7 @@ class M3zMorph(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an M3Z file
         holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_loss`.
+        reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -420,9 +425,12 @@ class M3zMorph(
             Shape of the atlas. The default is the shape that the
             current record records, or else the shape of the node grid
             multiplied by `spacing`.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -450,7 +458,7 @@ class M3zMorph(
         metadata = metadata_to_write(
             self.metadata, M3zMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)

@@ -12,8 +12,12 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.transformations import Affine, Transformation
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -182,11 +186,12 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             return self.data.shape
         return tuple(int(d) for d in self.rawdata.shape)
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> "PrecomputedImage":
         """Move the pending data into `rawdata`.
@@ -201,15 +206,18 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a
         precomputed volume holds no field of the vocabulary yet, so a
-        field that is set is reported as lost, once, by `on_loss`.
+        field that is set is reported as lost, once, by `on_error`.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -232,7 +240,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, PrecomputedMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         # The record cannot be encoded, so a copy is given the list that

@@ -13,12 +13,13 @@ from brainhops._core.properties import smartproperty
 # datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
+from brainhops.datamodel.metadata._report import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.errors import CompositionError, ConversionError
+from brainhops.errors import UNSET, CompositionError, ConversionError
 
 # transformations
 from . import nocycles
-from .base import Transformation, _copied
+from .base import Transformation, _copied, _deprecated_error
 from .compute.check import is_kind
 from .compute.compose import compose
 from .compute.factor import PatternCache, factor_sequence
@@ -214,10 +215,20 @@ class Sequence(SequenceMixin, MetaTransformation):
 
         Any other chain raises a [`ConversionError`][] before anything is
         computed. Without `log=`, the conversion follows
-        [`Transformation.to`][Transformation.to], and so does `copy=`.
+        [`Transformation.to`][Transformation.to], and so do `copy=`,
+        `lossy=` and `on_error=`. With `log=`, `lossy=` and `on_error=`
+        apply to the whole conversion of the chain.
         """
         if "log" in kwargs:
-            return _copied(self, _chain_to(self, cls, kwargs), copy)
+            lossy = kwargs.pop("lossy", None)
+            on_error = _deprecated_error(
+                kwargs, kwargs.pop("on_error", UNSET), type(self)
+            )
+            return call_under_policy(
+                lambda: _copied(self, _chain_to(self, cls, kwargs), copy),
+                on_error,
+                lossy=lossy,
+            )
         return super().to(cls, copy=copy, **kwargs)
 
     def compute(

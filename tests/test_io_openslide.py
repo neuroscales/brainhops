@@ -619,7 +619,7 @@ def test_kept_levels_hold_the_consolidated_metadata(
     metadata = pyramid.metadata
     pyramid.images[2].transformations = [Scaling([3.0, 3.0, 1.0])]
     copy = pyramid.consolidate(
-        inplace=inplace, on_loss="ignore", name="renamed"
+        inplace=inplace, on_error="ignore", name="renamed"
     )
     assert copy._images is not None
     assert copy.metadata is not None

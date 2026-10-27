@@ -14,8 +14,9 @@ from brainhops._core.properties import cached_value, smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import write_file
@@ -329,6 +330,7 @@ class Jpeg2000MultiScaleImage(
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
@@ -336,7 +338,7 @@ class Jpeg2000MultiScaleImage(
         container: tx.Optional[str] = None,
         num_resolutions: tx.Optional[int] = None,
         comment: tx.Optional[str] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **options,
     ) -> "Jpeg2000MultiScaleImage":
         """Encode the full-resolution level and the placements of the pyramid.
@@ -362,7 +364,7 @@ class Jpeg2000MultiScaleImage(
         The metadata of the pyramid, which its levels share, is
         consolidated by that of the full-resolution level, with the fields
         given by keyword, and a field that the record cannot hold is
-        reported as lost, once, by `on_loss`.
+        reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -376,9 +378,12 @@ class Jpeg2000MultiScaleImage(
             number of levels of the pyramid.
         comment : str, optional
             The comment of the file, in place of those of the record.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, and fields of the
             metadata, as for [`Jpeg2000Image.consolidate`][].
@@ -410,7 +415,7 @@ class Jpeg2000MultiScaleImage(
             container=container,
             num_resolutions=num_resolutions,
             comment=comment,
-            on_loss=on_loss,
+            on_error=on_error,
             **options,
         )
         if level.rawdata is self.rawdata and level.metadata is self.metadata:

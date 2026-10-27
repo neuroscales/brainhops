@@ -15,9 +15,14 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    MetadataLossError,
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
+from brainhops.errors import UNSET, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import same_file
@@ -335,6 +340,7 @@ class TiffMultiScaleImage(
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def consolidate(
         self,
         *,
@@ -342,7 +348,7 @@ class TiffMultiScaleImage(
         dialect: tx.Optional[str] = None,
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_error: ErrorPolicy = UNSET,
         **fields: tx.Any,
     ) -> "TiffMultiScaleImage":
         """Encode pending levels and placements into `rawdata` and the record.
@@ -366,7 +372,7 @@ class TiffMultiScaleImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a TIFF
         file holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, by `on_error`.
 
         Parameters
         ----------
@@ -379,9 +385,12 @@ class TiffMultiScaleImage(
         bigtiff : bool, optional
             Whether to write BigTIFF. By default, BigTIFF is written only
             when the levels are too large for a classic TIFF (about 4 GiB).
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
+        on_error : ErrorPolicy, optional
+            What to do with the metadata that the record cannot hold,
+            and with any other error
+            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
+            default, an error is raised, and a loss follows the policy
+            in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -408,7 +417,7 @@ class TiffMultiScaleImage(
         metadata = metadata_to_write(
             self.metadata, TiffMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if not requested:
             metadata = self.metadata
         if self._untouched(dialect, name, bigtiff):
@@ -443,6 +452,7 @@ class TiffMultiScaleImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Encode the pyramid as TIFF.
 
@@ -460,7 +470,7 @@ class TiffMultiScaleImage(
             `bigtiff`), and the options of `TiffWriter.write` of
             tifffile that encode the pixels: `compression`,
             `compressionargs`, `predictor`, `tile` and `rowsperstrip`.
-            `on_loss` and the fields of the metadata are taken as by
+            `on_error` and the fields of the metadata are taken as by
             [`consolidate`][].
 
         Returns
@@ -475,13 +485,13 @@ class TiffMultiScaleImage(
         WriterError
             If the pyramid cannot be written.
         """
-        on_loss = kwargs.pop("on_loss", None)
+        on_error = kwargs.pop("on_error", UNSET)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         report = ConversionReport(
             source="TiffMultiScaleImage", target="TiffMultiScaleImage"
         )
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         options, encoding = split_options(kwargs)
         if not encoding and self._copies_source(**options):
             return self.rawdata[0].read_bytes()
@@ -505,6 +515,7 @@ class TiffMultiScaleImage(
         kwargs.setdefault("name", _to_filename(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the pyramid to a file.
 
@@ -520,7 +531,7 @@ class TiffMultiScaleImage(
         filename : str or PathLike
             The path of the file.
         **kwargs : Any
-            The options of [`to_bytes`][]. `on_loss` and the fields of
+            The options of [`to_bytes`][]. `on_error` and the fields of
             the metadata are taken as by [`consolidate`][].
 
         Raises
@@ -530,13 +541,13 @@ class TiffMultiScaleImage(
         WriterError
             If the pyramid cannot be written.
         """
-        on_loss = kwargs.pop("on_loss", None)
+        on_error = kwargs.pop("on_error", UNSET)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         report = ConversionReport(
             source="TiffMultiScaleImage", target="TiffMultiScaleImage"
         )
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, on_error, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
         kwargs.setdefault("name", _to_filename(filename))
@@ -559,7 +570,10 @@ class TiffMultiScaleImage(
             # write lost, as it does after any save over its own file.
             # The loss was reported above, so it is not reported again.
             self.consolidate(
-                inplace=True, on_loss="ignore", **options, **fields
+                inplace=True,
+                on_error={MetadataLossError: "ignore"},
+                **options,
+                **fields,
             )
             return
         plan = self._planned(**options)
