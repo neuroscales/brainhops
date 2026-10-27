@@ -240,7 +240,7 @@ def test_a_zero_tangent_is_the_identity(
 ) -> None:
     np.testing.assert_array_equal(getattr(t, view), expected)
     assert is_identity(t, compute=True)
-    assert isinstance(t.simplify("numeric"), Identity)
+    assert isinstance(t.simplify({None: "numeric"}), Identity)
 
 
 @pytest.mark.parametrize(

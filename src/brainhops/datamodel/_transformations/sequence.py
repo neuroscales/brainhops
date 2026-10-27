@@ -244,8 +244,10 @@ class Sequence(SequenceMixin, MetaTransformation):
             composes everything, and `False` only simplifies.
         simplify : SimplifyLike, default="analytic"
             Simplification policy applied before composition: `"analytic"` uses
-            the type structure only, `"numeric"` also inspects values, and
-            `False`, `"none"` or `None` disables simplification.
+            the type structure only, `"numeric"` also inspects the values
+            of matrix transformations, `{None: "numeric"}` inspects the
+            values of every transformation, and `False`, `"none"` or
+            `None` disables simplification.
         factor : bool, default=False
             Whether to rewrite the chain into a normal form organized by groups
             of axes, `[grid?, F_1, ..., F_m, Pi_perm?]`. The normal form starts
