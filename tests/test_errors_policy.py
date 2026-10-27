@@ -505,7 +505,7 @@ def test_a_warning_points_at_the_call_of_the_user() -> None:
         chain.to(Rotation, on_loss="warn")
     assert caught[0].filename == __file__
     with pytest.warns(ConversionWarning) as caught:
-        _linear().to_kind("rotation", on_loss="warn")
+        _linear().to_rotation(on_loss="warn")
     assert caught[0].filename == __file__
     with pytest.warns(ConversionWarning) as caught:
         _linear().to(Rotation, on_loss="warn")

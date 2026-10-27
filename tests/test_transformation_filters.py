@@ -192,12 +192,6 @@ def test_each_to_method_returns_its_class(
     )
 
 
-def test_to_kind_accepts_a_kind_and_refuses_one_without_a_class() -> None:
-    assert isinstance(Scaling([2.0]).to_kind(kinds.Linear), Linear)
-    with pytest.raises(ValueError):
-        Scaling([2.0]).to_kind(kinds.Identity)
-
-
 # --- include= and exclude= --------------------------------------------
 
 

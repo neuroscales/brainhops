@@ -91,15 +91,17 @@ methods.
 
 ## 4. Converting to a kind
 
-F5. `to_kind(kind, ...)` converts a transformation to the concrete
-class that represents a kind. It computes the transformation first,
-because a chain must be composed before it can be converted, and then
-calls `Transformation.to` with the same keyword arguments as
-`to()`. The kinds that the `is_*` methods test map to concrete classes
-through a single table, which `is_*` and `to_*` share.
+F5. Six methods convert a transformation to the concrete class of a
+kind: `to_translation()`, `to_scaling()`, `to_permutation()`,
+`to_rotation()`, `to_linear()` and `to_affine()`. Each method converts
+to its own class, which it names directly, and there is no method that
+takes the kind as an argument and no shared table of kinds. Each method
+computes the transformation first, because a chain must be composed
+before it can be converted, and then calls `Transformation.to` with the
+same keyword arguments as `to()`.
 
-The result of `to_kind` always has its parameters. A result that has
-no matrix, or, for a translation, a scaling or a permutation, no
+The result of a `to_*` method always has its parameters. A result that
+has no matrix, or, for a translation, a scaling or a permutation, no
 `data`, raises a `ConversionError`, because its dimension is unknown,
 as for `Identity()` or for the inverse of an affine whose matrix is not
 set. The error goes through the error policy of the call, so that
@@ -107,6 +109,9 @@ set. The error goes through the error policy of the call, so that
 `None`, rather than also for a missing matrix. Plain `to()` makes no
 such check, because a transformation without parameters is a valid
 object of its class.
+
+The `is_*` method of the same name tests the kind that the class of
+each `to_*` method represents.
 
 | Method             | Kind tested by `is_*`     | Concrete class |
 | ------------------ | ------------------------- | -------------- |
@@ -117,18 +122,16 @@ object of its class.
 | `to_linear()`      | `kinds.Linear`            | `Linear`       |
 | `to_affine()`      | `kinds.Affine`            | `Affine`       |
 
-Each `to_*` method is a one-line call to `to_kind()`. There is no
-`to_identity()`, because a transformation that is the identity has
-nothing to convert, and a transformation that is not the identity
-cannot become one without losing all of its content.
+There is no `to_identity()`, because a transformation that is the
+identity has nothing to convert, and a transformation that is not the
+identity cannot become one without losing all of its content.
 
-F6. `to_kind()` and every `to_*` method take two matchers,
-`include=` and `exclude=`. The method applies `with_only(include)` and
-then `without(exclude)` before it computes and converts the
-transformation, and either or both may be given. The two names say
-which way the matcher works, where a single `ignore=` argument had to
-take the value `True` to mean every part that is not of the target
-kind. The affine part of a chain is therefore
+F6. Every `to_*` method takes two matchers, `include=` and `exclude=`.
+The method applies `with_only(include)` and then `without(exclude)`
+before it computes and converts the transformation, and either or both
+may be given. The two names say which way each matcher works, so that
+no special value is needed to mean every part that is not of the
+target kind. The affine part of a chain is therefore
 `to_affine(include="affine")`. That call replaces
 `_as_affine_ignoring_fields`, and `to_affine(on_error=None)` replaces
 `_as_affine` (see [error-policy.md](error-policy.md) for `on_error=`).
