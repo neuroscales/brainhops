@@ -18,7 +18,7 @@ from .compute.simplify import SimplifyLike
 from .compute.simplify import simplify as _simplify
 from .compute.utils import (
     axis_list,
-    outermost_compute,
+    compute_depth,
     refuse_free_axes,
     require_endomorphism,
 )
@@ -53,11 +53,11 @@ class MetaTransformation(_MetaBackendMixin, Transformation):
         # computing it amounts to simplifying it, and the registered
         # simplifier recurses into the transformations that it wraps. `mode`
         # only controls composition, and there is nothing here to compose.
-        with outermost_compute() as outermost:
+        with compute_depth() as depth:
             result = _simplify(self, policy=simplify)
         # Only a composition removes the free axes that nothing reads, so
         # the result is checked when something may be composed.
-        if outermost and normalize_modes(mode):
+        if depth == 0 and normalize_modes(mode):
             refuse_free_axes(result)
         return result
 

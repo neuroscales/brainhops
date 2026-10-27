@@ -197,24 +197,29 @@ def _matmul(
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
     C = xp.empty(batch + (M, N + 1), dtype=A.dtype)
 
-    linear, shift = A[..., :-1], A[..., -1:]
-    translation = B[..., -1:]
-    C[..., :-1] = xp.matmul(linear, B[..., :-1])
+    Al, At = A[..., :-1], A[..., -1:]
+    Bl, Bt = B[..., :-1], B[..., -1:]
+    C[..., :-1] = xp.matmul(Al, Bl)
 
-    free = xp.isnan(translation) if zero_cancels_nan else None
-    if free is None or not bool(xp.any(free)):
-        C[..., -1:] = xp.matmul(linear, translation)
-        C[..., -1:] += shift
+    # A Python scalar is not accepted by every backend (CuPy refuses it),
+    # so the mask without NaN handling is an array of False.
+    if zero_cancels_nan:
+        is_nan = xp.isnan(Bt)
+    else:
+        is_nan = xp.zeros_like(Bt, dtype=bool)
+    if not bool(xp.any(is_nan)):
+        C[..., -1:] = xp.matmul(Al, Bt)
+        C[..., -1:] += At
         return C
 
     # A free entry of the translation is replaced by zero in the product,
     # and every output whose row reads it with a non-zero coefficient is
     # set to NaN.
-    finite = xp.where(free, xp.zeros_like(translation), translation)
-    reads = (linear != 0).astype(A.dtype)
-    reads = xp.matmul(reads, free.astype(A.dtype)) > 0
-    nan = xp.full_like(shift, float("nan"))
-    C[..., -1:] = xp.where(reads, nan, xp.matmul(linear, finite) + shift)
+    finite = xp.where(is_nan, xp.zeros_like(Bt), Bt)
+    reads = (Al != 0).astype(A.dtype)
+    reads = xp.matmul(reads, is_nan.astype(A.dtype)) > 0
+    nan = xp.full_like(At, float("nan"))
+    C[..., -1:] = xp.where(reads, nan, xp.matmul(Al, finite) + At)
     return C
 
 

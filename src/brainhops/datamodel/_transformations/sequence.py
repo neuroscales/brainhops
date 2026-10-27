@@ -29,7 +29,7 @@ from .compute.factor import PatternCache, factor_sequence
 from .compute.simplify import SimplifyLike, SimplifyTable
 from .compute.simplify import simplify as _simplify
 from .compute.utils import (
-    outermost_compute,
+    compute_depth,
     refuse_free_axes,
     require_endomorphism,
 )
@@ -265,7 +265,7 @@ class Sequence(SequenceMixin, MetaTransformation):
         """
         modes = normalize_modes(mode)
         policy = SimplifyTable.from_like(simplify)
-        with outermost_compute() as outermost:
+        with compute_depth() as depth:
             if not modes:
                 # Without a mode, only simplify, exactly as `simplify()`
                 # does. Leaves are downcast to more specific types and pairs
@@ -276,7 +276,7 @@ class Sequence(SequenceMixin, MetaTransformation):
                 result = _compute_sequence(self, modes, policy, factor=factor)
         # Only a composition removes the free axes that nothing reads, so
         # the result is checked when something may be composed.
-        if outermost and modes:
+        if depth == 0 and modes:
             refuse_free_axes(result)
         return result
 

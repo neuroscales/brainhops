@@ -281,12 +281,15 @@ _COMPUTE_DEPTH: contextvars.ContextVar = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def outermost_compute() -> tx.Iterator[bool]:
-    """Track nested calls to `compute`, and tell whether this one is first."""
+def compute_depth() -> tx.Iterator[int]:
+    """Track nested calls to `compute`, and give the depth of this one.
+
+    The outermost call has depth zero.
+    """
     depth = _COMPUTE_DEPTH.get()
     token = _COMPUTE_DEPTH.set(depth + 1)
     try:
-        yield depth == 0
+        yield depth
     finally:
         _COMPUTE_DEPTH.reset(token)
 
