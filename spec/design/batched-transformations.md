@@ -108,48 +108,99 @@ for each batch axis, the coordinate of each element along that axis. Its
 default is the index of the element, which is what a file that knows
 nothing about the timing of the volumes can give.
 
-`b.element(k)` returns element `k` as an ordinary transformation of the
-element type, whose data is a view of the stack. It is the same map as
+### Elements are created on demand
+
+A `BatchedTransformation` holds the whole stack in one array, and no
+element exists until one is asked for. `b[k]` returns element `k` along
+the first batch axis, and `b[k, v]` indexes several batch axes, as an
+ordinary transformation of the element type whose data is a view of the
+stack. A slice, such as `b[2:5]`, returns a smaller batch whose data and
+positions are views as well. Iterating over `b` gives its elements one
+at a time. When the stack is a lazy array of a file, indexing it keeps
+it lazy, so an element reads only its own part of the file. Element `k`
+is the same map as
 `b.restrict(element_axes, element_axes, at={"t": positions[k]})`, and
 the restrictor of section 4 returns it.
 
+### One generic class, with typed subclasses
+
+A batch is consistent by definition: its elements have one type and
+one encoding, which is what lets one array hold them all. A collection
+of transformations of different types is not a batch, and it needs no
+container of its own, because the readers keep returning one of its
+members, selected by `position=` as the ITK readers do today.
+
+`BatchedTransformation` is generic, so that
+`BatchedTransformation[Affine]` names a batch of affines, as
+`SubspaceTransformation[T]` names a subspace transformation of a `T`.
+It is also polymorphic. The class that the constructor builds is chosen
+from the element type, in the way that `Inverse` builds an
+`InverseAffine` for the inverse of an `Affine`. The subclasses, such as
+`BatchedAffine` and `BatchedDisplacementField`, give the views of the
+stack that the element type has, such as `matrix`,
+`homogeneous_matrix`, `field` and `coefficients`, and they let the
+composers and the other dispatched functions register a rule for a batch
+of one type. Unlike `InverseAffine`, which is also an `Affine`, a
+`BatchedAffine` does not inherit from `Affine`.
+
+No subclass is registered as any of the kinds of `kinds.py`. A batched
+affine is therefore never mistaken for an affine, and every rule that
+applies to it is written for it. The ordinary types, in turn, refuse
+data with leading dimensions in their constructor, so that a stacked
+array never enters an `Affine` by accident. This validation is new,
+because no type checks the shape of its data today.
+
 ### Building a batch
 
-The constructor above is rarely called directly. Every concrete class
-has a class method `batch`, which takes the same keywords as the
-constructor of the class, with arrays that carry leading batch
-dimensions, together with `batch_axes` and `positions`. It returns a
-`BatchedTransformation` whose element type is that class.
+Every concrete class has a method `batch`, which builds a batch of its
+own type from a stacked array without creating any element. It takes
+the stack, or one of the views of the class, such as
+`homogeneous_matrix`, `field` or `coefficients`, together with
+`batch_axes` and `positions`. Every other keyword of the constructor of
+the class is accepted too.
+
+`batch` can be called on the class or on an instance. On an instance,
+the instance serves as a template: every keyword that is not given is
+taken from it, which includes the encoding (such as `degree`, `bound`,
+`store` and `log`) and the input and output systems, while its own data
+is not used. On the class, the defaults of the class are used.
 
 ```python
 Affine.batch(matrices, batch_axes=["t"])
 Affine.batch(homogeneous_matrix=matrices, batch_axes=["t"])
-DisplacementField.batch(fields, batch_axes=["t"], degree=3)
+field.batch(fields, batch_axes=["t"])  # with the degree of `field`
 ```
 
-Since `batch` accepts the views of the class, such as
-`homogeneous_matrix`, `field` and `coefficients`, the conversions between
-a view and the stored data must work on stacks, which the first step of
-section 9 provides. When `batch` is called on the class of a file
-format, the element type is the data-model class of that format,
-because the metadata of a format describes one record of a file and not
-one element of a batch. A class that holds no data, such as `Identity`,
-refuses `batch`, since a batch of identities is the identity.
+The systems that `batch` receives, or takes from the template, are those
+of one element. The batch axes are new axes, given as axes or as names,
+and a name stands for a discrete axis with that name. They are placed
+after the axes of the elements, which is the order of the axes of an
+image such as `(x, y, z, t)`, whereas the data always keeps the batch
+dimensions first. A batch whose axes are in another order is built with
+the constructor of `BatchedTransformation`, from systems of the whole
+space.
 
-`batch` is a class method only. An instance method that would use the
-instance as a template, keeping its encoding and its systems and
-replacing its data with a stack, is rejected. The same call would then
-mean two different things depending on whether it is made on a class or
-on an instance, and the data of the instance would be discarded without
-an error. The meta transformations, whose parameters are other
+A method that works on both a class and an instance needs a small
+descriptor, which does not exist in the code base yet. Since `batch`
+accepts the views of the class, the conversions between a view and the
+stored data must work on stacks, which the first step of section 9
+provides. When `batch` is called on the class of a file format, or on
+an instance of one, the element type is the data-model class of that
+format, because the metadata of a format describes one record of a file
+and not one element of a batch. A class that holds no data, such as
+`Identity`, refuses `batch`, since a batch of identities is the
+identity. The meta transformations, whose parameters are other
 transformations, have no `batch` either.
 
-A batch of existing instances is built with
-`BatchedTransformation.stack(elements, batch_axes=...)`, which checks
-that the elements have the same type, the same encoding and the same
-shape. `stack` also accepts meta transformations, and moves the batch
-inside them, so that a `BatchedTransformation` always holds stacked
-data directly.
+`BatchedTransformation.stack(elements, batch_axes=...)` builds a batch
+from instances that already exist, and copies their data into one
+array. It checks that the elements have the same type, the same encoding
+and the same shape. It suits a format that stores each element on its
+own, such as the directory of one file per volume that MCFLIRT writes,
+whereas a format that stores a stack passes its array to `batch`.
+`stack` also accepts meta transformations, and moves the batch inside
+them, so that a `BatchedTransformation` always holds stacked data
+directly.
 
 - Sequences of the same length, whose transformations have the same type
   at each position, give a sequence of batches. This is exact, because
@@ -161,13 +212,6 @@ data directly.
   transformation of a batch, whose axes include the batch axes.
 - Lazy inverses give the lazy inverse of the batch of their forward
   transformations.
-
-The class is not registered as any of the kinds of `kinds.py`. A batched
-affine is therefore never mistaken for an affine, and every rule that
-applies to it is written for it. The ordinary types, in turn, refuse
-data with leading dimensions in their constructor, so that a stacked
-array never enters an `Affine` by accident. This validation is new,
-because no type checks the shape of its data today.
 
 A batch whose elements are fields covers a coordinate field of shape
 `(*batch, *shape, n_out)`, which maps the batch axes and the axes of its
@@ -428,7 +472,7 @@ components differs from the dimension of their grid need #588.
    data with leading dimensions. The NIfTI vector reader raises on a
    field with more than one volume.
 2. Add `BatchedTransformation`, with the class method `batch` of the
-   concrete classes, `stack`, `element`, the systems, `inverse` and
+   concrete classes, `stack`, indexing, the systems, `inverse` and
    `sqrt`, the pattern reader, the restrictor, the simplifier and the
    three composers of section 4.
 3. Add the resampling step of section 5, the check of discrete axes in
