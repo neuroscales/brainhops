@@ -139,7 +139,7 @@ class MghImage(
         geometry is encoded from the image sets the flag.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None

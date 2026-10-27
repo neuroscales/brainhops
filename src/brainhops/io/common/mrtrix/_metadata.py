@@ -30,7 +30,7 @@ class MrtrixMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     image.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mih")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mrtrix",)
     RAW: tx.ClassVar[type] = MrtrixRaw
 

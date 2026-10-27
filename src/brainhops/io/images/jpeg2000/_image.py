@@ -20,7 +20,6 @@ from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -560,7 +559,7 @@ class Jpeg2000Image(
             The options of [`consolidate`][].
         """
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(_to_filename(file))
+            kwargs["container"] = _container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:

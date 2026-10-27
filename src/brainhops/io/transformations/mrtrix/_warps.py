@@ -169,7 +169,7 @@ class MrtrixWarp(
     # (`"mrtrix.coord"`) as well as by `"mrtrix.field"`
     # (`"mrtrix.field.coord"`).
     HINTS = ("field",)
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mih")
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The values of the file as it stores them, or `None` without values.

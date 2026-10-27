@@ -144,7 +144,7 @@ class MrtrixImage(
     its data file, so a copy under another name differs in that line only.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mih")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mrtrix",)
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None

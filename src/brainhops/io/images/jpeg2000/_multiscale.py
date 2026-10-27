@@ -17,7 +17,6 @@ from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata._report import OnLoss
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -444,7 +443,7 @@ class Jpeg2000MultiScaleImage(
             The options of [`consolidate`][].
         """
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(_to_filename(file))
+            kwargs["container"] = _container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:

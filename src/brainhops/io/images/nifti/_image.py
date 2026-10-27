@@ -121,7 +121,7 @@ class NiftiImage(
     byte.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None

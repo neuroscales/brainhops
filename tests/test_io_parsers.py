@@ -429,3 +429,30 @@ def test_a_disabled_writer_raises_on_an_instance() -> None:
     with pytest.raises(WriterError, match="Write to a path instead."):
         greeting.to_bytes()
     assert list(greeting.to_lines()) == ["HELLO world"]
+
+
+# ----------------------------------------------------------------------
+#   COMPRESSION
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("suffix", [".gz", ".bz2", ".xz"])
+def test_any_format_reads_and_writes_a_compressed_file(
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    from brainhops._core.streams import decompress
+
+    target = tmp_path / ("x.greet" + suffix)
+    WritableGreeting("world").save(target)
+    content = target.read_bytes()
+    assert decompress(content) == b"HELLO world\n"
+    assert content != b"HELLO world\n"
+    assert Greeting.sniff(target) == Confidence.CERTAIN
+    assert Greeting.load(target) == "HELLO world"
+    assert Greeting.load(content) == "HELLO world"
+    assert Greeting.from_bytes(content) == "HELLO world"
+    with target.open("rb") as stream:
+        assert Greeting.sniff(stream) == Confidence.CERTAIN
+        assert stream.tell() == 0
+        assert Greeting.load(stream) == "HELLO world"

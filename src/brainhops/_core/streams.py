@@ -1,4 +1,4 @@
-"""Utilities for reading streams without consuming them."""
+"""Utilities for reading streams without consuming them, and compression."""
 
 # TODO: Merge this module with _core.peek, which also looks ahead without
 # consuming its input. The modules stay separate until the many callers of
@@ -7,12 +7,17 @@
 __all__ = [
     "preserve_position",
     "open_compressed",
+    "decompress",
+    "compression_suffix",
+    "open_compressing",
     "COMPRESSORS",
+    "COMPRESSING",
     "HAS_INDEXED_GZIP",
 ]
 
 import gzip
 from contextlib import contextmanager
+from io import BytesIO
 
 import typing_extensions as tx
 
@@ -125,7 +130,8 @@ def open_compressed(file: tx.BinaryIO) -> tx.IO:
     -------
     tx.IO
         A decompressing stream, or `file` itself when the data are not
-        compressed or the stream cannot seek.
+        compressed, when the stream cannot seek, or when it is a text
+        stream.
     """
     width = max(len(magic) for magic, _ in COMPRESSORS)
     try:
@@ -136,9 +142,115 @@ def open_compressed(file: tx.BinaryIO) -> tx.IO:
         # Peeking at a stream that cannot seek would consume bytes that cannot
         # be recovered.
         return file
+    if not isinstance(head, (bytes, bytearray)):
+        # A text stream has already been decoded, so it is not compressed.
+        return file
 
     for magic, opener in COMPRESSORS:
         if head.startswith(magic):
             return opener(file)
 
     return file
+
+
+def decompress(content: bytes) -> bytes:
+    """Return the decompressed content of a file, if its magic bytes match.
+
+    Content that is not compressed with one of the [`COMPRESSORS`][] is
+    returned as it is.
+
+    Parameters
+    ----------
+    content : bytes
+        The content of a file.
+
+    Returns
+    -------
+    bytes
+        The decompressed content.
+    """
+    stream = BytesIO(content)
+    opened = open_compressed(stream)
+    if opened is stream:
+        return content
+    return opened.read()
+
+
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+
+COMPRESSING: tx.Dict[str, tx.Callable[[tx.BinaryIO], tx.BinaryIO]] = {
+    ".gz": lambda f: gzip.GzipFile(fileobj=f, mode="wb"),
+}
+"""Compressors, keyed by the file name suffix that calls for them.
+
+A compressor takes a binary stream open for writing and returns a
+stream that compresses what it receives into it. Closing the
+compressing stream finishes the compressed data without closing the
+stream that it wraps. The bz2 and lzma formats are registered only if
+their modules can be imported.
+"""
+
+try:
+    import bz2
+
+    COMPRESSING[".bz2"] = lambda f: bz2.BZ2File(f, mode="wb")
+except ImportError:  # pragma: no cover - Python built without libbz2
+    pass
+
+try:
+    import lzma
+
+    COMPRESSING[".xz"] = lambda f: lzma.LZMAFile(f, mode="wb")
+except ImportError:  # pragma: no cover - Python built without liblzma
+    pass
+
+
+def compression_suffix(name: tx.Optional[str]) -> tx.Optional[str]:
+    """Return the compression suffix that ends a file name, or `None`.
+
+    The suffixes are the keys of [`COMPRESSING`][], such as `".gz"`, and
+    they are compared without regard to case.
+    """
+    if not name:
+        return None
+    lower = name.lower()
+    for suffix in COMPRESSING:
+        if lower.endswith(suffix):
+            return suffix
+    return None
+
+
+@contextmanager
+def open_compressing(
+    file: tx.BinaryIO, suffix: tx.Optional[str]
+) -> tx.Generator[tx.BinaryIO, None, None]:
+    """Compress what is written into a binary stream, as a suffix asks.
+
+    The context yields a stream that compresses into `file` with the
+    compressor of `suffix`, and finishes the compressed data when it
+    exits, without closing `file`. Without a suffix, `file` itself is
+    yielded.
+
+    Parameters
+    ----------
+    file : BinaryIO
+        The stream that receives the compressed data.
+    suffix : str, optional
+        A key of [`COMPRESSING`][], such as `".gz"`.
+
+    Yields
+    ------
+    BinaryIO
+        The stream to write the uncompressed content to.
+    """
+    if suffix is None:
+        yield file
+        return
+    stream = COMPRESSING[suffix](file)
+    try:
+        yield stream
+    finally:
+        stream.close()

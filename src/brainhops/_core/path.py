@@ -33,6 +33,7 @@ __all__ = [
     "exists",
     "LOCAL_PROTOCOLS",
     "is_local",
+    "base_name",
     "local_path",
     "replace_directory",
     "replace_file",
@@ -43,8 +44,10 @@ __all__ = [
 import errno
 import os
 import uuid
-from os import PathLike
+from os import DirEntry, PathLike, sep
+from os.path import basename
 from pathlib import Path as LocalPath
+from urllib.parse import urlsplit
 
 import typing_extensions as tx
 from bagof.paths import Path
@@ -116,6 +119,61 @@ def is_local(file: FilenameLike) -> bool:
         If `file` is not a path, for example an open file.
     """
     return Path(file).protocol.lower() in LOCAL_PROTOCOLS
+
+
+def base_name(other: tx.Any) -> tx.Optional[str]:
+    """Return the base name of the file that a path or an open file names.
+
+    A format reads the extension of a file from this name, and an open
+    file is named by its `name` attribute. The name is taken from the
+    text of the path without touching storage,
+    because `os.fspath` raises on remote paths and downloads cloud paths.
+    For a URL, the name is the last segment of its path, without query or
+    fragment, so `https://host/x.nii.gz?token=...` names `x.nii.gz`. For an
+    fsspec chain such as `simplecache::s3://...`, the name comes from the
+    last link.
+    """
+    if isinstance(other, DirEntry):
+        # str() of a DirEntry gives its repr.
+        text = other.path
+    elif isinstance(other, (str, PathLike)):
+        text = str(other)
+    else:
+        text = getattr(other, "name", None)
+        if not isinstance(text, str):
+            return None
+    return _base_name_of_text(text)
+
+
+def _base_name_of_text(text: str) -> str:
+    """Return the last component of a local path or of the path of a URL."""
+    if "::" in text and "://" in text:
+        # In an fsspec chain, the last link is the file, and the other links
+        # are layers such as caches or archives.
+        text = text.rsplit("::", 1)[-1]
+    if _has_scheme(text):
+        # Only the path of the URL is kept, because the query and the
+        # fragment may contain slashes and dots.
+        text = urlsplit(text).path
+        # Trailing slashes are stripped so that a directory store, such as a
+        # .zarr folder, still gets a name.
+        return text.rstrip("/").rsplit("/", 1)[-1]
+    return basename(text.rstrip("/" + sep))
+
+
+def _has_scheme(text: str) -> bool:
+    """Return whether `text` starts with a URL scheme such as `s3:`.
+
+    A scheme has at least two characters, so a drive such as `C:` is not one.
+    """
+    scheme, colon, _ = text.partition(":")
+    return (
+        bool(colon)
+        and len(scheme) > 1
+        and scheme.isascii()
+        and scheme[0].isalpha()
+        and all(c.isalnum() or c in "+-." for c in scheme)
+    )
 
 
 def local_path(file: tx.Any) -> tx.Optional[Path]:

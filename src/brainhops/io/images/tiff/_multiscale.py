@@ -20,7 +20,6 @@ from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -502,7 +501,7 @@ class TiffMultiScaleImage(
         **kwargs : Any
             The options of [`to_bytes`][].
         """
-        kwargs.setdefault("name", _to_filename(file))
+        kwargs.setdefault("name", path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -539,7 +538,7 @@ class TiffMultiScaleImage(
         apply_loss_policy(report, on_loss, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
-        kwargs.setdefault("name", _to_filename(filename))
+        kwargs.setdefault("name", path.base_name(filename))
         options, encoding = split_options(kwargs)
         raws = self.rawdata or ()
         reading = [

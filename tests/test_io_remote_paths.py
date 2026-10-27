@@ -13,6 +13,7 @@ import pytest
 import typing_extensions as tx
 
 import brainhops.io as io
+from brainhops._core import path
 from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base import FileFormat
@@ -20,7 +21,7 @@ from brainhops.io.base._base import (
     is_format_registry,
     register_format,
 )
-from brainhops.io.base._dispatch import Source, _to_filename
+from brainhops.io.base._dispatch import Source
 from brainhops.io.base.parsers import (
     ParserError,
     TextFileWriter,
@@ -104,12 +105,12 @@ def _fresh_store() -> tx.Iterator[None]:
     ],
 )
 def test_the_name_is_read_from_the_path(location: str, name: str) -> None:
-    assert _to_filename(location) == name
-    assert _to_filename(RemotePath(location)) == name
+    assert path.base_name(location) == name
+    assert path.base_name(RemotePath(location)) == name
 
 
 def test_a_remote_path_is_never_made_local() -> None:
-    _to_filename(RemotePath("s3://bucket/x.nii.gz"))
+    path.base_name(RemotePath("s3://bucket/x.nii.gz"))
     assert RemotePath.fspath_calls == 0
 
 
@@ -118,16 +119,16 @@ def test_local_paths_and_open_files_are_named(tmp_path) -> None:  # noqa: ANN001
 
     target = tmp_path / "x.nii.gz"
     target.write_bytes(b"")
-    assert _to_filename(Path(target)) == "x.nii.gz"
+    assert path.base_name(Path(target)) == "x.nii.gz"
     with os.scandir(tmp_path) as entries:
-        assert [_to_filename(e) for e in entries] == ["x.nii.gz"]
+        assert [path.base_name(e) for e in entries] == ["x.nii.gz"]
     with open(target, "rb") as f:
-        assert _to_filename(f) == "x.nii.gz"
+        assert path.base_name(f) == "x.nii.gz"
 
 
 def test_content_and_unnamed_streams_name_nothing() -> None:
-    assert _to_filename(b"bytes") is None
-    assert _to_filename(_io.BytesIO()) is None
+    assert path.base_name(b"bytes") is None
+    assert path.base_name(_io.BytesIO()) is None
 
 
 def test_a_source_names_its_path_and_never_its_content() -> None:

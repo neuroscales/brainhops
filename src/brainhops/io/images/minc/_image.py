@@ -457,7 +457,7 @@ class Minc1Image(MincImage):
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc1", "1")
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc", ".mnc.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc",)
     VERSION: tx.ClassVar[int] = 1
 
 

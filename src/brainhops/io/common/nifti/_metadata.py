@@ -42,7 +42,7 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     has no free-form store, so `extra` is not supported.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
     RAW: tx.ClassVar[type] = NiftiRaw
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (

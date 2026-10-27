@@ -21,7 +21,6 @@ from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -696,7 +695,7 @@ class PillowImage(
             The options of [`to_bytes`][].
         """
         if kwargs.get("format") is None:
-            kwargs["format"] = format_for_name(_to_filename(file))
+            kwargs["format"] = format_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:

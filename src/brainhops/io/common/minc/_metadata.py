@@ -26,7 +26,7 @@ class MincMetadata(MetadataReader, MetadataFormat):
     [`MincRaw`][] and wraps it.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc", ".mnc.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc",)
     RAW: tx.ClassVar[type] = MincRaw
 
