@@ -155,9 +155,8 @@ class Source:
         if isinstance(self.other, (str, bytes, bytearray, PathLike)):
             # Content wrapped by Source.content is never a file name.
             return None
-        return path.base_name(
-            self.other
-        )  # An open file is named by its .name.
+        # An open file is named by its .name.
+        return path.base_name(self.other)
 
     def __repr__(self) -> str:
         name = self.name

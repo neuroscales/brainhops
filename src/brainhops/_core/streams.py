@@ -7,6 +7,8 @@
 __all__ = [
     "preserve_position",
     "open_compressed",
+    "open_decompressed",
+    "is_seekable",
     "decompress",
     "compression_suffix",
     "open_compressing",
@@ -17,7 +19,7 @@ __all__ = [
 
 import gzip
 from contextlib import contextmanager
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 
 import typing_extensions as tx
 
@@ -151,6 +153,58 @@ def open_compressed(file: tx.BinaryIO) -> tx.IO:
             return opener(file)
 
     return file
+
+
+@contextmanager
+def open_decompressed(
+    file: tx.Any, mode: str = "rb"
+) -> tx.Generator[tx.IO, None, None]:
+    """Open a file for reading, decompressed if its magic bytes say so.
+
+    A reader opens a path with this function so that it reads a file
+    compressed with one of the [`COMPRESSORS`][] as if it were not. The
+    file is opened in binary mode with its own `open` method, which a
+    `Path` of `bagof.paths` has, and decompressed with
+    [`open_compressed`][]. In a text mode, such as `"r"` or `"rt"`, the
+    stream is then decoded as the built-in `open` would decode it. A
+    text format cannot decompress a stream that is already decoded,
+    which is why a path is decompressed as it is opened.
+
+    Parameters
+    ----------
+    file : Path
+        The path of the file, an object with an `open` method.
+    mode : str, default="rb"
+        The mode to read in, binary or text.
+
+    Yields
+    ------
+    tx.IO
+        The decompressed stream.
+    """
+    with file.open("rb") as raw:
+        stream = open_compressed(raw)
+        try:
+            if "b" in mode:
+                yield stream
+            else:
+                with TextIOWrapper(stream) as text:
+                    yield text
+        finally:
+            if stream is not raw:
+                stream.close()
+
+
+def is_seekable(file: tx.IO) -> bool:
+    """Return whether a stream can seek.
+
+    A stream without a `seekable` method, or whose method raises, cannot
+    seek.
+    """
+    try:
+        return bool(file.seekable())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def decompress(content: bytes) -> bytes:

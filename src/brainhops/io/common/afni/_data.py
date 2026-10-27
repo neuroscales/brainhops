@@ -13,8 +13,12 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local, replace_file
-from brainhops._core.path import local_path as _local_path
+from brainhops._core.path import (
+    is_local,
+    is_local_file,
+    is_same_file,
+    replace_file,
+)
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
@@ -238,12 +242,15 @@ class _BrikProxy(StridedProxy):
     [`from_record`][brainhops.io.common.afni._data._BrikProxy.from_record].
     """
 
+    source: path.Path
+    """The path of the BRIK file, which a string is converted to."""
+
     record: KwOnly[NoRepr[AfniRaw]]
     """The record of the dataset, which describes the BRIK."""
 
     @classmethod
     def from_record(
-        cls, brik: tx.Any, record: AfniRaw, mmap: bool
+        cls, brik: path.FilenameLike, record: AfniRaw, mmap: bool
     ) -> ArrayProxy:
         """
         Return the lazy array of the voxels of a BRIK that a record describes.
@@ -320,7 +327,7 @@ class _BrikProxy(StridedProxy):
             If the BRIK holds fewer bytes than the record says.
         """
         remaining = self.record.nbytes
-        with path.Path(self.brik).open("rb") as f:
+        with self.brik.open("rb") as f:
             stream = open_compressed(f)
             while remaining > 0:
                 chunk = stream.read(min(remaining, _CHUNK))
@@ -407,7 +414,7 @@ def read_afni(
     return record, brik_proxy(record, brik, mmap)
 
 
-def brik_proxy(record: AfniRaw, brik: tx.Any, mmap: bool) -> _BrikProxy:
+def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
     """Return the lazy array of a BRIK, after checking that it can be read.
 
     The checks need no voxel: the BRIK must exist, be compressed with
@@ -435,9 +442,8 @@ def brik_proxy(record: AfniRaw, brik: tx.Any, mmap: bool) -> _BrikProxy:
             f"cannot be read here. Decompress it, or recompress it with "
             f"gzip."
         )
-    local = _local_path(brik)
-    if local is not None and not suffix:
-        size = local.stat().st_size
+    if is_local_file(brik) and not suffix:
+        size = brik.stat().st_size
         if size < record.nbytes:
             raise ParserContentError(
                 f"The AFNI BRIK {brik} holds {size} bytes, but the header "
@@ -446,32 +452,32 @@ def brik_proxy(record: AfniRaw, brik: tx.Any, mmap: bool) -> _BrikProxy:
     return _BrikProxy.from_record(brik, record, mmap)
 
 
-def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
+def _read_bricks(header: AfniRaw, brik: path.Path, mmap: bool) -> np.ndarray:
     """
     Read the sub-bricks of a BRIK, memory-mapping the file when it is
     local, uncompressed, of a single type, and `mmap` is true.
     """
     nbytes = header.nbytes
-    local = _local_path(brik)
-    with path.Path(brik).open("rb") as f:
+    local = is_local_file(brik)
+    with brik.open("rb") as f:
         stream = open_compressed(f)
         compressed = stream is not f
         if (
-            local is not None
+            local
             and mmap
             and not compressed
             and nbytes > 0
             and len(set(header.dtypes)) == 1
         ):
             buffer = np.memmap(
-                local, dtype=np.uint8, mode="r", offset=0, shape=(nbytes,)
+                brik, dtype=np.uint8, mode="r", offset=0, shape=(nbytes,)
             )
         else:
             buffer = stream.read(nbytes)
     return decode_bricks(header, buffer)
 
 
-def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
+def write_brik(header: AfniRaw, data: tx.Any, brik: path.Path) -> None:
     """Write a BRIK, compressed according to its suffix.
 
     The lazy array of a whole BRIK (see [`whole_brik`][]) is copied as
@@ -521,20 +527,12 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         replace_file(brik, write_named)
         return
     whole = whole_brik(data)
-    if whole is not None and _is_same_file(whole.brik, brik):
+    if whole is not None and is_same_file(whole.brik, brik):
         copied = BytesIO()
         whole.copy_to(copied)
         data = copied.getvalue()
     with brik.open("wb") as f:
         write(f)
-
-
-def _is_same_file(first: tx.Any, second: tx.Any) -> bool:
-    """Tell whether two paths name the same existing local file."""
-    first, second = _local_path(first), _local_path(second)
-    if first is None or second is None:
-        return False
-    return first.samefile(second)
 
 
 def stores_brik(raw: tx.Any) -> bool:
@@ -610,4 +608,4 @@ def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
         Whether `raw` is a lazy array that reads `brik`.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(raw, _BrikProxy) and _is_same_file(raw.brik, brik)
+    return isinstance(raw, _BrikProxy) and is_same_file(raw.brik, brik)

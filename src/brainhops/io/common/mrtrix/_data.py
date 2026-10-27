@@ -2,7 +2,6 @@
 array that reads it."""
 
 # stdlib
-import os
 
 # dependencies
 import numpy as np
@@ -11,7 +10,7 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import local_path as _local_path
+from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
@@ -397,7 +396,7 @@ def read_mrtrix(
     """
     if isinstance(file, str):
         file = path.Path(file)
-    named = isinstance(file, (path.PathLike, os.PathLike))
+    named = isinstance(file, path.PathLike)
     if named:
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
@@ -411,14 +410,12 @@ def read_mrtrix(
     if name == ".":
         source = file
     else:
-        if not isinstance(origin, (str, bytes, os.PathLike, path.PathLike)):
+        if not isinstance(origin, (str, path.PathLike)):
             raise ParserContentError(
                 f"The MRtrix header names a separate data file "
                 f"({name!r}), which cannot be found from a stream that "
                 f"has no file name. Read it from its path instead."
             )
-        if isinstance(origin, bytes):
-            origin = os.fsdecode(origin)
         source = path.Path(origin).parent / name
         start = 0
         if not path.exists(source):
@@ -427,9 +424,8 @@ def read_mrtrix(
                 f"MRtrix header {origin})"
             )
     if named or name != ".":
-        local = _local_path(source)
-        if local is not None and not _is_gzip(source):
-            size = local.stat().st_size
+        if is_local_file(source) and not _is_gzip(source):
+            size = path.Path(source).stat().st_size
             if size < offset + record.nbytes:
                 raise ParserContentError(
                     f"The MRtrix data file {source} holds {size} bytes, but "

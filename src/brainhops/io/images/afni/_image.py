@@ -14,7 +14,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import write_file
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import (
     smartproperty,
 )
@@ -753,7 +753,7 @@ class AfniImage(
         options["attributes"] = attributes
         options.update(fields, on_loss=on_loss)
         reading = reads_brik(self.rawdata, brik) or any(
-            reads_brik(self.rawdata, sibling) for sibling, _ in stale
+            reads_brik(self.rawdata, sibling) for sibling in stale
         )
         if reading:
             mmap = self.rawdata.root.mmap
@@ -762,9 +762,9 @@ class AfniImage(
             image = self.consolidate(**options)
         record, data = _afni_written(image)
         write_brik(record, data, brik)
-        write_file(head, record.to_bytes())
-        for _, local in stale:
-            os.remove(local)
+        atomic_write_bytes(head, record.to_bytes())
+        for sibling in stale:
+            sibling.unlink()
         if reading:
             # The image holds what the dataset holds, and its lazy array
             # reads the new BRIK, since the lazy array of the old BRIK

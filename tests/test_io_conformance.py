@@ -55,7 +55,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
-from brainhops._core.path import replace_directory
+from brainhops._core.path import Path, replace_directory
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ScaledProxy
 from brainhops._core.streams import preserve_position
@@ -5158,7 +5158,7 @@ def _cut(
     elif exemplar.header_file is not None:
         header = exemplar.header_file(target)
         _write_header(header, metadata.to_bytes())
-        if header != target:
+        if Path(header) != Path(target):
             _write_header(target, b"")
     else:
         _write_header(target, metadata.to_bytes())

@@ -485,7 +485,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         head, _, _ = afni_dataset_files(filename)
         if not path.exists(head):
             raise ParserExistsError(f"No such file: {head}")
-        with path.Path(head).open("rb") as f:
+        with head.open("rb") as f:
             return cls.from_bytes(f.read())
 
     @classmethod
@@ -793,7 +793,7 @@ def _sniffed_raw_at(
     head, _, _ = afni_dataset_files(filename)
     if not path.exists(head):
         return None, ParserExistsError(f"No such file: {head}")
-    with path.Path(head).open("rb") as f:
+    with head.open("rb") as f:
         return _sniffed_raw(f)
 
 

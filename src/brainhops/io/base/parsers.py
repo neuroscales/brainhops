@@ -21,9 +21,8 @@ __all__ = [
 ]
 
 from collections.abc import Iterable
-from contextlib import contextmanager
 from contextvars import ContextVar
-from io import BytesIO, TextIOBase, TextIOWrapper
+from io import BytesIO, TextIOBase
 
 import typing_extensions as tx
 
@@ -32,8 +31,8 @@ from brainhops._core.path import is_local, replace_file
 from brainhops._core.streams import (
     compression_suffix,
     decompress,
-    open_compressed,
     open_compressing,
+    open_decompressed,
     preserve_position,
 )
 from brainhops.errors import (
@@ -134,35 +133,6 @@ class disabled:  # noqa: N801
 
 
 # ----------------------------------------------------------------------
-#   OPENING FILES
-# ----------------------------------------------------------------------
-
-
-@contextmanager
-def _open_decompressed(
-    filename: path.Path, mode: str
-) -> tx.Generator[tx.IO, None, None]:
-    """Open a file for reading, decompressed if its magic bytes say so.
-
-    The file is opened in binary mode and decompressed with
-    [`open_compressed`][brainhops._core.streams.open_compressed]. In a
-    text mode, such as `"r"` or `"rt"`, the stream is then decoded as
-    the built-in `open` would decode it.
-    """
-    with filename.open("rb") as raw:
-        stream = open_compressed(raw)
-        try:
-            if "b" in mode:
-                yield stream
-            else:
-                with TextIOWrapper(stream) as text:
-                    yield text
-        finally:
-            if stream is not raw:
-                stream.close()
-
-
-# ----------------------------------------------------------------------
 #   BASES
 # ----------------------------------------------------------------------
 
@@ -250,8 +220,6 @@ class _SnifferMixin(_FileNamesMixin):
 
         A path is sniffed with [`sniff_filename`][], an open file with
         [`sniff_fileobj`][], and binary content with [`sniff_bytes`][].
-        A file or content compressed with gzip, bzip2 or xz is
-        decompressed first, whatever the format.
 
         Parameters
         ----------
@@ -274,11 +242,10 @@ class _SnifferMixin(_FileNamesMixin):
             return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
-            with preserve_position(file):
-                return cls.sniff_fileobj(open_compressed(file), **kwargs)
+            return cls.sniff_fileobj(file, **kwargs)
 
         if isinstance(file, (bytes, bytearray)):
-            return cls.sniff_bytes(decompress(bytes(file)), **kwargs)
+            return cls.sniff_bytes(file, **kwargs)
 
         if error:
             if error is True:
@@ -300,8 +267,7 @@ class _SnifferMixin(_FileNamesMixin):
             return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
-            with preserve_position(file):
-                return cls.sniff_fileobj(open_compressed(file), **kwargs)
+            return cls.sniff_fileobj(file, **kwargs)
 
         if error:
             if error is True:
@@ -334,7 +300,7 @@ class _SnifferMixin(_FileNamesMixin):
                         error = SnifferExistsError
                     raise error(f"No such file: {filename}")
                 return Confidence.NO
-            with _open_decompressed(filename, cls._READ_MODE) as f:
+            with open_decompressed(filename, cls._READ_MODE) as f:
                 return cls.sniff_fileobj(f, **kwargs)
 
         if error:
@@ -370,7 +336,7 @@ class _SnifferMixin(_FileNamesMixin):
         kwargs["error"] = error
 
         if isinstance(content, (bytes, bytearray)):
-            return cls.sniff_bytes(decompress(bytes(content)), **kwargs)
+            return cls.sniff_bytes(content, **kwargs)
 
         if isinstance(content, str):
             return cls.sniff_text(content, **kwargs)
@@ -566,8 +532,10 @@ class _ReaderMixin:
         with [`from_bytes`][], and a [`SourceSpec`][] with [`from_spec`][].
         A `str` is always a path, whether or not the file exists, so text
         held in memory must be read with [`from_text`][] or
-        [`from_content`][]. A file or content compressed with gzip, bzip2
-        or xz is decompressed first, whatever the format.
+        [`from_content`][]. The default [`from_filename`][],
+        [`from_fileobj`][] and [`from_bytes`][] decompress a file or
+        content that gzip, bzip2 or xz compresses, so that a format that
+        does not override them reads compressed files too.
 
         Raises
         ------
@@ -589,7 +557,7 @@ class _ReaderMixin:
             return cls.from_file(other, **kwargs)
 
         if isinstance(other, (bytes, bytearray)):
-            return cls.from_bytes(decompress(bytes(other)), **kwargs)
+            return cls.from_bytes(other, **kwargs)
 
         raise ParserTypeError(f"Cannot parse file of type {type(other)}")
 
@@ -638,7 +606,7 @@ class _ReaderMixin:
 
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
-        with _open_decompressed(filename, cls._READ_MODE) as f:
+        with open_decompressed(filename, cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
 
     @classmethod
@@ -647,12 +615,14 @@ class _ReaderMixin:
         """Read an object from a file object open for reading.
 
         The default implementation reads the whole stream and passes it to
-        [`from_content`][], which decompresses compressed content. A parser
-        that needs only part of the stream, such as a header, should override
-        this method. [`from_bytes`][] then wraps binary content in a stream
-        and reads it with the override. An override receives the stream as
-        the caller gave it, compressed or not, because a lazy array that keeps
-        the stream must read it from the position where the file starts.
+        [`from_content`][], and [`from_bytes`][] decompresses binary content
+        that is compressed. A parser that needs only part of the stream,
+        such as a header, should override this method. [`from_bytes`][]
+        then wraps binary content in a stream and reads it with the
+        override. An override receives the stream as the caller gave it,
+        compressed or not, and decompresses it itself, because a lazy array
+        that keeps the stream must read it from the position where the
+        file starts.
         """
         with preserve_position(file):
             return cls.from_content(file.read(), **kwargs)
@@ -661,7 +631,7 @@ class _ReaderMixin:
     def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
         """Read an object from bytes, text, or lines."""
         if isinstance(content, (bytes, bytearray)):
-            return cls.from_bytes(decompress(bytes(content)), **kwargs)
+            return cls.from_bytes(content, **kwargs)
 
         if isinstance(content, str):
             return cls.from_text(content, **kwargs)

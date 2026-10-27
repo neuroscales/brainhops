@@ -5,12 +5,12 @@ import typing_extensions as tx
 
 from brainhops._core.path import (
     Path,
+    atomic_write_bytes,
     is_local,
+    is_local_file,
     is_same_file,
-    local_path,
     replace_directory,
     replace_file,
-    write_file,
 )
 
 
@@ -47,17 +47,18 @@ def test_local_and_remote_paths_are_told_apart(tmp_path) -> None:  # noqa: ANN00
     assert not is_local("memory://bucket/file.nii")
 
 
-def test_only_an_existing_local_file_has_a_local_path(tmp_path) -> None:  # noqa: ANN001
+def test_only_an_existing_local_file_is_a_local_file(tmp_path) -> None:  # noqa: ANN001
     file = tmp_path / "file.bin"
     file.write_bytes(b"1")
-    assert local_path(file) == Path(file)
-    assert local_path(str(file)) == Path(file)
-    assert local_path(bytes(str(file), "utf-8")) == Path(file)
-    assert local_path(tmp_path / "missing.bin") is None
-    assert local_path(tmp_path) is None
-    assert local_path("memory://bucket/file.bin") is None
+    assert is_local_file(file)
+    assert is_local_file(str(file))
+    assert is_local_file(Path(file))
+    assert not is_local_file(tmp_path / "missing.bin")
+    assert not is_local_file(tmp_path)
+    assert not is_local_file("memory://bucket/file.bin")
+    assert not is_local_file(None)
     with file.open("rb") as stream:
-        assert local_path(stream) is None
+        assert not is_local_file(stream)
 
 
 def test_is_same_file_resolves_links_and_refuses_streams(tmp_path) -> None:  # noqa: ANN001
@@ -74,6 +75,7 @@ def test_is_same_file_resolves_links_and_refuses_streams(tmp_path) -> None:  # n
     )
     with real.open("rb") as stream:
         assert not is_same_file(stream, real)
+    assert not is_same_file(None, real)
 
 
 # ----------------------------------------------------------------------
@@ -126,9 +128,9 @@ def test_an_error_names_the_target_rather_than_the_new_file(tmp_path) -> None:  
 def test_write_file_writes_local_and_remote_files(tmp_path) -> None:  # noqa: ANN001
     target = tmp_path / "file.bin"
     target.write_bytes(b"old")
-    write_file(target, b"new")
+    atomic_write_bytes(target, b"new")
     assert target.read_bytes() == b"new"
-    write_file(str(target), b"newer")
+    atomic_write_bytes(str(target), b"newer")
     assert target.read_bytes() == b"newer"
     assert _names(tmp_path) == ["file.bin"]
 

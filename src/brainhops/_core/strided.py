@@ -32,7 +32,6 @@ __all__ = ["StridedProxy"]
 
 # stdlib
 import math
-import os
 
 # dependencies
 import numpy as np
@@ -40,6 +39,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import (
     ArrayProxy,
@@ -410,18 +410,18 @@ class StridedProxy(StoredProxy):
         # last value are read and viewed with the strides of the box.
         first, shape, strides = self._layout(index)
         dtype = self._dtype
-        local = _local(self.source)
+        local = is_local_file(self.source)
         if (
-            local is not None
+            local
             and self.mmap
             and self.nbytes_stored > 0
-            and not _compressed(local, self.start)
+            and not _compressed(self.source, self.start)
         ):
             # A view of a map of the whole array, which reads the pages of
             # the box when its values are used.
             low, high = self._whole_span
             buffer = np.memmap(
-                local,
+                path.Path(self.source),
                 dtype=np.uint8,
                 mode="r",
                 offset=self.start + low,
@@ -446,8 +446,8 @@ class StridedProxy(StoredProxy):
         # `nbytes` bytes of the decoded stream, from `position`.
         if nbytes <= 0:
             return b""
-        if isinstance(self.source, (str, os.PathLike, path.PathLike)):
-            with _open(self.source) as f:
+        if isinstance(self.source, (str, path.PathLike)):
+            with path.Path(self.source).open("rb") as f:
                 f.seek(self.start)
                 content = _read_at(f, position, nbytes)
         else:
@@ -580,35 +580,13 @@ def _chunk_bytes() -> int:
     return int(parse_bytes(size)) if isinstance(size, str) else int(size)
 
 
-def _local(source: tx.Any) -> tx.Optional[str]:
-    # The local path of an existing regular file, or `None` for a stream
-    # or a remote file.
-    if not isinstance(source, (str, os.PathLike, path.PathLike)):
-        return None
-    try:
-        local = os.fspath(source)
-    except TypeError:
-        return None
-    if isinstance(local, bytes):
-        local = os.fsdecode(local)
-    return local if os.path.isfile(local) else None
-
-
-def _compressed(local: str, start: int = 0) -> bool:
+def _compressed(local: path.FilenameLike, start: int = 0) -> bool:
     # Whether the content of a local file from `start` is compressed,
     # judged by its magic bytes.
-    with open(local, "rb") as f:
+    with path.Path(local).open("rb") as f:
         f.seek(start)
         stream = open_compressed(f)
         return stream is not f
-
-
-def _open(source: tx.Any) -> tx.BinaryIO:
-    # A binary stream on a path, local or remote.
-    local = _local(source)
-    if local is not None:
-        return open(local, "rb")
-    return source.open("rb")
 
 
 def _read_at(file: tx.BinaryIO, offset: int, nbytes: int) -> bytes:
@@ -621,6 +599,6 @@ def _read_at(file: tx.BinaryIO, offset: int, nbytes: int) -> bytes:
 
 
 def _describe(source: tx.Any) -> str:
-    if isinstance(source, (str, os.PathLike, path.PathLike)):
+    if isinstance(source, (str, path.PathLike)):
         return repr(str(source))
     return repr(source)

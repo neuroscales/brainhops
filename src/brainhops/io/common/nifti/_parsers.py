@@ -11,7 +11,7 @@ import typing_extensions as tx
 from brainhops._core import path
 from brainhops._core.path import is_local, is_same_file
 from brainhops._core.proxy import ArrayProxy
-from brainhops._core.streams import preserve_position
+from brainhops._core.streams import is_seekable, preserve_position
 
 # io
 from brainhops.io.base.parsers import (
@@ -166,6 +166,9 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         if not is_local(filename):
+            # The lazy array keeps the stream that it reads, and a stream
+            # opened here would be closed when this method returns, so a
+            # remote file is read into memory.
             return cls.from_bytes(filename.read_bytes(), **kwargs)
         with filename.open("rb") as stream:
             record = NiftiRaw.from_fileobj(stream)
@@ -204,8 +207,8 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
             If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
         """
         mmap = _mmap_option(kwargs)
-        if not _seekable(file):
-            file = BytesIO(file.read())
+        if not is_seekable(file):
+            return cls.from_bytes(file.read(), **kwargs)
         start = file.tell()
         with preserve_position(file):
             record = NiftiRaw.from_fileobj(file)
@@ -388,11 +391,3 @@ def _mmap_option(kwargs: tx.Mapping[str, tx.Any]) -> bool:
     if mmap not in (True, False, "c", "r"):
         raise ValueError("mmap should be one of {True, False, 'c', 'r'}")
     return bool(mmap)
-
-
-def _seekable(fileobj: tx.IO) -> bool:
-    """Tell whether a stream can seek."""
-    try:
-        return bool(fileobj.seekable())
-    except Exception:  # noqa: BLE001
-        return False

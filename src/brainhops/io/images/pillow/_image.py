@@ -11,7 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import write_file
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -739,7 +739,7 @@ class PillowImage(
             kwargs["format"] = fmt
         reading = reads_from(self.rawdata, filename)
         image = self.consolidate(inplace=reading, **kwargs)
-        write_file(filename, image.rawdata.read_stored())
+        atomic_write_bytes(filename, image.rawdata.read_stored())
         if reading:
             # The image holds what the file holds, and its lazy array reads
             # the new file, since the old lazy array may read other bytes.
