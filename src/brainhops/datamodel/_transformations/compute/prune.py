@@ -1,4 +1,4 @@
-"""Reduction of the axes that a chain of transformations does not need.
+"""Pruning of the axes that a chain of transformations does not need.
 
 A chain often computes axes that a later element throws away, or adds an
 axis whose value is fixed. Restricting a transformation to some of its
@@ -6,13 +6,13 @@ axes, for example, wraps it between a projection that creates the
 removed inputs and a projection that drops the removed outputs, both of
 them instances of
 [`Projection`][brainhops.datamodel.transformations.Projection].
-The reduction of this module rewrites such a chain, without composing
+The pruning of this module rewrites such a chain, without composing
 anything, so that every element only handles the axes that are needed.
 [`simplify`][brainhops.datamodel._transformations.compute.simplify.simplify]
 runs it on every chain, and the factor pass uses it to find the two ends
 of its normal form.
 
-The reduction reads the dependency pattern of each element, which says
+The pruning reads the dependency pattern of each element, which says
 which of its outputs read which of its inputs. It is a boolean matrix
 with one row per output and one column per input. A projection is an
 element like any other: the axes that it creates are outputs that read
@@ -34,13 +34,13 @@ Two passes read the patterns.
    an element reads a created axis, whether its value is a number or
    NaN, the axis is created again just before that element, and a
    composing `compute` folds the value into the element by a matrix
-   product. The reduction itself computes nothing: it only copies the
+   product. The pruning itself computes nothing: it only copies the
    values of created axes.
 
 Between two elements, and at the two ends of the chain, a projection
 drops the axes that the next element does not read and creates the axes
 that it reads but that the previous element did not produce. The
-reduction drops an axis only when the patterns prove that nothing reads
+pruning drops an axis only when the patterns prove that nothing reads
 it, and it never raises.
 
 The knowledge about each type is registered on two dispatched functions.
@@ -53,7 +53,7 @@ registered with [`block_restrictor`][] and called as
 means that the outputs in `outputs` read only inputs in `inputs`. It
 returns None to decline. An element whose restrictor declines keeps all
 its axes, so that a drop happens after it and a creation stays before
-it. The built-in rules live in the `reducers` module.
+it. The built-in rules live in the `pruners` module.
 """
 
 __all__ = [
@@ -63,8 +63,8 @@ __all__ = [
     "restrict_block",
     "counts_of",
     "stage_counts",
-    "may_reduce",
-    "reduce_chain",
+    "may_prune",
+    "prune_chain",
 ]
 
 
@@ -157,7 +157,7 @@ def read_pattern(t: "Transformation", policy: "SimplifyTable") -> tx.Any:
         return _read_pattern(t, policy=policy)
     except Exception:
         # A type without a rule, or a rule that fails, counts as fully
-        # coupled, because the reduction never raises.
+        # coupled, because the pruning never raises.
         return UNREADABLE
 
 
@@ -199,7 +199,7 @@ def restrict_block(
         return _restrict_block(t, list(inputs), list(outputs), policy)
     except Exception:
         # A type without a rule, or a rule that fails on an unexpected
-        # block, declines, because the reduction never raises.
+        # block, declines, because the pruning never raises.
         return None
 
 
@@ -254,7 +254,7 @@ def counts_of(t: "Transformation") -> tx.Tuple[tx.Optional[int], ...]:
 
     This is [`axis_counts`][], except for a projection, whose counts are
     read from the systems that it stores. A projection derives the
-    system on its other side, which costs more than the reduction needs.
+    system on its other side, which costs more than the pruning needs.
     """
     from ..meta import Projection
 
@@ -390,12 +390,12 @@ def close_counts(
 # ======================================================================
 
 
-def may_reduce(
+def may_prune(
     leaves: tx.Sequence["Transformation"], policy: "SimplifyTable"
 ) -> bool:
-    """Tell cheaply whether the reduction may find axes to remove.
+    """Tell cheaply whether the pruning may find axes to remove.
 
-    The reduction may find something only when an element has different
+    The pruning may find something only when an element has different
     numbers of input and output axes or, under the numeric policy, when
     the linear part of a matrix transformation has a zero row or a zero
     column. The test reads no pattern, because
@@ -465,12 +465,12 @@ _REMOVED = object()
 
 
 class _Abort(Exception):
-    # Raised inside the reduction when the chain is not in a state that
-    # the passes can handle. The reduction then leaves the chain alone.
+    # Raised inside the pruning when the chain is not in a state that
+    # the passes can handle. The pruning then leaves the chain alone.
     pass
 
 
-def reduce_chain(
+def prune_chain(
     leaves: tx.Sequence["Transformation"],
     policy: "SimplifyTable",
     *,
@@ -493,7 +493,7 @@ def reduce_chain(
     ends : bool, default=False
         Whether the result may have a projection at each end that the
         chain does not have. Simplification never lengthens a chain, so
-        by default a reduction that would add elements, for example the
+        by default a pruning that would add elements, for example the
         projection that drops an input that the first element does not
         read, is not applied. The factor pass sets `ends` to obtain the
         two ends of its normal form, and the rest of the result is then
@@ -502,17 +502,17 @@ def reduce_chain(
     Returns
     -------
     list of Transformation or None
-        The reduced chain, or None when nothing is removed.
+        The pruned chain, or None when nothing is removed.
     """
     try:
-        return _reduce(list(leaves), policy, ends)
+        return _prune(list(leaves), policy, ends)
     except Exception:
         # A rule that fails on an unexpected block is a refusal, because
-        # the reduction never raises.
+        # the pruning never raises.
         return None
 
 
-def _reduce(
+def _prune(
     leaves: tx.List["Transformation"], policy: "SimplifyTable", ends: bool
 ) -> tx.Optional[tx.List["Transformation"]]:
     if not leaves:
@@ -531,7 +531,7 @@ def _reduce(
             return None
         elements.append(closed)
     try:
-        chain = _Reduction(leaves, elements, counts, policy).run()
+        chain = _Pruning(leaves, elements, counts, policy).run()
     except _Abort:
         return None
     if _same_chain(chain, leaves):
@@ -544,7 +544,7 @@ def _reduce(
 def _core(chain: tx.List["Transformation"]) -> tx.List["Transformation"]:
     # Return the chain without a leading projection that only drops axes
     # and a trailing projection that only creates axes, which are the
-    # only elements that the reduction may add for the factor pass.
+    # only elements that the pruning may add for the factor pass.
     from ..meta import Projection
 
     core = list(chain)
@@ -557,7 +557,7 @@ def _core(chain: tx.List["Transformation"]) -> tx.List["Transformation"]:
     return core
 
 
-class _Reduction:
+class _Pruning:
     # One run of the two passes over a chain. `elements` holds the
     # leaves with closed systems where a leaf did not state its numbers
     # of axes, and `counts[k]` is the number of axes before element k.
@@ -913,8 +913,8 @@ def _changes_system(t: "Transformation") -> bool:
 def _same_chain(
     chain: tx.List["Transformation"], leaves: tx.List["Transformation"]
 ) -> bool:
-    # Tell whether the reduction left the chain as it was, in which case
-    # the original objects are kept. A projection that the reduction
+    # Tell whether the pruning left the chain as it was, in which case
+    # the original objects are kept. A projection that the pruning
     # rebuilt is the same when it drops and creates the same axes at the
     # same values.
     from ..meta import Projection

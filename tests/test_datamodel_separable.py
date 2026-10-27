@@ -14,7 +14,7 @@ from brainhops._core import backends
 from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations.compute import reducers
+from brainhops.datamodel._transformations.compute import pruners
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
@@ -1358,14 +1358,14 @@ def test_reverting_subspace_recursion_to_all_ones_over_couples(
     sub = _subspace(inner, [0, 1, 2])
     fine = _components([sub], (5, 6, 7, 4))
     assert fine == [((0,), (0,)), ((1,), (1,)), ((2,), (2,)), ((3,), (3,))]
-    original = reducers.read_pattern
+    original = pruners.read_pattern
 
     def all_ones(element: object, policy: object) -> object:
         if element is inner:
             return np.ones((3, 3), dtype=bool)
         return original(element, policy)
 
-    monkeypatch.setattr(reducers, "read_pattern", all_ones)
+    monkeypatch.setattr(pruners, "read_pattern", all_ones)
     coarse = _components([sub], (5, 6, 7, 4))
     assert coarse == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
     assert fine != coarse

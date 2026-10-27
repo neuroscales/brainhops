@@ -1,15 +1,15 @@
-"""Tests of the reduction of the axes that a chain does not need."""
+"""Tests of the pruning of the axes that a chain does not need."""
 
 import numpy as np
 import pytest
 import typing_extensions as tx
 
 from brainhops._core.affines import matmul
-from brainhops.datamodel._transformations.compute import reduce
+from brainhops.datamodel._transformations.compute import prune
 from brainhops.datamodel._transformations.compute.factor import (
     factor_sequence,
 )
-from brainhops.datamodel._transformations.compute.reduce import (
+from brainhops.datamodel._transformations.compute.prune import (
     read_pattern,
     restrict_block,
 )
@@ -166,8 +166,8 @@ def test_the_restriction_table_comes_out_of_compute(
     # before the affine when the affine may read t, and compute folds
     # its value into the translation.
     chain = _restricted(affine, 4.0)
-    reduced = chain.simplify(policy)
-    *before, cut = _leaves(reduced)
+    pruned = chain.simplify(policy)
+    *before, cut = _leaves(pruned)
     assert isinstance(cut, Affine) and cut.matrix.shape[0] == 2
     reads_t = policy == "analytic" or affine is _A2
     assert len(before) == (1 if reads_t else 0)
@@ -178,9 +178,9 @@ def test_the_restriction_table_comes_out_of_compute(
 def test_a_free_axis_that_nothing_reads_cancels_under_numeric(
     affine: Affine,
 ) -> None:
-    reduced = _restricted(affine, np.nan).simplify("numeric")
-    assert isinstance(reduced, Affine)
-    assert np.allclose(reduced.matrix, [[2.0, 0, 1], [0, 3, 2]])
+    pruned = _restricted(affine, np.nan).simplify("numeric")
+    assert isinstance(pruned, Affine)
+    assert np.allclose(pruned.matrix, [[2.0, 0, 1], [0, 3, 2]])
 
 
 @pytest.mark.parametrize("affine", [_A1, _A3], ids=["A1", "A3"])
@@ -191,8 +191,8 @@ def test_a_free_axis_stays_under_analytic_and_compute_removes_it(
     # free axis may be read and its embedding stays. The projection that
     # drops t' is still absorbed into the affine.
     chain = _restricted(affine, np.nan)
-    reduced = chain.simplify("analytic")
-    first, second = reduced.transformations
+    pruned = chain.simplify("analytic")
+    first, second = pruned.transformations
     assert isinstance(first, Projection) and np.isnan(first.at[0])
     assert isinstance(second, Affine) and second.matrix.shape == (2, 4)
     expected = np.array([[2.0, 0, 1], [0, 3, 2]])
@@ -204,8 +204,8 @@ def test_a_free_axis_that_a_kept_output_reads_stays_in_place(
     policy: str,
 ) -> None:
     chain = _restricted(_A2, np.nan)
-    reduced = chain.simplify(policy)
-    assert isinstance(reduced.transformations[0], Projection)
+    pruned = chain.simplify(policy)
+    assert isinstance(pruned.transformations[0], Projection)
     with pytest.raises(RestrictionError, match="free"):
         chain.compute(simplify=policy)
 
@@ -224,8 +224,8 @@ def test_a_drop_moves_back_through_several_elements() -> None:
             Projection(dropped=[2]),
         ]
     )
-    reduced = chain.simplify()
-    drop, scaling, translation, permutation = reduced.transformations
+    pruned = chain.simplify()
+    drop, scaling, translation, permutation = pruned.transformations
     assert isinstance(drop, Projection) and list(drop.dropped) == [2]
     assert isinstance(scaling, Scaling)
     assert list(scaling.scale) == [2.0, 3.0]
@@ -233,7 +233,7 @@ def test_a_drop_moves_back_through_several_elements() -> None:
     assert list(translation.translation) == [1.0, 2.0]
     assert isinstance(permutation, Permutation)
     assert list(permutation.permutation) == [1, 0]
-    assert _same_map(chain, reduced, 3)
+    assert _same_map(chain, pruned, 3)
 
 
 def test_a_drop_is_absorbed_by_the_first_element_that_reads_it() -> None:
@@ -247,11 +247,11 @@ def test_a_drop_is_absorbed_by_the_first_element_that_reads_it() -> None:
             Projection(dropped=[1]),
         ]
     )
-    reduced = chain.simplify()
-    first, second = reduced.transformations
+    pruned = chain.simplify()
+    first, second = pruned.transformations
     assert isinstance(first, Affine) and first.matrix.shape == (2, 4)
     assert isinstance(second, Scaling) and list(second.scale) == [2.0, 4.0]
-    assert _same_map(chain, reduced, 3)
+    assert _same_map(chain, pruned, 3)
 
 
 # ----------------------------------------------------------------------
@@ -271,12 +271,12 @@ def test_a_created_axis_is_carried_through_a_permutation() -> None:
             scaling,
         ]
     )
-    reduced = chain.simplify()
-    create, kept = reduced.transformations
+    pruned = chain.simplify()
+    create, kept = pruned.transformations
     assert isinstance(create, Projection)
     assert list(create.created) == [0] and list(create.at) == [5.0]
     assert kept is scaling
-    assert _same_map(chain, reduced, 2)
+    assert _same_map(chain, pruned, 2)
     assert _same_map(chain, chain.compute(), 2)
 
 
@@ -292,8 +292,8 @@ def test_a_created_axis_passes_around_a_field_in_a_subspace() -> None:
         output=CoordinateSystem().expand(3),
     )
     chain = Sequence([Projection(created=[2], at=[4.0]), subspace])
-    reduced = chain.simplify()
-    inner, create = reduced.transformations
+    pruned = chain.simplify()
+    inner, create = pruned.transformations
     assert inner is field
     assert list(create.created) == [2] and list(create.at) == [4.0]
 
@@ -305,8 +305,8 @@ def test_a_free_axis_is_carried_to_the_end_and_refused() -> None:
             Permutation(permutation=np.array([2, 0, 1])),
         ]
     )
-    reduced = chain.simplify()
-    (create,) = _leaves(reduced)
+    pruned = chain.simplify()
+    (create,) = _leaves(pruned)
     assert list(create.created) == [0] and np.isnan(create.at[0])
     with pytest.raises(RestrictionError, match="free"):
         chain.compute()
@@ -326,9 +326,9 @@ def test_an_affine_with_a_zero_column_is_split_under_numeric() -> None:
     )
     chain = Sequence([Projection(created=[2], at=[np.nan]), affine])
     assert chain.simplify("analytic") is chain
-    reduced = chain.simplify("numeric")
-    assert isinstance(reduced, Affine)
-    assert np.allclose(reduced.matrix, affine.matrix[:, [0, 1, 3]])
+    pruned = chain.simplify("numeric")
+    assert isinstance(pruned, Affine)
+    assert np.allclose(pruned.matrix, affine.matrix[:, [0, 1, 3]])
 
 
 def test_an_affine_with_a_zero_row_is_split_under_numeric() -> None:
@@ -341,11 +341,11 @@ def test_an_affine_with_a_zero_row_is_split_under_numeric() -> None:
     )
     chain = Sequence([affine, Permutation(permutation=np.array([2, 0, 1]))])
     assert chain.simplify("analytic") is chain
-    reduced = chain.simplify("numeric")
-    cut, create = reduced.transformations
+    pruned = chain.simplify("numeric")
+    cut, create = pruned.transformations
     assert _dense(cut, 3).shape == (2, 4)
     assert list(create.created) == [0] and list(create.at) == [5.0]
-    assert _same_map(chain, reduced, 3)
+    assert _same_map(chain, pruned, 3)
 
 
 def test_simplify_does_not_lengthen_a_chain_to_split_an_affine() -> None:
@@ -417,29 +417,29 @@ def test_a_closed_block_of_an_inverse_stays_lazy() -> None:
     assert isinstance(piece, Inverse)
     assert np.allclose(piece.forward.matrix, [[1.0, 1], [0, 1]])
     chain = Sequence([shear.inverse(), Projection(dropped=[0])])
-    reduced = chain.simplify("numeric")
-    drop, inverse = reduced.transformations
+    pruned = chain.simplify("numeric")
+    drop, inverse = pruned.transformations
     assert list(drop.dropped) == [0]
     assert isinstance(inverse, Inverse)
-    assert _same_map(chain, reduced, 3)
+    assert _same_map(chain, pruned, 3)
 
 
 def test_an_inverse_still_cancels_with_its_forward() -> None:
     shear = _SHEAR
     chain = Sequence([shear, shear.inverse(), Projection(dropped=[1, 2])])
     for policy in ("analytic", "numeric"):
-        reduced = chain.simplify(policy)
-        assert isinstance(reduced, Projection)
-        assert list(reduced.dropped) == [1, 2]
+        pruned = chain.simplify(policy)
+        assert isinstance(pruned, Projection)
+        assert list(pruned.dropped) == [1, 2]
 
 
 def test_a_lazy_inverse_that_is_not_cut_is_kept() -> None:
     shear = _SHEAR
     inverse = shear.inverse()
     chain = Sequence([Projection(created=[2], at=[np.nan]), inverse])
-    reduced = chain.simplify("numeric")
-    assert reduced is chain
-    assert reduced.transformations[1] is inverse
+    pruned = chain.simplify("numeric")
+    assert pruned is chain
+    assert pruned.transformations[1] is inverse
 
 
 # ----------------------------------------------------------------------
@@ -476,9 +476,9 @@ def test_simplify_returns_the_same_object_when_nothing_is_dropped() -> None:
     assert chain.simplify("numeric") is chain
 
 
-def test_a_reduced_chain_is_not_reduced_again() -> None:
-    reduced = _restricted(_A2, np.nan).simplify("analytic")
-    assert reduced.simplify("analytic") is reduced
+def test_a_pruned_chain_is_not_pruned_again() -> None:
+    pruned = _restricted(_A2, np.nan).simplify("analytic")
+    assert pruned.simplify("analytic") is pruned
 
 
 # ----------------------------------------------------------------------
@@ -572,10 +572,10 @@ def test_an_identity_that_renames_the_axes_keeps_its_systems() -> None:
             Projection(dropped=[2]),
         ]
     )
-    reduced = chain.simplify()
-    names = [axis.name for axis in reduced.transformations[-1].output.axes]
+    pruned = chain.simplify()
+    names = [axis.name for axis in pruned.transformations[-1].output.axes]
     assert names == ["a", "b"]
-    assert _same_map(chain, reduced, 3)
+    assert _same_map(chain, pruned, 3)
 
 
 @pytest.mark.parametrize(
@@ -605,12 +605,12 @@ def test_simplify_never_raises_when_a_rule_fails(
     def broken(*args: object, **kwargs: object) -> object:
         raise RuntimeError("broken rule")
 
-    monkeypatch.setattr(reduce, "_restrict_block", broken)
+    monkeypatch.setattr(prune, "_restrict_block", broken)
     chain = _restricted(_A1, 4.0)
     assert chain.simplify() is chain
-    monkeypatch.setattr(reduce, "_read_pattern", broken)
+    monkeypatch.setattr(prune, "_read_pattern", broken)
     assert chain.simplify() is chain
-    monkeypatch.setattr(reduce, "_Reduction", broken)
+    monkeypatch.setattr(prune, "_Pruning", broken)
     assert chain.simplify() is chain
 
 
@@ -732,10 +732,10 @@ _POLICIES = [
 @pytest.mark.parametrize("seed", range(20))
 def test_random_chains_keep_their_map(seed: int, policy: object) -> None:
     chain, n_in = _random_chain(seed)
-    reduced = chain.simplify(policy)
-    assert len(_flat(reduced)) <= len(_flat(chain))
-    assert _same_map(chain, reduced, n_in, seed)
-    assert reduced.simplify(policy) is reduced
+    pruned = chain.simplify(policy)
+    assert len(_flat(pruned)) <= len(_flat(chain))
+    assert _same_map(chain, pruned, n_in, seed)
+    assert pruned.simplify(policy) is pruned
 
 
 @pytest.mark.parametrize("policy", ["analytic", "numeric"])
