@@ -15,7 +15,6 @@ from bagof.magic import KwOnly, NoRepr
 from brainhops._core import path
 from brainhops._core.path import is_local, replace_file
 from brainhops._core.path import local_path as _local_path
-from brainhops._core.path import open_path as _open_path
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
@@ -321,7 +320,7 @@ class _BrikProxy(StridedProxy):
             If the BRIK holds fewer bytes than the record says.
         """
         remaining = self.record.nbytes
-        with _open_path(self.brik) as f:
+        with path.Path(self.brik).open("rb") as f:
             stream = open_compressed(f)
             while remaining > 0:
                 chunk = stream.read(min(remaining, _CHUNK))
@@ -454,7 +453,7 @@ def _read_bricks(header: AfniRaw, brik: tx.Any, mmap: bool) -> np.ndarray:
     """
     nbytes = header.nbytes
     local = _local_path(brik)
-    with _open_path(brik) as f:
+    with path.Path(brik).open("rb") as f:
         stream = open_compressed(f)
         compressed = stream is not f
         if (
@@ -522,7 +521,7 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         replace_file(brik, write_named)
         return
     whole = whole_brik(data)
-    if whole is not None and _same_file(whole.brik, brik):
+    if whole is not None and _is_same_file(whole.brik, brik):
         copied = BytesIO()
         whole.copy_to(copied)
         data = copied.getvalue()
@@ -530,7 +529,7 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: tx.Any) -> None:
         write(f)
 
 
-def _same_file(first: tx.Any, second: tx.Any) -> bool:
+def _is_same_file(first: tx.Any, second: tx.Any) -> bool:
     """Tell whether two paths name the same existing local file."""
     first, second = _local_path(first), _local_path(second)
     if first is None or second is None:
@@ -611,4 +610,4 @@ def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
         Whether `raw` is a lazy array that reads `brik`.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(raw, _BrikProxy) and _same_file(raw.brik, brik)
+    return isinstance(raw, _BrikProxy) and _is_same_file(raw.brik, brik)

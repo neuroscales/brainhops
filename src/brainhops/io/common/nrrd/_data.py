@@ -15,8 +15,6 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.path import local_path as _local_path
-from brainhops._core.path import open_path as _open_path
-from brainhops._core.path import sibling as _sibling
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import preserve_position
@@ -152,7 +150,7 @@ def _decode(
         chunks = []
         for file, start in locations:
             if _is_path(file):
-                with _open_path(file) as f:
+                with path.Path(file).open("rb") as f:
                     chunks.append(_decode_part(f, start, header, part))
             else:
                 with preserve_position(file):
@@ -339,7 +337,7 @@ class _NrrdProxy(StoredProxy):
             If the header no longer describes the samples of the record.
         """
         if _is_path(self.source):
-            with _open_path(self.source) as f:
+            with path.Path(self.source).open("rb") as f:
                 current = NrrdRaw.from_fileobj(f)
         else:
             with preserve_position(self.source):
@@ -375,7 +373,7 @@ class _NrrdProxy(StoredProxy):
             )
         ((file, start),) = self._locations()
         if _is_path(file):
-            with _open_path(file) as f:
+            with path.Path(file).open("rb") as f:
                 f.seek(start)
                 return f.read()
         with preserve_position(file):
@@ -433,7 +431,7 @@ _PARTIAL_ENCODINGS = ("raw", "gzip", "bzip2")
 def _end_start(file: tx.Any, nbytes: int) -> int:
     """Return the position of the last `nbytes` bytes of a raw file."""
     if _is_path(file):
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             f.seek(0, os.SEEK_END)
             size = f.tell()
     else:
@@ -487,7 +485,7 @@ def read_nrrd(
     if _is_path(file):
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             record = NrrdRaw.from_fileobj(f)
         origin, start = file, 0
     else:
@@ -501,7 +499,7 @@ def read_nrrd(
         elif isinstance(origin, (str, bytes, os.PathLike)):
             if isinstance(origin, bytes):
                 origin = os.fsdecode(origin)
-            datafile = _sibling(origin, name)
+            datafile = path.Path(origin).parent / name
         else:
             raise ParserContentError(
                 f"The NRRD header names a separate data file ({name!r}), "

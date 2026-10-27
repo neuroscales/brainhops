@@ -14,7 +14,7 @@ from nibabel.volumeutils import array_from_file, array_to_file
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import same_file, write_file
+from brainhops._core.path import is_same_file, write_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
@@ -1104,7 +1104,7 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
 
 def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
     """Tell whether a lazy array of voxels reads a file by its name."""
-    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
+    return isinstance(raw, ArrayProxy) and is_same_file(raw.file_like, file)
 
 
 def _stored_voxels(data: ArrayProtocol, dtype: np.dtype) -> ArrayProtocol:

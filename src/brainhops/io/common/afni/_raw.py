@@ -14,7 +14,6 @@ from bagof.magic import NoRepr
 # brainhops
 from brainhops._core import path
 from brainhops._core.magic import replace
-from brainhops._core.path import open_path as _open_path
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
@@ -487,7 +486,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         head, _, _ = afni_dataset_files(filename)
         if not path.exists(head):
             raise ParserExistsError(f"No such file: {head}")
-        with _open_path(head) as f:
+        with path.Path(head).open("rb") as f:
             return cls.from_bytes(f.read())
 
     @classmethod
@@ -826,7 +825,7 @@ def _sniffed_raw_at(
     head, _, _ = afni_dataset_files(filename)
     if not path.exists(head):
         return None, ParserExistsError(f"No such file: {head}")
-    with _open_path(head) as f:
+    with path.Path(head).open("rb") as f:
         return _sniffed_raw(f)
 
 

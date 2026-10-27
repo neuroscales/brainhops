@@ -11,7 +11,6 @@ from bagof.magic import Magic, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import sibling
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
@@ -364,7 +363,7 @@ class BdvRaw(Raw, BinaryFileReader, BinaryFileWriter):
         if not self.hdf5_relative:
             return path.Path(self.hdf5)
         if self.base_path_relative:
-            base = sibling(xml_filename, self.base_path)
+            base = path.Path(xml_filename).parent / self.base_path
         else:
             base = path.Path(self.base_path)
         return path.Path(os.path.normpath(os.fspath(base / self.hdf5)))

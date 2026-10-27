@@ -18,7 +18,7 @@ from bagof.magic import NoRepr
 from PIL import Image, ImageFile
 
 from brainhops._core import path
-from brainhops._core.path import is_local, same_file
+from brainhops._core.path import is_local, is_same_file
 from brainhops._core.properties import alias
 
 # internals
@@ -77,7 +77,9 @@ class _Jpeg2000Source:
         bool
             Whether the source opens the file of that path by name.
         """
-        return self.filename is not None and same_file(self.filename, filename)
+        return self.filename is not None and is_same_file(
+            self.filename, filename
+        )
 
     def __repr__(self) -> str:
         if self.filename is not None:

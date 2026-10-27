@@ -1,4 +1,4 @@
-"""Finding, opening and replacing files, as the readers and writers do."""
+"""Checking and replacing files, as the readers and writers do."""
 
 import pytest
 import typing_extensions as tx
@@ -6,12 +6,10 @@ import typing_extensions as tx
 from brainhops._core.path import (
     Path,
     is_local,
+    is_same_file,
     local_path,
-    open_path,
     replace_directory,
     replace_file,
-    same_file,
-    sibling,
     write_file,
 )
 
@@ -62,38 +60,20 @@ def test_only_an_existing_local_file_has_a_local_path(tmp_path) -> None:  # noqa
         assert local_path(stream) is None
 
 
-def test_a_file_is_opened_by_name_or_through_its_path(tmp_path) -> None:  # noqa: ANN001
-    file = tmp_path / "file.bin"
-    file.write_bytes(b"content")
-    for name in (file, str(file), Path(file)):
-        with open_path(name) as stream:
-            assert stream.read() == b"content"
-
-
-def test_a_sibling_is_named_relative_to_its_header(tmp_path) -> None:  # noqa: ANN001
-    header = tmp_path / "image.nhdr"
-    assert sibling(header, "image.raw") == Path(tmp_path / "image.raw")
-    assert sibling(str(header), "data/image.raw") == Path(
-        tmp_path / "data" / "image.raw"
-    )
-    absolute = tmp_path / "elsewhere" / "image.raw"
-    assert sibling("memory://bucket/a.nhdr", str(absolute)) == Path(absolute)
-
-
-def test_same_file_resolves_links_and_refuses_streams(tmp_path) -> None:  # noqa: ANN001
+def test_is_same_file_resolves_links_and_refuses_streams(tmp_path) -> None:  # noqa: ANN001
     real = tmp_path / "real.bin"
     real.write_bytes(b"1")
     link = tmp_path / "link.bin"
     link.symlink_to(real)
-    assert same_file(real, link)
-    assert same_file(str(real), tmp_path / "." / "real.bin")
-    assert same_file(tmp_path / "new.bin", tmp_path / "new.bin")
-    assert not same_file(real, tmp_path / "other.bin")
-    assert not same_file(
+    assert is_same_file(real, link)
+    assert is_same_file(str(real), tmp_path / "." / "real.bin")
+    assert is_same_file(tmp_path / "new.bin", tmp_path / "new.bin")
+    assert not is_same_file(real, tmp_path / "other.bin")
+    assert not is_same_file(
         "memory://bucket/real.bin", "memory://bucket/real.bin"
     )
     with real.open("rb") as stream:
-        assert not same_file(stream, real)
+        assert not is_same_file(stream, real)
 
 
 # ----------------------------------------------------------------------

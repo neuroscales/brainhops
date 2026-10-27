@@ -16,7 +16,6 @@ import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.path import open_path
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -485,7 +484,7 @@ def _read_file(
         filename = path.Path(filename)
     if not path.exists(filename):
         raise ParserExistsError(f"No such file: {filename}")
-    with open_path(filename) as file:
+    with path.Path(filename).open("rb") as file:
         text = file.read().decode(encoding)
     if syntax is None:
         syntax = syntax_of(filename)

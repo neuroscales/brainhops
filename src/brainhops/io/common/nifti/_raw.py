@@ -15,7 +15,7 @@ from nibabel.arrayproxy import ArrayProxy
 # internals
 from brainhops._core import path
 from brainhops._core.magic import replace
-from brainhops._core.path import is_local, same_file
+from brainhops._core.path import is_local, is_same_file
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
@@ -296,7 +296,7 @@ def reads_file(raw: tx.Any, file: tx.Any) -> bool:
     An image written over that file must then read the new file, since
     nibabel opens the file by name each time it reads the voxels.
     """
-    return isinstance(raw, ArrayProxy) and same_file(raw.file_like, file)
+    return isinstance(raw, ArrayProxy) and is_same_file(raw.file_like, file)
 
 
 def write_nifti(image: _NibabelImage, file: path.FileLike) -> None:

@@ -9,7 +9,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
@@ -639,7 +639,7 @@ class TiffImage(
         options, encoding = split_options(kwargs)
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(stored, _TiffProxy) and same_file(
+        reading = isinstance(stored, _TiffProxy) and is_same_file(
             stored.source.filename, filename
         )
         if not encoding and self._copies_source(**options):

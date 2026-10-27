@@ -2,12 +2,10 @@
 
 The type hints describe the files, paths and contents that the readers
 and writers accept. The helpers work on any path that [`Path`][] wraps,
-local or remote. The formats that store a header and its data in
-separate files find one from the other with [`sibling`][]. A writer
-replaces a local file at once with [`write_file`][] or
-[`replace_file`][], so that a lazy array that reads the old file is
-never left reading a file that is half written. A writer replaces a
-local directory, such as the store of a pyramid, with
+local or remote. A writer replaces a local file at once with
+[`write_file`][] or [`replace_file`][], so that a lazy array that reads
+the old file is never left reading a file that is half written. A
+writer replaces a local directory, such as the store of a pyramid, with
 [`replace_directory`][] for the same reason.
 
 !!! warning "Internal module"
@@ -36,11 +34,9 @@ __all__ = [
     "LOCAL_PROTOCOLS",
     "is_local",
     "local_path",
-    "open_path",
     "replace_directory",
     "replace_file",
-    "same_file",
-    "sibling",
+    "is_same_file",
     "write_file",
 ]
 
@@ -143,32 +139,7 @@ def local_path(file: tx.Any) -> tx.Optional[Path]:
         return None
 
 
-def open_path(file: FilenameLike) -> tx.BinaryIO:
-    """Open a local or remote file for binary reading.
-
-    A string is a path, and any other path is opened with its own `open`
-    method, so a remote path is read through its file system.
-    """
-    if not hasattr(file, "open"):
-        file = Path(file)
-    return file.open("rb")
-
-
-def sibling(filename: FilenameLike, name: str) -> Path:
-    """Return the path of a file named relative to the directory of another.
-
-    A header that stores its data in another file names the data file
-    relative to the directory of the header. This function resolves such
-    a name against the directory of `filename`, which may be remote. An
-    absolute `name` names a local file of its own and is returned as it
-    is.
-    """
-    if LocalPath(name).is_absolute():
-        return Path(name)
-    return Path(filename).parent / name
-
-
-def same_file(first: tx.Any, second: tx.Any) -> bool:
+def is_same_file(first: tx.Any, second: tx.Any) -> bool:
     """Return whether two local paths name the same file.
 
     The paths are compared once their symbolic links are resolved, so the

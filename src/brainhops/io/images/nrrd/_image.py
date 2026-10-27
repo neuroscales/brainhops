@@ -12,9 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import same_file as _same_file
-from brainhops._core.path import sibling as _sibling
-from brainhops._core.path import write_file
+from brainhops._core.path import is_same_file, write_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -902,7 +900,7 @@ class NrrdImage(
         if attached:
             written = [filename]
         else:
-            written = [filename, _sibling(filename, data_file)]
+            written = [filename, path.Path(filename).parent / data_file]
         reading = _reads_from(self.rawdata, written)
         if reading:
             mmap = self.rawdata.root.mmap
@@ -1424,7 +1422,7 @@ def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     if not isinstance(raw, _NrrdProxy):
         return False
     return any(
-        _same_file(read, file)
+        is_same_file(read, file)
         for read in (raw.source, *raw.files)
         for file in written
     )

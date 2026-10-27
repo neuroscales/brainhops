@@ -13,12 +13,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.path import (
-    open_path,
-    same_file,
-    sibling,
-    write_file,
-)
+from brainhops._core.path import is_same_file, write_file
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
@@ -927,15 +922,17 @@ def _place_initial(
     initial = record.initial
     if initial is None or name is None or is_absolute(name):
         return
-    target = sibling(filename, name)
-    if same_file(target, written) or (os.fspath(target) == os.fspath(written)):
+    target = path.Path(filename).parent / name
+    if is_same_file(target, written) or (
+        os.fspath(target) == os.fspath(written)
+    ):
         raise WriterError(
             f"The elastix initial transform {name!r} would be written over "
             f"{written}, which names it."
         )
     content = initial.to_bytes()
     if path.exists(target):
-        with open_path(target) as file:
+        with path.Path(target).open("rb") as file:
             if file.read() != content:
                 raise WriterError(
                     f"The elastix initial transform {name!r} must be "

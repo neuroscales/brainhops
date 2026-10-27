@@ -19,9 +19,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import same_file as _same_file
-from brainhops._core.path import sibling as _sibling
-from brainhops._core.path import write_file
+from brainhops._core.path import is_same_file, write_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import WriterError
@@ -386,7 +384,7 @@ def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _MrtrixProxy):
         return False
-    return any(_same_file(raw.source, file) for file in written)
+    return any(is_same_file(raw.source, file) for file in written)
 
 
 def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
@@ -409,7 +407,7 @@ def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
         filename = path.Path(filename)
     if str(filename).lower().endswith(".mih"):
         base = filename.name[: -len(".mih")]
-        return [filename, _sibling(filename, base + ".dat")]
+        return [filename, path.Path(filename).parent / (base + ".dat")]
     return [filename]
 
 

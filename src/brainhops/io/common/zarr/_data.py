@@ -15,7 +15,7 @@ from brainhops._core import backends, path
 from brainhops._core.dependencies import da
 
 # internals
-from brainhops._core.path import is_local, same_file
+from brainhops._core.path import is_local, is_same_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, StoredProxy
 
@@ -132,7 +132,7 @@ def reads_store(raw: tx.Any, location: tx.Any) -> bool:
         return False
     source = raw.location
     if _local(source) and _local(location):
-        return same_file(_fspath(source), _fspath(location))
+        return is_same_file(_fspath(source), _fspath(location))
     if _local(source) or _local(location):
         return False
     return str(source).rstrip("/") == str(location).rstrip("/")

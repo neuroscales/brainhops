@@ -12,7 +12,6 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.path import local_path as _local_path
-from brainhops._core.path import open_path as _open_path
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import open_compressed, preserve_position
@@ -122,7 +121,7 @@ def _opened(source: tx.Any) -> tx.Union[path.Path, bytes]:
         with open(local, "rb") as f:
             if f.read(2) != b"\x1f\x8b":
                 return local
-    with _open_path(source) as f:
+    with path.Path(source).open("rb") as f:
         return bytes(open_compressed(f).read())
 
 
@@ -159,7 +158,7 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
     if isinstance(file, os.PathLike):
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             record = MincRaw.from_fileobj(f)
         return record, _MincProxy(file, record)
     with preserve_position(file):

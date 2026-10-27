@@ -12,8 +12,6 @@ from bagof.magic import KwOnly, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.path import local_path as _local_path
-from brainhops._core.path import open_path as _open_path
-from brainhops._core.path import sibling as _sibling
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
@@ -111,7 +109,7 @@ def encode_data(header: MrtrixRaw, data: tx.Any) -> bytes:
 def _is_gzip(file: tx.Any) -> bool:
     """Tell whether a path names a gzip file, judged by its content."""
     try:
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             return f.read(2) == b"\x1f\x8b"
     except Exception:
         return False
@@ -403,7 +401,7 @@ def read_mrtrix(
     if named:
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             record = MrtrixRaw.from_fileobj(f)
         origin, start = file, 0
     else:
@@ -421,7 +419,7 @@ def read_mrtrix(
             )
         if isinstance(origin, bytes):
             origin = os.fsdecode(origin)
-        source = _sibling(origin, name)
+        source = path.Path(origin).parent / name
         start = 0
         if not path.exists(source):
             raise ParserExistsError(

@@ -12,12 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import (
-    open_path,
-    same_file,
-    sibling,
-    write_file,
-)
+from brainhops._core.path import is_same_file, write_file
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -1114,7 +1109,7 @@ def _place_volumes(
     for number, block in enumerate(grids):
         if os.path.isabs(block.volume):
             continue
-        target = sibling(filename, block.volume)
+        target = path.Path(filename).parent / block.volume
         volume = None if volumes is None else volumes[number]
         if isinstance(volume, PendingVolume):
             write_volume(target, volume)
@@ -1128,12 +1123,12 @@ def _place_volumes(
                 f"the grid transform to an XfmGridTransform of its "
                 f"displacements to write it as a new volume."
             )
-        if same_file(source, target):
+        if is_same_file(source, target):
             continue
-        with open_path(source) as file:
+        with path.Path(source).open("rb") as file:
             content = file.read()
         if path.exists(target):
-            with open_path(target) as file:
+            with path.Path(target).open("rb") as file:
                 if file.read() == content:
                     continue
         write_file(target, content)
