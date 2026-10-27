@@ -4,7 +4,6 @@ encoding, and the lazy array that reads a BRIK."""
 # stdlib
 import bz2
 import gzip
-import os
 from io import BytesIO
 
 # dependencies
@@ -14,13 +13,13 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import local_path as _local_path
+from brainhops._core.path import open_path as _open_path
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
-from brainhops.io.base._utils_files import is_local, replace_file
-from brainhops.io.base._utils_files import local_path as _local_path
-from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,
@@ -439,7 +438,7 @@ def brik_proxy(record: AfniRaw, brik: tx.Any, mmap: bool) -> _BrikProxy:
         )
     local = _local_path(brik)
     if local is not None and not suffix:
-        size = os.path.getsize(local)
+        size = local.stat().st_size
         if size < record.nbytes:
             raise ParserContentError(
                 f"The AFNI BRIK {brik} holds {size} bytes, but the header "
@@ -536,7 +535,7 @@ def _same_file(first: tx.Any, second: tx.Any) -> bool:
     first, second = _local_path(first), _local_path(second)
     if first is None or second is None:
         return False
-    return os.path.samefile(first, second)
+    return first.samefile(second)
 
 
 def stores_brik(raw: tx.Any) -> bool:

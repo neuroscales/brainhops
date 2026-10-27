@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops._core.path import local_path as _local_path
 
 # this format
 from ._constants import _BRIK_SUFFIXES

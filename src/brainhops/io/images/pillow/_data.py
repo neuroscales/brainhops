@@ -11,11 +11,11 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 from brainhops._core import path
+from brainhops._core.path import open_path, same_file
 
 # internals
 from brainhops._core.proxy import ArrayProxy, StoredProxy
 from brainhops._core.streams import preserve_position
-from brainhops.io.base._utils_files import open_path, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
 # this format

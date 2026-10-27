@@ -19,11 +19,11 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import same_file as _same_file
+from brainhops._core.path import sibling as _sibling
+from brainhops._core.path import write_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.base._utils_files import same_file as _same_file
-from brainhops.io.base._utils_files import sibling as _sibling
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import WriterError
 
 # this format

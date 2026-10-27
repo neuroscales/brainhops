@@ -9,6 +9,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
@@ -20,7 +21,6 @@ from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

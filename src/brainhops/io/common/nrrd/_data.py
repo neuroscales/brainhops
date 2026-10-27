@@ -14,13 +14,13 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import local_path as _local_path
+from brainhops._core.path import open_path as _open_path
+from brainhops._core.path import sibling as _sibling
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.strided import StridedProxy
-from brainhops.io.base._utils_files import local_path as _local_path
-from brainhops.io.base._utils_files import open_path as _open_path
-from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,
@@ -543,7 +543,7 @@ def _check_size(
     if local is None:
         return
     needed = offset + max(record.byte_skip, 0) + record.nbytes
-    size = os.path.getsize(local)
+    size = local.stat().st_size
     if size < needed:
         raise ParserContentError(
             f"The NRRD data file {local} holds {size} bytes, but the header "

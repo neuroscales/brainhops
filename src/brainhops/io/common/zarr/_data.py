@@ -13,11 +13,11 @@ from bagof.magic import NoRepr
 # core
 from brainhops._core import backends, path
 from brainhops._core.dependencies import da
-from brainhops._core.properties import alias
-from brainhops._core.proxy import ArrayProxy, StoredProxy
 
 # internals
-from brainhops.io.base._utils_files import is_local, same_file
+from brainhops._core.path import is_local, same_file
+from brainhops._core.properties import alias
+from brainhops._core.proxy import ArrayProxy, StoredProxy
 
 # this format
 from ._raw import ZarrRaw, _document_keys, same_storage

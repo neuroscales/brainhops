@@ -27,6 +27,7 @@ from io import BytesIO
 import typing_extensions as tx
 
 from brainhops._core import path, peek
+from brainhops._core.path import is_local, replace_file
 from brainhops._core.streams import preserve_position
 from brainhops.errors import (
     AmbiguousFormatError,  # noqa: F401
@@ -44,7 +45,6 @@ from brainhops.errors import (
     WriterError,  # noqa: F401
     WriterNotImplementedError,
 )
-from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base.specs import SourceSpec
 
 # ----------------------------------------------------------------------

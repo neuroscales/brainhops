@@ -55,6 +55,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, Magic, NoRepr, fields, replace
 
 import brainhops.io as io
+from brainhops._core.path import replace_directory
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
@@ -78,7 +79,6 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import FileFormat, _takes_over, register_format
 from brainhops.io.base._save import _model
-from brainhops.io.base._utils_files import replace_directory
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

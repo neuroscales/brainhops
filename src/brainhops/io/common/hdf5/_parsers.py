@@ -11,10 +11,10 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core.streams import preserve_position
 
 # io
-from brainhops.io.base._utils_files import is_local, replace_file
+from brainhops._core.path import is_local, replace_file
+from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

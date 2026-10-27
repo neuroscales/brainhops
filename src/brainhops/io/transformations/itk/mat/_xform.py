@@ -9,12 +9,12 @@ import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 from brainhops._core import path
+from brainhops._core.path import write_file
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

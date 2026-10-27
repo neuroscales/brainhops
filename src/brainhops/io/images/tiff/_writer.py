@@ -20,9 +20,9 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local, replace_file
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.images.base import _utils_raster as raster
 

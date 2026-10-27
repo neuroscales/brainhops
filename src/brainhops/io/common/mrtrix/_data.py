@@ -11,13 +11,13 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import local_path as _local_path
+from brainhops._core.path import open_path as _open_path
+from brainhops._core.path import sibling as _sibling
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
-from brainhops.io.base._utils_files import local_path as _local_path
-from brainhops.io.base._utils_files import open_path as _open_path
-from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,
@@ -431,7 +431,7 @@ def read_mrtrix(
     if named or name != ".":
         local = _local_path(source)
         if local is not None and not _is_gzip(source):
-            size = os.path.getsize(local)
+            size = local.stat().st_size
             if size < offset + record.nbytes:
                 raise ParserContentError(
                     f"The MRtrix data file {source} holds {size} bytes, but "

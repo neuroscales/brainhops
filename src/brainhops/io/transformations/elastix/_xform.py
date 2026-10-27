@@ -13,6 +13,12 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
+from brainhops._core.path import (
+    open_path,
+    same_file,
+    sibling,
+    write_file,
+)
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
@@ -20,12 +26,6 @@ from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import (
-    open_path,
-    same_file,
-    sibling,
-    write_file,
-)
 from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     TextFileReader,

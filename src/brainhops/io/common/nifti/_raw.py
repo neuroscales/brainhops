@@ -15,9 +15,9 @@ from nibabel.arrayproxy import ArrayProxy
 # internals
 from brainhops._core import path
 from brainhops._core.magic import replace
+from brainhops._core.path import is_local, same_file
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

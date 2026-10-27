@@ -11,9 +11,9 @@ from bagof.magic import Magic, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import sibling
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import sibling
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

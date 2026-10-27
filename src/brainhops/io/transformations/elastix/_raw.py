@@ -16,8 +16,8 @@ import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, replace
 
 from brainhops._core import path
+from brainhops._core.path import open_path
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import open_path
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,

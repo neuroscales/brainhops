@@ -8,6 +8,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # core
 from brainhops._core.dependencies import da
+from brainhops._core.path import is_local, replace_directory
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -19,7 +20,6 @@ from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import UnrepresentableTransformationError
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
