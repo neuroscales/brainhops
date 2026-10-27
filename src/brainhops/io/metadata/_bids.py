@@ -119,7 +119,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
     ) -> "BidsSidecar":
         """Encode the fields that differ from the JSON object into a copy.
 
-        The contract is that of [`MetadataFormat.consolidate`][]: the
+        The contract is that of `consolidated`: the
         changes are written into a copy of the object, or into a new
         object, and the result is decoded from it afresh.
 

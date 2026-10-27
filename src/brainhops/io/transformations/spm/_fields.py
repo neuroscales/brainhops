@@ -228,7 +228,8 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         the base of the new header. The fields given by keyword take
         precedence over `like`, and a `dtype` that is given, or changed
         in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, by `on_error`.
+        loses or approximates is acted on once, under the error policy
+        of the call.
 
         Parameters
         ----------

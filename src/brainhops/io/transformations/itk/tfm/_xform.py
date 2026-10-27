@@ -276,7 +276,8 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an ITK
         text file holds no field of the vocabulary yet, so a field that
-        is set is reported as lost, once, by `on_error`.
+        is set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -364,9 +365,9 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         Parameters
         ----------
         **kwargs : Any
-            `on_error` and the fields of the metadata, which are given
-            to [`consolidate`][]. The writer of the record takes no
-            other option.
+            The fields of the metadata, which are given to
+            [`consolidate`][]. The writer of the record takes no other
+            option.
 
         Returns
         -------
@@ -390,8 +391,8 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         Parameters
         ----------
         **kwargs : Any
-            `on_error` and the fields of the metadata, which are given
-            to [`consolidate`][].
+            The fields of the metadata, which are given to
+            [`consolidate`][].
 
         Returns
         -------

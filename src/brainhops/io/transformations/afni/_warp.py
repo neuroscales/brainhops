@@ -430,7 +430,7 @@ class AfniBrikWarp(
 
         The warp is encoded as an
         [`AfniImage`][brainhops.io.images.afni.AfniImage] is, by
-        [`AfniImage.consolidate`][brainhops.io.images.afni.AfniImage.consolidate],
+        `AfniImage._consolidate`,
         over the record of its metadata. A warp whose chain was not
         assigned keeps its sub-bricks, assigned or read, under the geometry
         of its record. A warp whose chain was assigned is encoded from the
@@ -443,10 +443,10 @@ class AfniBrikWarp(
         and nothing pending, consolidated without options, is left as it
         is: the copy shares `rawdata` and the metadata.
 
-        The metadata is consolidated first, as by the AFNI image, with the
-        fields given by keyword. The record of an AFNI dataset holds no
-        field of the vocabulary yet, so a field that is set is reported as
-        lost, once, by `on_error`.
+        The metadata is consolidated first, as by the AFNI image, with
+        the fields given by keyword. The record of an AFNI dataset holds
+        no field of the vocabulary yet, so a field that is set is
+        reported as lost, once, under the error policy of the call.
 
         Parameters
         ----------

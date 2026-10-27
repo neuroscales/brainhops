@@ -470,7 +470,8 @@ class TiffImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a TIFF
         file holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_error`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -556,7 +557,7 @@ class TiffImage(
             `bigtiff`), and the options of `TiffWriter.write` of
             tifffile that encode the pixels: `compression`,
             `compressionargs`, `predictor`, `tile` and `rowsperstrip`.
-            `on_error` and the fields of the metadata are taken as by
+            The fields of the metadata are taken as by
             [`consolidate`][].
 
         Returns
@@ -617,8 +618,8 @@ class TiffImage(
         filename : str or PathLike
             The path of the file.
         **kwargs : Any
-            The options of [`to_bytes`][]. `on_error` and the fields of
-            the metadata are taken as by [`consolidate`][].
+            The options of [`to_bytes`][]. The fields of the metadata
+            are taken as by [`consolidate`][].
 
         Raises
         ------

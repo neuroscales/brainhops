@@ -15,7 +15,7 @@ package of the format. It holds the record of the file, `<X>Raw`, in its
 `raw` field, and it holds the vocabulary in the fields that it inherits
 from `Metadata`. A format that stores a vocabulary adds four things to
 its class: the constant `SUPPORTED_FIELDS`, a `from_raw` that decodes
-the record, a `consolidate` that encodes the fields that changed, and
+the record, a `_consolidate` that encodes the fields that changed, and
 two module-level functions that do the work, `_decode` and `_encode`.
 NIfTI (`io/common/nifti/_metadata.py` and `_vocabulary.py`), MGH
 (`io/common/mgh/_metadata.py`) and X5
@@ -36,7 +36,7 @@ it.
 |---|---|
 | `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `FIELDS`, `GROUPS`, `BIDS_KEYS`, `SCOPES` and `ALONG` |
 | `brainhops.datamodel.metadata._derive` | `Indexed` and `Resampled`, which an image operation builds for `derive` |
-| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `takes_error_policy`, `call_under_policy`, `OnLoss` and `LossPolicy` |
+| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `call_under_policy`, `OnLoss` and `LossPolicy` |
 | `brainhops.io.metadata._base` | `consolidated`, `lost_fields` and `unsupported_values`, and, for the format objects, `metadata_to_write`, `requested_fields`, `overruled_fields` and `metadata_options` |
 | `brainhops.io.metadata._json` | the codec of the JSON stores, which BIDS and X5 share |
 | `brainhops.io.metadata._storage` | `preferred_storage` and `stored_values` |
@@ -60,17 +60,9 @@ class MyMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     def from_raw(cls, raw, **kwargs):
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    @takes_error_policy
-    def consolidate(
-        self, *, inplace=False, on_error=UNSET, on_loss=UNSET, **fields
-    ):
+    def _consolidate(self, *, inplace=False, **fields):
         return consolidated(
-            self,
-            _encode,
-            MyRaw,
-            inplace=inplace,
-            on_error=on_error,
-            fields=fields,
+            self, _encode, MyRaw, inplace=inplace, fields=fields
         )
 ```
 
@@ -99,7 +91,7 @@ empty, holds `None`. Readers call `from_raw` once per read, and the
 format objects call it when they consolidate, so the decoding must be
 cheap and must not read the data of the file.
 
-`consolidate` hands the encoder of the format to `consolidated`, with a
+`_consolidate` hands the encoder of the format to `consolidated`, with a
 function that builds an empty record for metadata that has none, or
 `None` when the format never makes up a record, as X5 does, because its
 vocabulary lives in a transform. `consolidated` follows the contract of
@@ -109,36 +101,38 @@ the record when nothing differs, encodes the changes into a copy of the
 record otherwise, reports what is lost and approximated, and decodes the
 result afresh, so that a second consolidation changes nothing.
 
-Every public method that takes `on_error=` and `on_loss=` is decorated
-with `takes_error_policy`, which merges the two into the error policy
-of the call (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). The
-decorator passes the method only the action that the policy takes for
-a loss of metadata, which `consolidated` and `apply_loss_policy` take
-where the loss happens, and it acts itself on every other error that
-the method raises. The writers that the base classes of the formats
-define, and those that a format defines, are decorated by the base
-classes, so a format does not decorate them itself. The default
-`UNSET` comes from `brainhops.errors` and means that no policy was
-given, so that a loss follows the policy in effect.
+A format never declares the keywords `on_error=` and `on_loss=`, which
+say what happens to what a file cannot hold (see
+[`ErrorPolicy`][brainhops.errors.ErrorPolicy]). The public
+`consolidate`, which the format inherits, takes them, applies the
+policy with `call_under_policy`, and calls `_consolidate` under it. The
+base class of the writers does the same around each `save` and `to_*`
+method that a format defines. While the body of `_consolidate` or of a
+writer runs, the action that the policy takes for a loss of metadata
+is the policy in effect, and `consolidated` and `apply_loss_policy`
+act on a loss where it happens by reading that policy. The body
+therefore passes no policy to the methods that it calls, and a method
+called without a policy follows the policy of the call that the user
+made. A value to return in place of the result, such as
+`on_error=None`, is applied once, by that outermost call.
 
 The writers of the metadata, `to_bytes`, `to_filename` or `to_h5`,
 consolidate first and write the record of the copy, and they take the
-same overrides and `on_error=` as `consolidate`. The metadata itself is
-never changed by a write.
+same overrides as `consolidate`. The metadata itself is never changed
+by a write.
 
 An image or a transformation of the format consolidates its metadata
 first, as step 2 of the precedence on write, whether or not the format
-stores a vocabulary. Its `consolidate` takes `on_error=` and the fields
-of the metadata by keyword. It asks `requested_fields` which fields the
+stores a vocabulary. Its `_consolidate` takes the fields of the
+metadata by keyword. It asks `requested_fields` which fields the
 write is asked to store, consolidates the metadata with
 `metadata_to_write` and the report of the write, encodes its geometry
 and its data over the record of the result, and acts on the report once
 with `apply_loss_policy`. A format whose model owns a slot, such as the
 time step of a NIfTI image, reports a field that it encoded over with
 `overruled_fields`. A writer that writes the record of a consolidated
-copy splits its options with `metadata_options`, so that `on_error` and
-the fields go to `consolidate` and the other options to the writer of
-the record.
+copy splits its options with `metadata_options`, so that the fields go
+to `consolidate` and the other options to the writer of the record.
 
 ## The codec
 

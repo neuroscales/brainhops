@@ -522,7 +522,8 @@ class XfmAffine(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a MINC
         transform file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_error`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -593,8 +594,8 @@ class XfmAffine(
         file : path or file object
             The path or the open file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -612,8 +613,8 @@ class XfmAffine(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -631,8 +632,8 @@ class XfmAffine(
         file : IO
             The open file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -648,9 +649,8 @@ class XfmAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_error` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -671,9 +671,8 @@ class XfmAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_error` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -694,8 +693,8 @@ class XfmAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Returns
         -------
@@ -729,7 +728,7 @@ def _system_name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
 def _encode(xform: XfmAffine, old: tx.Optional[XfmRaw]) -> XfmRaw:
     """Encode the matrix of an affine as a new record.
 
-    See [`XfmAffine.consolidate`][].
+    See `XfmAffine._consolidate`.
 
     Raises
     ------
@@ -763,9 +762,9 @@ def _written(
 ) -> tx.Tuple[XfmRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from an affine holds.
 
-    The record is that of the copy consolidated with `on_error` and the
-    fields of the metadata among `kwargs`, and the other options, for
-    the writer of the record, are returned with it.
+    The record is that of the copy consolidated with the fields of the
+    metadata among `kwargs`, and the other options, for the writer of
+    the record, are returned with it.
 
     Raises
     ------

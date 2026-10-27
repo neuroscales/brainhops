@@ -424,13 +424,13 @@ class X5Transform(
         reset.
 
         The fields of the metadata that changed, and those given by
-        keyword, are encoded over the record that the chain gives, since an
-        X5 file stores the vocabulary in the JSON metadata of the transform
-        that holds it (see [`X5Metadata`][]). A transform that is reused
-        keeps its own JSON metadata otherwise, and a transformation built
-        from one transformation and given metadata writes the metadata into
-        its single transform. What the write loses is acted on once, by
-        `on_error`.
+        keyword, are encoded over the record that the chain gives, since
+        an X5 file stores the vocabulary in the JSON metadata of the
+        transform that holds it (see [`X5Metadata`][]). A transform that
+        is reused keeps its own JSON metadata otherwise, and a
+        transformation built from one transformation and given metadata
+        writes the metadata into its single transform. What the write
+        loses is acted on once, under the error policy of the call.
 
         Parameters
         ----------
@@ -517,7 +517,7 @@ class X5Transform(
         h5file : h5py.File
             The empty file, open for writing.
         **kwargs : Any
-            `on_error` and the fields of the metadata to override, as in
+            The fields of the metadata to override, as in
             [`consolidate`][].
 
         Raises
@@ -540,7 +540,7 @@ class X5Transform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            `on_error` and the fields of the metadata to override, as in
+            The fields of the metadata to override, as in
             [`consolidate`][].
 
         Raises
@@ -560,7 +560,7 @@ class X5Transform(
         Parameters
         ----------
         **kwargs : Any
-            `on_error` and the fields of the metadata to override, as in
+            The fields of the metadata to override, as in
             [`consolidate`][].
 
         Returns

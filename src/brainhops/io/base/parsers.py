@@ -832,8 +832,10 @@ _WRITER_ENTRY_POINTS = (
 def _decorate_writers(cls: type) -> None:
     """Decorate the entry points of a writer that `cls` itself defines.
 
-    An entry point that is already decorated, by hand or by a base class,
-    is left as it is.
+    Each entry point is wrapped so that it applies the error policy that
+    it is given (see [`_WriterMixin`][]). An entry point that is already
+    wrapped, such as one that a class assigns from a base class, is left
+    as it is.
     """
     for name in _WRITER_ENTRY_POINTS:
         method = cls.__dict__.get(name)

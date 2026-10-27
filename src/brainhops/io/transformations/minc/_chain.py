@@ -680,7 +680,8 @@ class XfmTransform(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a MINC
         transform file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_error`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -794,8 +795,8 @@ class XfmTransform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -823,8 +824,8 @@ class XfmTransform(
         file : IO
             The open file, in text or binary mode.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -840,9 +841,8 @@ class XfmTransform(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_error` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -863,9 +863,8 @@ class XfmTransform(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_error` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -886,8 +885,8 @@ class XfmTransform(
         Parameters
         ----------
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Returns
         -------
@@ -944,7 +943,7 @@ def _encode(
 ) -> tx.Tuple[XfmRaw, _Volumes]:
     """Encode a chain of transformations as a new record and its volumes.
 
-    The rules are described in [`XfmTransform.consolidate`][]. An element
+    The rules are described in `XfmTransform._consolidate`. An element
     that was decoded from transform `i` of `old`, which `decoded` lists,
     is recognized by its identity.
 

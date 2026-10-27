@@ -92,8 +92,7 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
     ) -> "X5Metadata":
         """Encode the fields that differ from the record into a copy of it.
 
-        The contract is that of
-        [`MetadataFormat.consolidate`][brainhops.io.metadata.MetadataFormat.consolidate]:
+        The contract is that of `consolidated`:
         the changes are written into the JSON metadata of the transform
         of a copy of the record, and the result is decoded from it
         afresh. A record without such a transform stores nothing, and a

@@ -458,13 +458,14 @@ class MghImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the options that name its fields, and its record is
         the base of the new record. The MRI parameters given by keyword,
-        such as `flip_angle=` in degrees, take precedence over `like`. The
-        image owns its geometry, so a repetition time that disagrees with
-        the TR stated by the transformations is reported as approximated.
-        The voxels are stored with the type given as `dtype=`, or else
-        with the nearest type to `metadata.dtype` that MGH stores, or else
-        with the nearest type to that of the data. What the write loses
-        or approximates is acted on once, by `on_error`.
+        such as `flip_angle=` in degrees, take precedence over `like`.
+        The image owns its geometry, so a repetition time that disagrees
+        with the TR stated by the transformations is reported as
+        approximated. The voxels are stored with the type given as
+        `dtype=`, or else with the nearest type to `metadata.dtype` that
+        MGH stores, or else with the nearest type to that of the data.
+        What the write loses or approximates is acted on once, under the
+        error policy of the call.
 
         Parameters
         ----------
@@ -578,8 +579,8 @@ class MghImage(
             Template whose MRI parameters override those of this image. A
             TR stated by the transformation overrides both.
         **overrides : Any
-            `on_error`, and the fields of the metadata and of the
-            header, as for [`consolidate`][].
+            The fields of the metadata and of the header, as for
+            [`consolidate`][].
 
         Returns
         -------
@@ -613,8 +614,7 @@ class MghImage(
         compress : bool, default=False
             Whether to gzip the result into MGZ.
         **kwargs : Any
-            The template `like`, `on_error` and the options of
-            [`consolidate`][].
+            The template `like` and the options of [`consolidate`][].
 
         Returns
         -------
@@ -817,7 +817,7 @@ def _encoded(
 ) -> tx.Tuple[MghRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`MghImage.consolidate`][] describes, over a
+    The record is encoded as `MghImage._consolidate` describes, over a
     copy of the record of the consolidated `metadata`, and the voxels are
     the assigned data, or else `rawdata`, arranged in the axis order
     of the file when the transformations declare another order. The held

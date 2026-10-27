@@ -400,9 +400,10 @@ class M3zMorph(
         record.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an M3Z file
-        holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_error`.
+        write), with the fields given by keyword. The record of an M3Z
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -569,7 +570,7 @@ def _encode(
 ) -> M3zRaw:
     """Encode a chain of transformations as a new record.
 
-    The rules are described in [`M3zMorph.consolidate`][]. The current
+    The rules are described in `M3zMorph._consolidate`. The current
     record, `old`, is never changed: the new record replaces its fields,
     and it shares the arrays that it keeps.
     """

@@ -160,7 +160,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         write), with the options that name its fields, and its record is
         the base of the new header. The fields given by keyword take
         precedence over `like`. What the write loses or approximates is
-        acted on once, by `on_error`.
+        acted on once, under the error policy of the call.
 
         Parameters
         ----------
@@ -431,7 +431,7 @@ def _affine_encoded(
     """Encode an affine as the header of a single-voxel placeholder volume.
 
     The header is built over a copy of `base`, the record of the
-    consolidated metadata, as [`_NiftiAffine.consolidate`][] describes.
+    consolidated metadata, as `_NiftiAffine._consolidate` describes.
     """
     matrix = xform._voxel_to_ras_matrix()
     scode, qcode = _xform_codes(_header(xform))

@@ -4,7 +4,7 @@ Status: implemented (#590). This memo records how a caller says what
 should happen when a conversion fails or loses information. It replaces
 three conventions with one policy, given as `on_error=`, whose half
 that concerns losses is also given as `on_loss=`. Decisions are tagged
-`E1` to `E7`.
+`E1` to `E8`.
 
 ## 1. The problem
 
@@ -133,42 +133,85 @@ are valid actions. The strings `"raise"`, `"warn"` and `"ignore"` stay
 reserved for the actions (E4). `errors.raise_or_warn()` and its type
 `errors.OnError` are removed, since nothing calls them.
 
-## 6. Implementation
+## 6. Where the policy is applied
 
-The policy lives in `brainhops.errors`. `ErrorPolicy` and `ErrorAction`
-are its types, `error_policy()` reads `on_error=` and `on_loss=` into
-one mapping (E3, E5), `policy_action()` walks the method resolution order,
-and `apply_error_policy()` acts on one error (E1, E2). Both functions
-take the scope of the call as `scope=`, whose default is
-`(ConversionError,)`. The decorator `takes_error_policy` takes a
-`scope=` argument with the same default, and `Transformation.to()`
-passes `(ConversionError,)` to `call_under_policy()`. The default of
+E8. A policy is applied in one place, by `call_under_policy()`, and
+only by the call that the user made. That function merges `on_error=`
+and `on_loss=` into one policy, makes the action that the policy takes
+for a loss of metadata the policy in effect (the context variable that
+`metadata_loss_policy()` sets) while the call runs, and hands an error
+that escapes the call to the policy. An action that the body of the
+call can take where a loss happens, which is `"ignore"`, `"warn"`,
+`"raise"` or a report, is set as it is. Any other action, such as a
+value to return or an exception to raise, is set as `"raise"`, so that
+the body raises a `MetadataLossError`, and the policy then returns its
+value or raises its exception. The body acts on a loss with
+`apply_loss_policy()`, which reads the policy in effect, and it passes
+no policy to the methods that it calls. A method called without a
+policy runs as it is, under the policy of its caller, so that only the
+outermost call returns a value in place of a result, and no policy is
+applied twice.
+
+The reason is maintenance. If the body received the policy as
+`on_error=`, every method of every format would have to declare both
+keywords, document them and forward them to the methods that it calls,
+and a method that did not forward them would escape the policy of its
+caller.
+
+The policy is applied in three ways.
+
+- The explicit entry points declare `on_error=` and `on_loss=` and call
+  `call_under_policy()` in their body: `Transformation.to()`, the
+  `to_*` methods of a transformation through `_to_class()`,
+  `Metadata.to()`, `Metadata.from_instance()`,
+  `MetadataFormat.from_instance()`, `io.save()` and `to_bids()`.
+- The common base of the formats, `_FileBasedModelMixin`, defines the
+  one public `consolidate(*, inplace=False, on_error=UNSET,
+  on_loss=UNSET, **fields)`, which calls the protected hook
+  `_consolidate(inplace=inplace, **fields)` under the policy. A format
+  overrides only the hook, which takes no policy.
+- The base class of the writers, `_WriterMixin`, wraps each entry point
+  (`save`, `to_file`, `to_filename`, `to_fileobj`, `to_bytes`,
+  `to_text`, `to_lines` and `to_h5`) that a class defines, when the
+  class is created. The wrapper removes the two keywords and calls the
+  method with `call_under_policy()`. The body of a generator, such as a
+  `to_lines` written with `yield`, runs only while its items are read,
+  so its wrapper is a generator that sets the policy in effect while
+  the body computes each item, and not while the caller handles it. An
+  error on which the policy does not raise ends the iteration, because
+  a generator has no result that a value could replace.
+
+A test checks that no method of a format under `brainhops.io` declares
+`on_error=` or `on_loss=`, except the `consolidate` of the base class
+and `MetadataFormat.from_instance()`. One consequence of E8 is that a
+conversion that the body of a format makes without a policy, such as
+the conversion of a field, follows the policy of the caller rather than
+the default `"warn"`.
+
+## 7. Implementation
+
+The types of the policy, `ErrorPolicy` and `ErrorAction`, the sentinel
+`UNSET` and the classes of errors and warnings live in
+`brainhops.errors`, which lists them in its `__all__`. The functions that read a policy are internal, in
+`brainhops._core.errors`: `error_policy()` reads `on_error=` and
+`on_loss=` into one mapping (E3, E5), `policy_action()` walks the
+method resolution order, and `apply_error_policy()` acts on one error
+(E1, E2). `error_policy()` and `apply_error_policy()` take the scope of
+the call as `scope=`, whose default is `(ConversionError,)`, and
+`call_under_policy()` takes the same argument. The default of
 `on_error=` is the sentinel `UNSET` rather than `None`, because `None`
 is a policy that returns `None` (E1). Without a policy, every error is
 raised and a loss of metadata follows the policy in effect, which
 `metadata_loss_policy()` sets, so that a call that names no policy
 behaves as it did before. `ConversionWarning` is the warning of the
 `"warn"` action, and `MetadataLossWarning` is a subclass of it.
+`call_under_policy()`, `apply_loss_policy()` and the decorator of the
+writers, `takes_error_policy()`, are internal names of
+`brainhops.datamodel.metadata._report`.
 
 `ConversionReport` gains an `errors` list and a `record()` method. A
 `MetadataLossError` adds its fields to `lost` and `approximated`, as
 before, and any other error is appended to `errors` (E6).
-
-The metadata methods take `on_error=` and `on_loss=` (E5). The
-decorator `takes_error_policy` applies the policy around such a method,
-and the base class of the writers decorates the `save` and `to_*`
-entry points of every writer, so that the body of a writer never
-receives a value in place of consolidated metadata. The body of the method acts on
-a loss where the loss happens, because a warning or a report lets the
-method go on with its result, so the decorator passes it only the
-action for a `MetadataLossError`, and an action that the body cannot
-take there, such as a value to return, is passed as `"raise"` and then
-applied by the decorator. Because the body receives a mapping that only
-concerns losses, it can pass its `on_error` on to another method
-without widening the policy. `Transformation.to()` runs its conversion
-with `call_under_policy()`, which makes the action for a loss the policy
-in effect while the conversion runs, so that the conversions of metadata
-that it triggers follow the policy of the call.
 
 The field converter of the data model, `DataModelConverter`, lets a
 `LossyConversionError` through before it handles a `TypeError` (E6).

@@ -265,8 +265,7 @@ class ElastixTransform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            `on_error` and the fields of the metadata, given to
-            [`consolidate`][].
+            The fields of the metadata, given to [`consolidate`][].
 
         Raises
         ------
@@ -294,8 +293,7 @@ class ElastixTransform(
         file : IO
             The open text file.
         **kwargs : Any
-            `on_error` and the fields of the metadata, given to
-            [`consolidate`][].
+            The fields of the metadata, given to [`consolidate`][].
 
         Raises
         ------
@@ -313,8 +311,7 @@ class ElastixTransform(
         Parameters
         ----------
         **kwargs : Any
-            `on_error` and the fields of the metadata, given to
-            [`consolidate`][].
+            The fields of the metadata, given to [`consolidate`][].
 
         Returns
         -------
@@ -456,7 +453,7 @@ class ElastixParameterTransform(ElastixTransform):
     ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
-        The rules are those of [`ElastixTomlTransform.consolidate`][],
+        The rules are those of `ElastixTomlTransform._consolidate`,
         with the classic text syntax.
 
         Parameters
@@ -596,9 +593,10 @@ class ElastixTomlTransform(ElastixTransform):
         initial transform of the old record, is reset.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an elastix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        write), with the fields given by keyword. The record of an
+        elastix file holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -768,7 +766,7 @@ def _consolidated(
 ) -> ElastixTransform:
     """Encode the pending state of a transformation into a new record.
 
-    The rules are described in [`ElastixTomlTransform.consolidate`][].
+    The rules are described in `ElastixTomlTransform._consolidate`.
 
     Raises
     ------

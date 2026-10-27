@@ -402,9 +402,10 @@ class LtaTransformation(
         matrix and the systems are then decoded from it.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an LTA file
-        holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_error`.
+        write), with the fields given by keyword. The record of an LTA
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -477,8 +478,8 @@ class LtaTransformation(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            `on_error` and the fields of the metadata, as for
-            [`consolidate`][], and options of the writer of the record.
+            The fields of the metadata, as for [`consolidate`][], and
+            options of the writer of the record.
 
         Raises
         ------
@@ -497,8 +498,8 @@ class LtaTransformation(
         Parameters
         ----------
         **kwargs : Any
-            `on_error` and the fields of the metadata, as for
-            [`consolidate`][], and options of the writer of the record.
+            The fields of the metadata, as for [`consolidate`][], and
+            options of the writer of the record.
 
         Yields
         ------
@@ -522,8 +523,8 @@ class LtaTransformation(
         Parameters
         ----------
         **kwargs : Any
-            `on_error` and the fields of the metadata, as for
-            [`consolidate`][], and options of the writer of the record.
+            The fields of the metadata, as for [`consolidate`][], and
+            options of the writer of the record.
 
         Returns
         -------
@@ -682,7 +683,7 @@ def _as_block(
 def _build_raw(xform: LtaTransformation) -> LtaRaw:
     """Encode the matrix and coordinate systems of `xform` as a record.
 
-    See [`LtaTransformation.consolidate`][].
+    See `LtaTransformation._consolidate`.
     """
     src_system, dst_system = xform.input, xform.output
     old = record_of(xform)

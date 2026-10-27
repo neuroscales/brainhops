@@ -217,7 +217,8 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an
         Imaris file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_error`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------

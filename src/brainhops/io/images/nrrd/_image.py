@@ -589,8 +589,9 @@ class NrrdImage(
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a NRRD
-        image holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        image holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -983,7 +984,7 @@ def _encoded(
 ) -> tx.Tuple[NrrdRaw, ArrayProtocol]:
     """Return the record and the samples that consolidating an image stores.
 
-    The record is encoded as [`NrrdImage.consolidate`][] describes, and the
+    The record is encoded as `NrrdImage._consolidate` describes, and the
     held record is returned when the encoding changes nothing. The samples
     are the assigned data, or else `rawdata`, in the order of the image,
     converted to the stored type as the writer converts them, with

@@ -620,7 +620,8 @@ class AfniImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an AFNI
         dataset holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_error`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -840,7 +841,7 @@ def _encoded(
 ) -> tx.Tuple[AfniRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`AfniImage.consolidate`][] describes, and
+    The record is encoded as `AfniImage._consolidate` describes, and
     the held record is returned when the encoding changes nothing. The
     voxels are `rawdata` when it is a lazy array that is copied as the
     BRIK stores it, and otherwise the assigned data or the data, as an

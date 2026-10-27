@@ -340,7 +340,7 @@ class Jpeg2000MultiScaleImage(
         """Encode the full-resolution level and the placements of the pyramid.
 
         The pyramid is consolidated through its full-resolution level, as
-        [`Jpeg2000Image.consolidate`][] describes, with the record of the
+        `Jpeg2000Image._consolidate` describes, with the record of the
         pyramid as the base of the new file. The transformation of that
         level is composed with the preferred placement of the pyramid, if
         it has one. A pyramid of another number of levels than its file is
@@ -358,9 +358,9 @@ class Jpeg2000MultiScaleImage(
         levels are decoded from the new record.
 
         The metadata of the pyramid, which its levels share, is
-        consolidated by that of the full-resolution level, with the fields
-        given by keyword, and a field that the record cannot hold is
-        reported as lost, once, by `on_error`.
+        consolidated by that of the full-resolution level, with the
+        fields given by keyword, and a field that the record cannot hold
+        is reported as lost, once, under the error policy of the call.
 
         Parameters
         ----------
@@ -368,7 +368,7 @@ class Jpeg2000MultiScaleImage(
             Whether to change this pyramid rather than a copy.
         container : {"jp2", "j2k"}, optional
             The container of the file, as for
-            [`Jpeg2000Image.consolidate`][].
+            `Jpeg2000Image._consolidate`.
         num_resolutions : int, optional
             The number of resolution levels to encode, by default the
             number of levels of the pyramid.
@@ -376,7 +376,7 @@ class Jpeg2000MultiScaleImage(
             The comment of the file, in place of those of the record.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, and fields of the
-            metadata, as for [`Jpeg2000Image.consolidate`][].
+            metadata, as for `Jpeg2000Image._consolidate`.
 
         Returns
         -------

@@ -391,7 +391,8 @@ class RegisterDatTransformation(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a
         register.dat file holds no field of the vocabulary yet, so a
-        field that is set is reported as lost, once, by `on_error`.
+        field that is set is reported as lost, once, under the error
+        policy of the call.
 
         Parameters
         ----------
@@ -465,8 +466,8 @@ class RegisterDatTransformation(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            Options of the writer of the record. `on_error` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer of the record. The fields of the
+            metadata are given to [`consolidate`][].
 
         Raises
         ------
@@ -485,8 +486,8 @@ class RegisterDatTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record. `on_error` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer of the record. The fields of the
+            metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -510,8 +511,8 @@ class RegisterDatTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record. `on_error` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer of the record. The fields of the
+            metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -635,7 +636,7 @@ def _scanner_to_tkr(
 def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
     """Encode the matrix and coordinate systems of `xform` as a record.
 
-    See [`RegisterDatTransformation.consolidate`][].
+    See `RegisterDatTransformation._consolidate`.
 
     Raises
     ------
@@ -714,9 +715,9 @@ def _written(
 ) -> tx.Tuple[RegisterDatRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
 
-    The record is that of the copy consolidated with `on_error` and the
-    fields of the metadata among `kwargs`, and the other options, for
-    the writer of the record, are returned with it.
+    The record is that of the copy consolidated with the fields of the
+    metadata among `kwargs`, and the other options, for the writer of
+    the record, are returned with it.
 
     The record is that of the consolidated copy of the transformation.
 

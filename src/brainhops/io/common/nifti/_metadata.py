@@ -91,8 +91,7 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     ) -> "NiftiMetadata":
         """Encode the fields that differ from the header into a copy of it.
 
-        The contract is that of
-        [`MetadataFormat.consolidate`][brainhops.io.metadata.MetadataFormat.consolidate]:
+        The contract is that of `consolidated`:
         the changes are written into a copy of the record, or into an
         empty NIfTI-1 header, and the result is decoded from it afresh.
 

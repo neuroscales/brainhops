@@ -447,7 +447,7 @@ def _record(
 def _encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
     """Encode the matrix and the systems of a transformation as a record.
 
-    See [`NeuroglancerTransform.consolidate`][].
+    See `NeuroglancerTransform._consolidate`.
 
     Raises
     ------

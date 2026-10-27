@@ -364,8 +364,9 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -530,8 +531,9 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -696,8 +698,9 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -865,8 +868,9 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -1034,8 +1038,9 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -1215,8 +1220,9 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -1384,8 +1390,9 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a matrix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_error`.
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------

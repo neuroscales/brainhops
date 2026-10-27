@@ -500,14 +500,15 @@ class NiftiImage(
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the options that name its fields, so any field of
-        the metadata can be overridden here, and its record is the base of
-        the new header. The image owns its geometry, so a field that the
-        geometry encodes over, such as the repetition time, which is the
-        time step of the image, is reported as approximated when it
+        the metadata can be overridden here, and its record is the base
+        of the new header. The image owns its geometry, so a field that
+        the geometry encodes over, such as the repetition time, which is
+        the time step of the image, is reported as approximated when it
         disagrees. The data are stored with the type given as `dtype=`,
-        or else with `metadata.dtype`, or else with the type of the data,
-        and nibabel scales them into an integer type. What the write
-        loses or approximates is acted on once, by `on_error`.
+        or else with `metadata.dtype`, or else with the type of the
+        data, and nibabel scales them into an integer type. What the
+        write loses or approximates is acted on once, under the error
+        policy of the call.
 
         Parameters
         ----------
@@ -602,8 +603,8 @@ class NiftiImage(
             Template whose description and intent are copied, as in
             [`consolidate`][].
         **overrides : Any
-            `on_error`, and the fields of the metadata and of the
-            header, as in [`consolidate`][].
+            The fields of the metadata and of the header, as in
+            [`consolidate`][].
 
         Returns
         -------
@@ -635,8 +636,7 @@ class NiftiImage(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            The template `like`, `on_error` and the options of
-            [`consolidate`][].
+            The template `like` and the options of [`consolidate`][].
 
         Raises
         ------
@@ -669,8 +669,7 @@ class NiftiImage(
         file : file object
             The stream to write to, open in binary mode.
         **kwargs : Any
-            The template `like`, `on_error` and the options of
-            [`consolidate`][].
+            The template `like` and the options of [`consolidate`][].
 
         Raises
         ------
@@ -688,8 +687,7 @@ class NiftiImage(
         Parameters
         ----------
         **kwargs : Any
-            The template `like`, `on_error` and the options of
-            [`consolidate`][].
+            The template `like` and the options of [`consolidate`][].
 
         Returns
         -------

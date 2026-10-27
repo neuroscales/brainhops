@@ -85,6 +85,14 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
     [`load`][brainhops.io.load] never returns metadata when it reads an
     image or a transformation. A concrete
     subclass is added to the metadata registry with `@register_format`.
+
+    The `consolidate` method of the metadata of a format, and each
+    method that writes a file, take an error policy as their `on_error=`
+    and `on_loss=` keywords (see
+    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
+    happens to what the file cannot hold. A format overrides the hook
+    `_consolidate` and defines its writers without these keywords,
+    because the base classes apply the policy around them.
     """
 
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = ()

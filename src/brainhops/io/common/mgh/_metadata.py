@@ -103,8 +103,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     ) -> "MghMetadata":
         """Encode the fields that differ from the record into a copy of it.
 
-        The contract is that of
-        [`MetadataFormat.consolidate`][brainhops.io.metadata.MetadataFormat.consolidate]:
+        The contract is that of `consolidated`:
         the changes are written into a copy of the record, or into a new
         record, and the result is decoded from it afresh.
 

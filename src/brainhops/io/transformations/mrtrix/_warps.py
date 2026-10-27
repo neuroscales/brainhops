@@ -375,8 +375,8 @@ class MrtrixWarp(
         Parameters
         ----------
         **kwargs : Any
-            The options of [`consolidate`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            The options of [`consolidate`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Returns
         -------
@@ -428,8 +428,8 @@ class MrtrixWarp(
         filename : path-like
             The path of the `.mif`, `.mif.gz` or `.mih` file.
         **kwargs : Any
-            The options of [`consolidate`][]. `on_error` and the fields
-            of the metadata are given to [`consolidate`][].
+            The options of [`consolidate`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -648,7 +648,8 @@ class MrtrixCoordinateField(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an
         MRtrix image holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_error`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -917,7 +918,7 @@ class MrtrixDisplacementField(
     ) -> tx.Self:
         """Encode pending displacements or a chain into `rawdata` and a record.
 
-        The encoding is that of [`MrtrixCoordinateField.consolidate`][],
+        The encoding is that of `MrtrixCoordinateField._consolidate`,
         with RAS displacements in place of RAS coordinates, and with
         `brainhops_field_type: displacement` in the header. A chain that
         was assigned is split into its grid and its displacements, rotated
@@ -926,7 +927,8 @@ class MrtrixDisplacementField(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an
         MRtrix image holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_error`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -1368,7 +1370,7 @@ class MrtrixWarpFull(
         The warps, assigned or read, are stored under the geometry of the
         record, whose linear transforms and other keys are kept, and
         `keyval` is merged into them last. The values are stored as for
-        [`MrtrixCoordinateField.consolidate`][]. A warpfull object that
+        `MrtrixCoordinateField._consolidate`. A warpfull object that
         has a record storing its warps as they are stored, and nothing
         pending, consolidated without options, is left as it is.
         `from_image` and `midway` select what is decoded, and are not
@@ -1377,7 +1379,8 @@ class MrtrixWarpFull(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an
         MRtrix image holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_error`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------

@@ -278,7 +278,8 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an ITK
         HDF5 file holds no field of the vocabulary yet, so a field that
-        is set is reported as lost, once, by `on_error`.
+        is set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -366,8 +367,8 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
         h5file : h5py.File
             The file, empty and open for writing.
         **kwargs : Any
-            `on_error` and the fields of the metadata, which are given
-            to [`consolidate`][].
+            The fields of the metadata, which are given to
+            [`consolidate`][].
 
         Raises
         ------
