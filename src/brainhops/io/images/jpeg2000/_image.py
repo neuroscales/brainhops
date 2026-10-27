@@ -64,14 +64,14 @@ class Jpeg2000Image(
 ):
     """One resolution level of a JPEG 2000 image.
 
-    A JPEG 2000 image holds everything that its file says beside the coded
-    image as [`Jpeg2000Metadata`][], whose record is a [`Jpeg2000Raw`][],
-    and the samples of one resolution level in `rawdata`. When the image
-    is read from a file, `rawdata` is a lazy array, which Pillow decodes
-    only when the samples are needed, and `data` is decoded from it on
-    first access. The data is indexed `(x, y)`, or `(x, y, c)` for
-    several samples per pixel, in Fortran order. Level 0 is the full
-    resolution, and level `r` is reduced by `2**r`.
+    A JPEG 2000 image holds everything that its file says beside the
+    coded image as [`Jpeg2000Metadata`][], whose record is a
+    [`Jpeg2000Raw`][], and the samples of one resolution level in
+    `rawdata`. When the image is read from a file, `rawdata` is a lazy
+    array, which Pillow decodes only when the samples are needed, and
+    `data` returns that lazy array. The data is indexed `(x, y)`, or
+    `(x, y, c)` for several samples per pixel, in Fortran order. Level 0
+    is the full resolution, and level `r` is reduced by `2**r`.
 
     The transformations are decoded from the record on first access,
     unless other transformations are assigned. The only transformation is

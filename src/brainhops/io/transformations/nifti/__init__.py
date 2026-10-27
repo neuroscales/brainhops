@@ -6,9 +6,10 @@ Each transformation holds the header of its file as
 is a [`NiftiRaw`][brainhops.io.common.nifti.NiftiRaw], and the array of
 the file as it is stored, in `rawdata`. The two classes of the header
 are defined in [`brainhops.io.common.nifti`][] and exported here as
-well. An affine keeps its matrix in the header, and a field decodes its
-data from `rawdata` when the data is first read. A field that is read
-and written again without changes is written as its file stored it.
+well. An affine keeps its matrix in the header, and the `data` of a
+field is a lazy array of its file, which reads the voxels only when a
+computation needs them. A field that is read and written again without
+changes is written as its file stored it.
 
 ## Fields of RAS displacements and of RAS coordinates
 

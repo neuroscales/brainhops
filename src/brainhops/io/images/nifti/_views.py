@@ -9,15 +9,17 @@ invert each other, so that `_image_to_model(_image_to_disk(data))` gives
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.common.nifti._files import _read
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the file stores.
 
-    An image stores its data as it is, so the stored array is only read.
+    An image stores its data as it is, so the array is returned as it
+    is. The lazy array of a file therefore stays lazy and reads nothing
+    until a computation needs its values, and the `data` of the image
+    returns that lazy array.
     """
-    return _read(raw)
+    return raw
 
 
 def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:

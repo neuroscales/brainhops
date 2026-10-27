@@ -9,7 +9,6 @@ from urllib.parse import urlsplit
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, replace
-from nibabel.arrayproxy import ArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 from nibabel.volumeutils import array_to_file
 
@@ -43,6 +42,7 @@ from ._constants import (
     MGH_FOOTER_SIZE,
     MGH_HEADER_SIZE,
 )
+from ._data import _MghProxy
 from ._utils import _read_prefix, _seekable, _valid_prefix
 
 _3Floats = tx.Tuple[float, float, float]
@@ -381,87 +381,95 @@ def _compressed_name(filename: path.FilenameLike) -> bool:
 # ----------------------------------------------------------------------
 
 _PROXY_OPTIONS = ("mmap", "keep_file_open")
-"""The options of the nibabel array proxy that a reader passes on."""
+"""The reader options, which nibabel's readers also take."""
 
 
-def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, ArrayProxy]:
+def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, _MghProxy]:
     """Read the record and a lazy array of the voxels of an MGH file.
 
     The record is read from the file as it is stored. The voxels are not
-    read: nibabel's array proxy reads them when they are accessed. A local
-    file whose name matches its content (`.mgz` or `.mgh.gz` when it is
-    compressed, and `.mgh` otherwise) is handed to the proxy by name, so
-    that nibabel opens the file each time and can memory-map the voxels.
-    Any other path is read into memory, because nibabel chooses the codec
-    from the name. An open stream is kept by the proxy, so the caller must
-    keep it open while the voxels may be read, and a stream that cannot
-    seek is read into memory first.
+    read: the lazy array reads them when they are accessed. A local file
+    is kept by its name, so that the lazy array opens it for each read
+    and can memory-map the voxels of an `.mgh` file. Whether the file is
+    compressed is judged from its content, so the name of the file does
+    not matter. A remote file is read into memory. An open stream is
+    kept by the lazy array, so the caller must keep it open while the
+    voxels may be read, and a stream that cannot seek is read into
+    memory first.
 
     Parameters
     ----------
     file : path or file object
         The MGH or MGZ file.
     **kwargs : Any
-        Options of the nibabel array proxy, which are `mmap` and
-        `keep_file_open`. Other options are refused.
+        The options `mmap` and `keep_file_open`, which nibabel's readers
+        also take. `mmap` tells whether the voxels of a local file that
+        is not compressed are memory-mapped, and it is true by default.
+        The lazy array never keeps a file open, so `keep_file_open` is
+        accepted and ignored. Other options are refused.
 
     Returns
     -------
     raw : MghRaw
         The record of the file.
-    proxy : nibabel.arrayproxy.ArrayProxy
+    proxy : _MghProxy
         The lazy array of the voxels, in Fortran order.
 
     Raises
     ------
     TypeError
         If another option is given.
+    ValueError
+        If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
     """
     unknown = [name for name in kwargs if name not in _PROXY_OPTIONS]
     if unknown:
         raise TypeError(f"Unknown MGH reader option(s): {', '.join(unknown)}")
-    options = {k: kwargs[k] for k in _PROXY_OPTIONS if k in kwargs}
+    mmap = _mmap_option(kwargs.get("mmap", True))
     if isinstance(file, str):
         file = path.Path(file)
     if not isinstance(file, path.PathLike):
-        return _read_mgh_stream(file, options)
-    with file.open("rb") as stream:
-        if not (is_local(file) and _named_as_stored(file, stream)):
-            return _read_mgh_stream(BytesIO(stream.read()), options)
+        return _read_mgh_stream(file, mmap)
+    if not is_local(file):
+        with file.open("rb") as stream:
+            return _read_mgh_stream(BytesIO(stream.read()), mmap)
+    filename = str(file)
+    with open(filename, "rb") as stream:
         raw = MghRaw.from_fileobj(stream)
-    return raw, ArrayProxy(str(file), raw.header, **options)
+    return raw, _MghProxy.from_header(filename, raw.header, mmap=mmap)
 
 
 def _read_mgh_stream(
-    fileobj: tx.BinaryIO, options: tx.Mapping[str, tx.Any]
-) -> tx.Tuple[MghRaw, ArrayProxy]:
-    """Read the record and the proxy of an MGH stream.
+    fileobj: tx.BinaryIO, mmap: bool
+) -> tx.Tuple[MghRaw, _MghProxy]:
+    """Read the record and the lazy array of an MGH stream.
 
     The record is read first, and the position of the stream is restored
-    so that the proxy reads the voxels from the same start.
+    so that the lazy array reads the voxels from the same start.
     """
     if not _seekable(fileobj):
         fileobj = BytesIO(fileobj.read())
-    stream = open_compressed(fileobj)
-    with preserve_position(stream):
-        raw = MghRaw.from_fileobj(stream)
-    return raw, ArrayProxy(stream, raw.header, **options)
+    start = fileobj.tell()
+    with preserve_position(fileobj):
+        raw = MghRaw.from_fileobj(fileobj)
+    proxy = _MghProxy.from_header(fileobj, raw.header, start, mmap=mmap)
+    return raw, proxy
 
 
-def _named_as_stored(file: path.PathLike, stream: tx.BinaryIO) -> bool:
-    """Tell whether nibabel would choose the right codec from a file name.
+def _mmap_option(mmap: tx.Any) -> bool:
+    """Return whether the `mmap` option of a reader asks for a memory map.
 
-    nibabel decompresses a file whose name ends with `.mgz` or `.gz`, so
-    a compressed file must be named `.mgz` or `.mgh.gz`, and a file that
-    is not compressed must be named `.mgh`. The position of the stream is
-    restored.
+    The option takes the values that nibabel's readers take. `"c"` and
+    `"r"` ask for a memory map, as `True` does.
+
+    Raises
+    ------
+    ValueError
+        If the option is not one of `True`, `False`, `"c"` and `"r"`.
     """
-    with preserve_position(stream):
-        gzipped = stream.read(2) == b"\x1f\x8b"
-    name = str(file).lower()
-    if gzipped:
-        return name.endswith((".mgz", ".mgh.gz"))
-    return name.endswith(".mgh")
+    if mmap not in (True, False, "c", "r"):
+        raise ValueError("mmap should be one of {True, False, 'c', 'r'}")
+    return bool(mmap)
 
 
 def encode_mgh(raw: MghRaw, data: ArrayProtocol) -> bytes:
@@ -469,9 +477,8 @@ def encode_mgh(raw: MghRaw, data: ArrayProtocol) -> bytes:
 
     The fixed header, the voxels, the footer and the tags are written in
     this order, without compression. The voxels are written in Fortran
-    order with the voxel type of the header, and a nibabel proxy is
-    written as it is stored. The shape of `data` must match the dimensions
-    of the header.
+    order with the voxel type of the header. The shape of `data` must
+    match the dimensions of the header.
 
     Parameters
     ----------
@@ -485,8 +492,6 @@ def encode_mgh(raw: MghRaw, data: ArrayProtocol) -> bytes:
     bytes
         The uncompressed content of the file.
     """
-    if isinstance(data, ArrayProxy):
-        data = data.get_unscaled()
     buffer = BytesIO()
     raw.header.writehdr_to(buffer)
     dtype = raw.header.get_data_dtype()
