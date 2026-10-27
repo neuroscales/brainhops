@@ -249,9 +249,8 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    field = Ti.field
+    field, scale = to_promoted_backend(Ti.field, To.scale)
     grid = _grid_like(field)
-    field, scale = to_promoted_backend(field, To.scale)
     field = scale * field + (scale - 1) * grid
     return DisplacementField(
         field=field,
@@ -266,7 +265,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    field = Ti.field
+    (field,) = to_promoted_backend(Ti.field)
     grid = _grid_like(field)
     field = (grid + field)[..., To.permutation] - grid
     return DisplacementField(
@@ -297,9 +296,8 @@ def _check_square(To: tx.Union[Linear, Affine]) -> None:
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    field = Ti.field
+    field, matrix = to_promoted_backend(Ti.field, To.matrix)
     grid = _grid_like(field)
-    field, matrix = to_promoted_backend(field, To.matrix)
     field = (grid + field) @ matrix.T - grid
     return DisplacementField(
         field=field,
@@ -315,9 +313,8 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    field = Ti.field
+    field, matrix = to_promoted_backend(Ti.field, To.matrix)
     grid = _grid_like(field)
-    field, matrix = to_promoted_backend(field, To.matrix)
     field = (grid + field) @ matrix[:, :-1].T + matrix[:, -1] - grid
     return DisplacementField(
         field=field,

@@ -23,6 +23,7 @@ from .backends import (
     promote_backends,
     to_backend,
     to_backend_of,
+    to_promoted_backend,
 )
 from .dependencies import da, np
 from .typing import Clip
@@ -334,7 +335,8 @@ def pull_axes(
         come first, in their original order, and are followed by the
         spatial axes of the output.
     """
-    xp = array_backend(promote_backends(input, coords))
+    input, coords = to_promoted_backend(input, coords)
+    xp = array_backend(input)
     axes = [int(a) % input.ndim for a in axes]
     ndim = len(axes)
     dest = list(range(input.ndim - ndim, input.ndim))
@@ -514,6 +516,7 @@ def coeff2value_field(
     ArrayLike
         The values, with the same shape as `field`.
     """
+    (field,) = to_promoted_backend(field)
     xp = array_backend(field)
     ndim = field.shape[-1]
     field = xp.moveaxis(field, -1, 0)
@@ -951,6 +954,7 @@ def value2coeff_field(
     ArrayLike
         The coefficients, with the same shape as `field`.
     """
+    (field,) = to_promoted_backend(field)
     xp = array_backend(field)
     ndim = field.shape[-1]
     field = xp.moveaxis(field, -1, 0)

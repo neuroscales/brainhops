@@ -1295,16 +1295,18 @@ def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
 
 
 def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
-    """Invert a field of displacements, in the package of the field.
+    """Invert a field of displacements, in the backend of the setting.
 
-    The inversion ([`brainhops._ext.invfield`][]) runs with NumPy or with
-    CuPy, on the device of the field. It needs the whole field at once,
-    so a Dask field is computed, with NumPy or with CuPy depending on its
+    Under the default setting, the backend is the package of the field,
+    and a lazy array of a file counts as the array that `"auto"` makes of
+    it. The inversion ([`brainhops._ext.invfield`][]) runs with NumPy or
+    with CuPy. It needs the whole field at once, so a field that becomes
+    a Dask array is computed, with NumPy or with CuPy depending on its
     chunks, and its inverse is converted back to a Dask array.
     """
-    target = resolve_backend(disp, "native")
+    target = resolve_backend(disp)
     if target in ("numpy", "cupy"):
-        return inverse_disp(disp)
+        return inverse_disp(to_backend(disp, target))
     loaded = "cupy" if target == "dask+cupy" else "numpy"
     inverse = inverse_disp(to_backend(disp, loaded))
     return to_backend(inverse, target)

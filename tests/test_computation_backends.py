@@ -120,13 +120,14 @@ def test_a_reslice_follows_an_explicit_setting() -> None:
 
 def test_field_views_are_derived_from_the_stored_data() -> None:
     # The values of a field that stores values are its data, whatever the
-    # setting, and its coefficients are computed in the package of the
-    # data.
+    # setting, and its coefficients are computed in the backend of the
+    # setting, or in the package of the data under the default setting.
     field = DisplacementField(FIELD)
     with backend("dask"):
         assert field.data is FIELD
         assert field.field is FIELD
-        assert isinstance(field.coefficients, np.ndarray)
+        assert isinstance(field.coefficients, da.Array)
+    assert isinstance(DisplacementField(FIELD).coefficients, np.ndarray)
     lazy = DisplacementField(da.from_array(FIELD, chunks=4))
     assert isinstance(lazy.coefficients, da.Array)
 

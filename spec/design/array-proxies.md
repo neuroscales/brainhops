@@ -371,10 +371,28 @@ compositions of transformations combine their operands with
 `to_promoted_backend`, which converts them to the setting in effect when
 it is not `"native"`, so that their result follows that setting.
 
+Under a setting other than `"native"`, a computation that involves a
+proxy runs in the backend of the setting, and operands of incompatible
+packages never meet. CuPy refuses NumPy arrays and proxies as operands,
+so every computation of brainhops converts its array operands before it
+chooses its array package: the operators and functions of a proxy, the
+compositions of transformations and the spline functions go through
+`to_promoted_backend`, and the reslice and the inversion of a field
+convert their inputs with `to_backend`. These conversions apply to
+loaded arrays too, so that under an explicit setting the coefficients
+of a NumPy field are computed in the backend of the setting.
+
+The tests cannot run CuPy without a GPU, so `tests/fake_cupy.py` gives a
+stand-in that holds NumPy arrays and refuses what CuPy refuses: implicit
+conversion to NumPy, and NumPy arrays or other array-likes as operands.
+`tests/test_backends_cupy_rules.py` installs it as the CuPy of the
+backends and runs computations on proxies under the CuPy setting, and
+next to CuPy arrays under the default setting.
+
 Status: implemented, in `brainhops._core.proxy`,
-`brainhops._core.backends` and `brainhops.datamodel._backends`. The behavior next to CuPy arrays was
-checked against the source of CuPy, but not run, because the tests run
-without a GPU.
+`brainhops._core.backends` and `brainhops.datamodel._backends`. The
+stand-in checks the rules that CuPy enforces, not the numerical kernels
+of CuPy, which are still tested only where CuPy is installed.
 
 ### Third layer: strided data behind a file
 
