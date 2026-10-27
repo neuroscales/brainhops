@@ -48,7 +48,7 @@ from pathlib import Path as LocalPath
 from urllib.parse import urlsplit
 
 import typing_extensions as tx
-from bagof.paths import Path, PurePath, UnsupportedPathOperation
+from bagof.paths import Path, PurePath
 
 FilenameLike = tx.Union[PathLike, str]
 """Name of a file, given as a string or a path-like object."""
@@ -134,17 +134,13 @@ def base_name(other: tx.Any) -> tx.Optional[str]:
         other = getattr(other, "name", None)
         if not isinstance(other, str):
             return None
-    try:
-        file = PurePath(other)
-        name = file.name
-    except UnsupportedPathOperation:
-        # A path object that no driver knows is read from its text.
-        file = PurePath(str(other))
-        name = file.name
+    file = PurePath(other)
     if file.protocol not in LOCAL_PROTOCOLS:
-        url = urlsplit(str(file))
-        name = PurePath(url._replace(query="", fragment="").geturl()).name
-    return name
+        # TODO: `bagof.paths` keeps the query and the fragment of a URL in
+        # the name, so they are removed here until it drops them itself.
+        url = urlsplit(str(file))._replace(query="", fragment="")
+        file = PurePath(url.geturl())
+    return file.name
 
 
 def is_local_file(file: tx.Any) -> bool:

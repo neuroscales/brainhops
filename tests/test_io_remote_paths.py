@@ -48,6 +48,11 @@ class RemotePath(os.PathLike):
     def __str__(self) -> str:
         return self.url
 
+    @property
+    def name(self) -> str:
+        # A path object names its last component, as `UPath` does.
+        return self.url.rstrip("/").rsplit("/", 1)[-1]
+
     def exists(self) -> bool:
         return self.url in self.store
 
