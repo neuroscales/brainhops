@@ -33,12 +33,16 @@ V1. Every name of `brainhops` has one of three levels of visibility.
 
 | Level   | Spelling                                  | May be imported by      | Stability                |
 | ------- | ----------------------------------------- | ----------------------- | ------------------------ |
-| Public  | listed in `__all__` of a public module    | anyone                  | kept, with deprecations  |
+| Public  | listed in `__all__` of a public module    | anyone                  | kept (see below)         |
 | Internal | a plain name in a module whose name starts with `_` | any module of `brainhops` (see V3) | may change without notice |
 | Private | a name that starts with `_`               | the defining module only | none                     |
 
-An internal name has a docstring and a signature that serves more than
-one caller, because other modules depend on it. A private name is
+A public name is kept from one release to the next, and a change to it
+goes through a deprecation. This applies once a release has users. Until
+then, a public name may change or be removed without a deprecation,
+because no code outside the repository depends on it. An internal name
+has a docstring and a signature that serves more than one caller,
+because other modules depend on it. A private name is
 never imported by another module, including tests.
 
 V2. A name that another module needs is promoted, not imported with its

@@ -127,7 +127,9 @@ Every name has one of three levels of visibility, which
 `spec/design/internal-api.md` explains in full.
 
 - A public name is listed in the `__all__` of a public module. Anyone
-  may import it, and it changes only through a deprecation.
+  may import it. Until a release has users, a public name may change or
+  be removed without a deprecation; after that, it changes only through
+  one.
 - An internal name is a plain name in a module whose name starts with
   an underscore. Any module of `brainhops` may import it, but a module
   of another package imports it only from the `_internal_api.py` module
