@@ -556,9 +556,12 @@ def to_promoted_backend(
     When computing on multiple arrays that live on different backends,
     this function moves them all to compatible backends.
 
-    When one of the arrays is on a GPU, the others are copied to it:
-    a NumPy array becomes a CuPy array, and a Dask array of NumPy chunks
-    becomes a Dask array of CuPy chunks.
+    Under a setting other than `"native"`, every array is converted to
+    that setting, so that the result of the computation follows it.
+    Under `"native"`, a lazy array, such as the array of a file, becomes
+    what [`to_backend`][] makes of it, and when one of the arrays is on a
+    GPU, the others are copied to it: a NumPy array becomes a CuPy array,
+    and a Dask array of NumPy chunks becomes a Dask array of CuPy chunks.
 
     A NumPy array that meets a Dask array in memory is returned as it is,
     because Dask accepts NumPy operands.
@@ -576,6 +579,11 @@ def to_promoted_backend(
     tuple
         The arrays, in the same order.
     """
+    if _BACKEND != "native":
+        return tuple(
+            to_backend(x, **kwargs) if hasattr(x, "shape") else x
+            for x in arrays
+        )
     if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
         # A value without a shape, such as `None` or a number, is not an
         # array and is kept as it is.
@@ -897,10 +905,12 @@ def array_backend(
 ) -> ModuleType:
     """Return the array package of an array, module or setting.
 
-    The result is `numpy`, `cupy` or `dask.array`. `None`, or an object of
-    no known backend, gives the package in which the current setting
-    creates new arrays: NumPy under `"native"` and `"auto"`, CuPy under
-    `"cupy"` and `"auto+cupy"`, and Dask under `"dask"` and `"dask+cupy"`.
+    The result is `numpy`, `cupy` or `dask.array`. A lazy array, such as
+    the array of a file, gives the package of the array that
+    [`to_backend`][] makes of it. `None`, or an object of no known
+    backend, gives the package in which the current setting creates new
+    arrays: NumPy under `"native"` and `"auto"`, CuPy under `"cupy"` and
+    `"auto+cupy"`, and Dask under `"dask"` and `"dask+cupy"`.
 
     Raises
     ------
@@ -940,6 +950,8 @@ def array_backend(
         return cp
     if da and isinstance(x, da.Array):
         return da
+    if hasattr(x, "shape") and hasattr(x, "dtype"):
+        return array_backend(resolve_backend(x))
 
     return array_backend()
 

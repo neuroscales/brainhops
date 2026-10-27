@@ -220,7 +220,7 @@ def test_nested_conversions_forward_the_device(
     wrapped = SubspaceTransformation(field, [0, 1, 2], [0, 1, 2])
     sequence = Sequence([wrapped])
     lazy = sequence.as_dask(device="cpu")
-    assert isinstance(lazy[0].transformation.dataobj, da.Array)
+    assert isinstance(lazy[0].transformation.data, da.Array)
     assert devices and all(device == "cpu" for device in devices)
 
 
@@ -253,11 +253,10 @@ class _CountingArray:
 
 
 def test_an_assigned_lazy_array_is_kept() -> None:
-    # `data` and `dataobj` return the array as it was assigned, and a
-    # conversion reads it each time.
+    # `data` returns the array as it was assigned, and a conversion reads
+    # it each time.
     lazy = _CountingArray(VOLUME)
     image = SingleScaleImage(lazy)
-    assert image.dataobj is lazy
     assert image.data is lazy
     assert lazy.reads == 0
     np.testing.assert_array_equal(image.to_numpy(), VOLUME)
@@ -271,17 +270,3 @@ def test_a_loaded_array_is_data_itself() -> None:
     values = VOLUME.copy()
     image = SingleScaleImage(values)
     assert image.data is values
-    assert image.dataobj is values
-
-
-def test_assigning_dataobj_is_assigning_data() -> None:
-    # Both store the array, which `data` and `dataobj` then return.
-    image = SingleScaleImage(_CountingArray(VOLUME))
-    image.data  # noqa: B018
-    lazy = _CountingArray(VOLUME + 1)
-    image.dataobj = lazy
-    assert image.dataobj is lazy
-    np.testing.assert_array_equal(image.data, VOLUME + 1)
-    image.data = VOLUME
-    assert image.dataobj is VOLUME
-    assert image.data is VOLUME

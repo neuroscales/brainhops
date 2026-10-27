@@ -14,11 +14,6 @@ from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import (
-    _stored_data,
-    dataobjproperty,
-    dataproperty,
-)
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
@@ -229,32 +224,16 @@ class FnirtWarpField(
     encodes it into `rawdata`.
     """
 
-    data = dataproperty()
-    """The array of the file, as FSL stores it.
+    @smartproperty
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The array of the file, as FSL stores it.
 
-    A deformation field has shape (X, Y, Z, 3), and a coefficient field
-    holds the coefficients on its knot grid. An array that is assigned
-    is returned as it is, and stays pending until [`consolidate`][] or
-    a write encodes it. Otherwise the array is decoded from `rawdata`. The
-    chain is built again from a new array.
-
-    The first read converts the lazy array of the file with the
-    backend setting in effect and caches the result. Each later read
-    returns the cached array converted to the setting in effect then,
-    such as `with backend("dask"):`, and the cached array does not
-    change.
-    """
-
-    @dataobjproperty
-    def dataobj(self) -> tx.Optional[ArrayProtocol]:
-        """The array of the field in the layout of `data`, without reading it.
-
-        An array assigned as `data` is returned as it is. Otherwise, the
-        lazy array of the file is returned through the same view that
-        `data` reads, and nothing is read until it is converted.
+        A deformation field has shape (X, Y, Z, 3), and a coefficient field
+        holds the coefficients on its knot grid. An array that is assigned
+        is returned as it is, and stays pending until [`consolidate`][] or
+        a write encodes it. Otherwise the array is decoded from `rawdata`. The
+        chain is built again from a new array.
         """
-        if self._data is not None:
-            return self._data
         if self.rawdata is None:
             return None
         return _image_to_model(self.rawdata)
@@ -653,7 +632,7 @@ class FnirtWarpField(
     def _raw_field(self) -> tx.Any:
         # A 5-D vector field in the layout of the NIfTI standard is
         # collapsed to `(*grid, 3)`.
-        return _field_to_model(_stored_data(self))
+        return _field_to_model(self.data)
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
         """The field on its own grid, as scaled millimetre displacements.

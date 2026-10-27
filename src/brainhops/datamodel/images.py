@@ -10,16 +10,10 @@ from bagof.magic import Forget, NoRepr, NotKwOnly, replace
 from brainhops._core.affines import axis_scales
 from brainhops._core.backends import BackendLike, DeviceLike
 from brainhops._core.magic import smart_replace
-from brainhops._core.properties import alias
+from brainhops._core.properties import alias, smartproperty
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
 
-from ._backends import (
-    _BackendsMixin,
-    _stored_data,
-    as_backend,
-    dataobjproperty,
-    dataproperty,
-)
+from ._backends import _BackendsMixin, as_backend
 from ._frames import (
     FrameSlot,
     FrameTargets,
@@ -103,7 +97,7 @@ class Image(
             and type(other) is not cls
             and isinstance(other, SingleScaleImage)
         ):
-            data = _stored_data(other)
+            data = other.data
             if data is not None:
                 kwargs.setdefault("data", data)
         return super().from_instance(other, *args, **kwargs)
@@ -137,19 +131,19 @@ class Image(
 
     def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
         """Convert the data to a NumPy array, optionally of a given type."""
-        return np.asarray(_stored_data(self), dtype=dtype)
+        return np.asarray(self.data, dtype=dtype)
 
     @property
     def shape(self) -> Shape:
         """The shape of the data."""
-        return tuple(self.dataobj.shape)
+        return tuple(self.data.shape)
 
     @property
     def ndim(self) -> int:
         """The number of dimensions of the data."""
         return len(self.shape)
 
-    dtype = alias("dataobj.dtype", readonly=True)
+    dtype = alias("data.dtype", readonly=True)
     """The data type of the data."""
 
     grid = alias("geometry.grid", readonly=True)
@@ -268,28 +262,21 @@ class SingleScaleImage(Image):
     Must be an array-like object that supports the array protocol
     (e.g. numpy, cupy or dask array).
     """
-    # It defaults to `None` so that subclasses can derive it lazily -- a
-    # format reader typically holds a handle to the file and materializes
-    # the array on first access, and cannot supply it at construction time.
-    # This mirrors `Affine.matrix`, which is optional for the same reason.
+    # It defaults to `None` so that a format can give the lazy array of
+    # its file instead, through its own getter of `data`. This mirrors
+    # `Affine.matrix`, which is optional for the same reason.
 
-    data = dataproperty()
+    data = smartproperty("data")
     """The image data, as the image stores them.
 
     An image built from an array returns that array, whatever the
     backend setting. An image read from a file returns a lazy array of
     the file (see [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]),
     which reads nothing until a computation needs its values, unless an
-    array was assigned as `data` or `dataobj`. Its shape, and a part of
-    it, such as `image.data[0]`, are therefore had without reading the
-    whole file. The backend setting applies when a computation reads
-    the array, and the `to_*` and `as_*` methods convert it on request.
-    """
-
-    dataobj = dataobjproperty()
-    """The array of the image, the same array as `data`.
-
-    Assigning `dataobj` is the same as assigning `data`.
+    array was assigned as `data`. Its shape, and a part of it, such as
+    `image.data[0]`, are therefore had without reading the whole file.
+    The backend setting applies when a computation reads the array, and
+    the `to_*` and `as_*` methods convert it on request.
     """
 
     transformations: NotKwOnly[tx.List[Transformation]] = ()
@@ -410,7 +397,7 @@ class SingleScaleImage(Image):
         return Geometry(
             (
                 CartesianField(
-                    shape=tuple(self.dataobj.shape),
+                    shape=tuple(self.data.shape),
                     input=self.transformation.input,
                     output=self.transformation.input,
                 ),
@@ -779,7 +766,7 @@ class SingleScaleImage(Image):
         transformations = list(self.transformations or [])
         transformations.append(transformation)
         return SingleScaleImage(
-            data=_stored_data(self),
+            data=self.data,
             transformations=transformations,
             metadata=self.metadata,
             frames=self._frames,
@@ -878,11 +865,6 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
     def data(self) -> ArrayProtocol:
         """The data of the highest-resolution level."""
         return self.images[0].data
-
-    @property
-    def dataobj(self) -> tx.Optional[ArrayProtocol]:
-        """The array of the highest-resolution level, without reading it."""
-        return self.images[0].dataobj
 
     # --- conversion to another backend -------------------------------
 

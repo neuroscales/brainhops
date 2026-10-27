@@ -104,7 +104,7 @@ def test_a_lazy_reslice_computes_nothing() -> None:
     image = SingleScaleImage(da.from_array(VOLUME, chunks=6))
     with _Computations() as computations:
         moved = image.reslice(_target())
-    assert isinstance(moved.dataobj, da.Array)
+    assert isinstance(moved.data, da.Array)
     assert computations.count == 0
     np.testing.assert_allclose(np.asarray(moved.data), expected, atol=1e-5)
 
@@ -114,19 +114,21 @@ def test_a_reslice_follows_an_explicit_setting() -> None:
     image = SingleScaleImage(VOLUME)
     with backend("dask"):
         moved = image.reslice(_target())
-    assert isinstance(moved.dataobj, da.Array)
-    assert image.dataobj is VOLUME
+    assert isinstance(moved.data, da.Array)
+    assert image.data is VOLUME
 
 
-def test_field_views_follow_the_setting() -> None:
-    # The values and coefficients of a field follow the setting, whereas
-    # its data is the array that it stores.
+def test_field_views_are_derived_from_the_stored_data() -> None:
+    # The values of a field that stores values are its data, whatever the
+    # setting, and its coefficients are computed in the package of the
+    # data.
     field = DisplacementField(FIELD)
     with backend("dask"):
         assert field.data is FIELD
-        assert isinstance(field.field, da.Array)
-        assert isinstance(field.coefficients, da.Array)
-    assert isinstance(field.field, np.ndarray)
+        assert field.field is FIELD
+        assert isinstance(field.coefficients, np.ndarray)
+    lazy = DisplacementField(da.from_array(FIELD, chunks=4))
+    assert isinstance(lazy.coefficients, da.Array)
 
 
 def test_a_dask_field_is_inverted_into_a_dask_field() -> None:
@@ -190,8 +192,8 @@ def test_a_cupy_image_is_resliced_on_the_gpu() -> None:
     cp = pytest.importorskip("cupy")
     expected = SingleScaleImage(VOLUME).reslice(_target()).data
     moved = SingleScaleImage(VOLUME).as_cupy().reslice(_target())
-    assert isinstance(moved.dataobj, cp.ndarray)
-    np.testing.assert_allclose(moved.dataobj.get(), expected, atol=1e-5)
+    assert isinstance(moved.data, cp.ndarray)
+    np.testing.assert_allclose(moved.data.get(), expected, atol=1e-5)
 
 
 def test_a_cupy_field_is_inverted_on_the_gpu() -> None:

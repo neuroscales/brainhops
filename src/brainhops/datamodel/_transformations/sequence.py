@@ -12,11 +12,7 @@ from brainhops._core.properties import smartproperty
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import (
-    _BackendsMixin,
-    dataobjproperty,
-    dataproperty,
-)
+from brainhops.datamodel._backends import _BackendsMixin
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
@@ -486,9 +482,8 @@ class DerivedSequence(ImmutableSequence):
     they are derived again when the array changes. Such a format derives
     from this class rather than from [`ImmutableSequence`][].
 
-    The array is exposed as `data` and `dataobj`, as in an image (see
-    [`dataproperty`][brainhops.datamodel._backends.dataproperty]). The
-    backend conversions apply to the array, so `to_backend` returns it
+    The array is exposed as `data`, as in an image. The backend
+    conversions apply to the array, so `to_backend` returns it
     and `as_backend` converts it, and the members are then derived from
     the converted array. A plain sequence instead refuses `to_backend`
     and converts its members one by one, which would leave the stored
@@ -496,20 +491,17 @@ class DerivedSequence(ImmutableSequence):
 
     A subclass declares the field `_data`, which holds an array that was
     assigned, derives its members from `data` in `transformations`, and
-    usually gives its own `dataobj`, which returns the lazy array of its
-    file when no array was assigned. This class declares no field, so
+    usually gives `data` its own getter, which returns the lazy array of
+    its file when no array was assigned. This class declares no field, so
     that the data model of such a format remains the sequence: another
     object is converted into it through its chain of transformations.
     """
 
-    data = dataproperty(invalidates="transformations")
+    data = smartproperty("data", invalidates="transformations")
     """The stored array, as it is stored.
 
     Assigning it drops the members derived from the previous array.
     """
-
-    dataobj = dataobjproperty()
-    """The stored array, without reading it."""
 
     # The conversions of an object that stores an array, rather than
     # those of a sequence, which convert the members.

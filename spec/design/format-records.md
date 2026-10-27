@@ -149,21 +149,19 @@ The proxy types are nibabel's `ArrayProxy`, the existing
 `H5ArrayProxy` for HDF5, Zarr arrays, and a new proxy for raw binary
 blocks that knows their offset and compression.
 
-The public `data` attribute is a cached view of `rawdata`. Each format
+The public `data` attribute is a view of `rawdata`. Each format
 defines a pair of pure functions, `to_model` and `to_disk`, with
-`data = to_model(rawdata)` and `rawdata = to_disk(data)`. Reading `data`
-decodes `rawdata` once and caches the result.
+`data = to_model(rawdata)` and `rawdata = to_disk(data)`. The view only
+indexes, transposes and scales the lazy array of the file, so reading
+`data` reads nothing (see [Lazy arrays of file data](array-proxies.md)).
 
 Assigned data is pending. A format takes the private `_data` field of
 its model over, with `_data: ... = Inherit("_data", default=None)`.
-The format defines `dataobj`, which returns the array stored in `_data`
-when there is one, and otherwise the view `to_model(rawdata)`, which
-reads nothing. Its `data` property is a `dataproperty`, which reads
-`dataobj` once, caches the result, and converts it with the backend
-setting in effect at each read. `None` in `_data` means that `data` is
-decoded from `rawdata`. Assigning
-`data` stores the array in `_data` and clears the cache, and it never
-changes `rawdata`. The data model of a transformation already stores its
+Its `data` property is a `smartproperty` whose getter returns the view
+`to_model(rawdata)`, and which returns instead the array stored in
+`_data` when there is one. `None` in `_data` means that `data` is the
+view of `rawdata`. Assigning `data` stores the array in `_data`, and it
+never changes `rawdata`. The data model of a transformation already stores its
 data in `_data`, and a format whose model is a chain, such as a NIfTI
 displacement field, declares a private `_data` field of its own.
 `rawdata` and the record therefore describe the file as it was read, or

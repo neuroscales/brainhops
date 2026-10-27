@@ -1,4 +1,4 @@
-"""Tests of `dataobj`, the lazy array of an object in the layout of data."""
+"""Tests of `data`, which is the lazy array of a file read from disk."""
 
 import warnings
 
@@ -37,22 +37,22 @@ def _nifti(tmp_path, values=VOLUME):  # noqa: ANN001, ANN202
     return io.images.load(path)
 
 
-def test_an_array_holds_itself_as_dataobj() -> None:
-    # An image or a field built from an array has that array as dataobj.
-    assert SingleScaleImage(VOLUME).dataobj is VOLUME
+def test_an_array_holds_itself_as_data() -> None:
+    # An image or a field built from an array has that array as data.
+    assert SingleScaleImage(VOLUME).data is VOLUME
     field = np.zeros((4, 5, 6, 3))
-    assert DisplacementField(field).dataobj is field
+    assert DisplacementField(field).data is field
 
 
 def test_a_file_is_described_without_reading(tmp_path, reads) -> None:  # noqa: ANN001
-    # dataobj, shape, dtype and geometry read nothing, and indexing dataobj
+    # data, shape, dtype and geometry read nothing, and indexing data
     # reads only the selected box when it is converted.
     image = _nifti(tmp_path)
-    assert isinstance(image.dataobj, NibabelProxy)
+    assert isinstance(image.data, NibabelProxy)
     assert image.shape == VOLUME.shape
     assert image.dtype == VOLUME.dtype
     assert image.geometry is not None
-    part = image.dataobj[1:3, :, 0]
+    part = image.data[1:3, :, 0]
     assert reads == []
     np.testing.assert_array_equal(np.asarray(part), VOLUME[1:3, :, 0])
     assert len(reads) == 1
@@ -105,30 +105,31 @@ def test_an_index_of_an_image_reads_nothing(tmp_path, reads) -> None:  # noqa: A
     assert len(reads) == 1
 
 
-def test_assigned_data_is_the_dataobj(tmp_path) -> None:  # noqa: ANN001
-    # An array assigned as data replaces the lazy array of the file.
+def test_assigned_data_replaces_the_lazy_array(tmp_path) -> None:  # noqa: ANN001
+    # An array assigned as data replaces the lazy array of the file, and
+    # assigning None gives the lazy array again.
     image = _nifti(tmp_path)
     values = VOLUME + 1
     image.data = values
-    assert image.dataobj is values
     assert image.data is values
+    image.data = None
+    assert isinstance(image.data, NibabelProxy)
 
 
 def test_a_swapped_layout_is_kept_lazy(tmp_path) -> None:  # noqa: ANN001
-    # A PNG stores rows first, and dataobj presents the columns first, as
-    # data does, without reading the file.
+    # A PNG stores rows first, and data presents the columns first,
+    # without reading the file.
     pytest.importorskip("PIL")
     pixels = np.arange(5 * 6, dtype=np.uint8).reshape(5, 6)
     io.save(SingleScaleImage(pixels), tmp_path / "image.png")
     image = io.images.load(tmp_path / "image.png")
-    assert not isinstance(image.dataobj, np.ndarray)
-    assert image.dataobj.shape == pixels.shape
-    np.testing.assert_array_equal(np.asarray(image.dataobj), pixels)
-    np.testing.assert_array_equal(image.data, pixels)
+    assert not isinstance(image.data, np.ndarray)
+    assert image.data.shape == pixels.shape
+    np.testing.assert_array_equal(np.asarray(image.data), pixels)
 
 
 def test_an_itk_field_drops_its_singleton_axis_lazily(tmp_path) -> None:  # noqa: ANN001
-    # An ITK displacement field stores (X, Y, Z, 1, 3), and its dataobj is
+    # An ITK displacement field stores (X, Y, Z, 1, 3), and its data is
     # the lazy (X, Y, Z, 3) array.
     values = np.linspace(0, 1, 4 * 5 * 6 * 3, dtype=np.float32)
     values = values.reshape(4, 5, 6, 1, 3)
@@ -138,10 +139,10 @@ def test_an_itk_field_drops_its_singleton_axis_lazily(tmp_path) -> None:  # noqa
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         field = io.transformations.load(tmp_path / "field.nii.gz", hint="itk")
-    assert isinstance(field.dataobj.root, NibabelProxy)
-    assert field.dataobj.shape == (4, 5, 6, 3)
+    assert isinstance(field.data.root, NibabelProxy)
+    assert field.data.shape == (4, 5, 6, 3)
     np.testing.assert_array_equal(
-        np.asarray(field.dataobj), values[:, :, :, 0, :]
+        np.asarray(field.data), values[:, :, :, 0, :]
     )
 
 
@@ -150,7 +151,7 @@ def test_a_compressed_tiff_is_decoded_at_each_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A compressed TIFF level must be decoded in full, which describing
-    # the image or reading its dataobj does not do. Each computation on
+    # the image or reading its data does not do. Each computation on
     # data decodes it, and as_numpy(inplace=True) decodes it once.
     tifffile = pytest.importorskip("tifffile")
     from brainhops.io.images.tiff import _data as tiff_data
@@ -168,7 +169,7 @@ def test_a_compressed_tiff_is_decoded_at_each_read(
     image = io.images.load(tmp_path / "image.tif")
     assert image.shape == (32, 64)
     assert image.dtype == np.uint8
-    assert image.dataobj.shape == (32, 64)
+    assert image.data.shape == (32, 64)
     assert decodes == []
     np.testing.assert_array_equal(image.data, pixels.T)
     assert len(decodes) == 1

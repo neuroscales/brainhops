@@ -21,7 +21,6 @@ from brainhops._core.backends import (
     to_backend,
 )
 from brainhops._core.magic import smart_replace
-from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
 _T = tx.TypeVar("_T")
@@ -31,19 +30,6 @@ class _BackendsMixin:
     """
     The `to_*` and `as_*` methods of the classes that hold data.
     """
-
-    @property
-    def dataobj(self) -> ArrayProtocol:
-        """The array of the object, without reading it.
-
-        By default, it is the data that the object holds. An object read
-        from a file returns instead a lazy array of the file, in the
-        layout of `data`, which reads nothing until a computation needs
-        its values, so that a part of a large file can be read alone.
-        The shape and the type of the values are read from it without
-        reading the file.
-        """
-        return _stored_data(self)
 
     def to_backend(
         self,
@@ -70,7 +56,7 @@ class _BackendsMixin:
         array | None
             The data.
         """
-        data = _stored_data(self)
+        data = self.data
         if data is None:
             return None
         return to_backend(data, backend, device=device)
@@ -260,83 +246,6 @@ class _MetaBackendMixin(_BackendsMixin):
         return smart_replace(self, "inplace" if inplace else None, **changes)
 
 
-def dataproperty(**kwargs: tx.Any) -> property:
-    """Declare the `data` of an image or a field, the array that it stores.
-
-    `data` returns the array that the object stores, as it is stored,
-    whatever the backend setting. An object read from a file returns the
-    lazy array of its file, which reads nothing until a computation
-    needs its values (see [`ArrayProxy`][brainhops._core.proxy.ArrayProxy]),
-    so that the shape of the data, or a part of them, can be had without
-    reading the whole file. An array that was assigned as `data` or
-    `dataobj` is returned instead. The backend setting applies when a
-    computation reads the array, and the `to_*` and `as_*` methods
-    convert it on request. `data` returns the same array as `dataobj`,
-    and assigning either of them stores the new array.
-
-    Parameters
-    ----------
-    **kwargs : Any
-        Other options of [`smartproperty`][], such as `invalidates`.
-
-    Returns
-    -------
-    property
-        The property `data`, stored in `_data`.
-    """
-
-    # The getter runs when `_data` holds nothing, and `dataobj` is then
-    # the lazy array of a file, or `None`. The property is named after
-    # its getter, so the getter is `data`.
-    def data(self: tx.Any) -> tx.Any:
-        return self.dataobj
-
-    return smartproperty(data, **kwargs)
-
-
-def dataobjproperty(
-    fget: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None,
-) -> property:
-    """Declare the `dataobj` of an image or a field, where its array lives.
-
-    `dataobj` is the array that the object stores, without reading it.
-    By default, it is the array that was assigned as `data` or `dataobj`.
-    A file format passes its own getter, which returns the assigned array
-    if there is one and the lazy array of its file otherwise. Assigning
-    `dataobj` is the same as assigning `data`: the array is stored, and
-    the loaded array that `data` caches is cleared.
-
-    !!! example
-        ```python
-        class Format(SingleScaleImage):
-            @dataobjproperty
-            def dataobj(self):
-                if self._data is not None:
-                    return self._data
-                return lazy_array_of_the_file(self)
-        ```
-
-    Parameters
-    ----------
-    fget : callable, optional
-        The getter. By default, the getter returns `_data`.
-
-    Returns
-    -------
-    property
-        The property `dataobj`.
-    """
-    if fget is None:
-
-        def fget(self: tx.Any) -> ArrayProtocol:
-            return getattr(self, "_data", None)
-
-    def dataobj(self: tx.Any, value: tx.Any) -> None:
-        self.data = value
-
-    return property(fget, dataobj, doc=fget.__doc__)
-
-
 def _as_backend_data(
     obj: _T,
     backend: tx.Optional[BackendLike],
@@ -365,19 +274,10 @@ def _as_backend_data(
     object
         The object, or a copy of it.
     """
-    data = _stored_data(obj)
+    data = obj.data
     if data is None:
         return obj
     converted = to_backend(data, backend, device=device)
     if converted is data:
         return obj
     return smart_replace(obj, "inplace" if inplace else None, data=converted)
-
-
-def _stored_data(obj: tx.Any) -> tx.Any:
-    """Return the `data` of an object, which the conversion methods convert.
-
-    The `data` of an image or a field is the array that it stores,
-    without any conversion (see [`dataproperty`][]).
-    """
-    return obj.data

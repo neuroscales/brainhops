@@ -294,9 +294,8 @@ will return a description of the bytes that a writer may copy as they
 are, or `None` for an indexed proxy, and replace the `isinstance`
 checks of the writers.
 
-The format views only index and transpose the proxy, so the `dataobj`
-of an object read from a file is a proxy in the layout of its `data`,
-and `data` returns the same proxy (see "Computing with a proxy"
+The format views only index and transpose the proxy, so the `data` of
+an object read from a file is a proxy (see "Computing with a proxy"
 below). The NIfTI and MGH views wrap the
 proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
 The voxels of these files are stored contiguously, so that proxy
@@ -354,13 +353,26 @@ computation reads them again. Caching was left out for now: a cache in
 the proxy would keep the memory of a large file without the user
 knowing, and a cache in the image would make `data` change type after
 the first computation. The `as_*` methods with `inplace=True` keep the
-values on request. The views that a field caches, such as its `values`
-and its `coefficients`, are derived from the values of its `data`
-rather than from the proxy, so that a field read from a file keeps its
-values once it has computed them.
+values on request. The views of a field, its `values` and its
+`coefficients`, are derived from its `data` without conversion: a view
+that the field stores is the proxy itself, and the other one is
+computed from the proxy, in the backend that the computation chooses,
+and cached.
 
-Status: implemented, in `brainhops._core.proxy` and
-`brainhops.datamodel._backends`. The behavior next to CuPy arrays was
+An object has no `dataobj` attribute besides `data`, since the
+two would be the same array. A file format gives the lazy array of its
+file through the getter of its `data` property, which returns instead
+an array that was assigned.
+
+A computation finds the package of a proxy with `array_backend`, which
+gives the package of the array that `to_backend` makes of it: NumPy for
+a small proxy and Dask for a large one under the default setting. The
+compositions of transformations combine their operands with
+`to_promoted_backend`, which converts them to the setting in effect when
+it is not `"native"`, so that their result follows that setting.
+
+Status: implemented, in `brainhops._core.proxy`,
+`brainhops._core.backends` and `brainhops.datamodel._backends`. The behavior next to CuPy arrays was
 checked against the source of CuPy, but not run, because the tests run
 without a GPU.
 

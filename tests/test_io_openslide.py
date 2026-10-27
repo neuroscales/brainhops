@@ -299,7 +299,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> tx.List[tx.Any]:
 
 def test_regions_are_read_lazily(svs: Path, calls: tx.List[tx.Any]) -> None:
     image = load(svs, lazy=False)
-    data = image.images[1].dataobj
+    data = image.images[1].data
     assert isinstance(data, slides._SlideArray)
     assert calls == []
     region = data[10:20, 30:35]
@@ -354,7 +354,7 @@ def test_background_composite(
 ) -> None:
     from PIL import Image
 
-    data = load(svs, lazy=False).images[0].dataobj
+    data = load(svs, lazy=False).images[0].data
     properties = {**data.record.properties}
     properties["openslide.background-color"] = "102030"
     data.record = replace(data.record, properties=properties)

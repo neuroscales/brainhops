@@ -25,7 +25,6 @@ from brainhops._core.affines import sqrtm as affine_sqrtm
 from brainhops._core.affines import to_compact, to_homogeneous
 from brainhops._core.backends import (
     _creation_options,
-    _is_loaded,
     array_backend,
     backend,
     resolve_backend,
@@ -50,12 +49,7 @@ from brainhops._ext.invfield import inverse as inverse_disp
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import (
-    _FrozenBackendMixin,
-    _stored_data,
-    dataobjproperty,
-    dataproperty,
-)
+from brainhops.datamodel._backends import _FrozenBackendMixin
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
@@ -89,27 +83,6 @@ def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
-
-
-def _read_data(obj: tx.Any) -> tx.Optional[ArrayProtocol]:
-    """Return the values of the stored `data` of a field.
-
-    A lazy array, such as the array of a file, is read as the setting in
-    effect says (see `to_backend` in `brainhops._core.backends`), so
-    that the views that a field caches, such as its values, hold values
-    rather than a lazy array that each read would read again. A NumPy,
-    CuPy or Dask array is returned as it is.
-    """
-    data = _stored_data(obj)
-    if data is None or _is_loaded(data):
-        return data
-    return to_backend(data)
-
-
-def _invalidating_dataproperty(*args, **kwargs) -> property:
-    """Build a [`dataproperty`][] whose assignment clears the cached views."""
-    kwargs.setdefault("invalidates", _FORGET_DERIVED)
-    return dataproperty(*args, **kwargs)
 
 
 # --- API --------------------------------------------------------------
@@ -337,8 +310,7 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = _invalidating_dataproperty()
-    dataobj = dataobjproperty()
+    data = _invalidating_property("data")
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 
@@ -358,11 +330,9 @@ class TransformationField(ConcreteTransformation):
 
     # --- derived views ------------------------------------------------
 
-    @smartproperty(cache=True, convert=to_backend)
+    @smartproperty(cache=True)
     def values(self) -> tx.Optional[ArrayProtocol]:
-        return _data2values(
-            _read_data(self), self.store, self.degree, self.bound
-        )
+        return _data2values(self.data, self.store, self.degree, self.bound)
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
@@ -374,11 +344,9 @@ class TransformationField(ConcreteTransformation):
 
     field = alias("values")
 
-    @smartproperty(cache=True, convert=to_backend)
+    @smartproperty(cache=True)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
-        return _data2coeffs(
-            _read_data(self), self.store, self.degree, self.bound
-        )
+        return _data2coeffs(self.data, self.store, self.degree, self.bound)
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:
@@ -642,9 +610,6 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
     def data(self) -> tx.Optional[ArrayProtocol]:
         """Coordinates of the grid points, encoded according to the flags."""
         return _values2data(self.field, self.store, self.degree, self.bound)
-
-    dataobj = alias("data", readonly=True)
-    """Coordinates of the grid points, which a grid computes."""
 
     # --- methods ------------------------------------------------------
 

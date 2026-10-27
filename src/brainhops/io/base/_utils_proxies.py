@@ -2,8 +2,8 @@
 
 The NIfTI and MGH formats read their voxels with nibabel, whose
 `ArrayProxy` reads a selection when it is indexed and returns a NumPy
-array. The `dataobj` of an object read from a file is a lazy array that
-reads nothing until it is converted (see
+array. The `data` of an object read from a file is a lazy array that
+reads nothing until a computation needs its values (see
 [`StoredProxy`][brainhops._core.proxy.StoredProxy]), so the views of these
 formats wrap the nibabel proxy in the class below, which brainhops can
 index and transpose without reading anything.
