@@ -442,11 +442,7 @@ def call_under_policy(
             return apply_error_policy(error, policy, stacklevel=stacklevel + 1)
 
 
-def takes_error_policy(
-    method: tx.Optional[tx.Callable] = None,
-    *,
-    scope: tx.Tuple[tx.Type[BaseException], ...] = _CONVERSION_ERRORS,
-) -> tx.Callable:
+def takes_error_policy(method: tx.Callable) -> tx.Callable:
     """
     Make a method take an error policy as its `on_error=` and `on_loss=`
     keywords.
@@ -456,9 +452,9 @@ def takes_error_policy(
     format defines, such as `to_bytes` or `save`. The wrapper removes
     `on_error=` and `on_loss=` from the keyword arguments and calls the
     method with [`call_under_policy`][], so that the body of the method
-    never receives a policy and passes none on. The decorator is used
-    bare, as `@takes_error_policy`, or with arguments, as
-    `@takes_error_policy(scope=...)`.
+    never receives a policy and passes none on. A single action of
+    `on_error=` applies to a `ConversionError`, which covers a loss of
+    metadata, and never to an `OSError`.
 
     A generator function, such as a `to_lines` method, runs its body
     only while its result is iterated. The wrapper of such a method
@@ -468,32 +464,25 @@ def takes_error_policy(
     handed to the policy. When the policy does not raise, the iteration
     ends there, and the value that the policy returns is dropped,
     because the generator has no result that the value could replace.
+    The policy itself is checked when the method is called.
 
     Parameters
     ----------
-    method : callable, optional
-        The method. When it is not given, a decorator is returned.
-    scope : tuple of type, default=(ConversionError,)
-        The exception classes that the method raises on purpose when it
-        cannot convert or store something, to which a single action of
-        `on_error=` applies. The default covers a loss of metadata, and
-        never an `OSError`.
+    method : callable
+        The method.
 
     Returns
     -------
     callable
-        The decorated method, or a decorator when `method` is not given.
+        The decorated method.
     """
-    if method is None:
-        return functools.partial(takes_error_policy, scope=scope)
-
     if inspect.isgeneratorfunction(method):
 
         @functools.wraps(method)
         def wrapper(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
             on_error = kwargs.pop("on_error", UNSET)
             on_loss = kwargs.pop("on_loss", UNSET)
-            policy = error_policy(on_error, on_loss=on_loss, scope=scope)
+            policy = error_policy(on_error, on_loss=on_loss)
             items = method(*args, **kwargs)
             if not policy:
                 return items
@@ -509,7 +498,6 @@ def takes_error_policy(
                 lambda: method(*args, **kwargs),
                 on_error,
                 on_loss=on_loss,
-                scope=scope,
                 stacklevel=3,
             )
 

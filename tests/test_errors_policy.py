@@ -20,6 +20,7 @@ from brainhops.datamodel.metadata import (
     MetadataLossWarning,
     metadata_loss_policy,
 )
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.transformations import Linear, Rotation
 from brainhops.errors import (
     UNSET,
@@ -28,6 +29,7 @@ from brainhops.errors import (
     IncompatibleSystemError,
     LossyConversionError,
 )
+from brainhops.io.base.parsers import TextFileWriter
 from brainhops.io.common.mgh import MghMetadata
 from brainhops.io.transformations.c3d import C3dAffine
 
@@ -556,3 +558,129 @@ def test_none_is_a_policy_of_a_save_that_converts(
     )
     assert io.save(image, tmp_path / "a.mgz", on_error=None) is None
     assert _lossy_metadata().to(MghMetadata, on_error=None) is None
+
+
+def test_a_nested_writer_follows_the_policy_of_the_outer_call(
+    tmp_path: Path, silent: None
+) -> None:
+    mgh = _mgh_image()
+    # `save` calls the other entry points of the writer without a
+    # policy, so the loss follows the policy of `save`, and only `save`
+    # returns the value in place of its result.
+    marker = object()
+    assert mgh.save(tmp_path / "a.mgz", on_error=marker) is marker
+    report = ConversionReport()
+    assert mgh.save(tmp_path / "b.mgz", on_loss=report) is None
+    assert report.lost == {"description": "T1w"}
+
+
+# ----------------------------------------------------------------------
+#   WRITERS THAT YIELD THEIR LINES
+# ----------------------------------------------------------------------
+
+
+class _LineWriter(TextFileWriter):
+    """A writer whose lines lose metadata after the first one."""
+
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
+        yield "first"
+        apply_loss_policy(
+            ConversionReport(lost={"description": "T1w"}), stacklevel=2
+        )
+        yield "second"
+
+
+def test_the_policy_of_a_generator_applies_while_it_runs() -> None:
+    writer = _LineWriter()
+    # The body of a generator runs while its lines are read, under the
+    # policy of the call.
+    with pytest.raises(MetadataLossError):
+        list(writer.to_lines(on_loss="raise"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        lines = list(writer.to_lines(on_loss="ignore"))
+    assert lines == ["first", "second"]
+    report = ConversionReport()
+    assert list(writer.to_lines(on_loss=report)) == ["first", "second"]
+    assert report.lost == {"description": "T1w"}
+    with pytest.warns(MetadataLossWarning):
+        assert list(writer.to_lines()) == ["first", "second"]
+
+
+def test_a_value_of_the_policy_ends_the_lines(silent: None) -> None:
+    # The value cannot replace the result of a generator, so the lines
+    # end where the body raised.
+    assert list(_LineWriter().to_lines(on_error=None)) == ["first"]
+
+
+def test_the_policy_of_a_generator_does_not_leak_to_its_consumer() -> None:
+    lines = _LineWriter().to_lines(on_loss="raise")
+    assert next(lines) == "first"
+    # Between two lines, the code that reads them runs under the policy
+    # in effect, which warns.
+    with pytest.warns(MetadataLossWarning):
+        apply_loss_policy(ConversionReport(lost={"echo_time": 0.03}))
+    with pytest.raises(MetadataLossError):
+        next(lines)
+
+
+def test_the_policy_of_a_generator_is_checked_when_it_is_called() -> None:
+    with pytest.raises(TypeError):
+        _LineWriter().to_lines(on_error=True)
+
+
+# ----------------------------------------------------------------------
+#   THE FORMATS
+# ----------------------------------------------------------------------
+
+# The methods of the formats that apply a policy themselves. Every other
+# method of a format runs under the policy of its caller.
+_ENTRY_POINTS = {
+    ("brainhops.io.base._base", "_FileBasedModelMixin", "consolidate"),
+    ("brainhops.io.metadata._base", "MetadataFormat", "from_instance"),
+}
+
+
+def _subclasses(cls: type) -> tx.Set[type]:
+    found = set()
+    pending = [cls]
+    while pending:
+        for sub in pending.pop().__subclasses__():
+            if sub not in found:
+                found.add(sub)
+                pending.append(sub)
+    return found
+
+
+def test_no_method_of_a_format_declares_a_policy() -> None:
+    import inspect
+
+    import brainhops.io.images  # noqa: F401
+    import brainhops.io.metadata  # noqa: F401
+    import brainhops.io.transformations  # noqa: F401
+    from brainhops.io.base import FileFormat
+    from brainhops.io.base.parsers import FileReader, FileWriter
+
+    classes = set()
+    for base in (FileFormat, FileReader, FileWriter):
+        for cls in _subclasses(base):
+            classes.update(cls.__mro__)
+    declared = []
+    entry_points = set()
+    for cls in classes:
+        if not cls.__module__.startswith("brainhops.io"):
+            continue
+        for name, member in vars(cls).items():
+            function = getattr(member, "__func__", member)
+            if not inspect.isfunction(function):
+                continue
+            parameters = inspect.signature(function).parameters
+            if not {"on_error", "on_loss"} & set(parameters):
+                continue
+            key = (cls.__module__, cls.__qualname__, name)
+            if key in _ENTRY_POINTS:
+                entry_points.add(key)
+                continue
+            declared.append(".".join(key))
+    assert sorted(declared) == []
+    assert entry_points == _ENTRY_POINTS
