@@ -1,7 +1,6 @@
 """The shared base of the transformations stored in NIfTI files."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import nibabel as nb
@@ -117,31 +116,6 @@ class NiftiBasedTransformation(
         if header is None:
             return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
         return cls._score_nibabel(header)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this transformation.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no NIfTI header.
-        **kwargs : Any
-            Options of the reader, as for [`sniff_fileobj`][].
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:

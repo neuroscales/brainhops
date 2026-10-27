@@ -6,7 +6,6 @@ import os
 import time
 import uuid
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -429,32 +428,6 @@ class AfniImage(
         if raw is None:
             return _declined(error, failure)
         return cls._score_header(raw)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an AFNI image header.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a `.HEAD` file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no AFNI image
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_filename(

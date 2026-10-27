@@ -3,7 +3,6 @@
 # stdlib
 import pickle
 import warnings
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -170,32 +169,6 @@ class PillowRaw(Raw, BinaryFileReader):
                 error = SnifferContentError
             raise error("Pillow does not recognize this content as an image.")
         return Confidence.NO
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an image that Pillow reads.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when Pillow does not recognise the
-            content.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_fileobj(

@@ -243,38 +243,6 @@ class Hdf5Reader(BinaryFileReader):
                 )
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score the bytes of an HDF5 file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not of this
-            format. With `True`, the error is a `SnifferContentError`, and
-            an exception class is raised instead when one is given.
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            The confidence that the content is of this format.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content is not of this format and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
-
-    @classmethod
     def from_file(cls, file: H5Like, **kwargs) -> tx.Self:
         """
         Build an object from a path, a binary stream or an open HDF5 file.

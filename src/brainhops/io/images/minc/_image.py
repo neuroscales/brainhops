@@ -1,7 +1,6 @@
 """The MINC image formats, which are read only."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -374,32 +373,6 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             The confidence, between 0 and 1.
         """
         return _score(sniff_minc(file, cls._versions()), error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a MINC file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes are not a MINC file
-            that this class reads.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_filename(

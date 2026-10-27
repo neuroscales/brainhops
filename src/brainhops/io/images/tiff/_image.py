@@ -85,31 +85,6 @@ class _TiffReader:
         return False
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a TIFF file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no TIFF file.
-        **kwargs : Any
-            The options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
-
-    @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
         """Read from a file.
 

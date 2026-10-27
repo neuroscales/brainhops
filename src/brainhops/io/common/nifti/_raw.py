@@ -131,19 +131,6 @@ class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
         return Confidence.NO
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes start with a NIfTI header.
-
-        The bytes are read as a stream with [`sniff_fileobj`][].
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
     def from_fileobj(
         cls, file: tx.BinaryIO, check: bool = True, **kwargs
     ) -> "NiftiRaw":

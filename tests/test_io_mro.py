@@ -40,12 +40,11 @@ NIFTI_FORMATS = [
 
 # Methods that each NIfTI format specializes, in `NiftiImage` or in
 # `NiftiBasedTransformation` and the formats below it. The generic
-# `from_file` and `from_bytes` of the ladder reach them.
+# `from_file`, `from_bytes` and `sniff_bytes` of the ladder reach them.
 SPECIALIZED = [
     "from_filename",
     "from_fileobj",
     "sniff_fileobj",
-    "sniff_bytes",
 ]
 
 

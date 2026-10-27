@@ -549,32 +549,6 @@ class NrrdImage(
         return _declined(error, None)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this kind of NRRD file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes do not hold this
-            kind of NRRD file.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
-    @classmethod
     def from_filename(
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> "NrrdImage":

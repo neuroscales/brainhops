@@ -2,7 +2,6 @@
 
 # stdlib
 import os
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -240,32 +239,6 @@ class Jpeg2000Image(
             The confidence, between 0 and 1.
         """
         return Jpeg2000Raw.sniff_fileobj(file, error=error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a JPEG 2000 image.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no JPEG 2000
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(data)), error=error, **kwargs)
 
     @classmethod
     def from_filename(

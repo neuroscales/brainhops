@@ -370,32 +370,6 @@ class PillowImage(
         return PillowRaw.sniff_fileobj(file, error=error)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an image that Pillow reads.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when Pillow does not recognise the
-            content.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
-
-    @classmethod
     def from_filename(
         cls,
         filename: path.FilenameLike,

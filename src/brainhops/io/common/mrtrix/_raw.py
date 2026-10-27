@@ -3,7 +3,6 @@
 # stdlib
 import math
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -442,37 +441,6 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         if raw is not None:
             return Confidence.LIKELY
         return _declined(error, failure)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an MRtrix header.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test, which may be gzipped.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content holds no header, as
-            in [`sniff_fileobj`][].
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            `Confidence.LIKELY` or `Confidence.NO`.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content holds no header and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header as the file stores it.

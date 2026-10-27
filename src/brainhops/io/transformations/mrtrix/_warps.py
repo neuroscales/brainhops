@@ -12,7 +12,6 @@ import math
 import os
 import warnings
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -228,32 +227,6 @@ class MrtrixWarp(
         if raw is None:
             return _declined(error, failure)
         return cls._score_header(raw, file)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this kind of warp.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no MRtrix
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_filename(

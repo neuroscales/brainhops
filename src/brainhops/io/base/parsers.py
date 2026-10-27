@@ -177,6 +177,15 @@ class _FileNamesMixin:
     """
 
 
+# The parser classes whose sniff_bytes is currently falling back to
+# sniff_fileobj. If sniff_bytes is entered again for one of these classes,
+# then sniff_fileobj has passed the content back to sniff_bytes, and the
+# fallback would loop.
+_SNIFF_BYTES_FALLBACK: ContextVar[frozenset] = ContextVar(
+    "_SNIFF_BYTES_FALLBACK", default=frozenset()
+)
+
+
 class _SnifferMixin(_FileNamesMixin):
     """Default `sniff*` methods, which derive one from another.
 
@@ -339,11 +348,26 @@ class _SnifferMixin(_FileNamesMixin):
     ) -> float:
         """Same as [`sniff`][], for binary content.
 
+        The content is wrapped in an `io.BytesIO` and scored with
+        [`sniff_fileobj`][], so that a class that scores a stream also
+        scores bytes. If that method only reads the stream back into
+        bytes, as the default does, the content would come back to this
+        method, which then raises instead.
+
         Raises
         ------
         SnifferNotImplementedError
-            In the base class, which cannot sniff binary content.
+            If neither this method nor `sniff_fileobj` is implemented.
         """
+        active = _SNIFF_BYTES_FALLBACK.get()
+        if cls not in active:
+            token = _SNIFF_BYTES_FALLBACK.set(active | {cls})
+            try:
+                return cls.sniff_fileobj(
+                    BytesIO(bytes(content)), error=error, **kwargs
+                )
+            finally:
+                _SNIFF_BYTES_FALLBACK.reset(token)
         raise SnifferNotImplementedError(
             f"sniff_bytes() is not available in parser of type {cls.__name__}"
         )

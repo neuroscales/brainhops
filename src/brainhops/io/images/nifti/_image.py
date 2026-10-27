@@ -1,7 +1,6 @@
 """The NIfTI image format."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import nibabel as nb
@@ -282,40 +281,6 @@ class NiftiImage(
         if header is None:
             return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
         return cls._score_nibabel(header)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a NIfTI image.
-
-        The bytes are scored as [`sniff_fileobj`][] scores a stream.
-
-        Parameters
-        ----------
-        data : bytes
-            The content to test, which may be compressed with gzip.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no NIfTI header,
-            as in [`sniff_fileobj`][].
-        **kwargs : Any
-            The NIfTI `version` to look for, 1 or 2. Other options are
-            ignored.
-
-        Returns
-        -------
-        float
-            The confidence that the bytes hold an image.
-
-        Raises
-        ------
-        SnifferContentError
-            If the bytes hold no NIfTI header and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:

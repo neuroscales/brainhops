@@ -3,7 +3,6 @@
 # stdlib
 import json
 import math
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -297,38 +296,6 @@ class PrecomputedRaw(Raw, BinaryFileReader):
             is `True`.
         """
         return _score(sniff_info(file), error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold the `info` of a volume.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not the `info`
-            file of a volume.
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            The confidence, `Confidence.CERTAIN` or `Confidence.NO`.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content is not the `info` file of a volume and `error`
-            is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
 
 def sniff_info(file: tx.IO) -> float:
