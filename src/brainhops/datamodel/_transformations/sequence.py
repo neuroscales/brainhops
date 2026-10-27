@@ -34,9 +34,10 @@ from .concrete import (
     CoordinateField,
     DisplacementField,
     Identity,
+    Permutation,
 )
 from .inverse import Inverse
-from .meta import MetaTransformation, SubspaceTransformation
+from .meta import MetaTransformation, Projection, SubspaceTransformation
 from .modes import (
     Family,
     ModeLike,
@@ -253,13 +254,16 @@ class Sequence(SequenceMixin, MetaTransformation):
             values of every transformation, and `False`, `"none"` or
             `None` disables simplification.
         factor : bool, default=False
-            Whether to rewrite the chain into a normal form organized by groups
-            of axes, `[grid?, F_1, ..., F_m, Pi_perm?]`. The normal form starts
-            with an optional grid, continues with one subspace factor for each
-            group of axes that transform together, where each factor preserves
-            its axes, and ends with an optional permutation. Nothing is
-            composed across groups, and a chain that creates or drops axes is
-            left unfactored. The option is ignored with `mode=False`.
+            Whether to rewrite the chain into a normal form organized by
+            groups of axes,
+            `[grid?, delta?, F_1, ..., F_m, Pi_perm?, kappa?]`. The normal
+            form starts with an optional grid and an optional projection
+            that drops the inputs that nothing reads. It continues with
+            one subspace factor for each group of axes that transform
+            together, where each factor preserves its axes, and it ends
+            with an optional permutation and an optional projection that
+            creates the outputs that read no input. Nothing is composed
+            across groups. The option is ignored with `mode=False`.
         """
         modes = normalize_modes(mode)
         policy = SimplifyTable.from_like(simplify)
@@ -327,16 +331,19 @@ class Sequence(SequenceMixin, MetaTransformation):
     ) -> Transformation:
         """Rewrite the chain as one factor per group of axes.
 
-        The axes of a chain often fall into groups that never interact, as
-        when each axis is scaled on its own and two axes are then swapped.
-        Factoring finds those groups and rewrites the chain as
-        `[grid?, F_1, ..., F_m, Pi_perm?]`, with one axis-preserving factor
-        `F_i = Subspace(inner_i, A_i, A_i)` per group, ordered by their
-        first axis, and a trailing permutation that carries each group to
-        the axes that it occupies at the output (see [`factor_sequence`][]).
+        The axes of a chain often fall into groups that never interact,
+        as when each axis is scaled on its own and two axes are then
+        swapped. Factoring finds those groups and rewrites the chain as
+        `[grid?, delta?, F_1, ..., F_m, Pi_perm?, kappa?]`, with one
+        axis-preserving factor `F_i = Subspace(inner_i, A_i, A_i)` per
+        group, ordered by their first axis, and a permutation that
+        carries each group to the axes that it occupies at the output
+        (see [`factor_sequence`][]). The projection `delta` drops the
+        inputs that no output reads, and the projection `kappa` creates
+        the outputs that read no input, at their constant values.
         Nothing is composed across groups, so the coordinates of
-        independent axes are never tiled into a grid over all of them, and
-        each group can be resampled on its own.
+        independent axes are never tiled into a grid over all of them,
+        and each group can be resampled on its own.
 
         The chain is unnested first, and a leading [`CartesianField`][] is
         the sampling grid, which is kept as the same object. Every other
@@ -364,11 +371,13 @@ class Sequence(SequenceMixin, MetaTransformation):
         Returns
         -------
         Transformation
-            The normal form, or `self` when the chain is already in normal
-            form or does not factor at all, as when it forms a single
-            group, its two ends differ in dimension, a grid sits inside it,
-            or one of its elements cannot be read or restricted. An
-            [`Identity`][] is returned when no factor is left.
+            The normal form, or `self` when the chain is already in
+            normal form or does not factor at all, as when it forms a
+            single group and has neither end, its two ends differ in
+            dimension in a way that the end projections do not explain,
+            a grid sits inside it, or one of its elements cannot be read
+            or restricted. An [`Identity`][] is returned when no factor
+            is left.
         """
         return factor_sequence(self, compute, simplify=simplify)
 
@@ -708,11 +717,17 @@ def _compose_mode(
 
 
 def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
-    # Under `factor=True`, a `CartesianField` composes with nothing, and a
-    # subspace factor composes only with another one over the same axes or with
-    # an `Identity`. Next to anything else, the subspace composers would fold
-    # the factor in and destroy the normal form.
+    # Under `factor=True`, a `CartesianField` composes with nothing, and
+    # a subspace factor composes only with another one over the same
+    # axes or with an `Identity`. Next to anything else, the subspace
+    # composers would fold the factor in and destroy the normal form.
+    # For the same reason, the projection at the end of the normal form
+    # does not compose with the permutation before it.
     if isinstance(a, CartesianField) or isinstance(b, CartesianField):
+        return False
+    if (isinstance(a, Projection) and isinstance(b, Permutation)) or (
+        isinstance(a, Permutation) and isinstance(b, Projection)
+    ):
         return False
     a_sub = isinstance(a, SubspaceTransformation)
     b_sub = isinstance(b, SubspaceTransformation)

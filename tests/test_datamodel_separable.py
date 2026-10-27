@@ -14,7 +14,7 @@ from brainhops._core import backends
 from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.datamodel import kinds
-from brainhops.datamodel._transformations.compute import factor as fac
+from brainhops.datamodel._transformations.compute import reducers
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
@@ -1355,14 +1355,14 @@ def test_reverting_subspace_recursion_to_all_ones_over_couples(
     sub = _subspace(inner, [0, 1, 2])
     fine = _components([sub], (5, 6, 7, 4))
     assert fine == [((0,), (0,)), ((1,), (1,)), ((2,), (2,)), ((3,), (3,))]
-    original = fac._read_pattern
+    original = reducers.read_pattern
 
-    def all_ones(element: object, ni: int, no: int, *args: object) -> object:
+    def all_ones(element: object, policy: object) -> object:
         if element is inner:
-            return np.ones((no, ni), dtype=bool)
-        return original(element, ni, no, *args)
+            return np.ones((3, 3), dtype=bool)
+        return original(element, policy)
 
-    monkeypatch.setattr(fac, "_read_pattern", all_ones)
+    monkeypatch.setattr(reducers, "read_pattern", all_ones)
     coarse = _components([sub], (5, 6, 7, 4))
     assert coarse == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
     assert fine != coarse
@@ -1385,11 +1385,10 @@ def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:
     _reslice_equal(sub, (5, 6, 7, 4), 6)
 
 
-def test_nested_subspace_over_interpolating_inner_couples_all_its_axes() -> (
-    None
-):
-    # Recursing into the interpolating inner would misindex the axes;
-    # the equality check fails if it does.
+def test_nested_subspace_over_interpolating_inner_couples_its_axes() -> None:
+    # The inner subspace warps the first axis only and passes the two
+    # others through, so each axis forms a group of its own. The equality
+    # check fails if the axes are misindexed.
     warp = _warp((5,), 7)
     inner = SubspaceTransformation(
         transformation=warp,
@@ -1398,7 +1397,9 @@ def test_nested_subspace_over_interpolating_inner_couples_all_its_axes() -> (
     )
     sub = _subspace(inner, [0, 1, 2])
     assert _components([sub], (5, 6, 7, 4)) == [
-        ((0, 1, 2), (0, 1, 2)),
+        ((0,), (0,)),
+        ((1,), (1,)),
+        ((2,), (2,)),
         ((3,), (3,)),
     ]
     _reslice_equal(sub, (5, 6, 7, 4), 7)
@@ -1411,7 +1412,8 @@ def test_nested_subspace_over_interpolating_inner_couples_all_its_axes() -> (
 def test_subspace_over_interpolating_subset_warp_reslices(
     warp_axes: tuple, seed: int
 ) -> None:
-    # A warp on any two-axis subset stays one coupled block.
+    # A warp on any two-axis subset couples these two axes, and the
+    # third axis of the subspace passes through on its own.
     shape = (5, 6, 7, 4)
     field_shape = tuple(shape[a] for a in warp_axes)
     warp = _warp(field_shape, seed)
@@ -1421,10 +1423,10 @@ def test_subspace_over_interpolating_subset_warp_reslices(
         output_axes=np.asarray(warp_axes),
     )
     sub = _subspace(inner, [0, 1, 2])
-    assert _components([sub], (5, 6, 7, 4)) == [
-        ((0, 1, 2), (0, 1, 2)),
-        ((3,), (3,)),
-    ]
+    other = tuple(a for a in (0, 1, 2) if a not in warp_axes)
+    assert _components([sub], (5, 6, 7, 4)) == sorted(
+        [(warp_axes, warp_axes), (other, other), ((3,), (3,))]
+    )
     _reslice_equal(sub, shape, seed)
 
 
@@ -1440,7 +1442,8 @@ def test_permuting_subspace_over_interpolating_inner_reslices() -> None:
 
 
 def test_subspace_over_sequence_with_interpolating_member_reslices() -> None:
-    # A sequence interpolates when a member does.
+    # The shear couples the first two axes, and the warp acts on the
+    # third axis alone.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.4
     shear = Affine(matrix=matrix)
@@ -1453,7 +1456,8 @@ def test_subspace_over_sequence_with_interpolating_member_reslices() -> None:
     inner = Sequence(transformations=[shear, subwarp])
     sub = _subspace(inner, [0, 1, 2])
     assert _components([sub], (5, 6, 7, 4)) == [
-        ((0, 1, 2), (0, 1, 2)),
+        ((0, 1), (0, 1)),
+        ((2,), (2,)),
         ((3,), (3,)),
     ]
     _reslice_equal(sub, (5, 6, 7, 4), 15)

@@ -315,11 +315,19 @@ def test_restrict_keeps_scaling_and_translation_types() -> None:
 
 
 def test_restrict_keeps_permutation_type() -> None:
-    els = [Permutation(permutation=np.asarray([1, 0, 2]))]
+    # The affine couples the two axes that the permutation swaps, so the
+    # piece of the permutation in their group is a smaller permutation.
+    # In the group of the third axis, the piece of the permutation is the
+    # identity, which is omitted.
+    matrix = np.eye(3, 4)
+    matrix[0, 1] = 0.5
+    els = [Permutation(permutation=np.asarray([1, 0, 2])), Affine(matrix)]
     pieces = _pieces(els, 3)
-    assert len(pieces) == 3
-    for sub in pieces:
-        assert [type(t).__name__ for t in sub] == ["Permutation"]
+    assert [[type(t).__name__ for t in sub] for sub in pieces] == [
+        ["Permutation", "Affine"],
+        ["Affine"],
+    ]
+    assert list(pieces[0][0].permutation) == [1, 0]
 
 
 def test_restrict_drops_matrix_less_affine() -> None:
@@ -586,12 +594,10 @@ def test_sequence_inner_split_across_groups_is_kept() -> None:
 def test_unrestrictable_element_leaves_the_chain_unfactored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from brainhops.errors import RestrictionError
-
     def refuse(*args: object) -> None:
-        raise RestrictionError("cannot")
+        return None
 
-    monkeypatch.setattr(fac, "restrict", refuse)
+    monkeypatch.setattr(fac, "restrict_block", refuse)
     seq = Sequence(
         [CartesianField(shape=(4, 5)), Scaling(scale=np.array([2.0, 3.0]))]
     )
@@ -800,11 +806,10 @@ def test_rectangular_chain_left_unfactored() -> None:
     assert list(nf.transformations) == list(seq.transformations)
 
 
-def test_a_chain_that_drops_an_axis_is_composed_but_not_factored() -> None:
-    # The two ends of the chain have different numbers of axes, so the
-    # chain is not factored. The projection is linear, so it composes with
-    # the scaling into an affine that keeps the first two axes, and it is
-    # never dropped.
+def test_a_chain_that_drops_an_axis_factors_with_a_leading_drop() -> None:
+    # The projection drops the third output, so the third input is never
+    # read. The normal form drops it right after the grid and factors
+    # the two other axes.
     grid = CartesianField(shape=(4, 5, 6))
     seq = Sequence(
         [
@@ -814,13 +819,13 @@ def test_a_chain_that_drops_an_axis_is_composed_but_not_factored() -> None:
         ]
     )
     nf = seq.compute(factor=True)
-    first, last = nf.transformations
+    first, drop, *factors = nf.transformations
     assert first is grid
-    assert not any(
-        isinstance(t, SubspaceTransformation) for t in nf.transformations
-    )
+    assert isinstance(drop, Projection)
+    assert list(drop.dropped) == [2] and not list(drop.created)
+    assert [list(f.input_axes) for f in factors] == [[0], [1]]
     expected = np.array([[2.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0]])
-    assert np.allclose(last.to(Affine).matrix, expected)
+    assert np.allclose(Sequence(nf[1:]).to(Affine).matrix, expected)
 
 
 def test_default_compute_unchanged_by_factor_flag() -> None:

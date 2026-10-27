@@ -228,7 +228,6 @@ def _first_count(
     members: tx.List["Transformation"], side: int
 ) -> tx.Optional[int]:
     from ..sequence import Sequence
-    from .factor import _element_ndim
 
     for member in members:
         counts = axis_counts(member)
@@ -236,9 +235,26 @@ def _first_count(
             return counts[side]
         if counts[1 - side] is not None or isinstance(member, Sequence):
             return None
-        if _element_ndim(member, -1) != (-1, -1):
+        if not _preserves_count(member):
             return None
     return None
+
+
+def _preserves_count(t: "Transformation") -> bool:
+    # Tell whether `t` is known to have as many output axes as input
+    # axes without stating either number: an identity, a subspace, a
+    # field that interpolates, an affine-like map without parameters, or
+    # the lazy inverse of one of them.
+    from ..concrete import Identity
+    from ..inverse import Inverse
+    from ..meta import SubspaceTransformation
+    from ..sequence import _interpolates
+
+    if isinstance(t, Inverse):
+        return t.forward is None or _preserves_count(t.forward)
+    if isinstance(t, (SubspaceTransformation, Identity)) or _interpolates(t):
+        return True
+    return affine_matrix(t) is None
 
 
 UNREADABLE = object()
