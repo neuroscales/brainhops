@@ -1155,15 +1155,13 @@ class ScaledProxy(ArrayProxy):
     An axis of length one of a factor stays of length one, so the
     factors never grow to the shape of the values.
 
-    By default, the type of the scaled values depends on the stored type
-    only. It is the floating-point type that NumPy gives for the stored
-    type and a float32, so that integers of 8 or 16 bits and float32
-    values give float32, and other integers and float64 values give
-    float64. A reader that needs another type passes it as `dtype=`,
-    and indexing, transposing or reshaping the proxy keeps that type.
-    The factors are cast to the type of the scaled values before they
-    are applied, so a factor of a wider type neither widens the result
-    nor makes a wider copy of the values.
+    The type of the scaled values depends on the stored type only: it is
+    the floating-point type that NumPy gives for the stored type and a
+    float32, so that integers of 8 or 16 bits and float32 values give
+    float32, and other integers and float64 values give float64. The
+    factors are cast to that type before they are applied, so a factor
+    of a wider type neither widens the result nor makes a wider copy of
+    the values.
     """
 
     base: tx.Any
@@ -1176,10 +1174,6 @@ class ScaledProxy(ArrayProxy):
     inter: tx.Optional[np.ndarray] = None
     """The offset, a number or an array that broadcasts against the shape
     of `base`, or `None`."""
-
-    _dtype: tx.Optional[np.dtype] = None
-    """The type of the scaled values, given as `dtype=`, or `None` for
-    the type that the stored type decides."""
 
     @property
     def root(self) -> StoredProxy:
@@ -1212,14 +1206,11 @@ class ScaledProxy(ArrayProxy):
 
     @property
     def dtype(self) -> np.dtype:
-        """The type of the scaled values.
+        """The type of the scaled values, which the stored type decides.
 
-        It is the type given as `dtype=` when there is one. Otherwise, it
-        is the floating-point type that NumPy gives for the stored type
-        and a float32, whatever the type of the factors.
+        It is the floating-point type that NumPy gives for the stored
+        type and a float32, whatever the type of the factors.
         """
-        if self._dtype is not None:
-            return self._dtype
         return np.result_type(self.base.dtype, np.float32)
 
     @property
@@ -1243,7 +1234,6 @@ class ScaledProxy(ArrayProxy):
             self.base[index],
             _index_factor(self.slope, items, self.shape, front),
             _index_factor(self.inter, items, self.shape, front),
-            dtype=self._dtype,
         )
 
     def transpose(self, *axes: tx.Any) -> "ScaledProxy":
@@ -1270,7 +1260,6 @@ class ScaledProxy(ArrayProxy):
             self.base.transpose(perm),
             None if self.slope is None else self.slope.transpose(perm),
             None if self.inter is None else self.inter.transpose(perm),
-            dtype=self._dtype,
         )
 
     def _reshaped(self, shape: tx.Tuple[int, ...]) -> ArrayProxy:
@@ -1290,9 +1279,7 @@ class ScaledProxy(ArrayProxy):
             if factor is not None and reshaped is None:
                 return ReshapedProxy(self, shape)
             factors.append(reshaped)
-        return ScaledProxy(
-            self.base.reshape(shape), *factors, dtype=self._dtype
-        )
+        return ScaledProxy(self.base.reshape(shape), *factors)
 
     def __array__(
         self, dtype: tx.Any = None, copy: tx.Optional[bool] = None

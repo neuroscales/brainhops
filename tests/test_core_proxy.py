@@ -357,25 +357,6 @@ def test_the_stored_type_decides_the_scaled_type() -> None:
         np.testing.assert_array_equal(read, reference)
 
 
-def test_a_given_scaled_type_is_kept_by_every_view() -> None:
-    # A type given as `dtype=` replaces the type that the stored type
-    # decides, and an index, a transpose, a reshape and a computation
-    # keep it.
-    values = _array((3, 4)).astype(np.int16)
-    scaled = ScaledProxy(_Recording(values), 2.0, 1.0, dtype=np.float64)
-    assert scaled.dtype == np.float64
-    views = [
-        scaled[1:],
-        scaled.T,
-        scaled.reshape(4, 3),
-        scaled.reshape(12),
-    ]
-    for view in views:
-        assert view.dtype == np.float64
-        assert np.asarray(view).dtype == np.float64
-    assert (scaled + 1).dtype == np.float64
-
-
 def test_scaling_leaves_what_it_reads_unchanged(tmp_path) -> None:  # noqa: ANN001
     # Values that are already in the scaled type may be a view of an
     # array that the proxy keeps, or a read-only memory map, so they are

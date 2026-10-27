@@ -190,17 +190,15 @@ subclasses fall in three kinds, and each kind does one thing.
 - A `ScaledProxy` presents the values of another proxy multiplied by a
   factor and shifted by an offset, which broadcast against the shape,
   as in `slope * stored + inter`. It covers the single factor of
-  MRtrix and NIfTI, and the factor of each AFNI sub-brick. By default,
-  the stored type alone decides the type of the scaled values, which is
-  the floating-point type that NumPy gives for the stored type and a
+  MRtrix and NIfTI, and the factor of each AFNI sub-brick. The stored
+  type alone decides the type of the scaled values, which is the
+  floating-point type that NumPy gives for the stored type and a
   float32. A stored floating-point type is therefore kept, and an
-  integer type of 8 or 16 bits gives float32. NIfTI and MRtrix use this
-  rule. A format that needs another type passes that type to the proxy,
-  and an index, a transpose or a reshape of the proxy keeps it. The
-  factors are cast to the type of the scaled values before they are
-  applied, because the type of a factor says how the header writes it,
-  not how precise the values are, and a float64 factor would otherwise
-  make a float64 copy of float32 values.
+  integer type of 8 or 16 bits gives float32. The factors are cast to
+  the type of the scaled values before they are applied, because the
+  type of a factor says how the header writes it, not how precise the
+  values are, and a float64 factor would otherwise make a float64 copy
+  of float32 values.
 
 A fourth class, `PermutedProxy`, is a stored proxy that presents the
 axes of another stored proxy in another order. Transposing a stored
@@ -676,10 +674,10 @@ slope and the intercept of the header. They are read as nibabel reads
 them: a slope of zero or a slope that is not finite means that the
 voxels are not scaled, and the intercept is then ignored. When the
 slope and the intercept change the values, the reader wraps the proxy
-in a `ScaledProxy` with the default type rule. A scaled image of 8- or
-16-bit integers therefore has type float32, where nibabel would give
-float64, and a stored floating-point type is kept. Structured
-values, such as RGB triplets, are never scaled. An MGH file is never
+in a `ScaledProxy`, whose type follows the stored type. A scaled image
+of 8- or 16-bit integers therefore has type float32, where nibabel
+would give float64, and a stored floating-point type is kept.
+Structured values, such as RGB triplets, are never scaled. An MGH file is never
 scaled. A writer recognizes the lazy array of a whole NIfTI file, scaled
 by the factors of its header or not, with `whole_file`, and copies its
 stored voxels with the data type and the scaling of the header. A
