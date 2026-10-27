@@ -8,11 +8,14 @@ recorded in `spec/design/transformation-filters.md`.
 """
 
 import typing_extensions as tx
+from bagof.magic import replace
 
 from brainhops.datamodel import kinds
 
-if tx.TYPE_CHECKING:
-    from ..base import Transformation
+from ..base import Transformation
+from ..concrete import Identity
+from ..inverse import Inverse
+from ..sequence import Sequence
 
 __all__ = ["MatchLike", "matches", "replace_parts"]
 
@@ -65,8 +68,6 @@ def matches(xform: "Transformation", match: MatchLike) -> bool:
         If `match` is not a matcher, such as a transformation, a
         generator or another iterable.
     """
-    from ..base import Transformation
-
     if isinstance(match, str):
         return xform.is_kind(match)
     if isinstance(match, type):
@@ -123,11 +124,6 @@ def replace_parts(
     ValueError
         If a part to replace changes the number of axes.
     """
-    from bagof.magic import replace
-
-    from ..inverse import Inverse
-    from ..sequence import Sequence
-
     if matches(xform, match):
         # The node is decided as a whole.
         return xform if keep else _as_identity(xform)
@@ -155,8 +151,6 @@ def _as_identity(xform: "Transformation") -> "Transformation":
     ValueError
         If the input and output systems have different numbers of axes.
     """
-    from ..concrete import Identity
-
     source, target = xform.input, xform.output
     ndim_in = None if source is None else source.ndim
     ndim_out = None if target is None else target.ndim
