@@ -403,18 +403,6 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             with h5py.File(str(filename), "w") as f:
                 writer(f)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write to a binary stream open for writing.
-
-        Parameters
-        ----------
-        file : file object
-            The stream, open in binary mode.
-        **kwargs : Any
-            The options of the writer.
-        """
-        file.write(self.to_bytes(**kwargs))
-
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of an HDF5 file that encodes the object.
 

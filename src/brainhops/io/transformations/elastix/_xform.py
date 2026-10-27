@@ -276,27 +276,6 @@ class ElastixTransform(
         _place_initial(record, filename, filename)
         write_file(filename, content)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the parameter file to an open text file, without its chain.
-
-        The text of [`to_text`][] is written as it is, so that it keeps the
-        line endings of the file that was read.
-
-        Parameters
-        ----------
-        file : IO
-            The open text file.
-        **kwargs : Any
-            `on_loss` and the fields of the metadata, given to
-            [`consolidate`][].
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        """
-        file.write(self.to_text(**kwargs))
-
     def to_text(self, **kwargs) -> str:
         """Return the text of the parameter file that encodes the chain.
 

@@ -28,7 +28,11 @@ from brainhops.io.base.parsers import (
 
 
 class RemotePath(os.PathLike):
-    """An in-memory remote path whose os.fspath raises and counts its calls."""
+    """An in-memory remote path whose os.fspath raises and counts its calls.
+
+    The store holds text, which a file opened in binary mode encodes and
+    decodes as UTF-8.
+    """
 
     store: tx.ClassVar[tx.Dict[str, str]] = {}
     fspath_calls: tx.ClassVar[int] = 0
@@ -47,16 +51,23 @@ class RemotePath(os.PathLike):
         return self.url in self.store
 
     def open(self, mode: str = "r") -> tx.IO:  # noqa: A003
+        binary = "b" in mode
         if "w" not in mode:
-            return _io.StringIO(self.store[self.url])
+            text = self.store[self.url]
+            return _io.BytesIO(text.encode()) if binary else _io.StringIO(text)
         url, store = self.url, self.store
 
-        class _Writer(_io.StringIO):
+        class _TextWriter(_io.StringIO):
             def close(self) -> None:
                 store[url] = self.getvalue()
                 super().close()
 
-        return _Writer()
+        class _BinaryWriter(_io.BytesIO):
+            def close(self) -> None:
+                store[url] = self.getvalue().decode()
+                super().close()
+
+        return _BinaryWriter() if binary else _TextWriter()
 
 
 @pytest.fixture(autouse=True)

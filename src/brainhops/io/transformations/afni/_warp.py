@@ -583,27 +583,6 @@ class AfniBrikWarp(
             self.rawdata = brik_proxy(record, brik, mmap)
             self.data = None
 
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path, since AFNI datasets cannot be written to a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path, or a stream, which is refused.
-        **kwargs : Any
-            Arguments of [`to_filename`][].
-
-        Raises
-        ------
-        WriterError
-            If `file` is a stream.
-        """
-        if isinstance(file, str):
-            file = path.Path(file)
-        if isinstance(file, (path.PathLike, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return self.to_fileobj(file, **kwargs)
-
     to_fileobj = disabled(
         WriterError,
         "An AFNI dataset is two files (.HEAD and .BRIK), which a "

@@ -5,7 +5,6 @@ __all__ = ["MetadataReader", "MetadataWriter"]
 import typing_extensions as tx
 
 from brainhops._core import path
-from brainhops._core.path import write_file
 from brainhops.io.base.parsers import (
     FileReader,
     FileWriter,
@@ -393,21 +392,6 @@ class MetadataWriter(FileWriter):
                 f"no file to write."
             )
         return self.raw
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the file of the record to a path.
-
-        The content is encoded first, and a local file is then replaced
-        at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of the writer of the record.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the file of the record to an open file.

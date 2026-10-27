@@ -310,18 +310,6 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
         """
         return self.to_text(**kwargs).splitlines()
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the content of the file to a text stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in text mode.
-        **kwargs : Any
-            Refused, since the writer has no option.
-        """
-        file.write(self.to_text(**kwargs))
-
     def __repr__(self) -> str:
         return (
             f"AfniAffineRaw(matrices={self.matrices.tolist()!r}, "

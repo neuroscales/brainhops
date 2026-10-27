@@ -8,8 +8,6 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
-from brainhops._core.path import write_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
@@ -600,29 +598,6 @@ class BdvViewRegistration(
         """
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_bytes(**kwargs)
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the registration to the file at a path, replacing it.
-
-        The registration is consolidated into a copy before the file is
-        written, so a registration that cannot be encoded leaves the file
-        untouched. A local file is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of the writer, which are refused.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        UnrepresentableTransformationError
-            If the chain or the systems cannot be encoded.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

@@ -810,23 +810,6 @@ class NrrdImage(
         record = _nrrd_written(image, ())
         return record.to_bytes() + _payload(image, record)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a NRRD file with attached samples to a stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-
-        Raises
-        ------
-        TypeError
-            If an unknown option is given.
-        """
-        file.write(self.to_bytes(**kwargs))
-
     def to_filename(
         self,
         filename: path.FilenameLike,

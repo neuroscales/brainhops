@@ -8,8 +8,6 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
-from brainhops._core.path import write_file
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
@@ -538,30 +536,6 @@ class TrakEM2PatchAffine(
         """
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_bytes(**kwargs)
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the transformation to the file at a path, replacing it.
-
-        The transformation is consolidated into a copy before the file is
-        written, so a transformation that cannot be encoded leaves the
-        file untouched. A local file is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of the writer, which are refused.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        UnrepresentableTransformationError
-            If the matrix or the systems cannot be encoded, or if the
-            transformation has no record.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

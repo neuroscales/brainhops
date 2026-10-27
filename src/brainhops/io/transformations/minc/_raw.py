@@ -3,7 +3,6 @@
 __all__ = ["XfmRaw"]
 
 # stdlib
-import io as _io
 
 # dependencies
 import numpy as np
@@ -12,7 +11,6 @@ from bagof.magic import Magic, field
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import write_file
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -426,36 +424,6 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
             because they did not decode are written back unchanged.
         """
         return self.to_text(**kwargs).encode(encoding, "surrogateescape")
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the file that the record holds to an open file.
-
-        A text stream receives the text, and any other stream the bytes,
-        so that the line endings are written as stored.
-
-        Parameters
-        ----------
-        file : IO
-            The open file.
-        **kwargs : Any
-            Options of [`to_bytes`][].
-        """
-        if isinstance(file, _io.TextIOBase):
-            file.write(self.to_text(**kwargs))
-        else:
-            file.write(self.to_bytes(**kwargs))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the file that the record holds, replacing a local file.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of [`to_bytes`][].
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

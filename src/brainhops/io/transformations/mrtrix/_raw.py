@@ -310,18 +310,6 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
         lines.append("0 0 0 1")
         return lines
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the content of the file to a text stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in text mode.
-        **kwargs : Any
-            Refused, since the writer has no option.
-        """
-        file.write(self.to_text(**kwargs))
-
     def copy(self) -> "MrtrixLinearRaw":
         """Return a copy of the record that can be changed freely.
 

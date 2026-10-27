@@ -6,8 +6,6 @@ import typing_extensions as tx
 from bagof.magic import Alias, Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
-from brainhops._core.path import write_file
 from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
@@ -455,34 +453,6 @@ class AfniAffine(
             The lines of the file, without their line breaks.
         """
         return self.to_text(**kwargs).splitlines()
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the affine to a text stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in text mode.
-        **kwargs : Any
-            The options of [`consolidate`][].
-        """
-        file.write(self.to_text(**kwargs))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the affine to a path.
-
-        The content is encoded before the file is written, so an affine
-        that cannot be encoded leaves no file behind, and a local file is
-        replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The options of [`consolidate`][].
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

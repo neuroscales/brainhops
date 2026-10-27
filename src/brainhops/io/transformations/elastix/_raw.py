@@ -328,11 +328,6 @@ class ElastixRaw(
     def to_lines(self) -> tx.Iterator[str]:
         return iter(self.to_text().splitlines())
 
-    def to_fileobj(self, file: tx.IO) -> None:
-        # The base writes `to_lines`, each followed by "\n", which would
-        # change the line endings of the text that was read.
-        file.write(self.to_text())
-
 
 # ----------------------------------------------------------------------
 #   CHAINS

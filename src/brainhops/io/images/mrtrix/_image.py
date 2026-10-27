@@ -2,7 +2,6 @@
 
 # stdlib
 import math
-import os
 
 # dependencies
 import numpy as np
@@ -565,23 +564,6 @@ class MrtrixImage(
         image = self.consolidate(**_options(kwargs))
         return mrtrix_bytes(image.metadata.raw, image.rawdata)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a single-file, uncompressed `.mif` image to a stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-
-        Raises
-        ------
-        TypeError
-            If an unknown option is given.
-        """
-        file.write(self.to_bytes(**kwargs))
-
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write to a path, in the variant that its extension names.
 
@@ -622,22 +604,6 @@ class MrtrixImage(
             # how they stored the voxels.
             self.rawdata = read_mrtrix(filename, mmap=mmap)[1]
             self.data = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path or a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path or the stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-        """
-        if isinstance(file, str):
-            file = path.Path(file)
-        if isinstance(file, (path.PathLike, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return super().to_file(file, **kwargs)
 
 
 # ----------------------------------------------------------------------

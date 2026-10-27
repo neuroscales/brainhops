@@ -751,30 +751,6 @@ class XfmTransform(
         self.output = None
         return self
 
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write the transform to a path or a file object.
-
-        A path is written by [`to_filename`][], with the displacement
-        volumes, and a file object by [`to_fileobj`][], alone.
-
-        Parameters
-        ----------
-        file : path or file object
-            The path or the open file.
-        **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the transform cannot be encoded.
-        WriterError
-            If a displacement volume cannot be placed beside the file.
-        """
-        if isinstance(file, (str, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return self.to_fileobj(file, **kwargs)
-
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transform to a file, with its displacement volumes.
 

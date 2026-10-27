@@ -8,8 +8,6 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
-from brainhops._core.path import write_file
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -396,46 +394,6 @@ class NeuroglancerTransform(
             If a transform cannot encode the systems or the matrix.
         """
         return iter(self.to_text(**kwargs).splitlines())
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the JSON text of the transform to a file object.
-
-        The text is encoded before anything is written, so a
-        transformation that cannot be encoded leaves the file untouched.
-
-        Parameters
-        ----------
-        file : file object
-            The file, open in text mode.
-        **kwargs : Any
-            Options of [`consolidate`][].
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If a transform cannot encode the systems or the matrix.
-        """
-        file.write(self.to_text(**kwargs))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the JSON text of the transform to a path.
-
-        The text is encoded first, and a local file is then replaced at
-        once, so that a failed save leaves the file as it was.
-
-        Parameters
-        ----------
-        filename : path
-            The path of the file.
-        **kwargs : Any
-            Options of [`consolidate`][].
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If a transform cannot encode the systems or the matrix.
-        """
-        write_file(filename, self.to_text(**kwargs).encode("utf-8"))
 
 
 # ----------------------------------------------------------------------

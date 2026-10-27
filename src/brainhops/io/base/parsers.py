@@ -22,12 +22,12 @@ __all__ = [
 
 from collections.abc import Iterable
 from contextvars import ContextVar
-from io import BytesIO
+from io import BytesIO, TextIOBase
 
 import typing_extensions as tx
 
 from brainhops._core import path, peek
-from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import is_local, replace_file, write_file
 from brainhops._core.streams import preserve_position
 from brainhops.errors import (
     AmbiguousFormatError,  # noqa: F401
@@ -715,7 +715,7 @@ class _WriterMixin:
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or a file object.
 
-        A file object needs a `write` or a `writelines` method.
+        A file object needs a `write` method.
 
         Raises
         ------
@@ -725,28 +725,36 @@ class _WriterMixin:
         if isinstance(file, (str, path.PathLike)):
             return self.to_filename(file, **kwargs)
 
-        if hasattr(file, "write") or hasattr(file, "writelines"):
+        if hasattr(file, "write"):
             return self.to_fileobj(file, **kwargs)
 
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the object to a path, opened in the class write mode.
+        """Write the object to a path, always as bytes.
 
-        A local file is written next to its target, which it then
-        replaces at once, so that an error while the content is written
-        leaves the target as it was. Other paths are written in place.
+        The content is encoded before the target changes, so that an
+        error while it is encoded leaves the target as it was. A local
+        file is written next to its target, which it then replaces at
+        once. A remote file is written once the whole content is
+        encoded. A text format is written with [`to_bytes`][], so that
+        its line endings are written as they are, on every system. A
+        binary format is written with [`to_fileobj`][], which a local
+        file receives as it is written and a remote file receives once
+        it is complete.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
+        if "b" not in self._WRITE_MODE:
+            write_file(filename, self.to_bytes(**kwargs))
+            return
         if not is_local(filename):
-            with filename.open(self._WRITE_MODE) as f:
-                return self.to_fileobj(f, **kwargs)
+            buffer = BytesIO()
+            self.to_fileobj(buffer, **kwargs)
+            filename.write_bytes(buffer.getvalue())
+            return
 
-        mode = self._WRITE_MODE.replace("w", "x")
-
-        def write(name: str) -> None:
-            with open(name, mode) as f:
+        def write(name: path.Path) -> None:
+            with name.open("xb") as f:
                 self.to_fileobj(f, **kwargs)
 
         replace_file(filename, write)
@@ -754,18 +762,16 @@ class _WriterMixin:
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the object to a file object open for writing.
 
-        If the class writes in binary mode, the result of [`to_bytes`][] is
-        written. Otherwise, if the file object has a `writelines` method, the
-        lines of [`to_lines`][] are written with that method, each followed by
-        a newline. A file object without `writelines` receives the result of
-        [`to_text`][] through `write`.
+        A binary format writes the result of [`to_bytes`][]. A text
+        format writes the result of [`to_text`][] to a text stream, such
+        as a file opened with `"w"` or an `io.StringIO`, and the result
+        of [`to_bytes`][] to any other stream, such as a file opened with
+        `"wb"` or an `io.BytesIO`.
         """
-        if "b" in self._WRITE_MODE:
-            file.write(self.to_bytes(**kwargs))
-        elif hasattr(file, "writelines"):
-            file.writelines(line + "\n" for line in self.to_lines(**kwargs))
-        else:
+        if "b" not in self._WRITE_MODE and isinstance(file, TextIOBase):
             file.write(self.to_text(**kwargs))
+        else:
+            file.write(self.to_bytes(**kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the binary content of the file.
@@ -783,9 +789,10 @@ class _WriterMixin:
     def to_text(self, **kwargs) -> str:
         """Return the text of the file.
 
-        The text is made of the lines of [`to_lines`][] joined by newlines.
+        The text is made of the lines of [`to_lines`][], each followed by
+        a newline.
         """
-        return "\n".join(self.to_lines(**kwargs))
+        return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Return the lines of the file, without terminators.

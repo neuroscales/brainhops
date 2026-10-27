@@ -580,20 +580,6 @@ class TiffMultiScaleImage(
             self.images = None
             self.transformations = None
 
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write the pyramid to a path or a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path or the stream.
-        **kwargs : Any
-            The options of [`to_bytes`][].
-        """
-        if isinstance(file, (str, path.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return super().to_file(file, **kwargs)
-
     # --- helpers ------------------------------------------------------
 
     def _untouched(
