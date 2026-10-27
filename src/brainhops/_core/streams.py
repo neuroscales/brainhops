@@ -182,7 +182,9 @@ def decompress(content: bytes) -> bytes:
 
 
 COMPRESSING: tx.Dict[str, tx.Callable[[tx.BinaryIO], tx.BinaryIO]] = {
-    ".gz": lambda f: gzip.GzipFile(fileobj=f, mode="wb"),
+    # The name of the file is left out of the gzip header, because a writer
+    # may write a temporary file that is renamed afterwards.
+    ".gz": lambda f: gzip.GzipFile(filename="", fileobj=f, mode="wb"),
 }
 """Compressors, keyed by the file name suffix that calls for them.
 

@@ -557,7 +557,7 @@ def test_generic_reader_does_not_claim_fsl_intents() -> None:
 
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
     # A score of 1.0 would mean that the generic reader claims the file.
-    assert NiftiRASCoordinateField._score_nibabel(img.header) < 1.0
+    assert NiftiRASCoordinateField.score_header(img.header) < 1.0
 
 
 def test_coefficient_field_exposes_degree_and_coeff() -> None:

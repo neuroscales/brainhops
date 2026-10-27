@@ -279,7 +279,7 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
     """The `intent_p1` values that the reader decodes."""
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score `Confidence.CERTAIN` for a NiftyReg file of one of the `TYPES`.
         """

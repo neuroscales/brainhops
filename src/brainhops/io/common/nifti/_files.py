@@ -1,17 +1,13 @@
 """Reading and writing NIfTI files and streams through `nibabel`."""
 
 # stdlib
-import gzip
 import inspect
-from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
 from nibabel.arrayproxy import ArrayProxy
 
-from brainhops._core import path
-from brainhops._core.path import is_local, replace_file
 from brainhops._core.streams import open_compressed
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base._utils_proxies import NibabelProxy
@@ -113,10 +109,10 @@ def _image_from_stream(
     return read(file_map, **_accepted(read, kwargs))
 
 
-def write_nifti_stream(
+def _image_to_stream(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
 ) -> None:
-    """Write a NIfTI image to a stream, uncompressed.
+    """Write a NIfTI image to an uncompressed stream.
 
     Before nibabel 5.0, which added `to_stream`, the stream is passed in a file
     map.
@@ -148,34 +144,6 @@ def _nifti_from_stream(
         if start is not None:
             fileobj.seek(start)
         raise
-
-
-def write_nifti_file(
-    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
-) -> None:
-    """Write a NIfTI image to a local or remote path.
-
-    The file is compressed when its name ends with `.gz`. A local file is
-    written beside the target and moved over it, so that the voxels of a
-    lazy image are read from the old file even when the image is written
-    over the file that it reads.
-    """
-    if is_local(file):
-        # The file is written beside the target and moved over it, because
-        # nibabel reads the voxels of a lazy image while it writes, and the
-        # lazy image may read the target itself.
-        replace_file(path.Path(file), image.to_filename)
-        return
-    # The name is taken from the URL, because the backend may not know it and a
-    # query is not part of it. `open_compressed` only reads, so gzip compresses
-    # here.
-    compress = urlsplit(str(file)).path.lower().endswith(".gz")
-    with path.Path(file).open("wb") as f:
-        if compress:
-            with gzip.GzipFile(fileobj=f, mode="wb") as gz:
-                write_nifti_stream(image, gz)
-        else:
-            write_nifti_stream(image, f)
 
 
 # ----------------------------------------------------------------------

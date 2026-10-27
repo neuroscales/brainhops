@@ -381,8 +381,8 @@ def test_intent_p1_picks_the_reader(
 def test_generic_vector_readers_decline_niftyreg_files() -> None:
     image = _nreg_image(np.zeros((3, 4, 5, 3)), REF_VOX2RAS, 1)
     header = image.header
-    assert NiftiRASCoordinateField._score_nibabel(header) == Confidence.NO
-    assert ItkNiftiDisplacementField._score_nibabel(header) == Confidence.NO
+    assert NiftiRASCoordinateField.score_header(header) == Confidence.NO
+    assert ItkNiftiDisplacementField.score_header(header) == Confidence.NO
 
 
 def test_other_vector_images_are_not_niftyreg() -> None:
@@ -390,7 +390,7 @@ def test_other_vector_images_are_not_niftyreg() -> None:
     image.header.set_intent(1007, name="")
     image.header["intent_p1"] = 1
     for cls in (NiftyRegDisplacementField, NiftyRegDeformationField):
-        assert cls._score_nibabel(image.header) == Confidence.NO
+        assert cls.score_header(image.header) == Confidence.NO
 
 
 @pytest.mark.parametrize(

@@ -1066,9 +1066,9 @@ its status.
     and compared at consolidation with the list that the record decodes
     to, so a transformation appended in place is written, for every
     image format.
-32. `read_nifti` parses the header twice when it reads a local path,
-    once for the record and once for the nibabel image. Status:
-    accepted.
+32. `NiftiReaderWriter.from_filename` parses the header twice when it
+    reads a local path, once for the record and once for the nibabel
+    image. Status: accepted.
 33. `_reset_structural_fields` also resets `xyzt_units`, so a field
     written from a new chain of transformations declares unknown units,
     as it did before pass 1c when the header was built from scratch.
