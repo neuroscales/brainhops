@@ -197,10 +197,10 @@ classes plug in, not a public extension point.
 The `projectAxis` transformation of OME-NGFF 0.6 has the structure of
 `Projection(dropped, created)`: `droppedInputs` are the inputs it drops,
 and `createdOutputs` are the outputs it adds, with value zero. The
-default of `Projection.at` is therefore `0`. A projection whose `at`
-holds other numbers is written as a `projectAxis` followed by a
-`translation`, and a projection with a free axis is refused, since it
-never survives `compute` (A.4).
+default of `Projection.at` is therefore `0`. The OME-NGFF writer of
+brainhops writes a projection through its affine matrix, whose
+translation holds the values of `at`, and it refuses a free axis, which
+has no value to write and never survives `compute` (A.4).
 
 The specification also exposes a correctness issue. Swapping `dropped`
 and `created` does not invert a projection that drops an axis, which has
@@ -510,8 +510,9 @@ unfactored a chain whose two ends have different numbers of axes.
 
 The next pull requests, in order:
 
-1. add the field `at` of `Projection` and the matrix product that lets
-   zero cancel NaN, and teach the OME-NGFF writer to write `at`;
+1. add the field `at` of `Projection`, the matrix product that lets
+   zero cancel NaN and the check of `compute` for free axes, and make the
+   OME-NGFF writer refuse a free axis;
 2. replace the restrictors of #104 with the rules that move projections
    towards the input and embeddings towards the output, so that
    `compute` reduces projections before it composes;
