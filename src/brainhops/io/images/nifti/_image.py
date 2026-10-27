@@ -19,7 +19,6 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -35,9 +34,6 @@ from brainhops.datamodel.transformations import (
 
 # errors
 from brainhops.errors import (
-    UNSET,
-    ErrorAction,
-    ErrorPolicy,
     ParserExistsError,
     WriterError,
 )
@@ -466,14 +462,11 @@ class NiftiImage(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -523,17 +516,6 @@ class NiftiImage(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the header cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set
@@ -579,7 +561,7 @@ class NiftiImage(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_error, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
@@ -589,7 +571,7 @@ class NiftiImage(
         )
         metadata = type(metadata or NiftiMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,

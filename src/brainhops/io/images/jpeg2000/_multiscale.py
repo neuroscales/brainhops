@@ -14,9 +14,7 @@ from brainhops._core.properties import cached_value, smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import write_file
@@ -330,16 +328,13 @@ class Jpeg2000MultiScaleImage(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         container: tx.Optional[str] = None,
         num_resolutions: tx.Optional[int] = None,
         comment: tx.Optional[str] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options,
     ) -> "Jpeg2000MultiScaleImage":
         """Encode the full-resolution level and the placements of the pyramid.
@@ -379,16 +374,6 @@ class Jpeg2000MultiScaleImage(
             number of levels of the pyramid.
         comment : str, optional
             The comment of the file, in place of those of the record.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, and fields of the
             metadata, as for [`Jpeg2000Image.consolidate`][].
@@ -420,7 +405,6 @@ class Jpeg2000MultiScaleImage(
             container=container,
             num_resolutions=num_resolutions,
             comment=comment,
-            on_error=on_error,
             **options,
         )
         if level.rawdata is self.rawdata and level.metadata is self.metadata:

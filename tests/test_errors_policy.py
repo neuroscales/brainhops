@@ -8,6 +8,11 @@ import pytest
 import typing_extensions as tx
 
 from brainhops import io
+from brainhops._core.errors import (
+    apply_error_policy,
+    error_policy,
+    policy_action,
+)
 from brainhops.datamodel.metadata import (
     ConversionReport,
     Metadata,
@@ -22,9 +27,6 @@ from brainhops.errors import (
     ConversionWarning,
     IncompatibleSystemError,
     LossyConversionError,
-    apply_error_policy,
-    error_policy,
-    policy_action,
 )
 from brainhops.io.common.mgh import MghMetadata
 from brainhops.io.transformations.c3d import C3dAffine

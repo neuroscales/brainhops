@@ -20,10 +20,8 @@ from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -439,13 +437,10 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
 
     # --- consolidating ------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Move the pending data into `rawdata`.
@@ -466,16 +461,6 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -498,7 +483,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, OpenSlideMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         # The record cannot be encoded, so a copy is given the list that
@@ -781,13 +766,10 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
 
     # --- consolidating ------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Move the pending data of the levels into `rawdata`.
@@ -817,16 +799,6 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
         ----------
         inplace : bool, default=False
             Whether to change this pyramid rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -854,7 +826,7 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
         metadata = metadata_to_write(
             self.metadata, OpenSlideMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         # The record stores no placement, so a copy is given the list that

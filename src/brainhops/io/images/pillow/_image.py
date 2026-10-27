@@ -18,11 +18,9 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import write_file
@@ -523,15 +521,12 @@ class PillowImage(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         format: tx.Optional[str] = None,
         dpi: _DpiLike = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options,
     ) -> "PillowImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -587,16 +582,6 @@ class PillowImage(
             The resolution recorded by PNG, JPEG, BMP and TIFF. By default
             it is chosen as described above. `False` records none, and a
             number or an `(x, y)` pair is recorded as is.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Options passed to `Image.save`, such as `quality=95` for JPEG.
             Only the options that Pillow reads for the format are taken.
@@ -630,7 +615,7 @@ class PillowImage(
         metadata = metadata_to_write(
             self.metadata, PillowMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         held = None if self.metadata is None else self.metadata.raw

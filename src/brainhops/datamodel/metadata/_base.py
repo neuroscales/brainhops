@@ -21,7 +21,7 @@ from ._derive import (
     with_brainhops,
     with_history,
 )
-from ._report import takes_error_policy
+from ._report import call_under_policy
 from ._terms import EncodingDirection
 from ._vocabulary import (
     ALONG,
@@ -104,7 +104,6 @@ class Metadata(
     """
 
     @classmethod
-    @takes_error_policy
     def from_instance(
         cls,
         other: tx.Any,
@@ -146,11 +145,15 @@ class Metadata(
         Metadata
             The copy.
         """
-        if isinstance(other, Metadata) and "extra" not in kwargs:
-            kwargs["extra"] = dict(other.extra)
-        return super().from_instance(other, *args, **kwargs)
+        copy = super().from_instance
 
-    @takes_error_policy
+        def copy_fields() -> tx.Self:
+            if isinstance(other, Metadata) and "extra" not in kwargs:
+                kwargs["extra"] = dict(other.extra)
+            return copy(other, *args, **kwargs)
+
+        return call_under_policy(copy_fields, on_error, on_loss=on_loss)
+
     def to(
         self,
         cls: tx.Optional[tx.Type["Metadata"]] = None,
@@ -216,10 +219,14 @@ class Metadata(
         report.lost  # the fields MGH has no slot for
         ```
         """
-        target = type(self) if cls is None else cls
-        if type(self) is target and not values and not copy:
-            return self
-        return target.from_instance(self, on_error=on_error, **values)
+
+        def convert() -> "Metadata":
+            target = type(self) if cls is None else cls
+            if type(self) is target and not values and not copy:
+                return self
+            return target.from_instance(self, **values)
+
+        return call_under_policy(convert, on_error, on_loss=on_loss)
 
     def derive(
         self,

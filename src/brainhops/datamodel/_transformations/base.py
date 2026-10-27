@@ -1027,6 +1027,8 @@ class Transformation(
         *,
         include: tx.Optional["MatchLike"],
         exclude: tx.Optional["MatchLike"],
+        on_loss: ErrorAction = UNSET,
+        on_error: ErrorPolicy = UNSET,
         **kwargs,
     ) -> "Transformation":
         """Filter, compute and convert the transformation to `target`.
@@ -1036,8 +1038,6 @@ class Transformation(
         the computation and the conversion, and a result without its
         parameters is refused (see `_check_parameters`).
         """
-        on_error = kwargs.pop("on_error", UNSET)
-        on_loss = kwargs.pop("on_loss", UNSET)
 
         def convert_to() -> "Transformation":
             xform = self

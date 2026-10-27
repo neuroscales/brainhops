@@ -35,7 +35,7 @@ from brainhops.datamodel.metadata import (
 )
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
+    call_under_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import GROUPS, VOCABULARY
 from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
@@ -111,13 +111,10 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         """
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "BidsSidecar":
         """Encode the fields that differ from the JSON object into a copy.
@@ -130,16 +127,6 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the fields that a sidecar cannot hold, and
-            with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override before the encoding.
 
@@ -160,7 +147,6 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             _encode,
             dict,
             inplace=inplace,
-            on_error=on_error,
             fields=fields,
         )
 
@@ -231,12 +217,8 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             raise ValueError("A BIDS sidecar is a JSON object.")
         return cls.from_raw(obj)
 
-    @takes_error_policy
     def to_text(
         self,
-        *,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields,
     ) -> str:
         """Return the JSON text of the consolidated sidecar.
@@ -246,16 +228,6 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
 
         Parameters
         ----------
-        on_error : ErrorPolicy, optional
-            What to do with the fields that a sidecar cannot hold, and
-            with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -264,31 +236,17 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         str
             The JSON text, indented by two spaces.
         """
-        record = self.consolidate(on_error=on_error, **fields).raw
+        record = self.consolidate(**fields).raw
         return json.dumps({} if record is None else record, indent=2) + "\n"
 
-    @takes_error_policy
     def to_lines(
         self,
-        *,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields,
     ) -> tx.Iterator[str]:
         """Return the lines of the JSON text of the consolidated sidecar.
 
         Parameters
         ----------
-        on_error : ErrorPolicy, optional
-            What to do with the fields that a sidecar cannot hold, and
-            with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -297,7 +255,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         iterator of str
             The lines of [`to_text`][], without terminators.
         """
-        return iter(self.to_text(on_error=on_error, **fields).splitlines())
+        return iter(self.to_text(**fields).splitlines())
 
 
 def from_bids(source: tx.Any) -> Metadata:
@@ -319,7 +277,6 @@ def from_bids(source: tx.Any) -> Metadata:
     return Metadata(**_decode(_read(source)))
 
 
-@takes_error_policy
 def to_bids(
     metadata: Metadata,
     *,
@@ -355,11 +312,17 @@ def to_bids(
     MetadataLossError
         If a field is reported under the `"raise"` policy.
     """
-    report = ConversionReport()
-    sidecar = BidsSidecar.from_instance(metadata, on_loss=report)
-    record = sidecar.consolidate(on_loss=report).raw
-    apply_loss_policy(report, on_error, stacklevel=2)
-    return {} if record is None else record
+
+    def write() -> tx.Dict[str, tx.Any]:
+        # The copy and the consolidation fill one report, on which the
+        # policy then acts once.
+        report = ConversionReport()
+        sidecar = BidsSidecar.from_instance(metadata, on_loss=report)
+        record = sidecar.consolidate(on_loss=report).raw
+        apply_loss_policy(report, stacklevel=2)
+        return {} if record is None else record
+
+    return call_under_policy(write, on_error, on_loss=on_loss)
 
 
 # ----------------------------------------------------------------------

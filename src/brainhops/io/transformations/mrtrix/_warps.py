@@ -32,9 +32,7 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -337,7 +335,7 @@ class MrtrixWarp(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
+    def _consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
         """Encode the pending state into `rawdata` and the record.
 
         Each concrete format implements this method, on which the writers
@@ -613,8 +611,7 @@ class MrtrixCoordinateField(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
@@ -622,8 +619,6 @@ class MrtrixCoordinateField(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending coordinates or chain into `rawdata` and a record.
@@ -671,16 +666,6 @@ class MrtrixCoordinateField(
             that record the kind of warp. A value of `None` removes a
             key. The keys that the other options, the data and the
             geometry decide are refused.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -710,7 +695,7 @@ class MrtrixCoordinateField(
         metadata = metadata_to_write(
             self.metadata, MrtrixMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         what = "An MRtrix deformation"
@@ -920,8 +905,7 @@ class MrtrixDisplacementField(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
@@ -929,8 +913,6 @@ class MrtrixDisplacementField(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode pending displacements or a chain into `rawdata` and a record.
@@ -962,16 +944,6 @@ class MrtrixDisplacementField(
             that record the kind of warp. A value of `None` removes a
             key. The keys that the other options, the data and the
             geometry decide are refused.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1001,7 +973,7 @@ class MrtrixDisplacementField(
         metadata = metadata_to_write(
             self.metadata, MrtrixMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         what = "An MRtrix displacement"
@@ -1381,8 +1353,7 @@ class MrtrixWarpFull(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
@@ -1390,8 +1361,6 @@ class MrtrixWarpFull(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "MrtrixWarpFull":
         """Encode the pending warps into `rawdata` and a record.
@@ -1426,16 +1395,6 @@ class MrtrixWarpFull(
             and `linear2`. A value of `None` removes a key. The keys that
             the other options, the data and the geometry decide are
             refused.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1465,7 +1424,7 @@ class MrtrixWarpFull(
         metadata = metadata_to_write(
             self.metadata, MrtrixMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         options = dict(

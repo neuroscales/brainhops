@@ -29,8 +29,6 @@ from brainhops.datamodel.metadata import (
     MetadataLossWarning,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.errors import UNSET
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     TextFileReader,
@@ -127,15 +125,9 @@ class DictMetadata(MetadataFormat):
     def from_raw(cls, raw, **kwargs) -> "DictMetadata":  # noqa: ANN001
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    @takes_error_policy
-    def consolidate(self, *, inplace=False, on_error=UNSET, **fields):  # noqa: ANN001, ANN003, ANN201
+    def _consolidate(self, *, inplace=False, **fields):  # noqa: ANN001, ANN003, ANN202
         return consolidated(
-            self,
-            _encode,
-            DictRaw,
-            inplace=inplace,
-            on_error=on_error,
-            fields=fields,
+            self, _encode, DictRaw, inplace=inplace, fields=fields
         )
 
 

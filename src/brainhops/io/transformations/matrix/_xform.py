@@ -24,9 +24,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -347,13 +345,10 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -376,16 +371,6 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -405,9 +390,7 @@ class TxtMatrixAffine(TxtArrayReader, MatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, TxtMatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, TxtMatrixMetadata, inplace, fields)
 
 
 @register_format
@@ -528,13 +511,10 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -557,16 +537,6 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -586,9 +556,7 @@ class CsvMatrixAffine(CsvArrayReader, MatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, CsvMatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, CsvMatrixMetadata, inplace, fields)
 
 
 @register_format
@@ -709,13 +677,10 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -738,16 +703,6 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -767,9 +722,7 @@ class TsvMatrixAffine(TsvArrayReader, MatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, TsvMatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, TsvMatrixMetadata, inplace, fields)
 
 
 @register_format
@@ -893,13 +846,10 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -922,16 +872,6 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -951,9 +891,7 @@ class NpyMatrixAffine(NpyArrayReader, MatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, NpyMatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, NpyMatrixMetadata, inplace, fields)
 
 
 @register_format
@@ -1077,13 +1015,10 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1106,16 +1041,6 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1135,9 +1060,7 @@ class NpzMatrixAffine(NpzArrayReader, MatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, NpzMatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, NpzMatrixMetadata, inplace, fields)
 
 
 class MatMatrixAffine(MatArrayReader, MatrixAffine):
@@ -1273,13 +1196,10 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1302,16 +1222,6 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1331,9 +1241,7 @@ class MatLegacyMatrixAffine(MatLegacyArrayReader, MatMatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, MatLegacyMatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, MatLegacyMatrixMetadata, inplace, fields)
 
 
 @register_format
@@ -1457,13 +1365,10 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             return cls.from_raw(other, **kwargs)
         return super().from_any(other, *args, **kwargs)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -1486,16 +1391,6 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -1515,9 +1410,7 @@ class Mat73MatrixAffine(Mat73ArrayReader, MatMatrixAffine):
             If the conventions of the record cannot store the matrix or
             the systems.
         """
-        return _consolidated(
-            self, Mat73MatrixMetadata, inplace, on_error, fields
-        )
+        return _consolidated(self, Mat73MatrixMetadata, inplace, fields)
 
 
 MatMatrixAffine.VARIANTS = (MatLegacyMatrixAffine, Mat73MatrixAffine)
@@ -1568,7 +1461,6 @@ def _consolidated(
     xform: MatrixAffine,
     metadata_class: tx.Type[MatrixMetadata],
     inplace: bool,
-    on_error: ErrorPolicy,
     fields: tx.Mapping[str, tx.Any],
 ) -> MatrixAffine:
     """Encode the pending matrix and systems of a transformation.
@@ -1594,7 +1486,7 @@ def _consolidated(
     metadata = metadata_to_write(
         xform.metadata, metadata_class, fields, report
     )
-    apply_loss_policy(report, on_error, stacklevel=3)
+    apply_loss_policy(report, stacklevel=3)
     if not requested:
         metadata = xform.metadata
     record = _record(xform)

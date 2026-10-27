@@ -10,9 +10,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import TextFileReader, TextFileWriter
 from brainhops.io.common._geometry import held_transformations
@@ -251,13 +249,10 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
 
     # --- to -----------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
@@ -287,16 +282,6 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -322,7 +307,7 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         metadata = metadata_to_write(
             self.metadata, TfmMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)

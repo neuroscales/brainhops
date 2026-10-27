@@ -18,11 +18,9 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     MetadataLossError,
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base._utils_files import same_file
@@ -340,16 +338,13 @@ class TiffMultiScaleImage(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         dialect: tx.Optional[str] = None,
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "TiffMultiScaleImage":
         """Encode pending levels and placements into `rawdata` and the record.
@@ -386,16 +381,6 @@ class TiffMultiScaleImage(
         bigtiff : bool, optional
             Whether to write BigTIFF. By default, BigTIFF is written only
             when the levels are too large for a classic TIFF (about 4 GiB).
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -422,7 +407,7 @@ class TiffMultiScaleImage(
         metadata = metadata_to_write(
             self.metadata, TiffMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         if self._untouched(dialect, name, bigtiff):
@@ -457,7 +442,6 @@ class TiffMultiScaleImage(
         self.transformations = None
         return self
 
-    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Encode the pyramid as TIFF.
 
@@ -490,13 +474,12 @@ class TiffMultiScaleImage(
         WriterError
             If the pyramid cannot be written.
         """
-        on_error = kwargs.pop("on_error", UNSET)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         report = ConversionReport(
             source="TiffMultiScaleImage", target="TiffMultiScaleImage"
         )
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         options, encoding = split_options(kwargs)
         if not encoding and self._copies_source(**options):
             return self.rawdata[0].read_bytes()
@@ -520,7 +503,6 @@ class TiffMultiScaleImage(
         kwargs.setdefault("name", _to_filename(file))
         file.write(self.to_bytes(**kwargs))
 
-    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the pyramid to a file.
 
@@ -546,13 +528,12 @@ class TiffMultiScaleImage(
         WriterError
             If the pyramid cannot be written.
         """
-        on_error = kwargs.pop("on_error", UNSET)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         report = ConversionReport(
             source="TiffMultiScaleImage", target="TiffMultiScaleImage"
         )
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
         kwargs.setdefault("name", _to_filename(filename))

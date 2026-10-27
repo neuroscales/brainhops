@@ -58,7 +58,7 @@ class PrecomputedMultiScaleImage(
     A pyramid built from images has no metadata.
     """
 
-    def consolidate(
+    def _consolidate(
         self, *, inplace: bool = False
     ) -> "PrecomputedMultiScaleImage":
         """Move the pending data of each level into its `rawdata`.

@@ -17,9 +17,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -133,14 +131,11 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         """Return the (4, 4) voxel-to-RAS matrix that this affine encodes."""
         raise NotImplementedError
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix into a new header.
@@ -174,16 +169,6 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the header cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description`, and
             header fields, which take precedence over the derived values
@@ -218,14 +203,14 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_error, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         base = None if metadata is None else metadata.raw
         image = _affine_encoded(self, like, overrides, base, fields)
         record = NiftiRaw(header=image.header)
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,

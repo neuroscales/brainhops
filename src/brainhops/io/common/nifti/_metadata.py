@@ -7,8 +7,6 @@ from bagof.magic import NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
@@ -85,13 +83,10 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         """
         return cls(raw=raw, **{**decode(raw), **kwargs})
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "NiftiMetadata":
         """Encode the fields that differ from the header into a copy of it.
@@ -105,16 +100,6 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the fields that the header cannot hold, and
-            with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override before the encoding.
 
@@ -135,7 +120,6 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             encode,
             NiftiRaw,
             inplace=inplace,
-            on_error=on_error,
             fields=fields,
         )
 
@@ -174,12 +158,8 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             return derived
         return replace(derived, raw=clear_spatial_slots(self.raw))
 
-    @takes_error_policy
     def to_bytes(
         self,
-        *,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> bytes:
         """Return the header of the consolidated record as NIfTI stores it.
@@ -191,16 +171,6 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
 
         Parameters
         ----------
-        on_error : ErrorPolicy, optional
-            What to do with the fields that the header cannot hold, and
-            with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -209,16 +179,12 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         bytes
             The header and its extensions.
         """
-        raw = self.consolidate(on_error=on_error, **fields).raw
+        raw = self.consolidate(**fields).raw
         return (NiftiRaw() if raw is None else raw).to_bytes()
 
-    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
-        *,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> None:
         """Write the header to a path, compressed if its name ends with `.gz`.
@@ -230,18 +196,8 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         filename : str or PathLike
             The path.
-        on_error : ErrorPolicy, optional
-            What to do with the fields that the header cannot hold, and
-            with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields to override, as in [`consolidate`][].
         """
-        raw = self.consolidate(on_error=on_error, **fields).raw
+        raw = self.consolidate(**fields).raw
         (NiftiRaw() if raw is None else raw).to_filename(filename)

@@ -17,6 +17,7 @@ import contextlib
 import contextvars
 import enum
 import functools
+import inspect
 import warnings
 
 # externals
@@ -25,6 +26,11 @@ from bagof.magic import Factory
 
 # internals
 from brainhops._core.deprecation import external_stacklevel
+from brainhops._core.errors import (
+    apply_error_policy,
+    error_policy,
+    policy_action,
+)
 from brainhops.errors import (
     UNSET,
     ConversionError,
@@ -32,9 +38,6 @@ from brainhops.errors import (
     ErrorAction,
     ErrorPolicy,
     LossyConversionError,
-    apply_error_policy,
-    error_policy,
-    policy_action,
 )
 
 from ..base import DataModelBase
@@ -223,14 +226,17 @@ class MetadataLossError(LossyConversionError):
     """
 
     def __init__(
-        self, report: ConversionReport, *, result: tx.Any = None
+        self,
+        report: ConversionReport,
+        *,
+        result: tx.Optional[DataModelBase] = None,
     ) -> None:
         """
         Parameters
         ----------
         report : ConversionReport
             What was lost or approximated.
-        result : Any, optional
+        result : DataModelBase, optional
             The object that the conversion would have returned, when it
             is known.
         """
@@ -304,23 +310,20 @@ def metadata_loss_policy(policy: OnLoss) -> tx.Iterator[None]:
 
 def apply_loss_policy(
     report: ConversionReport,
-    on_error: ErrorPolicy = UNSET,
     *,
     stacklevel: int = 2,
 ) -> ConversionReport:
     """
-    Act on a report, according to the action that a policy takes for a
-    loss of metadata.
+    Act on a report, according to the loss policy in effect.
 
-    The action is the one that `on_error` takes for a
-    [`MetadataLossError`][] (see
-    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), and, when `on_error`
-    has no entry for it, the policy in effect (see
-    [`metadata_loss_policy`][]). Under the `"ignore"` action nothing
+    The body of a conversion or of a consolidation calls this function
+    with the report of what it could not carry over. The action is the
+    policy in effect (see [`metadata_loss_policy`][]), which the call
+    that received `on_error=` and `on_loss=` sets while its body runs
+    (see [`call_under_policy`][]). Under the `"ignore"` action nothing
     happens, under `"warn"` a [`MetadataLossWarning`][] is issued, and
-    any other action raises a [`MetadataLossError`][], which the method
-    that called this function hands to the policy (see
-    [`takes_error_policy`][]). A report that lists nothing as lost or
+    under `"raise"` a [`MetadataLossError`][] is raised, which that call
+    hands to its policy. A report that lists nothing as lost or
     approximated is silent under every action.
 
     When the action is itself a report, the entries of `report` are
@@ -332,10 +335,6 @@ def apply_loss_policy(
     ----------
     report : ConversionReport
         The report to act on.
-    on_error : ErrorPolicy, optional
-        The policy to apply. By default, the policy in effect. The value
-        `None` is a policy like any other value, which is not the
-        default.
     stacklevel : int, default=2
         The lowest stack level of the warning, counted from the caller
         of this function. The warning points at the first frame at or
@@ -350,16 +349,9 @@ def apply_loss_policy(
     Raises
     ------
     MetadataLossError
-        If the action is neither `"ignore"`, `"warn"` nor a report, and
-        the report is lossy.
-    ValueError
-        If `on_error` is a string other than an action.
+        If the action is `"raise"` and the report is lossy.
     """
-    action = UNSET
-    if on_error is not UNSET:
-        action = policy_action(error_policy(on_error), MetadataLossError)
-    if action is UNSET:
-        action = _POLICY.get()
+    action = _POLICY.get()
     if isinstance(action, ConversionReport):
         if action is not report:
             action.source = action.source or report.source
@@ -369,7 +361,8 @@ def apply_loss_policy(
     if not report.lossy or _is(action, "ignore"):
         return report
     if _is(action, "warn"):
-        # One frame more than asked, for the wrapper of the method.
+        # Two frames more than asked, for the call that applies the
+        # policy around the body.
         warnings.warn(
             MetadataLossWarning(report),
             stacklevel=external_stacklevel(stacklevel + 2),
@@ -379,81 +372,6 @@ def apply_loss_policy(
 
 
 _CONVERSION_ERRORS: tx.Tuple[tx.Type[BaseException], ...] = (ConversionError,)
-
-
-def takes_error_policy(
-    method: tx.Optional[tx.Callable] = None,
-    *,
-    scope: tx.Tuple[tx.Type[BaseException], ...] = _CONVERSION_ERRORS,
-) -> tx.Callable:
-    """
-    Make a metadata method apply the error policy that it is given.
-
-    A method of the metadata, such as `consolidate` or `from_instance`,
-    takes an error policy as its `on_error=` keyword (see
-    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), and the action for a
-    loss as its `on_loss=` keyword. The body of
-    the method acts on what it loses by calling [`apply_loss_policy`][],
-    which warns and returns as the method goes on, and this decorator
-    applies the rest of the policy around the call. The decorator is
-    used bare, as `@takes_error_policy`, or with arguments, as
-    `@takes_error_policy(scope=...)`.
-
-    The decorator merges `on_error=` and `on_loss=` into one policy, in
-    which a single action of `on_error=` applies to the classes of
-    `scope`, and passes to the method only the action for a loss of
-    metadata, as the mapping `{MetadataLossError: action}`. An action
-    that the body can take where the loss happens, which is `"ignore"`,
-    `"warn"`, `"raise"` or a report, is passed as it is. Any other
-    action, such as a value to return, is passed as `"raise"`, so that
-    the body raises a [`MetadataLossError`][], which the decorator then
-    hands to the policy. Every other error that the method raises is
-    handed to the policy as well, which raises it unchanged unless the
-    policy has an entry for it. Because the method receives a mapping
-    that only concerns losses, it can pass its `on_error` on to another
-    decorated method without widening the policy. A call with no policy
-    calls the method as it is, and a loss then follows the policy in
-    effect.
-
-    Parameters
-    ----------
-    method : callable, optional
-        The method. It takes `on_error=`, as a keyword parameter or
-        through `**kwargs`. When it is not given, a decorator is
-        returned.
-    scope : tuple of type, default=(ConversionError,)
-        The exception classes that the method raises on purpose when it
-        cannot convert or store something, to which a single action of
-        `on_error=` applies. The default covers a loss of metadata, and
-        never an `OSError`.
-
-    Returns
-    -------
-    callable
-        The decorated method, or a decorator when `method` is not given.
-    """
-    if method is None:
-        return functools.partial(takes_error_policy, scope=scope)
-
-    @functools.wraps(method)
-    def wrapper(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
-        on_error = kwargs.pop("on_error", UNSET)
-        on_loss = kwargs.pop("on_loss", UNSET)
-        policy = error_policy(on_error, on_loss=on_loss, scope=scope)
-        if not policy:
-            return method(*args, **kwargs)
-        action = _loss_action(policy)
-        if action is not UNSET:
-            kwargs["on_error"] = {MetadataLossError: action}
-        try:
-            return method(*args, **kwargs)
-        except Exception as error:  # noqa: BLE001
-            return apply_error_policy(error, policy, stacklevel=2)
-
-    # Marks the method, so that a base class that decorates the methods
-    # of its subclasses does not decorate it twice.
-    wrapper.takes_error_policy = True
-    return wrapper
 
 
 def call_under_policy(
@@ -467,16 +385,28 @@ def call_under_policy(
     """
     Call a conversion, and apply an error policy to what it raises.
 
-    A conversion that has no `on_error=` keyword to pass on, such as the
-    converters of transformations, runs under the policy of its caller.
-    The action that the policy takes for a loss of metadata becomes the
-    policy in effect (see [`metadata_loss_policy`][]) while `call` runs,
-    so that the conversions of metadata that `call` triggers follow it,
-    as [`takes_error_policy`][] arranges for a method. An error that
-    `call` raises is then handed to the policy (see
-    [`apply_error_policy`][brainhops.errors.apply_error_policy]), which
-    raises it unchanged unless the policy has an entry for it. A policy
-    that has no entry calls `call` as it is.
+    Every method that takes `on_error=` and `on_loss=` applies them
+    with this function, and passes no policy on to the calls that its
+    body makes. The function merges the two keywords into one policy,
+    in which a single action of `on_error` applies to the classes of
+    `scope` (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). While
+    `call` runs, the action that the policy takes for a loss of
+    metadata becomes the policy in effect (see
+    [`metadata_loss_policy`][]), so that every consolidation and every
+    conversion of metadata that `call` makes follows it, and acts on
+    what it loses with [`apply_loss_policy`][]. An action that the body
+    can take where the loss happens, which is `"ignore"`, `"warn"`,
+    `"raise"` or a report, is set as it is. Any other action, such as a
+    value to return or an exception to raise, is set as `"raise"`, so
+    that the body raises a [`MetadataLossError`][]. An error that `call`
+    raises is then handed to the policy, which raises it unchanged
+    unless the policy has an entry for it, and the value that the
+    policy returns takes the place of the result.
+
+    A call with no policy calls `call` as it is, under the policy in
+    effect. A method called without `on_error=` and `on_loss=` from the
+    body of another one therefore follows the policy of the outer call,
+    and only the outermost call returns a value in place of a result.
 
     Parameters
     ----------
@@ -486,8 +416,9 @@ def call_under_policy(
         The policy. By default, every error is raised, and a loss of
         metadata follows the policy in effect.
     on_loss : ErrorAction, optional
-        The action for a loss, merged with `on_error` as
-        [`error_policy`][brainhops.errors.error_policy] merges it.
+        The action for a loss. The policy that the call applies is
+        `{LossyConversionError: on_loss, **on_error}`, so that an entry
+        for a loss in `on_error` takes precedence over `on_loss`.
     scope : tuple of type, default=(ConversionError,)
         The exception classes that `call` raises on purpose, to which a
         single action of `on_error` applies.
@@ -504,17 +435,88 @@ def call_under_policy(
     policy = error_policy(on_error, on_loss=on_loss, scope=scope)
     if not policy:
         return call()
-    action = _loss_action(policy)
-    context = (
-        contextlib.nullcontext()
-        if action is UNSET
-        else metadata_loss_policy(action)
-    )
-    with context:
+    with _loss_context(policy):
         try:
             return call()
         except Exception as error:  # noqa: BLE001
             return apply_error_policy(error, policy, stacklevel=stacklevel + 1)
+
+
+def takes_error_policy(
+    method: tx.Optional[tx.Callable] = None,
+    *,
+    scope: tx.Tuple[tx.Type[BaseException], ...] = _CONVERSION_ERRORS,
+) -> tx.Callable:
+    """
+    Make a method take an error policy as its `on_error=` and `on_loss=`
+    keywords.
+
+    The writers of the file formats rely on this decorator: their
+    common base, `_WriterMixin`, wraps with it each entry point that a
+    format defines, such as `to_bytes` or `save`. The wrapper removes
+    `on_error=` and `on_loss=` from the keyword arguments and calls the
+    method with [`call_under_policy`][], so that the body of the method
+    never receives a policy and passes none on. The decorator is used
+    bare, as `@takes_error_policy`, or with arguments, as
+    `@takes_error_policy(scope=...)`.
+
+    A generator function, such as a `to_lines` method, runs its body
+    only while its result is iterated. The wrapper of such a method
+    returns a generator that sets the policy in effect for a loss while
+    it asks the body for each item, and not while the caller handles
+    that item. An error that the body raises during the iteration is
+    handed to the policy. When the policy does not raise, the iteration
+    ends there, and the value that the policy returns is dropped,
+    because the generator has no result that the value could replace.
+
+    Parameters
+    ----------
+    method : callable, optional
+        The method. When it is not given, a decorator is returned.
+    scope : tuple of type, default=(ConversionError,)
+        The exception classes that the method raises on purpose when it
+        cannot convert or store something, to which a single action of
+        `on_error=` applies. The default covers a loss of metadata, and
+        never an `OSError`.
+
+    Returns
+    -------
+    callable
+        The decorated method, or a decorator when `method` is not given.
+    """
+    if method is None:
+        return functools.partial(takes_error_policy, scope=scope)
+
+    if inspect.isgeneratorfunction(method):
+
+        @functools.wraps(method)
+        def wrapper(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
+            on_error = kwargs.pop("on_error", UNSET)
+            on_loss = kwargs.pop("on_loss", UNSET)
+            policy = error_policy(on_error, on_loss=on_loss, scope=scope)
+            items = method(*args, **kwargs)
+            if not policy:
+                return items
+            return _iterate_under_policy(items, policy)
+
+    else:
+
+        @functools.wraps(method)
+        def wrapper(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
+            on_error = kwargs.pop("on_error", UNSET)
+            on_loss = kwargs.pop("on_loss", UNSET)
+            return call_under_policy(
+                lambda: method(*args, **kwargs),
+                on_error,
+                on_loss=on_loss,
+                scope=scope,
+                stacklevel=3,
+            )
+
+    # Marks the method, so that a base class that decorates the methods
+    # of its subclasses does not decorate it twice.
+    wrapper.takes_error_policy = True
+    return wrapper
 
 
 # ----------------------------------------------------------------------
@@ -573,6 +575,38 @@ def _loss_action(policy: tx.Mapping[type, tx.Any]) -> tx.Any:
     if isinstance(action, str) and action in _POLICIES:
         return action
     return "raise"
+
+
+def _loss_context(
+    policy: tx.Mapping[type, tx.Any],
+) -> tx.ContextManager[None]:
+    # The block in which the action of `policy` for a loss of metadata
+    # is the policy in effect, or a block that changes nothing when the
+    # policy has no entry for a loss.
+    action = _loss_action(policy)
+    if action is UNSET:
+        return contextlib.nullcontext()
+    return metadata_loss_policy(action)
+
+
+def _iterate_under_policy(
+    items: tx.Iterator[tx.Any], policy: tx.Mapping[type, tx.Any]
+) -> tx.Iterator[tx.Any]:
+    # The items of a generator, each one computed under `policy`. The
+    # policy in effect is set only while the generator runs, so that it
+    # does not leak into the code that consumes the items, and an error
+    # of the generator ends the iteration once the policy has acted on
+    # it.
+    while True:
+        with _loss_context(policy):
+            try:
+                item = next(items)
+            except StopIteration:
+                return
+            except Exception as error:  # noqa: BLE001
+                apply_error_policy(error, policy, stacklevel=2)
+                return
+        yield item
 
 
 # Not annotated: `ContextVar[...]` is not subscriptable on Python 3.8, and

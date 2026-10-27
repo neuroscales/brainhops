@@ -18,11 +18,9 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     MetadataLossError,
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -204,14 +202,11 @@ class StackImage(
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         axis: tx.Optional[tx.Union[str, int]] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "StackImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -258,16 +253,6 @@ class StackImage(
         axis : {"x", "y", "z", 0, 1, 2}, optional
             The axis along which to cut the volume into files. By default,
             it is the axis of the record, or z.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -292,7 +277,7 @@ class StackImage(
         metadata = metadata_to_write(
             self.metadata, StackMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self.metadata)
@@ -337,7 +322,6 @@ class StackImage(
         self.transformations = None
         return self
 
-    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image as numbered files, in a folder or beside a name.
 
@@ -377,7 +361,6 @@ class StackImage(
             if the folder to replace holds files that are not images.
         """
         axis = kwargs.pop("axis", None)
-        on_error = kwargs.pop("on_error", UNSET)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         refuse_options(type(self), kwargs)
         target = stack_target(filename)
@@ -386,7 +369,7 @@ class StackImage(
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
         if isinstance(stored, _StackProxy):
             read = stored.filenames()
-        image = self.consolidate(axis=axis, on_error=on_error, **fields)
+        image = self.consolidate(axis=axis, **fields)
         reading = reads_from(self.rawdata, target, image.metadata.raw)
         if reading:
             fill = stored.fill

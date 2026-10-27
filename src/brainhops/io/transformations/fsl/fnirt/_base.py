@@ -20,13 +20,10 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     call_under_policy,
-    takes_error_policy,
 )
 from brainhops.errors import (
     UNSET,
     ConversionError,
-    ErrorAction,
-    ErrorPolicy,
     LossyConversionError,
 )
 
@@ -330,14 +327,11 @@ class FnirtWarpField(
             obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending array into `rawdata` and a new header.
@@ -367,16 +361,6 @@ class FnirtWarpField(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the header cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -418,7 +402,7 @@ class FnirtWarpField(
             and self.metadata.raw is not None
         ):
             _check_single_field(self.rawdata, WriterError)
-            apply_loss_policy(report, on_error, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -428,7 +412,7 @@ class FnirtWarpField(
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,

@@ -23,9 +23,7 @@ from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -154,14 +152,11 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             return None
         return _field_to_model(self.rawdata)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending field into `rawdata` and a new header.
@@ -196,16 +191,6 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the header cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -245,7 +230,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             and self.metadata.raw is not None
         ):
             _check_single_field(self.rawdata, WriterError)
-            apply_loss_policy(report, on_error, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -255,7 +240,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -542,15 +527,12 @@ StationaryVelocityField], integrated with `steps` squaring steps
 
     # --- writing ------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
         log: tx.Optional[bool] = None,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **options: tx.Any,
     ) -> tx.Self:
         """
@@ -589,16 +571,6 @@ StationaryVelocityField], integrated with `steps` squaring steps
         log : bool, optional
             Whether to encode the velocity rather than the displacements.
             It defaults to the `log` option of the field.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the header cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -640,7 +612,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
             and self.metadata.raw is not None
         ):
             _check_single_field(self.rawdata, WriterError)
-            apply_loss_policy(report, on_error, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -650,7 +622,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,

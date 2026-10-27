@@ -18,7 +18,6 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -29,7 +28,6 @@ from brainhops.datamodel.units import (
     Unit,
     is_physicalunit,
 )
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
@@ -216,13 +214,10 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             return None
         return _minc_system(self.metadata.raw)
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> "MincImage":
         """Move the pending data into `rawdata`.
@@ -245,16 +240,6 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -275,7 +260,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, MincMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         if self._data is None and not requested:

@@ -25,10 +25,8 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
-    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -381,13 +379,10 @@ class LtaTransformation(
 
     # --- to -----------------------------------------------------------
 
-    @takes_error_policy
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_error: ErrorPolicy = UNSET,
-        on_loss: ErrorAction = UNSET,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -415,16 +410,6 @@ class LtaTransformation(
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_error : ErrorPolicy, optional
-            What to do with the metadata that the record cannot hold,
-            and with any other conversion error
-            (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). By
-            default, an error is raised, and a loss follows the policy
-            in effect.
-        on_loss : ErrorAction, optional
-            What to do with a loss of metadata, with the same values as a
-            single action of `on_error`, over which it takes precedence for
-            a loss. By default, a loss falls under `on_error`.
         **fields : Any
             Fields of the metadata to override.
 
@@ -450,7 +435,7 @@ class LtaTransformation(
         metadata = metadata_to_write(
             self.metadata, LtaMetadata, fields, report
         )
-        apply_loss_policy(report, on_error, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         record = record_of(self)
         overridden = (
             self._data is not None
@@ -792,20 +777,15 @@ def _lta_written(
     """Return the record that a file written from a transformation holds.
 
     The record is that of the copy of the transformation consolidated
-    with `on_error` and the fields of the metadata among `kwargs`, and
-    the other options, for the writer of the record, are returned with
-    it.
+    with the fields of the metadata among `kwargs`, and the other
+    options, for the writer of the record, are returned with it.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the LTA format cannot encode the systems or the matrix.
     """
-    fields = {
-        name: value
-        for name, value in kwargs.items()
-        if name in FIELDS or name in ("on_error", "on_loss")
-    }
+    fields = {name: value for name, value in kwargs.items() if name in FIELDS}
     options = {
         name: value for name, value in kwargs.items() if name not in fields
     }

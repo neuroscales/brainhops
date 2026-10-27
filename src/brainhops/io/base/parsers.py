@@ -678,16 +678,31 @@ class _WriterMixin:
     methods and `save` from it. It is the counterpart of
     [`_ReaderMixin`][], and is independent of reading and sniffing.
 
-    Every entry point takes the error policy of the write as `on_error=`
-    (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). The mixin
-    decorates the entry points that it defines, and those that each
-    subclass defines, with
-    [`takes_error_policy`][brainhops.datamodel.metadata._report.takes_error_policy],
-    so that the body of a writer only ever receives the action of the
-    policy for a loss of metadata, which it can pass on to
-    `consolidate`. A value to return in place of the result, such as
-    `on_error=None`, is applied around the entry point that was called,
-    and never reaches the body of a writer as a consolidated object.
+    Every entry point (`save`, `to_file`, `to_filename`, `to_fileobj`,
+    `to_bytes`, `to_text`, `to_lines`, and `to_h5` where a format has
+    it) takes the error policy of the write as two keywords. The
+    `on_error=` keyword is an error policy (see
+    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
+    happens to a conversion error of the write, and the `on_loss=`
+    keyword is the action for a loss, such as the metadata that the
+    file cannot hold, which takes precedence over `on_error=` for a
+    loss. By default, an error is raised, and a loss follows the policy
+    in effect (see
+    [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+
+    The mixin wraps the entry points that it defines, and those that
+    each subclass defines, so that a format never declares the two
+    keywords. The wrapper removes them from the keyword arguments and
+    applies the policy around the call: while the body runs, the action
+    for a loss is the policy in effect, which the consolidation of the
+    object reads, and an error that the body raises is handed to the
+    policy. A value to return in place of the result, such as
+    `on_error=None`, is therefore applied once, by the entry point that
+    was called, and an entry point that the body calls without a policy
+    follows the policy of that call. When `to_lines` is a generator,
+    whose body runs only while its lines are read, the wrapper applies
+    the policy while each line is computed, and an error on which the
+    policy does not raise ends the lines there.
     """
 
     _WRITE_MODE = "w"

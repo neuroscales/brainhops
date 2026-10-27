@@ -262,7 +262,7 @@ class NiftiBasedTransformation(
             return None
         return self.metadata.raw.copy()
 
-    def consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
+    def _consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
         """Encode the pending state into `rawdata` and the header.
 
         Each concrete format implements this method, on which the writers
