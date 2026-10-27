@@ -1,12 +1,12 @@
 # Design: filtering a transformation and converting it to a kind
 
-Status: decided, not implemented (#589). This memo records two additions
-to the public methods of `Transformation`. The first is a pair of
-methods, `without()` and `with_only()`, that replace some parts of a
-transformation by the identity. The second is a family of methods,
-`to_affine()`, `to_linear()` and the others, that convert a
-transformation to the class that matches a kind. Decisions are tagged
-`F1` to `F7`.
+Status: implemented (#589), with `error=` in place of `on_error=` until
+#590 renames it. This memo records two additions to the public methods
+of `Transformation`. The first is a pair of methods, `without()` and
+`with_only()`, that replace some parts of a transformation by the
+identity. The second is a family of methods, `to_affine()`,
+`to_linear()` and the others, that convert a transformation to the
+class that matches a kind. Decisions are tagged `F1` to `F7`.
 
 ## 1. The problem
 

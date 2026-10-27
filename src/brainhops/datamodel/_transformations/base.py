@@ -11,11 +11,30 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import ConversionError, LossyConversionError
 
 from . import nocycles
-from .compute.check import is_kind
+from .compute.check import KindLike, is_kind, normalize_kind
 from .compute.convert import convert
 from .compute.simplify import SimplifyLike
 from .compute.utils import require_endomorphism
 from .modes import ModeLike
+
+if tx.TYPE_CHECKING:
+    from .compute.filter import MatchLike
+
+_KIND_CLASSES: tx.Dict[str, tx.Tuple[tx.Type[kinds.Kind], str]] = {
+    "translation": (kinds.Translation, "Translation"),
+    "scaling": (kinds.Diagonal, "Scaling"),
+    "permutation": (kinds.Permutation, "Permutation"),
+    "rotation": (kinds.SpecialOrthogonal, "Rotation"),
+    "linear": (kinds.Linear, "Linear"),
+    "affine": (kinds.Affine, "Affine"),
+}
+"""Kinds that the `is_*` methods test and the `to_*` methods produce.
+
+Each entry maps the word used in the method names to the kind that the
+`is_*` method tests and to the name of the concrete class that the
+`to_*` method returns. The class is named rather than imported because
+the module that defines it imports this module.
+"""
 
 if tx.TYPE_CHECKING:
     from .concrete import CoordinateField
@@ -554,7 +573,7 @@ class Transformation(
         identity. With `compute=True`, an affine matrix is checked for an
         identity linear part and a displacement field for a constant value.
         """
-        return self.is_kind(kinds.Translation, compute)
+        return self.is_kind(_KIND_CLASSES["translation"][0], compute)
 
     def is_scaling(self, compute: bool = False) -> bool:
         """Return whether the transformation is a scaling.
@@ -564,7 +583,7 @@ class Transformation(
         With `compute=True`, a linear or affine matrix is checked to be
         diagonal.
         """
-        return self.is_kind(kinds.Diagonal, compute)
+        return self.is_kind(_KIND_CLASSES["scaling"][0], compute)
 
     def is_permutation(self, compute: bool = False) -> bool:
         """Return whether the transformation is a permutation.
@@ -574,7 +593,7 @@ class Transformation(
         identity. With `compute=True`, a linear or affine matrix is checked for
         a single one in each row and column.
         """
-        return self.is_kind(kinds.Permutation, compute)
+        return self.is_kind(_KIND_CLASSES["permutation"][0], compute)
 
     def is_rotation(self, compute: bool = False) -> bool:
         """Return whether the transformation is a rotation.
@@ -584,7 +603,7 @@ class Transformation(
         or the identity. With `compute=True`, a linear or affine matrix is
         checked to be orthogonal with a positive determinant.
         """
-        return self.is_kind(kinds.SpecialOrthogonal, compute)
+        return self.is_kind(_KIND_CLASSES["rotation"][0], compute)
 
     def is_linear(self, compute: bool = False) -> bool:
         """Return whether the transformation is linear.
@@ -594,7 +613,7 @@ class Transformation(
         With `compute=True`, an affine matrix is checked for a zero
         translation.
         """
-        return self.is_kind(kinds.Linear, compute)
+        return self.is_kind(_KIND_CLASSES["linear"][0], compute)
 
     def is_affine(self, compute: bool = False) -> bool:
         """Return whether the transformation is affine.
@@ -602,7 +621,281 @@ class Transformation(
         A transformation is affine when it is an instance of
         [`kinds.Affine`][brainhops.datamodel.kinds.Affine] or the identity.
         """
-        return self.is_kind(kinds.Affine, compute)
+        return self.is_kind(_KIND_CLASSES["affine"][0], compute)
+
+    # --- filters ------------------------------------------------------
+
+    def without(self, match: "MatchLike") -> "Transformation":
+        """Return the transformation with some parts replaced by the identity.
+
+        A caller uses this method to ignore a class of transformations,
+        for example the displacement fields of a chain whose affine part
+        it needs. Every part that the matcher selects becomes an
+        [`Identity`][brainhops.datamodel.transformations.Identity] with
+        the same input and output coordinate systems, so that the
+        elements of a chain still connect and no bridge is guessed
+        between them. The identities disappear when the result is
+        computed.
+
+        The transformation is visited from the outside in. A selected
+        node is replaced as a whole, and the method looks inside a
+        sequence or an inverse only when the node itself is not
+        selected. The inverse of a replaced part is replaced as well.
+
+        Parameters
+        ----------
+        match : MatchLike
+            Parts to replace. A matcher is a kind or the name of a kind,
+            such as `"affine"`, a concrete class of transformation, a
+            predicate that takes a transformation and returns a boolean,
+            or a sequence of these values, which selects a part when any
+            of its items selects it.
+
+        Returns
+        -------
+        Transformation
+            The filtered transformation, or the transformation itself
+            when no part is replaced.
+
+        Raises
+        ------
+        ValueError
+            If a part to replace changes the number of axes.
+        """
+        from .compute.filter import replace_parts
+
+        return replace_parts(self, match, keep=False)
+
+    def with_only(self, match: "MatchLike") -> "Transformation":
+        """Return the transformation with only some parts kept.
+
+        This method is the complement of
+        [`without`][brainhops.datamodel.transformations.Transformation.without]:
+        every part that the matcher does not select is replaced by an
+        identity with the same coordinate systems. Because a kind can
+        only describe the transformations that have a property,
+        `with_only("affine")` is the way to remove everything that is not
+        affine.
+
+        A node that the matcher selects is kept as a whole, so a chain
+        that is affine as a whole is not split. The method looks inside
+        a sequence or an inverse only when the node itself is not
+        selected, and replaces any other node that is not selected.
+
+        Parameters
+        ----------
+        match : MatchLike
+            Parts to keep, in the same forms as for `without`.
+
+        Returns
+        -------
+        Transformation
+            The filtered transformation, or the transformation itself
+            when no part is replaced.
+
+        Raises
+        ------
+        ValueError
+            If a part to replace changes the number of axes.
+        """
+        from .compute.filter import replace_parts
+
+        return replace_parts(self, match, keep=True)
+
+    # --- conversions to a kind ----------------------------------------
+
+    def to_kind(
+        self,
+        kind: KindLike,
+        *,
+        ignore: tx.Union["MatchLike", bool, None] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to the class that represents a kind.
+
+        A caller uses this method to obtain, for example, the affine
+        matrix of a chain. The transformation is first filtered with
+        `ignore`, then computed, because a chain must be composed before
+        it can be converted, and the result is converted with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        | Kind            | Kind tested by `is_*`     | Concrete class |
+        | --------------- | ------------------------- | -------------- |
+        | `"translation"` | `kinds.Translation`       | `Translation`  |
+        | `"scaling"`     | `kinds.Diagonal`          | `Scaling`      |
+        | `"permutation"` | `kinds.Permutation`       | `Permutation`  |
+        | `"rotation"`    | `kinds.SpecialOrthogonal` | `Rotation`     |
+        | `"linear"`      | `kinds.Linear`            | `Linear`       |
+        | `"affine"`      | `kinds.Affine`            | `Affine`       |
+
+        Parameters
+        ----------
+        kind : KindLike
+            Target kind, as a word of the table above or as one of the
+            kinds of the table.
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion, as
+            in `without`. The value `True` means every part that is not
+            of the target kind, as in `with_only(kind)`.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `lossy=` and `error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that `to`
+            returns when the conversion fails and is not raised.
+
+        Raises
+        ------
+        ValueError
+            If the kind has no concrete class.
+        """
+        from . import concrete
+
+        kind_class, class_name = _kind_entry(kind)
+        xform = self
+        if ignore is True:
+            xform = xform.with_only(kind_class)
+        elif ignore is not None and ignore is not False:
+            xform = xform.without(ignore)
+        target = getattr(concrete, class_name)
+        return xform.compute().to(target, **kwargs)
+
+    def to_translation(
+        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+    ) -> "Transformation":
+        """Convert the transformation to a translation.
+
+        See `to_kind` for how the transformation is filtered and
+        converted.
+
+        Parameters
+        ----------
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion.
+        **kwargs : Any
+            Keyword arguments of `to`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        return self.to_kind("translation", ignore=ignore, **kwargs)
+
+    def to_scaling(
+        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+    ) -> "Transformation":
+        """Convert the transformation to a scaling.
+
+        See `to_kind` for how the transformation is filtered and
+        converted.
+
+        Parameters
+        ----------
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion.
+        **kwargs : Any
+            Keyword arguments of `to`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        return self.to_kind("scaling", ignore=ignore, **kwargs)
+
+    def to_permutation(
+        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+    ) -> "Transformation":
+        """Convert the transformation to a permutation.
+
+        See `to_kind` for how the transformation is filtered and
+        converted.
+
+        Parameters
+        ----------
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion.
+        **kwargs : Any
+            Keyword arguments of `to`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        return self.to_kind("permutation", ignore=ignore, **kwargs)
+
+    def to_rotation(
+        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+    ) -> "Transformation":
+        """Convert the transformation to a rotation.
+
+        See `to_kind` for how the transformation is filtered and
+        converted.
+
+        Parameters
+        ----------
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion.
+        **kwargs : Any
+            Keyword arguments of `to`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        return self.to_kind("rotation", ignore=ignore, **kwargs)
+
+    def to_linear(
+        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+    ) -> "Transformation":
+        """Convert the transformation to a linear map.
+
+        See `to_kind` for how the transformation is filtered and
+        converted.
+
+        Parameters
+        ----------
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion.
+        **kwargs : Any
+            Keyword arguments of `to`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        return self.to_kind("linear", ignore=ignore, **kwargs)
+
+    def to_affine(
+        self, *, ignore: tx.Union["MatchLike", bool, None] = None, **kwargs
+    ) -> "Transformation":
+        """Convert the transformation to an affine map.
+
+        See `to_kind` for how the transformation is filtered and
+        converted. `to_affine(error=None)` returns `None` when the
+        transformation is not affine, and
+        `to_affine(ignore=True, error=None)` returns the affine part of
+        a chain whose other parts, such as fields, are ignored.
+
+        Parameters
+        ----------
+        ignore : MatchLike or bool, optional
+            Parts to replace by the identity before the conversion.
+        **kwargs : Any
+            Keyword arguments of `to`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        return self.to_kind("affine", ignore=ignore, **kwargs)
 
     # --- operators ----------------------------------------------------
 
@@ -719,6 +1012,26 @@ def _mutually_exclusive(
         f"spellings of one parameter. To change the map of an existing "
         f"transformation, use t.to(...); to store an array as it is "
         f"encoded, pass data= alone."
+    )
+
+
+def _kind_entry(kind: KindLike) -> tx.Tuple[tx.Type[kinds.Kind], str]:
+    """Return the kind and the class name that `to_kind` converts to.
+
+    Raises
+    ------
+    ValueError
+        If the kind is not one of the kinds in `_KIND_CLASSES`.
+    """
+    if isinstance(kind, str) and kind.lower() in _KIND_CLASSES:
+        return _KIND_CLASSES[kind.lower()]
+    resolved = normalize_kind(kind)
+    for entry in _KIND_CLASSES.values():
+        if entry[0] is resolved:
+            return entry
+    raise ValueError(
+        f"No concrete class represents the kind {kind!r}. The kinds that "
+        f"can be converted to are {', '.join(_KIND_CLASSES)}."
     )
 
 

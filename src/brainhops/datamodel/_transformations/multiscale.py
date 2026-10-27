@@ -8,7 +8,6 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.multiscale import Multiscale
 
 from .base import Transformation
-from .compute.multiscale import _as_affine
 from .compute.simplify import SimplifyLike
 from .modes import ModeLike
 from .sequence import ImmutableSequence, Sequence
@@ -130,7 +129,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         scale = scales[index]
         if not len(scale):
             return None
-        affine = _as_affine(scale[0])
-        if affine is None:
+        affine = scale[0].to_affine(error=None)
+        if affine is None or affine.matrix is None:
             return None
         return axis_scales(_affine_inv(affine.matrix))

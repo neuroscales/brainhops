@@ -21,7 +21,6 @@ from brainhops._core.backends import array_backend, to_backend, to_numpy
 
 # datamodel
 from brainhops.datamodel._sugar import vector_axis
-from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,
@@ -443,7 +442,7 @@ class OmeZarrField(
             return
         if isinstance(placement, CartesianField):
             return
-        if _as_affine(placement) is None:
+        if placement.to_affine(error=None) is None:
             raise OmeFieldError(
                 "This OME displacement field is placed by a transformation "
                 "that cannot be reduced to an affine, so the displacements "
@@ -481,7 +480,7 @@ def _to_voxel_displacement(
     # L^-1 of the linear part of the placement: raw @ L^-T. The product is
     # computed in the backend of the displacements, so that a Dask array is
     # converted block by block rather than read into memory.
-    matrix = _as_affine(voxel2world).matrix
+    matrix = voxel2world.to_affine(error=None).matrix
     inverse = to_numpy(_affine_inv(matrix))
     ab = array_backend(raw)
     return raw @ ab.asarray(inverse[:, :-1].T)
@@ -532,8 +531,8 @@ def _spatial_part(
                 for part in placement.transformations
             ]
         )
-    affine = _as_affine(placement)
-    if affine is None:
+    affine = placement.to_affine(error=None)
+    if affine is None or affine.matrix is None:
         raise OmeFieldError(
             "This OME field is placed by a transformation that is not "
             "affine, so its spatial part cannot be told apart from its "
@@ -547,7 +546,7 @@ def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
     # An affine placement is returned unchanged. Otherwise, an identity affine
     # stands in, so that the leading world-to-voxel element stays a defined
     # affine rather than a bare identity.
-    if _as_affine(xform) is not None:
+    if xform.to_affine(error=None) is not None:
         return xform
     return Affine(
         matrix=[

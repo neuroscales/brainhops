@@ -13,7 +13,6 @@ from brainhops.datamodel import transformations as X
 from brainhops.datamodel._transformations.compute.multiscale import (
     nearest_level,
 )
-from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -140,8 +139,8 @@ def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
     assert len(parts) == 3
     assert isinstance(parts[1], DisplacementField)
     # The outer parts reduce to affines, for inversion and vector rotation.
-    assert _as_affine(parts[0]) is not None
-    assert _as_affine(parts[2]) is not None
+    assert parts[0].to_affine(error=None) is not None
+    assert parts[2].to_affine(error=None) is not None
 
 
 def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:

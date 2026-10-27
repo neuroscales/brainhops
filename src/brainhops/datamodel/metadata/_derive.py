@@ -187,11 +187,8 @@ class Resampled(
         voxels to the new ones, or `None` when it does not reduce to an
         affine.
         """
-        # Not at the top: see the docstring of the module.
-        from .._transformations.compute.multiscale import _as_affine
-
-        affine = _as_affine(self.transformation.inverse())
-        if affine is None:
+        affine = self.transformation.inverse().to_affine(error=None)
+        if affine is None or affine.matrix is None:
             return None
         return np.asarray(affine.matrix, dtype=float)[:, :-1]
 
