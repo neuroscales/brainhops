@@ -418,3 +418,33 @@ def test_the_generic_load_reads_a_field_rather_than_an_image(
         name="generic.zarr",
     )
     assert isinstance(io.load(path), OmeZarrField)
+
+
+def _placement_without_matrix() -> X.Transformation:
+    # The lazy inverse of an affine whose matrix is not set converts to an
+    # affine that has no matrix either.
+    return X.Inverse(forward=Affine())
+
+
+def test_a_placement_without_a_matrix_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from brainhops.io.transformations.zarr import _xforms
+
+    # Such a placement is taken for the identity, so the test makes it a
+    # placement that the check reaches.
+    monkeypatch.setattr(_xforms, "is_identity", lambda t: False)
+    field = SimpleNamespace(voxel2world=_placement_without_matrix())
+    with pytest.raises(OmeFieldError):
+        OmeZarrField._check_affine_voxel2world(field)
+
+
+def test_a_placement_without_a_matrix_becomes_the_identity() -> None:
+    from brainhops.io.transformations.zarr._xforms import (
+        _affine_or_identity,
+    )
+
+    affine = _affine_or_identity(_placement_without_matrix(), 3)
+    np.testing.assert_array_equal(np.asarray(affine.matrix), np.eye(4)[:3])

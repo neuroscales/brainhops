@@ -679,6 +679,10 @@ class Transformation(
         node is replaced as a whole, and the method looks inside a
         sequence or an inverse only when the node itself is not
         selected. The inverse of a replaced part is replaced as well.
+        The method does not look inside any other wrapper, such as a
+        lazy square root (`Sqrt`), a `Bijection` or a
+        `SubspaceTransformation`, so the matcher decides such a wrapper
+        as a whole, and a part that it holds is not replaced on its own.
 
         Parameters
         ----------
@@ -718,7 +722,11 @@ class Transformation(
         A node that the matcher selects is kept as a whole, so a chain
         that is affine as a whole is not split. The method looks inside
         a sequence or an inverse only when the node itself is not
-        selected, and replaces any other node that is not selected.
+        selected, and replaces any other node that is not selected. A
+        wrapper other than a sequence or an inverse, such as a lazy
+        square root (`Sqrt`), a `Bijection` or a
+        `SubspaceTransformation`, is therefore kept or replaced as a
+        whole, even when only a part that it holds is selected.
 
         Parameters
         ----------

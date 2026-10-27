@@ -20,6 +20,7 @@ __all__ = [
     "disabled",
 ]
 
+import inspect
 from collections.abc import Iterable
 from contextvars import ContextVar
 from io import BytesIO
@@ -28,6 +29,7 @@ import typing_extensions as tx
 
 from brainhops._core import path, peek
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.errors import (
     AmbiguousFormatError,  # noqa: F401
     ParserContentError,  # noqa: F401
@@ -675,9 +677,24 @@ class _WriterMixin:
     as `to_bytes` or `to_lines`, and this mixin derives the other `to_*`
     methods and `save` from it. It is the counterpart of
     [`_ReaderMixin`][], and is independent of reading and sniffing.
+
+    Every entry point takes the error policy of the write as `on_error=`
+    (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). The mixin
+    decorates the entry points that it defines, and those that each
+    subclass defines, with
+    [`takes_error_policy`][brainhops.datamodel.metadata._report.takes_error_policy],
+    so that the body of a writer only ever receives the action of the
+    policy for a loss of metadata, which it can pass on to
+    `consolidate`. A value to return in place of the result, such as
+    `on_error=None`, is applied around the entry point that was called,
+    and never reaches the body of a writer as a consolidated object.
     """
 
     _WRITE_MODE = "w"
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _decorate_writers(cls)
 
     def save(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or an open file.
@@ -783,6 +800,36 @@ class _WriterMixin:
         raise WriterNotImplementedError(
             f"to_line() is not available in writer of type {cls.__name__}"
         )
+
+
+_WRITER_ENTRY_POINTS = (
+    "save",
+    "to_file",
+    "to_filename",
+    "to_fileobj",
+    "to_bytes",
+    "to_text",
+    "to_lines",
+    "to_h5",
+)
+
+
+def _decorate_writers(cls: type) -> None:
+    """Decorate the entry points of a writer that `cls` itself defines.
+
+    An entry point that is already decorated, by hand or by a base class,
+    is left as it is.
+    """
+    for name in _WRITER_ENTRY_POINTS:
+        method = cls.__dict__.get(name)
+        if not inspect.isfunction(method):
+            continue
+        if getattr(method, "takes_error_policy", False):
+            continue
+        setattr(cls, name, takes_error_policy(method))
+
+
+_decorate_writers(_WriterMixin)
 
 
 class FileWriter(_WriterMixin):

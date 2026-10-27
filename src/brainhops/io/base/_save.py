@@ -174,7 +174,11 @@ def save(
         chosen format passes `on_error` to its own `save`. The metadata
         of a format that does not hold metadata is not written, and its
         fields are reported as lost. The deprecated `on_loss=v` reads as
-        `on_error={MetadataLossError: v}`.
+        `on_error={MetadataLossError: v}`. The `WriterError` that `save`
+        raises when no format can hold `obj` is not a conversion error,
+        so it is outside the scope of a single action, and it is raised
+        even under `on_error=None`. The `OSError` of a write that fails
+        is raised as well.
 
     Returns
     -------
@@ -201,8 +205,7 @@ def save(
     name = _to_filename(file)
     if name is None:
         if isinstance(obj, FileFormat) and isinstance(obj, FileWriter):
-            obj.save(file, **kwargs)
-            return
+            return obj.save(file, **kwargs)
         raise WriterError(
             f"Cannot choose a format to write {type(obj).__name__} in: the "
             f"file has no name to choose it from. Give the path of the "
@@ -239,8 +242,7 @@ def save(
     # Rebuilding the object would rerun its constructor and lose state that is
     # not a field, such as data already read.
     if any(isinstance(obj, fmt) for fmt, _ in claimed):
-        obj.save(file, **kwargs)
-        return
+        return obj.save(file, **kwargs)
 
     # The policy acts once on the report of the conversion and the
     # write, after the file is written.

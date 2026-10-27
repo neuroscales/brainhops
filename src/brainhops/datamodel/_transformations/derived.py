@@ -31,10 +31,11 @@ from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import alias, smartproperty
-from brainhops.errors import ErrorAction
+from brainhops.datamodel.metadata._report import call_under_policy
+from brainhops.errors import UNSET, ConversionError, ErrorAction, ErrorPolicy
 
 from . import nocycles
-from .base import Transformation, _copied
+from .base import Transformation, _copied, _deprecated_error
 from .compute.simplify import SimplifyLike
 from .compute.simplify import simplify as _simplify
 from .concrete import (
@@ -170,6 +171,7 @@ class DerivedTransformation(MetaTransformation):
         cls: tx.Optional[tx.Type[Transformation]] = None,
         *,
         lossy: ErrorAction = None,
+        on_error: ErrorPolicy = UNSET,
         copy: bool = False,
         **kwargs,
     ) -> Transformation:
@@ -191,13 +193,23 @@ class DerivedTransformation(MetaTransformation):
           converts the result.
         - With `copy=True`, a result that would be an existing object, such
           as the wrapper itself, is copied.
+
+        The policy given as `lossy=` and `on_error=` applies to the whole
+        conversion, including the edit of the forward, so that a value
+        such as `on_error=None` is returned in place of the wrapper
+        rather than taken for its forward.
         """
-        return _copied(self, self._to(cls, lossy, kwargs), copy)
+        on_error = _deprecated_error(kwargs, on_error, type(self))
+        return call_under_policy(
+            lambda: _copied(self, self._to(cls, kwargs), copy),
+            on_error,
+            lossy=lossy,
+            scope=(ConversionError,),
+        )
 
     def _to(
         self,
         cls: tx.Optional[tx.Type[Transformation]],
-        lossy: ErrorAction,
         kwargs: tx.Dict[str, tx.Any],
     ) -> Transformation:
         if cls is None or cls is type(self):
@@ -210,8 +222,6 @@ class DerivedTransformation(MetaTransformation):
                     f"t.forward.to({derived[0]}=...)."
                 )
             own = {f.public_name for f in fields(type(self)) if f.init}
-            # The policy of the conversion does not edit the forward.
-            own.update(("error", "on_error"))
             others = {k: kwargs.pop(k) for k in list(kwargs) if k not in own}
             if others:
                 front = nocycles.DERIVED[type(self)._operator]
@@ -221,10 +231,10 @@ class DerivedTransformation(MetaTransformation):
                     output=self._output,
                 )
                 return obj.to(**kwargs) if kwargs else obj
-            return super().to(cls, lossy=lossy, **kwargs)
+            return super().to(cls, **kwargs)
         # Converting to any other type, even the family's own, resolves the
         # operator first.
-        return self._materialize().to(cls, lossy=lossy, **kwargs)
+        return self._materialize().to(cls, **kwargs)
 
     # --- helpers ------------------------------------------------------
 

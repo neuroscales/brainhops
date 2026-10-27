@@ -461,3 +461,102 @@ def test_to_affine_returns_none_for_a_field() -> None:
     assert field.to_affine(on_error=None) is None
     with pytest.raises(ConversionError):
         field.to_affine()
+
+
+def test_the_policy_of_a_lazy_wrapper_covers_the_edit_of_its_forward() -> None:
+    from brainhops.datamodel.axes import A, R, S
+    from brainhops.datamodel.systems import CoordinateSystem
+    from brainhops.datamodel.transformations import (
+        Affine,
+        DisplacementField,
+        Inverse,
+        Sequence,
+    )
+
+    def system(name: str) -> CoordinateSystem:
+        return CoordinateSystem(name=name, axes=[R(), A(), S()])
+
+    scaling = np.diag([2.0, 1.0, 1.0, 1.0])[:3]
+    field = DisplacementField(
+        np.zeros((4, 5, 6, 3)), input=system("b"), output=system("c")
+    )
+    chain = Sequence(
+        transformations=[
+            Affine(scaling, input=system("a"), output=system("b")),
+            field,
+        ]
+    )
+    # `log=` edits the forward, a chain that has no tangent.
+    wrapper = Inverse(forward=chain)
+    with pytest.raises(ConversionError):
+        wrapper.to(log=True)
+    assert wrapper.to(log=True, on_error=None) is None
+    with pytest.warns(DeprecationWarning):
+        assert wrapper.to(log=True, error=None) is None
+
+
+# ----------------------------------------------------------------------
+#   WHERE A WARNING POINTS
+# ----------------------------------------------------------------------
+
+
+def test_a_warning_points_at_the_call_of_the_user() -> None:
+    from brainhops.datamodel.transformations import Sequence
+
+    with pytest.warns(MetadataLossWarning) as caught:
+        _lossy_metadata().to(MghMetadata, on_error="warn")
+    assert caught[0].filename == __file__
+    chain = Sequence(transformations=[_linear()])
+    with pytest.warns(DeprecationWarning) as caught:
+        chain.to(Rotation, error=None)
+    assert caught[0].filename == __file__
+    with pytest.warns(DeprecationWarning) as caught:
+        _linear().to_kind("rotation", error=None)
+    assert caught[0].filename == __file__
+    with pytest.warns(ConversionWarning) as caught:
+        _linear().to(Rotation, lossy="warn")
+    assert caught[0].filename == __file__
+
+
+# ----------------------------------------------------------------------
+#   WRITERS
+# ----------------------------------------------------------------------
+
+
+def _mgh_image() -> object:
+    from brainhops.datamodel.images import SingleScaleImage
+    from brainhops.io.images.freesurfer.mgh import MghImage
+
+    image = SingleScaleImage(
+        np.zeros((2, 3, 4), np.float32), metadata=_lossy_metadata()
+    )
+    with metadata_loss_policy("ignore"):
+        mgh = MghImage.from_instance(image)
+    # MGH has no slot for a description, which the write loses.
+    mgh.metadata.description = "T1w"
+    return mgh
+
+
+def test_a_writer_returns_what_the_policy_returns(
+    tmp_path: Path, silent: None
+) -> None:
+    mgh = _mgh_image()
+    # The value replaces the result of the write, and never reaches the
+    # body of the writer as consolidated metadata.
+    assert mgh.save(tmp_path / "a.mgz", on_error=None) is None
+    assert mgh.to_bytes(on_error=7) == 7
+    # A save of an object of the format returns what its writer returns.
+    marker = object()
+    assert io.save(mgh, tmp_path / "b.mgz", on_error=marker) is marker
+
+
+def test_none_is_a_policy_of_a_save_that_converts(
+    tmp_path: Path, silent: None
+) -> None:
+    from brainhops.datamodel.images import SingleScaleImage
+
+    image = SingleScaleImage(
+        np.zeros((2, 3, 4), np.float32), metadata=_lossy_metadata()
+    )
+    assert io.save(image, tmp_path / "a.mgz", on_error=None) is None
+    assert _lossy_metadata().to(MghMetadata, on_error=None) is None

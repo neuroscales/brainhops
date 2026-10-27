@@ -1,6 +1,6 @@
 """Old public names and keywords that still work, with a warning."""
 
-__all__ = ["pop_renamed_keyword", "renamed_attributes"]
+__all__ = ["external_stacklevel", "pop_renamed_keyword", "renamed_attributes"]
 
 import sys
 import warnings
@@ -83,9 +83,9 @@ def pop_renamed_keyword(
     default : Any, optional
         The value returned when `old` was not given.
     stacklevel : int, default=3
-        The stack level of the warning, counted from this function, so
-        that the default points at the caller of the function that
-        calls it.
+        The lowest stack level of the warning, counted from this
+        function. The warning points at the first frame at or above it
+        that is outside brainhops (see [`external_stacklevel`][]).
 
     Returns
     -------
@@ -107,6 +107,51 @@ def pop_renamed_keyword(
         f"The {old}= keyword of {owner}() is deprecated and will be "
         f"removed in a future release; use {new}= instead.",
         DeprecationWarning,
-        stacklevel=stacklevel,
+        stacklevel=external_stacklevel(stacklevel),
     )
     return kwargs.pop(old)
+
+
+# The packages whose frames a warning skips, so that it points at the code
+# that called them. bagof calls brainhops back from its field converters.
+_INTERNAL_PACKAGES = ("brainhops", "bagof")
+
+
+def external_stacklevel(stacklevel: int = 1) -> int:
+    """Return the stack level of a warning about the caller's own code.
+
+    A warning issued deep inside brainhops, such as the warning of a loss
+    of metadata or of a deprecated keyword, should point at the line of
+    the user's code that started the call, and the number of frames in
+    between depends on the path that the call took through decorators
+    and helpers. The function that issues the warning passes the result
+    of this function to `warnings.warn` as its `stacklevel`. The frames
+    are counted from that function, which is level 1, and the result is
+    the first level, at or above `stacklevel`, whose frame belongs to
+    neither brainhops nor bagof.
+
+    Parameters
+    ----------
+    stacklevel : int, default=1
+        The lowest level to return, counted as `warnings.warn` counts it
+        from the function that calls this one.
+
+    Returns
+    -------
+    int
+        The stack level, or the level of the outermost frame when every
+        frame belongs to brainhops or bagof.
+    """
+    frame = sys._getframe(1)
+    level = 1
+    while level < stacklevel or _is_internal(frame):
+        if frame.f_back is None:
+            return level
+        frame = frame.f_back
+        level += 1
+    return level
+
+
+def _is_internal(frame: tx.Any) -> bool:
+    name = frame.f_globals.get("__name__") or ""
+    return name.split(".", 1)[0] in _INTERNAL_PACKAGES

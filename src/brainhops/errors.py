@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 import typing_extensions as tx
 
-from brainhops._core.deprecation import renamed_attributes
+from brainhops._core.deprecation import external_stacklevel, renamed_attributes
 
 if tx.TYPE_CHECKING:
     # imported for the cross-references of mkdocstrings
@@ -465,9 +465,10 @@ def apply_error_policy(
         The exception classes that the conversion raises on purpose,
         to which a single action applies.
     stacklevel : int, default=2
-        The stack level of the warning, counted from the caller of this
-        function, so that the default points at the caller of the
-        conversion.
+        The lowest stack level of the warning, counted from the caller
+        of this function. The warning points at the first frame at or
+        above it that is outside brainhops, which is the code that
+        called the conversion.
 
     Returns
     -------
@@ -486,7 +487,9 @@ def apply_error_policy(
         raise error
     result = error.result if isinstance(error, LossyConversionError) else None
     if _is_action(action, "warn"):
-        warnings.warn(_as_warning(error), stacklevel=stacklevel + 1)
+        warnings.warn(
+            _as_warning(error), stacklevel=external_stacklevel(stacklevel + 1)
+        )
         return result
     if _is_action(action, "ignore"):
         return result

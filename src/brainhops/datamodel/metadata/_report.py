@@ -25,7 +25,10 @@ import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
-from brainhops._core.deprecation import pop_renamed_keyword
+from brainhops._core.deprecation import (
+    external_stacklevel,
+    pop_renamed_keyword,
+)
 from brainhops.errors import (
     UNSET,
     ConversionError,
@@ -332,12 +335,14 @@ def apply_loss_policy(
     report : ConversionReport
         The report to act on.
     on_error : ErrorPolicy, optional
-        The policy to apply. By default, or with `None`, the policy in
-        effect.
+        The policy to apply. By default, the policy in effect. The value
+        `None` is a policy like any other value, which is not the
+        default.
     stacklevel : int, default=2
-        The stack level of the warning, counted from the caller of this
-        function and without the frame that [`takes_error_policy`][]
-        adds around it.
+        The lowest stack level of the warning, counted from the caller
+        of this function. The warning points at the first frame at or
+        above it that is outside brainhops, which is the code that
+        called the conversion.
 
     Returns
     -------
@@ -353,7 +358,7 @@ def apply_loss_policy(
         If `on_error` is a string other than an action.
     """
     action = UNSET
-    if on_error is not UNSET and on_error is not None:
+    if on_error is not UNSET:
         action = policy_action(error_policy(on_error), MetadataLossError)
     if action is UNSET:
         action = _POLICY.get()
@@ -367,7 +372,10 @@ def apply_loss_policy(
         return report
     if _is(action, "warn"):
         # One frame more than asked, for the wrapper of the method.
-        warnings.warn(MetadataLossWarning(report), stacklevel=stacklevel + 2)
+        warnings.warn(
+            MetadataLossWarning(report),
+            stacklevel=external_stacklevel(stacklevel + 2),
+        )
         return report
     raise MetadataLossError(report)
 
@@ -453,6 +461,9 @@ def takes_error_policy(
         except Exception as error:  # noqa: BLE001
             return apply_error_policy(error, policy, stacklevel=2)
 
+    # Marks the method, so that a base class that decorates the methods
+    # of its subclasses does not decorate it twice.
+    wrapper.takes_error_policy = True
     return wrapper
 
 
@@ -492,8 +503,9 @@ def call_under_policy(
         The exception classes that `call` raises on purpose, to which a
         single action of `on_error` applies.
     stacklevel : int, default=2
-        The stack level of a warning, counted from the caller of this
-        function.
+        The lowest stack level of a warning, counted from the caller of
+        this function. The warning points at the first frame at or
+        above it that is outside brainhops.
 
     Returns
     -------

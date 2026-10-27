@@ -75,6 +75,11 @@ node itself is not decided, so a chain that is affine as a whole is
 kept whole by `with_only("affine")`. The inverse of a removed part is
 also removed, because the inverse of an identity is an identity. When
 nothing is replaced, the methods return the transformation itself.
+The methods do not look inside the other wrappers, which are the lazy
+square root `Sqrt`, `Bijection` and `SubspaceTransformation`, so such a
+wrapper is kept or replaced as a whole. Looking inside them is not
+implemented yet, and the limit is documented in the docstrings of both
+methods.
 
 ## 4. Converting to a kind
 
