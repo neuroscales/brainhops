@@ -15,7 +15,7 @@ from brainhops._core.properties import (
 )
 
 
-def _box(unset: tx.Any = None, cache: bool = False) -> type:
+def _box(cache: bool = False) -> type:
     # A class with one property `value`, stored as `_value`, that counts how
     # often its value is computed.
     class Box:
@@ -26,7 +26,7 @@ def _box(unset: tx.Any = None, cache: bool = False) -> type:
             # through the setter, as a data model does.
             self.value = value
 
-        @smartproperty(unset=unset, cache=cache)
+        @smartproperty(cache=cache)
         def value(self) -> str:
             type(self).computed += 1
             return "computed"
@@ -34,51 +34,13 @@ def _box(unset: tx.Any = None, cache: bool = False) -> type:
     return Box
 
 
-def _odd(value: tx.Any) -> bool:
-    return isinstance(value, int) and value % 2 == 1
-
-
-@pytest.mark.parametrize(
-    "unset, stored, computed",
-    [
-        # By default, only a stored None is unset.
-        (None, None, True),
-        (None, [], False),
-        (None, 0, False),
-        # A predicate decides which values are unset.
-        (_odd, 3, True),
-        (_odd, 2, False),
-        (_odd, None, False),
-        # With a tuple, any member may match.
-        ((None, _odd), 1, True),
-        ((None, _odd), None, True),
-        ((None, _odd), 2, False),
-        ((None, _odd), [], False),
-    ],
-)
-def test_unset_says_when_the_getter_runs(
-    unset: tx.Any, stored: tx.Any, computed: bool
-) -> None:
-    box = _box(unset)(stored)
-    assert (box.value == "computed") is computed
-    if not computed:
-        assert box.value is stored
-
-
 def test_the_default_is_a_stored_none() -> None:
     assert _box()(None).value == "computed"
     assert _box()([]).value == []
 
 
-@pytest.mark.parametrize("unset", [None, (None, _odd), _odd])
-def test_the_setter_stores_the_value_as_given(unset: tx.Any) -> None:
-    for value in (None, [], 3, [1]):
-        box = _box(unset)(value)
-        assert box._value is value
-
-
 def test_an_empty_value_is_used_as_it_is() -> None:
-    # Only `None` reads as unset, so an empty container is a value.
+    # Only a stored `None` is computed, so an empty container is a value.
     box = _box()(None)
     assert box.value == "computed"
     box.value = []
@@ -97,11 +59,6 @@ def test_the_cache_and_its_invalidation() -> None:
     assert box.value == ["given"] and not hasattr(box, "_cache_value")
     box.value = None
     assert box.value == "computed" and cls.computed == 2
-    # A predicate caches in the same way.
-    cls = _box(_odd, cache=True)
-    box = cls(1)
-    assert box.value == "computed" and box.value == "computed"
-    assert cls.computed == 1
 
 
 def test_a_frozen_object_can_cache_a_read_only_property() -> None:
@@ -136,36 +93,16 @@ def test_lazyproperty_computes_once_and_reads_a_stored_value() -> None:
     assert lazy.value == "stored" and Lazy.computed == 1
 
 
-@pytest.mark.parametrize(
-    "unset, error, match",
-    [
-        # No string names a form.
-        ("blank", TypeError, "not a str"),
-        ((None, "nothing"), TypeError, "not a str"),
-        ((), ValueError, "no form"),
-        (0, TypeError, "not a int"),
-        ([None, _odd], TypeError, "not a list"),
-        ((None, 1.0), TypeError, "not a float"),
-    ],
-)
-def test_a_bad_unset_is_refused_when_declared(
-    unset: tx.Any, error: type, match: str
-) -> None:
-    with pytest.raises(error, match=match):
-        smartproperty(unset=unset)
-
-
 def test_the_former_options_are_gone() -> None:
-    for option in ("empty_as_unset", "informative", "missing"):
+    for option in ("empty_as_unset", "informative", "missing", "unset"):
         with pytest.raises(TypeError):
             smartproperty(**{option: True})
-    # A lazy property is always computed when nothing is stored, so it
-    # takes no unset, and no predicate reads every stored value as unset.
     with pytest.raises(TypeError):
-        lazyproperty(unset=None)
+        smartproperty(convert=str)
     from brainhops._core import properties
 
     assert not hasattr(properties, "always_unset")
+    assert not hasattr(properties, "UnsetLike")
 
 
 def _views_box() -> type:
@@ -344,6 +281,94 @@ def test_cached_value_reads_a_cache_without_computing_it() -> None:
     assert cached_value(box, "value") is None
 
 
+def _sourced_box() -> type:
+    # A class whose cached `view` is computed from `source`, which it names
+    # in `invalidated_by`, and which counts how often it is computed.
+    class Box:
+        computed = 0
+
+        def __init__(self, source: tx.Any) -> None:
+            self.source = source
+            self._view = None
+
+        @smartproperty(cache=True, invalidated_by=("source",))
+        def view(self) -> tx.Any:
+            type(self).computed += 1
+            return ("view of", self.source)
+
+    return Box
+
+
+def test_invalidated_by_computes_again_for_another_source() -> None:
+    cls = _sourced_box()
+    first, second = [1], [1]
+    box = cls(first)
+    view = box.view
+    assert box.view is view and cls.computed == 1
+    # The same object, even changed in place, keeps the cached value.
+    first.append(2)
+    assert box.view is view and cls.computed == 1
+    # Another object, even an equal one, computes the value again.
+    box.source = second
+    assert box.view is not view and cls.computed == 2
+    assert box.view[1] is second and cls.computed == 2
+
+
+def test_cached_value_is_none_for_another_source() -> None:
+    cls = _sourced_box()
+    box = cls([1])
+    view = box.view
+    assert cached_value(box, "view") is view
+    box.source = [1]
+    assert cached_value(box, "view") is None
+    drop_cache(box, "view")
+    assert cached_value(box, "view") is None
+
+
+def test_invalidated_by_does_not_keep_a_source_alive() -> None:
+    # The cache refers to its sources weakly, so a source that is replaced
+    # is collected, and a collected source followed by None is a change.
+    import gc
+    import weakref
+
+    class Source:
+        pass
+
+    class Box:
+        computed = 0
+
+        def __init__(self) -> None:
+            self.source = Source()
+            self._view = None
+
+        @smartproperty(cache=True, invalidated_by=("source",))
+        def view(self) -> int:
+            type(self).computed += 1
+            return type(self).computed
+
+    box = Box()
+    assert box.view == 1
+    old = weakref.ref(box.source)
+    box.source = None
+    gc.collect()
+    assert old() is None
+    assert box.view == 2
+    assert box.view == 2
+
+
+def test_invalidated_by_needs_a_cache() -> None:
+    with pytest.raises(ValueError):
+        smartproperty(lambda self: None, invalidated_by=("source",))
+
+
+def test_invalidated_by_takes_a_single_name() -> None:
+    def view(self: tx.Any) -> tx.Any:
+        return self.source
+
+    prop = smartproperty(view, cache=True, invalidated_by="source")
+    assert prop.invalidated_by == ("source",)
+
+
 # smartsetter
 
 
@@ -412,32 +437,6 @@ def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
     model.data = 5
     assert model.data == 5 and Model.assigned == before + 1
     assert Model().data is None
-
-
-def test_convert_applies_at_each_read_without_changing_the_cache() -> None:
-    # convert transforms the value at each read, while the cached or
-    # stored value stays as it was, and None is not converted.
-    class Box:
-        computed = 0
-
-        @smartproperty(cache=True, convert=lambda value: value.upper())
-        def value(self) -> str:
-            type(self).computed += 1
-            return "computed"
-
-    box = Box()
-    assert box.value == "COMPUTED"
-    assert box.value == "COMPUTED"
-    assert Box.computed == 1
-    assert cached_value(box, "value") == "computed"
-    box.value = "stored"
-    assert box.value == "STORED"
-    assert box._value == "stored"
-
-    class Empty:
-        value = smartproperty("value", convert=lambda value: value.upper())
-
-    assert Empty().value is None
 
 
 def test_alias_reads_and_writes_its_source() -> None:

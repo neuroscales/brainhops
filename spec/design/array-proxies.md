@@ -22,8 +22,9 @@ object, called a proxy, that knows where the voxels lie and how they are
 stored. The proxy behaves like a read-only array: it has a `shape` and a
 `dtype`, and NumPy converts it with `np.asarray`. The proxy is stored as
 the `rawdata` of the format object (see [Format
-records](format-records.md)). The `data` property turns it into a NumPy
-array or a Dask array, depending on the array backend.
+records](format-records.md)). The `data` property of the object
+returns the proxy itself, and a computation on it reads the values in
+the backend of the computation (see "Computing with a proxy" below).
 
 A proxy keeps no file open between reads. It opens the file each time
 its values are needed, so that it can be pickled, sent to Dask workers
@@ -200,9 +201,32 @@ axes of another stored proxy in another order. Transposing a stored
 proxy returns one, and transposing it again composes the two
 permutations, so permuted proxies never nest.
 
-The kinds are kept in a fixed order, which every operation preserves:
-a scaled proxy holds an indexed proxy or a stored one, and an indexed
-proxy holds a stored proxy. Each layer keeps the proxy below it as
+A fifth class, `ReshapedProxy`, presents the values of any other proxy
+in another shape, in C order as `np.reshape` places them. It is a
+stored proxy whose storage is that proxy, so that indexing and
+transposing it work as for the proxy of a file, and its `root` is the
+root of the proxy that it reshapes. Reshaping it again reshapes that
+proxy, so reshaped proxies never nest. A read maps its box to a box of
+the base: a reshape splits or merges groups of neighbouring axes, and
+for each group the box of the base runs from the row of the first
+selected value to the row of the last one, so a read gets at most one
+extra row on each side of a group. `reshape` builds a reshaped proxy
+only when it cannot do better:
+
+- a reshape that only adds or removes axes of length one is an index;
+- a strided proxy, or a box of one, whose values NumPy could reshape
+  without copying them gives another strided proxy of the same bytes,
+  with the strides that NumPy would give (see "What is implemented of
+  the third layer" below);
+- a scaled proxy reshapes its base and its factors when each factor
+  still broadcasts against the new shape, which a factor that runs
+  along one axis does not when that axis is merged with others;
+- `order="F"` is a C-order reshape between two transposes.
+
+The kinds are kept in a fixed order, which indexing and transposing
+preserve: a scaled proxy holds an indexed proxy or a stored one, and an
+indexed proxy holds a stored proxy. A reshaped proxy starts the order
+again above the proxy that it reshapes. Each layer keeps the proxy below it as
 `base`, and the property `root` of every proxy is the stored proxy at
 the bottom, the one that a reader built. The `root` of a stored proxy
 is the proxy itself.
@@ -251,7 +275,15 @@ open store, is opened once and shared by every index of it.
 `to_dask()` calls `da.from_array` with the `chunks` of the proxy, which
 an indexed proxy carries through its selection, with `asarray=True`,
 with `fancy=False`, and with a `meta` argument, so that Dask does not
-index the proxy to learn the type.
+index the proxy to learn the type. Dask does not receive the proxy
+itself but a small view of it, which has a shape, a type, blocks and an
+index that reads a block into a NumPy array. `da.from_array` copies an
+argument that behaves as an array and has a `copy` method, which would
+read the whole proxy, and Dask keeps a block that behaves as an array
+as it is, which would pass unread proxies to the computation. A function
+of Dask that receives a proxy, such as `dask.array.transpose`, asks it
+for a Dask array through its method `to_dask_array`, which returns what
+`to_dask()` returns.
 
 Status: implemented, in `brainhops._core.proxy`.
 
@@ -262,10 +294,9 @@ will return a description of the bytes that a writer may copy as they
 are, or `None` for an indexed proxy, and replace the `isinstance`
 checks of the writers.
 
-The format views only index and transpose the proxy, so the `dataobj`
-of an object read from a file is a proxy in the layout of its `data`,
-and `data` reads it with the backend setting (see
-[Array backends](array-backends.md)). The NIfTI and MGH views wrap the
+The format views only index and transpose the proxy, so the `data` of
+an object read from a file is a proxy (see "Computing with a proxy"
+below). The NIfTI and MGH views wrap the
 proxy of nibabel in `brainhops.io.base._utils_proxies.NibabelProxy`.
 The voxels of these files are stored contiguously, so that proxy
 prefers blocks of whole slices along the last spatial axis, with as
@@ -274,6 +305,107 @@ many slices as fit in the block size of Dask (the option
 The views of TIFF and OpenSlide keep their own functions, because
 tifffile can give a memory map or a Dask array itself, and an
 OpenSlide level is kept as a Dask array when it is read lazily.
+
+### Computing with a proxy
+
+The `data` of an image or of a field returns the array that the object
+stores, whatever the backend setting, and the `data` of an object read
+from a file is therefore a proxy. Asking for the shape of the data, or
+indexing them, reads nothing, so that `image.data[0]` reads one slice
+even when Dask is not installed. If `data` read the proxy with the
+backend setting instead, `image.data.shape` and `image.data[0]` would
+read the whole file whenever the setting chose NumPy, which it always
+does when Dask is not installed.
+
+A proxy behaves as a read-only array in computations, and it is read
+when a computation needs its values. The classes of NumPy give the
+means:
+
+- `NDArrayOperatorsMixin` gives the operators of Python, such as
+  `proxy + 1` and `proxy == 0`, which call `__array_ufunc__`;
+- `__array_ufunc__` applies the universal functions of NumPy;
+- `__array_function__` applies the other functions of NumPy;
+- `__getattr__` gives the methods of NumPy arrays, such as `sum` and
+  `astype`, and the attributes that are computed from the values,
+  such as `real`. It does not give the methods that change an array
+  in place, such as `sort`, nor the attributes that describe memory,
+  such as `strides`;
+- the conversions to a number, such as `float(proxy)`, read the
+  values.
+
+A computation runs in the backend that `promote_backends` chooses for
+its operands, and the proxies and the arrays of other backends are
+converted to it. Next to a CuPy array, a proxy is read onto the GPU, and
+next to a Dask array, it becomes a Dask array that reads nothing yet.
+CuPy and Dask hand the computation to an operand that defines
+`__array_ufunc__` when they do not know its type, so this holds when
+the proxy is the second operand too, as in `cupy_array * proxy`. When a
+function of NumPy runs in NumPy, the implementation of NumPy receives
+the proxies themselves, so that `np.shape(proxy)` reads nothing, and
+`np.transpose(proxy)` and `np.reshape(proxy, shape)` return proxies.
+
+A proxy is read-only, so assigning values into it and using it as the
+`out` argument of a computation raise a `TypeError`. A proxy compares
+its values with `==`, as a NumPy array does, so it cannot be hashed.
+
+The values that a computation reads are not kept, so a second
+computation reads them again. Caching was left out for now: a cache in
+the proxy would keep the memory of a large file without the user
+knowing, and a cache in the image would make `data` change type after
+the first computation. The `as_*` methods with `inplace=True` keep the
+values on request. The views of a field, its `values` and its
+`coefficients`, are derived from its `data` without conversion: a view
+that the field stores is the proxy itself, and the other one is
+computed from the proxy, in the backend that the computation chooses,
+and cached.
+
+An object has no `dataobj` attribute besides `data`, since the
+two would be the same array. A file format gives the lazy array of its
+file through the getter of its `data` property, which returns instead
+an array that was assigned. The property caches the proxy, not its
+values, so that `image.data is image.data`. The format reassigns
+`rawdata` when it consolidates or writes, so the cache is declared with
+`invalidated_by="rawdata"`: it keeps a weak reference to the object that
+the proxy was built from, and builds the proxy again when `rawdata`
+holds another object. The image stack also reads the axis of its slices
+from its record, so its cache is invalidated by `metadata` too. A weak reference
+rather than the object keeps the cache from holding a replaced object
+alive, and rather than its `id`, which a new object may reuse once the
+old one is collected.
+
+`to_device` reads a proxy onto the device that it is asked for, as
+`to_backend` reads it under `"native"`, so that a computation that moves
+its operands to a GPU never leaves a proxy among them.
+
+A computation finds the package of a proxy with `array_backend`, which
+gives the package of the array that `to_backend` makes of it: NumPy for
+a small proxy and Dask for a large one under the default setting. The
+compositions of transformations combine their operands with
+`to_promoted_backend`, which converts them to the setting in effect when
+it is not `"native"`, so that their result follows that setting.
+
+Under a setting other than `"native"`, a computation that involves a
+proxy runs in the backend of the setting, and operands of incompatible
+packages never meet. CuPy refuses NumPy arrays and proxies as operands,
+so every computation of brainhops converts its array operands before it
+chooses its array package: the operators and functions of a proxy, the
+compositions of transformations and the spline functions go through
+`to_promoted_backend`, and the reslice and the inversion of a field
+convert their inputs with `to_backend`. These conversions apply to
+loaded arrays too, so that under an explicit setting the coefficients
+of a NumPy field are computed in the backend of the setting.
+
+The tests cannot run CuPy without a GPU, so `tests/fake_cupy.py` gives a
+stand-in that holds NumPy arrays and refuses what CuPy refuses: implicit
+conversion to NumPy, and NumPy arrays or other array-likes as operands.
+`tests/test_backends_cupy_rules.py` installs it as the CuPy of the
+backends and runs computations on proxies under the CuPy setting, and
+next to CuPy arrays under the default setting.
+
+Status: implemented, in `brainhops._core.proxy`,
+`brainhops._core.backends` and `brainhops.datamodel._backends`. The
+stand-in checks the rules that CuPy enforces, not the numerical kernels
+of CuPy, which are still tested only where CuPy is installed.
 
 ### Third layer: strided data behind a file
 
@@ -470,6 +602,20 @@ which convert their arguments to their types, and the MRtrix and AFNI
 proxies add the record of their file as a field and build themselves
 from it with `from_record`. Status: implemented.
 
+Transposing a strided proxy gives another strided proxy of the same
+bytes, with its shape and strides permuted, and so does a reshape, or a
+reshape of a box selected by integers and slices, when NumPy could do it
+without copying the values. The new strides are those that NumPy gives
+to the view: within each group of axes that the reshape splits or
+merges, the old axes must be laid out one after the other. The result
+is a private subclass whose `root` is the proxy that the reader built,
+so that a writer still sees which file it reads. It is not an instance
+of the class of that proxy, so a writer does not copy its bytes as the
+whole file. The MRtrix proxy of packed bits, and the AFNI proxy of
+sub-bricks of several types, decode the whole file rather than read
+with strides, so they are transposed by a `PermutedProxy` and reshaped
+by a `ReshapedProxy`. Status: implemented.
+
 `ArrayProxy` is a `Magic` class of bagof without fields, and every proxy
 of brainhops declares its state as fields, so that its constructor is
 built from them. A value that a proxy computes rather than receives is
@@ -481,8 +627,10 @@ the members that a subclass must define stay abstract. A field cannot
 implement an abstract property, so a proxy that receives its shape or
 its type keeps it in a private field, given by its public name, and
 returns it from the property: the `_shape` and `_dtype` of
-`StridedProxy` are given as `shape=` and `dtype=`. A proxy is compared
-by identity. The fields of a subclass convert their arguments to their
+`StridedProxy`, and the `_shape` of `ReshapedProxy`, are given as
+`shape=` and `dtype=`. A proxy compares
+its values with `==`, as a NumPy array does (see "Computing with a
+proxy"). The fields of a subclass convert their arguments to their
 types, and its representation is the one that `Magic` builds, which
 shows the fields that do not hold their defaults. An indexed proxy
 shows its stored proxy and its selection. Status: implemented.

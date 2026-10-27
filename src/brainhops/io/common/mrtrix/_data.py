@@ -295,6 +295,14 @@ class _MrtrixProxy(StridedProxy):
         """
         return decode_data(self.record, self.read_stored())
 
+    def _reads_strided(self) -> bool:
+        """Tell whether the voxels are read with strides.
+
+        Packed `Bit` data are decoded from the whole file, so they are
+        not.
+        """
+        return not self.record.is_bit
+
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         if not self.record.is_bit:
             try:

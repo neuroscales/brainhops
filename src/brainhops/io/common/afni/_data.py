@@ -335,6 +335,14 @@ class _BrikProxy(StridedProxy):
                 out.write(chunk)
                 remaining -= len(chunk)
 
+    def _reads_strided(self) -> bool:
+        """Tell whether the BRIK is read with strides, as one array.
+
+        Sub-bricks of several types are joined from the whole BRIK, so
+        they are not.
+        """
+        return self._single_type
+
     def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
         if self._single_type:
             try:

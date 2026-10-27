@@ -149,21 +149,22 @@ The proxy types are nibabel's `ArrayProxy`, the existing
 `H5ArrayProxy` for HDF5, Zarr arrays, and a new proxy for raw binary
 blocks that knows their offset and compression.
 
-The public `data` attribute is a cached view of `rawdata`. Each format
+The public `data` attribute is a view of `rawdata`. Each format
 defines a pair of pure functions, `to_model` and `to_disk`, with
-`data = to_model(rawdata)` and `rawdata = to_disk(data)`. Reading `data`
-decodes `rawdata` once and caches the result.
+`data = to_model(rawdata)` and `rawdata = to_disk(data)`. The view only
+indexes, transposes and scales the lazy array of the file, so reading
+`data` reads nothing (see [Lazy arrays of file data](array-proxies.md)).
 
 Assigned data is pending. A format takes the private `_data` field of
 its model over, with `_data: ... = Inherit("_data", default=None)`.
-The format defines `dataobj`, which returns the array stored in `_data`
-when there is one, and otherwise the view `to_model(rawdata)`, which
-reads nothing. Its `data` property is a `dataproperty`, which reads
-`dataobj` once, caches the result, and converts it with the backend
-setting in effect at each read. `None` in `_data` means that `data` is
-decoded from `rawdata`. Assigning
-`data` stores the array in `_data` and clears the cache, and it never
-changes `rawdata`. The data model of a transformation already stores its
+Its `data` property is a `smartproperty` whose getter returns the view
+`to_model(rawdata)`, and which returns instead the array stored in
+`_data` when there is one. The view is cached until `rawdata` holds
+another object (the option `invalidated_by` of `smartproperty`), or
+`metadata` too for a format whose view reads the record, such as the
+image stack. `None` in `_data` means that `data` is the
+view of `rawdata`. Assigning `data` stores the array in `_data`, and it
+never changes `rawdata`. The data model of a transformation already stores its
 data in `_data`, and a format whose model is a chain, such as a NIfTI
 displacement field, declares a private `_data` field of its own.
 `rawdata` and the record therefore describe the file as it was read, or
@@ -1003,9 +1004,11 @@ its status.
     keeps its own cache, unless the setter deletes it or names it in
     `invalidates`. Doing this automatically would break the setters
     that fill the cache on purpose (`concrete.py:396-421`), so every
-    NIfTI setter declares `unset=_always` and removes `_cache_data` by
+    NIfTI setter declared `unset=_always` and removed `_cache_data` by
     hand, since `_FORGET_VIEWS` clears only the attributes listed in
-    `derived_fields`. Status: open.
+    `derived_fields`. Status: obsolete. `smartproperty` has no `unset`
+    option, and the `data` of a format caches its lazy array with
+    `invalidated_by`, which no setter needs to clear.
 21. The test that compares the registry with the table of formats sees
     only registered classes, so a concrete format that is not
     registered escapes it. `NiftiRASToVoxel` is not registered, so a

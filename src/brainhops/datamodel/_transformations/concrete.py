@@ -49,12 +49,7 @@ from brainhops._ext.invfield import inverse as inverse_disp
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import (
-    _FrozenBackendMixin,
-    _stored_data,
-    dataobjproperty,
-    dataproperty,
-)
+from brainhops.datamodel._backends import _FrozenBackendMixin
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
@@ -88,12 +83,6 @@ def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
-
-
-def _invalidating_dataproperty(*args, **kwargs) -> property:
-    """Build a [`dataproperty`][] whose assignment clears the cached views."""
-    kwargs.setdefault("invalidates", _FORGET_DERIVED)
-    return dataproperty(*args, **kwargs)
 
 
 # --- API --------------------------------------------------------------
@@ -321,8 +310,7 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = _invalidating_dataproperty()
-    dataobj = dataobjproperty()
+    data = _invalidating_property("data")
     degree = _invalidating_property("degree")
     bound = _invalidating_property("bound")
 
@@ -342,11 +330,9 @@ class TransformationField(ConcreteTransformation):
 
     # --- derived views ------------------------------------------------
 
-    @smartproperty(cache=True, convert=to_backend)
+    @smartproperty(cache=True)
     def values(self) -> tx.Optional[ArrayProtocol]:
-        return _data2values(
-            _stored_data(self), self.store, self.degree, self.bound
-        )
+        return _data2values(self.data, self.store, self.degree, self.bound)
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
@@ -358,11 +344,9 @@ class TransformationField(ConcreteTransformation):
 
     field = alias("values")
 
-    @smartproperty(cache=True, convert=to_backend)
+    @smartproperty(cache=True)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
-        return _data2coeffs(
-            _stored_data(self), self.store, self.degree, self.bound
-        )
+        return _data2coeffs(self.data, self.store, self.degree, self.bound)
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:
@@ -626,9 +610,6 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
     def data(self) -> tx.Optional[ArrayProtocol]:
         """Coordinates of the grid points, encoded according to the flags."""
         return _values2data(self.field, self.store, self.degree, self.bound)
-
-    dataobj = alias("data", readonly=True)
-    """Coordinates of the grid points, which a grid computes."""
 
     # --- methods ------------------------------------------------------
 
@@ -1314,16 +1295,18 @@ def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
 
 
 def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
-    """Invert a field of displacements, in the package of the field.
+    """Invert a field of displacements, in the backend of the setting.
 
-    The inversion ([`brainhops._ext.invfield`][]) runs with NumPy or with
-    CuPy, on the device of the field. It needs the whole field at once,
-    so a Dask field is computed, with NumPy or with CuPy depending on its
+    Under the default setting, the backend is the package of the field,
+    and a lazy array of a file counts as the array that `"auto"` makes of
+    it. The inversion ([`brainhops._ext.invfield`][]) runs with NumPy or
+    with CuPy. It needs the whole field at once, so a field that becomes
+    a Dask array is computed, with NumPy or with CuPy depending on its
     chunks, and its inverse is converted back to a Dask array.
     """
-    target = resolve_backend(disp, "native")
+    target = resolve_backend(disp)
     if target in ("numpy", "cupy"):
-        return inverse_disp(disp)
+        return inverse_disp(to_backend(disp, target))
     loaded = "cupy" if target == "dask+cupy" else "numpy"
     inverse = inverse_disp(to_backend(disp, loaded))
     return to_backend(inverse, target)

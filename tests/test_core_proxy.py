@@ -10,6 +10,7 @@ from brainhops._core.proxy import (
     IndexedProxy,
     NewAxis,
     PermutedProxy,
+    ReshapedProxy,
     ScaledProxy,
     StoredProxy,
     _normalize_index,
@@ -452,3 +453,278 @@ def test_gpu_conversions_need_cupy() -> None:
         proxy.to_dask(device="cuda")
     with pytest.raises(ImportError):
         proxy.to_backend("dask+cupy")
+
+
+def test_describing_a_proxy_reads_nothing() -> None:
+    # The shape, the type, the transposition and the names of the methods
+    # are had without reading, through the proxy or through NumPy.
+    proxy = _Recording(_array())
+    assert np.shape(proxy) == (5, 6, 7)
+    assert np.ndim(proxy) == 3
+    assert proxy.itemsize == 4
+    assert isinstance(np.transpose(proxy), PermutedProxy)
+    assert isinstance(np.transpose(proxy, (1, 0, 2)), PermutedProxy)
+    assert hasattr(proxy, "sum")
+    assert proxy.reads == []
+
+
+@pytest.mark.parametrize(
+    "compute",
+    [
+        lambda x: x + 1,
+        lambda x: 1 - x,
+        lambda x: -x,
+        lambda x: abs(x - 50),
+        lambda x: x * x,
+        lambda x: x[1] / x[2],
+        lambda x: x == 3,
+        lambda x: x > 3,
+        lambda x: np.exp(x / 100),
+        lambda x: np.mean(x, axis=0),
+        lambda x: np.concatenate([x[0], x[1]]),
+        lambda x: np.where(x > 3, x, 0),
+        lambda x: x.sum(),
+        lambda x: x.astype(np.int16),
+        lambda x: x.real,
+    ],
+)
+def test_computations_read_the_values(compute) -> None:  # noqa: ANN001
+    # Operators, functions of NumPy and methods of NumPy arrays give what
+    # they give for the values.
+    proxy = _Recording(_array())
+    expected = compute(_array())
+    result = compute(proxy)
+    assert not isinstance(result, StoredProxy)
+    np.testing.assert_array_equal(result, expected)
+    assert proxy.reads != []
+
+
+def test_a_computation_reads_only_its_selection() -> None:
+    # A computation on a part of a proxy reads that part, and a second
+    # computation reads it again.
+    proxy = _Recording(_array())
+    assert float(proxy[1].sum()) == float(_array()[1].sum())
+    assert float(proxy[1].sum()) == float(_array()[1].sum())
+    assert proxy.reads == [(1, slice(0, 6, 1), slice(0, 7, 1))] * 2
+
+
+def test_scalar_conversions_read_the_value() -> None:
+    proxy = _Recording(_array())
+    assert float(proxy[0, 0, 1]) == 1.0
+    assert int(proxy[0, 0, 2]) == 2
+    assert complex(proxy[0, 0, 3]) == 3.0
+    assert not bool(proxy[0, 0, 0])
+    assert [10, 11, 12][_Recording(np.array(1))] == 11
+    with pytest.raises(ValueError):
+        bool(proxy)
+
+
+def test_a_proxy_is_read_only() -> None:
+    # Values cannot be assigned into a proxy, a proxy cannot receive the
+    # result of a computation, and the methods that change an array in
+    # place, or that describe its memory, are not given.
+    proxy = _Recording(_array())
+    with pytest.raises(TypeError):
+        proxy[0] = 1
+    with pytest.raises(TypeError):
+        proxy += 1
+    with pytest.raises(TypeError):
+        np.add(_array(), 1, out=proxy)
+    with pytest.raises(AttributeError):
+        proxy.sort()
+    with pytest.raises(AttributeError):
+        proxy.strides  # noqa: B018
+    with pytest.raises(TypeError):
+        hash(proxy)
+    assert proxy.reads == []
+
+
+def test_an_output_array_decides_the_backend() -> None:
+    # A computation that writes into an array runs in its backend.
+    proxy = _Recording(_array())
+    out = np.zeros(_array().shape, dtype=np.float32)
+    np.add(proxy, 1, out=out)
+    np.testing.assert_array_equal(out, _array() + 1)
+    out += proxy
+    np.testing.assert_array_equal(out, 2 * _array() + 1)
+
+
+def test_an_unknown_operand_is_given_the_computation() -> None:
+    # An operand of a type that the proxy does not know computes the
+    # result itself.
+    class Other:
+        __array_ufunc__ = None
+
+        def __radd__(self, other: object) -> str:
+            return "other"
+
+    assert _Recording(_array()) + Other() == "other"
+
+
+def test_a_dask_operand_keeps_the_computation_lazy() -> None:
+    # Next to a Dask array, a proxy becomes a Dask array that reads its
+    # blocks when the result is computed.
+    da = pytest.importorskip("dask.array")
+    array = _array()
+    proxy = _Recording(array, chunks=(5, 3, 7))
+    lazy = da.ones(array.shape, chunks=3)
+    for result, expected in [
+        (lazy * proxy, array),
+        (proxy * lazy, array),
+        (np.multiply(lazy, proxy), array),
+        (np.where(lazy > 0, proxy, 0), array),
+        (np.concatenate([lazy, proxy]), np.concatenate([lazy, array])),
+    ]:
+        assert isinstance(result, da.Array)
+        assert proxy.reads == []
+        np.testing.assert_array_equal(
+            result.compute(scheduler="sync"), expected
+        )
+        proxy.reads.clear()
+
+
+def test_a_computation_follows_an_explicit_setting() -> None:
+    # Under the Dask setting, a computation on a proxy is lazy.
+    da = pytest.importorskip("dask.array")
+    from brainhops.backends import backend
+
+    proxy = _Recording(_array())
+    with backend("dask"):
+        total = proxy.sum()
+        shifted = proxy + 1
+        assert np.shape(proxy) == (5, 6, 7)
+    assert isinstance(total, da.Array)
+    assert isinstance(shifted, da.Array)
+    assert proxy.reads == []
+    assert float(total.compute(scheduler="sync")) == float(_array().sum())
+
+
+def _shapes(size: int, ndim: int) -> list:
+    # Every shape of `ndim` axes that holds `size` values.
+    if ndim == 1:
+        return [(size,)]
+    return [
+        (n,) + rest
+        for n in range(1, size + 1)
+        if size % n == 0
+        for rest in _shapes(size // n, ndim - 1)
+    ]
+
+
+def test_reshape_reads_nothing_and_matches_numpy() -> None:
+    # Random chains of reshapes, indexes and transposes give what NumPy
+    # gives, and only reading the result reads values.
+    rng = np.random.default_rng(3)
+    array = _array((4, 6, 5))
+    sources = [
+        (_Recording(array), array),
+        (
+            ScaledProxy(_Recording(array), np.arange(5.0) + 1, 2.0),
+            array * (np.arange(5.0) + 1) + 2,
+        ),
+    ]
+    for proxy, expected in sources:
+        for _ in range(100):
+            view, values = proxy, expected
+            for _ in range(3):
+                step = rng.integers(4)
+                if step < 2:
+                    order = "CF"[step]
+                    ndim = int(rng.integers(1, 5))
+                    shapes = _shapes(values.size, ndim)
+                    shape = shapes[rng.integers(len(shapes))]
+                    view = view.reshape(shape, order=order)
+                    values = values.reshape(shape, order=order)
+                elif step == 2:
+                    index = tuple(
+                        slice(
+                            int(rng.integers(n)), None, int(rng.integers(1, 3))
+                        )
+                        for n in values.shape
+                    )
+                    view, values = view[index], values[index]
+                else:
+                    view, values = view.T, values.T
+                assert view.shape == values.shape
+            assert proxy.root.reads == []
+            np.testing.assert_allclose(np.asarray(view), values, rtol=1e-6)
+            proxy.root.reads.clear()
+
+
+def test_a_reshape_of_axes_of_length_one_is_an_index() -> None:
+    proxy = _Recording(_array((5, 1, 7)))
+    for shape in [(5, 7), (1, 5, 1, 1, 7), (5, 7, 1)]:
+        reshaped = proxy.reshape(shape)
+        assert isinstance(reshaped, IndexedProxy)
+        np.testing.assert_array_equal(
+            reshaped, _array((5, 1, 7)).reshape(shape)
+        )
+    assert proxy.reshape(5, 1, 7) is proxy
+
+
+def test_reshaped_proxies_do_not_nest() -> None:
+    proxy = _Recording(_array())
+    once = proxy.reshape(10, 21)
+    assert isinstance(once, ReshapedProxy)
+    twice = once.reshape(35, 6)
+    assert isinstance(twice, ReshapedProxy)
+    assert twice.base is proxy
+    assert twice.root is proxy
+    assert once.reshape(5, 6, 7) is proxy
+
+
+def test_a_reshaped_read_gets_the_rows_that_it_needs() -> None:
+    # A selection of merged axes reads the rows that hold it, a selection
+    # of split axes reads the range that holds it, and an axis that the
+    # reshape keeps reads only what it selects.
+    proxy = _Recording(_array())
+    merged = proxy.reshape(30, 7)
+    np.testing.assert_array_equal(
+        merged[8:14, 2], _array().reshape(30, 7)[8:14, 2]
+    )
+    assert proxy.reads == [(slice(1, 3, 1), slice(0, 6, 1), slice(2, 3, 1))]
+    proxy.reads.clear()
+    np.testing.assert_array_equal(merged[13, :], _array().reshape(30, 7)[13])
+    assert proxy.reads == [(slice(2, 3, 1), slice(1, 2, 1), slice(0, 7, 1))]
+    proxy.reads.clear()
+    split = proxy.reshape(5, 2, 3, 7)
+    np.testing.assert_array_equal(
+        split[1:3, 1, 2], _array().reshape(5, 2, 3, 7)[1:3, 1, 2]
+    )
+    assert proxy.reads == [(slice(1, 3, 1), slice(5, 6, 1), slice(0, 7, 1))]
+
+
+def test_np_reshape_is_lazy() -> None:
+    proxy = _Recording(_array())
+    reshaped = np.reshape(proxy, (-1, 7))
+    assert isinstance(reshaped, ReshapedProxy)
+    assert reshaped.shape == (30, 7)
+    assert proxy.reads == []
+
+
+def test_a_wrong_shape_is_refused() -> None:
+    proxy = _Recording(_array())
+    with pytest.raises(ValueError):
+        proxy.reshape(4, 7)
+    with pytest.raises(ValueError):
+        proxy.reshape(-1, -1)
+    with pytest.raises(ValueError):
+        proxy.reshape(-1, 4)
+    with pytest.raises(ValueError):
+        proxy.reshape(210, order="K")
+
+
+def test_a_scaled_reshape_reshapes_its_factors() -> None:
+    # A factor that runs along an axis that the reshape keeps or splits
+    # is reshaped with the values, and a factor that a merge would
+    # spread is kept under a reshaped proxy.
+    array = _array()
+    slope = np.arange(7.0) + 1
+    proxy = ScaledProxy(_Recording(array), slope, None)
+    split = proxy.reshape(30, 7)
+    assert isinstance(split, ScaledProxy)
+    assert split.slope.shape == (1, 7)
+    merged = proxy.reshape(5, 42)
+    assert isinstance(merged, ReshapedProxy)
+    for view, shape in [(split, (30, 7)), (merged, (5, 42))]:
+        np.testing.assert_allclose(view, (array * slope).reshape(shape))

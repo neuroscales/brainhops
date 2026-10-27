@@ -21,7 +21,6 @@ from bagof.magic import replace  # noqa: E402
 from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.metadata import MetadataLossWarning  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem, RASmm  # noqa: E402
 from brainhops.datamodel.transformations import (  # noqa: E402
@@ -892,11 +891,8 @@ def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
     # An edit in place would not reach `rawdata`, which is what is
     # written.
     image = MghImage.load(_write(tmp_path, "vol.mgh", _data()))
-    with backend("numpy"):
-        data = image.data
-    assert not data.flags.writeable
-    with pytest.raises(ValueError):
-        data[0, 0, 0] = 1
+    with pytest.raises(TypeError):
+        image.data[0, 0, 0] = 1
 
 
 def test_metadata_reads_and_writes_the_record(tmp_path) -> None:  # noqa: ANN001

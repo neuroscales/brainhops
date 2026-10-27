@@ -104,7 +104,7 @@ def test_a_lazy_reslice_computes_nothing() -> None:
     image = SingleScaleImage(da.from_array(VOLUME, chunks=6))
     with _Computations() as computations:
         moved = image.reslice(_target())
-    assert isinstance(moved.dataobj, da.Array)
+    assert isinstance(moved.data, da.Array)
     assert computations.count == 0
     np.testing.assert_allclose(np.asarray(moved.data), expected, atol=1e-5)
 
@@ -114,19 +114,22 @@ def test_a_reslice_follows_an_explicit_setting() -> None:
     image = SingleScaleImage(VOLUME)
     with backend("dask"):
         moved = image.reslice(_target())
-    assert isinstance(moved.dataobj, da.Array)
-    assert image.dataobj is VOLUME
+    assert isinstance(moved.data, da.Array)
+    assert image.data is VOLUME
 
 
-def test_field_views_follow_the_setting() -> None:
-    # The values and coefficients of a field are returned in the package
-    # of its data, which follows the setting.
+def test_field_views_are_derived_from_the_stored_data() -> None:
+    # The values of a field that stores values are its data, whatever the
+    # setting, and its coefficients are computed in the backend of the
+    # setting, or in the package of the data under the default setting.
     field = DisplacementField(FIELD)
     with backend("dask"):
-        assert isinstance(field.data, da.Array)
-        assert isinstance(field.field, da.Array)
+        assert field.data is FIELD
+        assert field.field is FIELD
         assert isinstance(field.coefficients, da.Array)
-    assert isinstance(field.field, np.ndarray)
+    assert isinstance(DisplacementField(FIELD).coefficients, np.ndarray)
+    lazy = DisplacementField(da.from_array(FIELD, chunks=4))
+    assert isinstance(lazy.coefficients, da.Array)
 
 
 def test_a_dask_field_is_inverted_into_a_dask_field() -> None:
@@ -190,8 +193,8 @@ def test_a_cupy_image_is_resliced_on_the_gpu() -> None:
     cp = pytest.importorskip("cupy")
     expected = SingleScaleImage(VOLUME).reslice(_target()).data
     moved = SingleScaleImage(VOLUME).as_cupy().reslice(_target())
-    assert isinstance(moved.dataobj, cp.ndarray)
-    np.testing.assert_allclose(moved.dataobj.get(), expected, atol=1e-5)
+    assert isinstance(moved.data, cp.ndarray)
+    np.testing.assert_allclose(moved.data.get(), expected, atol=1e-5)
 
 
 def test_a_cupy_field_is_inverted_on_the_gpu() -> None:
@@ -213,3 +216,28 @@ def test_fields_are_composed_on_the_gpu() -> None:
         field = (first @ second).compute().field
     assert isinstance(field, cp.ndarray)
     np.testing.assert_allclose(field.get(), expected)
+
+
+# --- Conversions ------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", ["numpy", "dask", "auto", "native"])
+@pytest.mark.parametrize("source", ["numpy", "dask"])
+def test_a_conversion_gives_the_requested_type(
+    source: str, target: str
+) -> None:
+    # The type of the values is honoured whatever the source and target.
+    from brainhops._core.backends import to_backend
+
+    values = VOLUME if source == "numpy" else da.from_array(VOLUME, chunks=6)
+    converted = to_backend(values, target, dtype=np.float64)
+    assert converted.dtype == np.float64
+    assert to_backend(values, target).dtype == VOLUME.dtype
+
+
+def test_a_value_that_is_not_an_array_is_kept() -> None:
+    from brainhops._core.backends import to_backend
+
+    assert to_backend(None) is None
+    assert to_backend(2.5, "dask") == 2.5
+    assert to_promoted_backend(None, 3, VOLUME)[:2] == (None, 3)

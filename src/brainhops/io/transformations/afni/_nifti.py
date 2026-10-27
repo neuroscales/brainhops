@@ -15,11 +15,6 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._backends import (
-    _stored_data,
-    dataobjproperty,
-    dataproperty,
-)
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (
     smart_replace,
@@ -167,32 +162,20 @@ class AfniNiftiWarp(
     encodes them into `rawdata`.
     """
 
-    data = dataproperty(invalidates="transformations")
-    """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
+    @smartproperty(
+        invalidates="transformations",
+        cache=True,
+        invalidated_by="rawdata",
+    )
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The sub-bricks as an (X, Y, Z, n) array, in DICOM millimetres.
 
-    Sub-bricks that are assigned are returned as they are, and stay
-    pending until [`consolidate`][] or a write encodes them. Otherwise
-    they are decoded from `rawdata`: AFNI stores the sub-bricks with shape
-    (X, Y, Z, 1, n), and the singleton axis is dropped. Assigning the
-    data drops the chain decoded from the previous data.
-
-    The first read converts the lazy array of the file with the
-    backend setting in effect and caches the result. Each later read
-    returns the cached array converted to the setting in effect then,
-    such as `with backend("dask"):`, and the cached array does not
-    change.
-    """
-
-    @dataobjproperty
-    def dataobj(self) -> tx.Optional[ArrayProtocol]:
-        """The array of the field in the layout of `data`, without reading it.
-
-        An array assigned as `data` is returned as it is. Otherwise, the
-        lazy array of the file is returned through the same view that
-        `data` reads, and nothing is read until it is converted.
+        Sub-bricks that are assigned are returned as they are, and stay
+        pending until [`consolidate`][] or a write encodes them. Otherwise
+        they are decoded from `rawdata`: AFNI stores the sub-bricks with shape
+        (X, Y, Z, 1, n), and the singleton axis is dropped. Assigning the
+        data drops the chain decoded from the previous data.
         """
-        if self._data is not None:
-            return self._data
         if self.rawdata is None:
             return None
         return _field_to_model(self.rawdata)
@@ -364,9 +347,7 @@ class AfniNiftiWarp(
         Assigning a chain overrides the decoded one, and the chain is
         pending until [`consolidate`][] or a write encodes it.
         """
-        return _dicom_chain(
-            _dicom_vectors(_stored_data(self)), _vox2dicom(self)
-        )
+        return _dicom_chain(_dicom_vectors(self.data), _vox2dicom(self))
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:

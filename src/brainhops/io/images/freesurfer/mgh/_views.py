@@ -22,8 +22,8 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
 
     A nibabel proxy is wrapped in a lazy array (see
     [`NibabelProxy`][brainhops.io.base._utils_proxies.NibabelProxy]),
-    which reads nothing until it is converted. The `data` of the image
-    reads it once, as the backend setting says. Any other array is
+    which reads nothing until a computation needs its values. The
+    `data` of the image returns that lazy array. Any other array is
     returned as it is.
     """
     if not isinstance(raw, ArrayProxy):

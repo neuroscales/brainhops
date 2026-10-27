@@ -5,18 +5,22 @@ to make optimal user of their computational infrastructure (threads,
 processes, GPUs, computing clusters, etc.).
 
 Backends can be set globally with [`set_backend`][] or locally with the
-[`backend`][] context manager.  When a backend is selected, accessing
-data from any `brainhops` object triggers an implicit conversion to the
-selected backend. That is, if the backend is set to `"cupy"`, accessing
-an image's data will return a CuPY array, even if the image stores it as
-a NumPy array internally. When the backend is set to `"native"`, the data is
-returned as it is stored, without any conversion. In this case, if an
-operation involves multiple arrays that live on different backends, they
-are "promoted" to the same backend, according to the following rules:
+[`backend`][] context manager. The setting decides in which backend a
+computation runs and where its result lives, for example when an image
+is resliced or when the lazy array of a file is summed. Reading the
+`data` of an object does not convert it: `data` returns the array that
+the object stores, and the `to_*` and `as_*` methods convert it on
+request. Under the default setting, `"native"`, a computation runs where
+its operands live, and operands that live in different backends are
+promoted to one backend (see `promote_backends` in
+`brainhops._core.backends`):
 
-- If one of the arrays is a Dask array, all arrays are promoted to Dask.
-- If one of the arrays is a CuPy array, all arrays are promoted to CuPy.
-- Otherwise, all arrays are promoted to NumPy.
+- if one of the operands is a Dask array, the computation is lazy;
+- if one of the operands is on a GPU, the computation runs on the GPU;
+- otherwise, the computation runs with NumPy.
+
+The lazy array of a file counts as the array that `"auto"` would make
+of it.
 
 The following backend settings are supported:
 
