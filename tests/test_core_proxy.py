@@ -10,6 +10,7 @@ from brainhops._core.proxy import (
     IndexedProxy,
     NewAxis,
     PermutedProxy,
+    ReshapedProxy,
     ScaledProxy,
     StoredProxy,
     _normalize_index,
@@ -483,7 +484,6 @@ def test_describing_a_proxy_reads_nothing() -> None:
         lambda x: np.concatenate([x[0], x[1]]),
         lambda x: np.where(x > 3, x, 0),
         lambda x: x.sum(),
-        lambda x: x.reshape(-1),
         lambda x: x.astype(np.int16),
         lambda x: x.real,
     ],
@@ -597,3 +597,134 @@ def test_a_computation_follows_an_explicit_setting() -> None:
     assert isinstance(shifted, da.Array)
     assert proxy.reads == []
     assert float(total.compute(scheduler="sync")) == float(_array().sum())
+
+
+def _shapes(size: int, ndim: int) -> list:
+    # Every shape of `ndim` axes that holds `size` values.
+    if ndim == 1:
+        return [(size,)]
+    return [
+        (n,) + rest
+        for n in range(1, size + 1)
+        if size % n == 0
+        for rest in _shapes(size // n, ndim - 1)
+    ]
+
+
+def test_reshape_reads_nothing_and_matches_numpy() -> None:
+    # Random chains of reshapes, indexes and transposes give what NumPy
+    # gives, and only reading the result reads values.
+    rng = np.random.default_rng(3)
+    array = _array((4, 6, 5))
+    sources = [
+        (_Recording(array), array),
+        (
+            ScaledProxy(_Recording(array), np.arange(5.0) + 1, 2.0),
+            array * (np.arange(5.0) + 1) + 2,
+        ),
+    ]
+    for proxy, expected in sources:
+        for _ in range(100):
+            view, values = proxy, expected
+            for _ in range(3):
+                step = rng.integers(4)
+                if step < 2:
+                    order = "CF"[step]
+                    ndim = int(rng.integers(1, 5))
+                    shapes = _shapes(values.size, ndim)
+                    shape = shapes[rng.integers(len(shapes))]
+                    view = view.reshape(shape, order=order)
+                    values = values.reshape(shape, order=order)
+                elif step == 2:
+                    index = tuple(
+                        slice(
+                            int(rng.integers(n)), None, int(rng.integers(1, 3))
+                        )
+                        for n in values.shape
+                    )
+                    view, values = view[index], values[index]
+                else:
+                    view, values = view.T, values.T
+                assert view.shape == values.shape
+            assert proxy.root.reads == []
+            np.testing.assert_allclose(np.asarray(view), values, rtol=1e-6)
+            proxy.root.reads.clear()
+
+
+def test_a_reshape_of_axes_of_length_one_is_an_index() -> None:
+    proxy = _Recording(_array((5, 1, 7)))
+    for shape in [(5, 7), (1, 5, 1, 1, 7), (5, 7, 1)]:
+        reshaped = proxy.reshape(shape)
+        assert isinstance(reshaped, IndexedProxy)
+        np.testing.assert_array_equal(
+            reshaped, _array((5, 1, 7)).reshape(shape)
+        )
+    assert proxy.reshape(5, 1, 7) is proxy
+
+
+def test_reshaped_proxies_do_not_nest() -> None:
+    proxy = _Recording(_array())
+    once = proxy.reshape(10, 21)
+    assert isinstance(once, ReshapedProxy)
+    twice = once.reshape(35, 6)
+    assert isinstance(twice, ReshapedProxy)
+    assert twice.base is proxy
+    assert twice.root is proxy
+    assert once.reshape(5, 6, 7) is proxy
+
+
+def test_a_reshaped_read_gets_the_rows_that_it_needs() -> None:
+    # A selection of merged axes reads the rows that hold it, a selection
+    # of split axes reads the range that holds it, and an axis that the
+    # reshape keeps reads only what it selects.
+    proxy = _Recording(_array())
+    merged = proxy.reshape(30, 7)
+    np.testing.assert_array_equal(
+        merged[8:14, 2], _array().reshape(30, 7)[8:14, 2]
+    )
+    assert proxy.reads == [(slice(1, 3, 1), slice(0, 6, 1), slice(2, 3, 1))]
+    proxy.reads.clear()
+    np.testing.assert_array_equal(merged[13, :], _array().reshape(30, 7)[13])
+    assert proxy.reads == [(slice(2, 3, 1), slice(1, 2, 1), slice(0, 7, 1))]
+    proxy.reads.clear()
+    split = proxy.reshape(5, 2, 3, 7)
+    np.testing.assert_array_equal(
+        split[1:3, 1, 2], _array().reshape(5, 2, 3, 7)[1:3, 1, 2]
+    )
+    assert proxy.reads == [(slice(1, 3, 1), slice(5, 6, 1), slice(0, 7, 1))]
+
+
+def test_np_reshape_is_lazy() -> None:
+    proxy = _Recording(_array())
+    reshaped = np.reshape(proxy, (-1, 7))
+    assert isinstance(reshaped, ReshapedProxy)
+    assert reshaped.shape == (30, 7)
+    assert proxy.reads == []
+
+
+def test_a_wrong_shape_is_refused() -> None:
+    proxy = _Recording(_array())
+    with pytest.raises(ValueError):
+        proxy.reshape(4, 7)
+    with pytest.raises(ValueError):
+        proxy.reshape(-1, -1)
+    with pytest.raises(ValueError):
+        proxy.reshape(-1, 4)
+    with pytest.raises(ValueError):
+        proxy.reshape(210, order="K")
+
+
+def test_a_scaled_reshape_reshapes_its_factors() -> None:
+    # A factor that runs along an axis that the reshape keeps or splits
+    # is reshaped with the values, and a factor that a merge would
+    # spread is kept under a reshaped proxy.
+    array = _array()
+    slope = np.arange(7.0) + 1
+    proxy = ScaledProxy(_Recording(array), slope, None)
+    split = proxy.reshape(30, 7)
+    assert isinstance(split, ScaledProxy)
+    assert split.slope.shape == (1, 7)
+    merged = proxy.reshape(5, 42)
+    assert isinstance(merged, ReshapedProxy)
+    for view, shape in [(split, (30, 7)), (merged, (5, 42))]:
+        np.testing.assert_allclose(view, (array * slope).reshape(shape))

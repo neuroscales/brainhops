@@ -196,6 +196,49 @@ def test_strides_that_reach_before_the_stream_are_refused() -> None:
         StridedProxy("values.bin", "<i2", (4, 5), strides=(10, -2))
 
 
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_a_reshape_or_a_transpose_changes_the_strides(
+    tmp_path,  # noqa: ANN001
+    order: str,
+) -> None:
+    # A reshape that NumPy does without copying, and a transpose, give a
+    # strided proxy of the same bytes, whose root is the proxy itself.
+    path = tmp_path / "values.bin"
+    _write(path, order, compressed=False)
+    proxy = StridedProxy.contiguous(
+        path, ">f4", SHAPE, offset=len(HEADER), order=order
+    )
+    values = _values()
+    flat = (-1, 7) if order == "C" else (5, -1)
+    for view, expected in [
+        (proxy.T, values.T),
+        (proxy.reshape(flat, order=order), values.reshape(flat, order=order)),
+        (
+            proxy[::-1].reshape((5, 42), order=order),
+            values[::-1].reshape((5, 42), order=order),
+        ),
+    ]:
+        assert type(view) is not StridedProxy
+        assert isinstance(view, StridedProxy)
+        assert view.root is proxy
+        np.testing.assert_array_equal(np.asarray(view), expected)
+        np.testing.assert_array_equal(np.asarray(view[1:3]), expected[1:3])
+
+
+def test_a_reshape_that_needs_a_copy_reads_through_the_proxy(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = tmp_path / "values.bin"
+    _write(path, "F", compressed=False)
+    proxy = StridedProxy.contiguous(
+        path, ">f4", SHAPE, offset=len(HEADER), order="F"
+    )
+    view = proxy.reshape(-1)
+    assert not isinstance(view, StridedProxy)
+    assert view.root is proxy
+    np.testing.assert_array_equal(np.asarray(view), _values().reshape(-1))
+
+
 # ----------------------------------------------------------------------
 #   FORMATS
 # ----------------------------------------------------------------------

@@ -201,9 +201,32 @@ axes of another stored proxy in another order. Transposing a stored
 proxy returns one, and transposing it again composes the two
 permutations, so permuted proxies never nest.
 
-The kinds are kept in a fixed order, which every operation preserves:
-a scaled proxy holds an indexed proxy or a stored one, and an indexed
-proxy holds a stored proxy. Each layer keeps the proxy below it as
+A fifth class, `ReshapedProxy`, presents the values of any other proxy
+in another shape, in C order as `np.reshape` places them. It is a
+stored proxy whose storage is that proxy, so that indexing and
+transposing it work as for the proxy of a file, and its `root` is the
+root of the proxy that it reshapes. Reshaping it again reshapes that
+proxy, so reshaped proxies never nest. A read maps its box to a box of
+the base: a reshape splits or merges groups of neighbouring axes, and
+for each group the box of the base runs from the row of the first
+selected value to the row of the last one, so a read gets at most one
+extra row on each side of a group. `reshape` builds a reshaped proxy
+only when it cannot do better:
+
+- a reshape that only adds or removes axes of length one is an index;
+- a strided proxy, or a box of one, whose values NumPy could reshape
+  without copying them gives another strided proxy of the same bytes,
+  with the strides that NumPy would give (see "What is implemented of
+  the third layer" below);
+- a scaled proxy reshapes its base and its factors when each factor
+  still broadcasts against the new shape, which a factor that runs
+  along one axis does not when that axis is merged with others;
+- `order="F"` is a C-order reshape between two transposes.
+
+The kinds are kept in a fixed order, which indexing and transposing
+preserve: a scaled proxy holds an indexed proxy or a stored one, and an
+indexed proxy holds a stored proxy. A reshaped proxy starts the order
+again above the proxy that it reshapes. Each layer keeps the proxy below it as
 `base`, and the property `root` of every proxy is the stored proxy at
 the bottom, the one that a reader built. The `root` of a stored proxy
 is the proxy itself.
@@ -304,7 +327,7 @@ means:
 - `__array_ufunc__` applies the universal functions of NumPy;
 - `__array_function__` applies the other functions of NumPy;
 - `__getattr__` gives the methods of NumPy arrays, such as `sum` and
-  `reshape`, and the attributes that are computed from the values,
+  `astype`, and the attributes that are computed from the values,
   such as `real`. It does not give the methods that change an array
   in place, such as `sort`, nor the attributes that describe memory,
   such as `strides`;
@@ -319,8 +342,8 @@ CuPy and Dask hand the computation to an operand that defines
 `__array_ufunc__` when they do not know its type, so this holds when
 the proxy is the second operand too, as in `cupy_array * proxy`. When a
 function of NumPy runs in NumPy, the implementation of NumPy receives
-the proxies themselves, so that `np.shape(proxy)` reads nothing and
-`np.transpose(proxy)` returns a proxy.
+the proxies themselves, so that `np.shape(proxy)` reads nothing, and
+`np.transpose(proxy)` and `np.reshape(proxy, shape)` return proxies.
 
 A proxy is read-only, so assigning values into it and using it as the
 `out` argument of a computation raise a `TypeError`. A proxy compares
@@ -536,6 +559,20 @@ which convert their arguments to their types, and the MRtrix and AFNI
 proxies add the record of their file as a field and build themselves
 from it with `from_record`. Status: implemented.
 
+Transposing a strided proxy gives another strided proxy of the same
+bytes, with its shape and strides permuted, and so does a reshape, or a
+reshape of a box selected by integers and slices, when NumPy could do it
+without copying the values. The new strides are those that NumPy gives
+to the view: within each group of axes that the reshape splits or
+merges, the old axes must be laid out one after the other. The result
+is a private subclass whose `root` is the proxy that the reader built,
+so that a writer still sees which file it reads. It is not an instance
+of the class of that proxy, so a writer does not copy its bytes as the
+whole file. The MRtrix proxy of packed bits, and the AFNI proxy of
+sub-bricks of several types, decode the whole file rather than read
+with strides, so they are transposed by a `PermutedProxy` and reshaped
+by a `ReshapedProxy`. Status: implemented.
+
 `ArrayProxy` is a `Magic` class of bagof without fields, and every proxy
 of brainhops declares its state as fields, so that its constructor is
 built from them. A value that a proxy computes rather than receives is
@@ -547,8 +584,9 @@ the members that a subclass must define stay abstract. A field cannot
 implement an abstract property, so a proxy that receives its shape or
 its type keeps it in a private field, given by its public name, and
 returns it from the property: the `_shape` and `_dtype` of
-`StridedProxy` are given as `shape=` and `dtype=`. A proxy is compared
-by identity. The fields of a subclass convert their arguments to their
+`StridedProxy` are given as `shape=` and `dtype=`. A proxy compares
+its values with `==`, as a NumPy array does (see "Computing with a
+proxy"). The fields of a subclass convert their arguments to their
 types, and its representation is the one that `Magic` builds, which
 shows the fields that do not hold their defaults. An indexed proxy
 shows its stored proxy and its selection. Status: implemented.
