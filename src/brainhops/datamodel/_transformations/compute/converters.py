@@ -2,6 +2,8 @@
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core.affines import matmul
+
 # core
 from brainhops._core.backends import _creation_options, array_backend
 from brainhops._core.magic import replace, stores
@@ -36,7 +38,6 @@ from ..meta import (
     Projection,
     SubspaceTransformation,
     _close_subspace,
-    _created_values,
 )
 from ..sequence import Sequence
 from ..tangents import (
@@ -47,7 +48,7 @@ from ..tangents import (
     StationaryVelocityField,
 )
 from .convert import convert, converter
-from .utils import affine_product, axis_counts, axis_list, get_ndim
+from .utils import axis_counts, axis_list, get_ndim
 
 # typing
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
@@ -526,7 +527,7 @@ def _projection_to_matrix(
     # missing.
     if t.is_identity():
         return convert(convert(t, Identity), cls, **kwargs)
-    values = _created_values(t)
+    values = list(t.at)
     if not homogeneous and any(value != 0 for value in values):
         raise ConversionError(
             "This projection creates axes at values other than zero, so "
@@ -599,7 +600,7 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
         if matrix is None:
             matrix = block
             continue
-        matrix = affine_product(block, matrix)
+        matrix = matmul(block, matrix, zero_cancels_nan=True)
     return cls(matrix=matrix, input=t.input, output=t.output)
 
 

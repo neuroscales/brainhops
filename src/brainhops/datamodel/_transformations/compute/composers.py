@@ -12,6 +12,8 @@ that both transformations are fully defined, with no unset parameters.
 import typing_extensions as tx
 from bagof.magic import replace
 
+from brainhops._core.affines import matmul
+
 # core
 from brainhops._core.backends import (
     array_backend,
@@ -45,7 +47,7 @@ from ..meta import (
 )
 from ..sequence import Sequence, _interpolates
 from .compose import compose, composer
-from .utils import affine_product, axis_counts
+from .utils import axis_counts
 
 # ----------------------------------------------------------------------
 #     SEQUENCE
@@ -87,8 +89,9 @@ def _(To: Sequence, Ti: Sequence) -> Transformation:
 @composer
 def _(To: Affine, Ti: Affine) -> Affine:
     # A NaN in the translation of `Ti` is a free axis, which only the
-    # outputs that read it inherit (see `affine_product`).
-    A = affine_product(To.matrix, Ti.matrix)
+    # outputs that read it inherit (see `matmul` in
+    # `brainhops._core.affines`).
+    A = matmul(To.matrix, Ti.matrix, zero_cancels_nan=True)
     return Affine(matrix=A, input=Ti.input, output=To.output)
 
 

@@ -266,34 +266,6 @@ def affine_matrix(t: "Transformation") -> tx.Any:
     return None if matrix is None else np.asarray(matrix)
 
 
-def affine_product(outer: tx.Any, inner: tx.Any) -> tx.Any:
-    """Return the matrix of an affine applied after another.
-
-    Both matrices are homogeneous without their last row, so that the last
-    column holds the translation. The translation of `inner` may hold NaN
-    for an axis created free by a projection. In the product, an exact
-    zero coefficient of `outer` cancels such a NaN, while a non-zero
-    coefficient carries it into the translation of the output. The
-    outputs of `outer` that do not read a free axis are therefore
-    unaffected by it.
-    """
-    xp = array_backend(outer)
-    linear, shift = outer[:, :-1], outer[:, -1:]
-    product = xp.empty_like(outer, shape=(outer.shape[0], inner.shape[1]))
-    product[:, :-1] = linear @ inner[:, :-1]
-    translation = inner[:, -1:]
-    free = xp.isnan(translation)
-    if not bool(xp.any(free)):
-        product[:, -1:] = linear @ translation + shift
-        return product
-    finite = xp.where(free, xp.zeros_like(translation), translation)
-    reads = (linear != 0) @ xp.astype(free, linear.dtype) > 0
-    product[:, -1:] = xp.where(
-        reads, xp.full_like(shift, float("nan")), linear @ finite + shift
-    )
-    return product
-
-
 # ----------------------------------------------------------------------
 #   FREE AXES
 # ----------------------------------------------------------------------
@@ -333,11 +305,13 @@ def refuse_free_axes(t: "Transformation") -> None:
     RestrictionError
         If the transformation depends on a free axis.
     """
+    # These imports stay local because the modules `concrete`, `meta` and
+    # `sequence` import this module when they load.
     from ..concrete import Affine
     from ..meta import Projection, SubspaceTransformation, _has_free_axes
     from ..sequence import Sequence
 
-    def depends(leaf: tx.Any) -> bool:
+    def depends(leaf: "Transformation") -> bool:
         if isinstance(leaf, Sequence):
             return any(depends(x) for x in leaf.transformations or [])
         if isinstance(leaf, SubspaceTransformation):

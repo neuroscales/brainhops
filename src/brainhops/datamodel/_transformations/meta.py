@@ -201,7 +201,8 @@ class Projection(MetaTransformation):
     at : array_like of float, optional
         Value of each created axis, in the order of `created`. All
         values are zero when it is omitted, as in the `projectAxis` of
-        OME-NGFF, and NaN makes an axis free.
+        OME-NGFF, and the projection then stores these zeros. NaN makes
+        an axis free.
     input : CoordinateSystem, optional
         Input coordinate system of the full space. If not given, it is
         derived from the output system when that system is closed.
@@ -223,7 +224,7 @@ class Projection(MetaTransformation):
     """Axes of the output coordinate system to add."""
 
     at: npvector[Real] = ()
-    """Value of each created axis, zero when empty, and NaN when free."""
+    """Value of each created axis, which is NaN when the axis is free."""
 
     def __post_init__(self, arguments: tx.Any) -> None:
         values = [] if self.at is None else list(self.at)
@@ -234,6 +235,10 @@ class Projection(MetaTransformation):
                 f"but it creates {len(created)} and `at` holds "
                 f"{len(values)}."
             )
+        if not values:
+            # An omitted `at` is stored as one zero per created axis, so
+            # that the code that reads `at` needs no special case.
+            self.at = [0.0] * len(created)
         super().__post_init__(arguments)
 
     # --- properties ---------------------------------------------------
@@ -572,17 +577,6 @@ def _close_projection(
     return t.to(**changes) if changes else t
 
 
-def _created_values(t: Projection) -> tx.List[float]:
-    """Return the value of each axis that a projection creates.
-
-    The values are zero when `at` is empty, and NaN marks a free axis.
-    """
-    created = axis_list(t.created)
-    if t.at is None or len(t.at) == 0:
-        return [0.0] * len(created)
-    return [float(value) for value in t.at]
-
-
 def _has_free_axes(t: Projection) -> bool:
     """Return whether a projection creates an axis whose value is NaN."""
-    return any(math.isnan(value) for value in _created_values(t))
+    return any(math.isnan(value) for value in t.at)

@@ -134,12 +134,22 @@ def matmul(
     B: ArrayProtocol,
     *Cs: ArrayProtocol,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
+    zero_cancels_nan: bool = False,
 ) -> ArrayProtocol:
     """Multiply two or more compact affines.
 
     In a chain of more than two affines, the order of the products is chosen
     to keep the cost low, so that matrices without batch dimensions are
     multiplied first.
+
+    The option `zero_cancels_nan` serves the projections that create a
+    free axis, that is, an axis whose value is NaN in the translation of
+    an affine. With the option, an exact zero coefficient of the left
+    affine cancels a NaN in the translation of the right affine, while a
+    non-zero coefficient carries the NaN into the translation of the
+    product. The outputs that do not read a free axis are therefore
+    unaffected by it. Without the option, NaN propagates as in an
+    ordinary matrix product.
 
     Parameters
     ----------
@@ -152,16 +162,20 @@ def matmul(
     backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
+    zero_cancels_nan : bool, default=False
+        Whether an exact zero coefficient cancels a NaN in the
+        translation of the affine that it multiplies.
 
     Returns
     -------
     ArrayProtocol
         The compact products, with shape `(..., M, P+1)` for two affines.
     """
+    options = dict(backend=backend, zero_cancels_nan=zero_cancels_nan)
     if Cs:
-        return _chain_matmul(A, B, *Cs, backend=backend)
+        return _chain_matmul(A, B, *Cs, **options)
     else:
-        return _matmul(A, B, backend=backend)
+        return _matmul(A, B, **options)
 
 
 def _matmul(
@@ -169,6 +183,7 @@ def _matmul(
     B: ArrayProtocol,
     *,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
+    zero_cancels_nan: bool = False,
 ) -> ArrayProtocol:
     backend = backend or promote_backends(A, B)
     xp = array_backend(backend)
@@ -182,10 +197,24 @@ def _matmul(
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
     C = xp.empty(batch + (M, N + 1), dtype=A.dtype)
 
-    C[..., :-1] = xp.matmul(A[..., :-1], B[..., :-1])
-    C[..., -1:] = xp.matmul(A[..., :-1], B[..., -1:])
-    C[..., -1:] += A[..., -1:]
+    linear, shift = A[..., :-1], A[..., -1:]
+    translation = B[..., -1:]
+    C[..., :-1] = xp.matmul(linear, B[..., :-1])
 
+    free = xp.isnan(translation) if zero_cancels_nan else None
+    if free is None or not bool(xp.any(free)):
+        C[..., -1:] = xp.matmul(linear, translation)
+        C[..., -1:] += shift
+        return C
+
+    # A free entry of the translation is replaced by zero in the product,
+    # and every output whose row reads it with a non-zero coefficient is
+    # set to NaN.
+    finite = xp.where(free, xp.zeros_like(translation), translation)
+    reads = (linear != 0).astype(A.dtype)
+    reads = xp.matmul(reads, free.astype(A.dtype)) > 0
+    nan = xp.full_like(shift, float("nan"))
+    C[..., -1:] = xp.where(reads, nan, xp.matmul(linear, finite) + shift)
     return C
 
 
@@ -199,8 +228,10 @@ def _matmul_cost(A: ArrayProtocol, B: ArrayProtocol) -> int:
 def _chain_matmul(
     *As: ArrayProtocol,
     backend: tx.Optional[tx.Union[str, ModuleType]] = None,
+    zero_cancels_nan: bool = False,
 ) -> ArrayProtocol:
     backend = backend or promote_backends(*As)
+    options = dict(backend=backend, zero_cancels_nan=zero_cancels_nan)
 
     if not As:
         return None
@@ -211,9 +242,7 @@ def _chain_matmul(
     best_cost = min(range(len(costs)), key=lambda i: costs[i])
     A0 = As[:best_cost]
     A1 = As[best_cost:]
-    return _chain_matmul(
-        *A0, _matmul(*A1[:2], backend=backend), *A1[2:], backend=backend
-    )
+    return _chain_matmul(*A0, _matmul(*A1[:2], **options), *A1[2:], **options)
 
 
 def matvec(

@@ -60,7 +60,6 @@ from ..meta import (
     MetaTransformation,
     Projection,
     SubspaceTransformation,
-    _created_values,
 )
 from ..sequence import Sequence
 from .check import checker, is_kind, register_kind_alias
@@ -951,7 +950,7 @@ def _projection_member(proj: Projection, node: type, compute: bool) -> bool:
     created = 0 if proj.created is None else len(proj.created)
     if not dropped and not created:
         return issubclass(kinds.Identity, node)
-    at_zero = all(value == 0 for value in _created_values(proj))
+    at_zero = all(value == 0 for value in proj.at)
     if issubclass(kinds.Linear if at_zero else kinds.Affine, node):
         return True
     if dropped and not created:

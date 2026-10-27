@@ -49,7 +49,6 @@ from ..meta import (
     Bijection,
     Projection,
     SubspaceTransformation,
-    _created_values,
     _same_axes,
 )
 from ..multiscale import MultiscaleField
@@ -329,7 +328,7 @@ def _(
     return Projection(
         dropped=dropped,
         created=created,
-        at=at if any(value != 0 for value in at) else (),
+        at=at,
         input=first.input,
         output=second.output,
     )
@@ -366,8 +365,8 @@ def _merge_projections(
         size = len(inputs) - len(dropped) + len(created)
         return [(value[o],) if o in value else next(kept) for o in range(size)]
 
-    middle = sources(list(range(width)), d1, c1, _created_values(first))
-    outputs = sources(middle, d2, c2, _created_values(second))
+    middle = sources(list(range(width)), d1, c1, list(first.at))
+    outputs = sources(middle, d2, c2, list(second.at))
     reached = set(o for o in outputs if not isinstance(o, tuple))
     dropped = [i for i in range(width) if i not in reached]
     created = [

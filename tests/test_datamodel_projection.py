@@ -3,9 +3,7 @@
 import numpy as np
 import pytest
 
-from brainhops.datamodel._transformations.compute.utils import (
-    affine_product,
-)
+from brainhops._core.affines import matmul
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -214,7 +212,7 @@ _A3 = Affine(matrix=np.array([[2, 0, 0, 1], [0, 3, 0, 2], [0, 0.1, 1, 5.0]]))
 
 
 def test_the_created_axes_are_at_zero_by_default() -> None:
-    assert len(Projection(created=[2]).at) == 0
+    assert np.array_equal(Projection(created=[2]).at, [0.0])
     matrix = Projection(created=[2], input=_xy()).to(Affine).matrix
     assert np.array_equal(matrix[:, -1], [0.0, 0.0, 0.0])
 
@@ -284,7 +282,7 @@ def test_the_merge_keeps_the_values_of_the_created_axes() -> None:
 def test_zero_cancels_nan_in_the_affine_product() -> None:
     inner = np.array([[1.0, 0, 0], [0, 1, 0], [0, 0, np.nan]])
     outer = np.array([[2.0, 0, 0, 1], [0, 3, 0.5, 2]])
-    product = affine_product(outer, inner)
+    product = matmul(outer, inner, zero_cancels_nan=True)
     assert np.array_equal(product[0], [2.0, 0, 1])
     assert np.isnan(product[1, -1])
     assert np.array_equal(product[1, :-1], [0.0, 3.0])
