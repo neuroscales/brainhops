@@ -4,7 +4,7 @@ Guidance for coding agents and contributors working in this repository.
 The organisation-wide rules in `bagofseeds/.github/CLAUDE.md` (workflow,
 gate before every PR, code conventions) apply here as well. This file
 records the rules for documentation, which are stricter than the
-organisation-wide ones.
+organisation-wide ones, and the rules for the visibility of names.
 
 ## Documentation
 
@@ -120,3 +120,22 @@ Keep:
 - Design memos in `spec/design/` record the decision, the reason for it
   and its status (implemented or not). They do not keep the history of
   how the decision was reached.
+
+## Visibility of names
+
+Every name has one of three levels of visibility, which
+`spec/design/internal-api.md` explains in full.
+
+- A public name is listed in the `__all__` of a public module. Anyone
+  may import it, and it changes only through a deprecation.
+- An internal name is a plain name in a module whose name starts with
+  an underscore. Any module of `brainhops` may import it, but a module
+  of another package imports it only from the `_internal_api.py` module
+  of the package that defines it.
+- A private name starts with an underscore. Only the module that
+  defines it uses it, and no other module imports it, tests included.
+
+When another module needs a private name, promote the name to internal
+or public instead of importing it with its underscore. Existing code
+does not follow these rules everywhere yet, and new code must not add
+to the imports that break them.
