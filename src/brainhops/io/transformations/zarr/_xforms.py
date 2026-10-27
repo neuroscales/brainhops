@@ -442,7 +442,7 @@ class OmeZarrField(
             return
         if isinstance(placement, CartesianField):
             return
-        if placement.to_affine(error=None) is None:
+        if placement.to_affine(on_error=None) is None:
             raise OmeFieldError(
                 "This OME displacement field is placed by a transformation "
                 "that cannot be reduced to an affine, so the displacements "
@@ -480,7 +480,7 @@ def _to_voxel_displacement(
     # L^-1 of the linear part of the placement: raw @ L^-T. The product is
     # computed in the backend of the displacements, so that a Dask array is
     # converted block by block rather than read into memory.
-    matrix = voxel2world.to_affine(error=None).matrix
+    matrix = voxel2world.to_affine(on_error=None).matrix
     inverse = to_numpy(_affine_inv(matrix))
     ab = array_backend(raw)
     return raw @ ab.asarray(inverse[:, :-1].T)
@@ -531,7 +531,7 @@ def _spatial_part(
                 for part in placement.transformations
             ]
         )
-    affine = placement.to_affine(error=None)
+    affine = placement.to_affine(on_error=None)
     if affine is None or affine.matrix is None:
         raise OmeFieldError(
             "This OME field is placed by a transformation that is not "
@@ -546,7 +546,7 @@ def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
     # An affine placement is returned unchanged. Otherwise, an identity affine
     # stands in, so that the leading world-to-voxel element stays a defined
     # affine rather than a bare identity.
-    if xform.to_affine(error=None) is not None:
+    if xform.to_affine(on_error=None) is not None:
         return xform
     return Affine(
         matrix=[

@@ -129,7 +129,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         scale = scales[index]
         if not len(scale):
             return None
-        affine = scale[0].to_affine(error=None)
+        affine = scale[0].to_affine(on_error=None)
         if affine is None or affine.matrix is None:
             return None
         return axis_scales(_affine_inv(affine.matrix))

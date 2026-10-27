@@ -1073,7 +1073,7 @@ def _part_matrix(
         if inputs != outputs:
             return None
         return np.eye(outputs, inputs + 1)
-    affine = part.to_affine(error=None)
+    affine = part.to_affine(on_error=None)
     if affine is None or affine.matrix is None:
         return None
     matrix = np.asarray(affine.matrix, dtype=float)

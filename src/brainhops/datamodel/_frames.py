@@ -368,7 +368,7 @@ def _keeps_values(voxel_map: Transformation, points: bool) -> bool:
     Composing the array system with the map would also be correct, so a
     map that this function cannot read returns `False`.
     """
-    affine = voxel_map.to_affine(error=None)
+    affine = voxel_map.to_affine(on_error=None)
     if affine is None or affine.matrix is None:
         return False
     matrix = np.asarray(affine.matrix, dtype=float)
@@ -443,10 +443,10 @@ def _structure(frame: Transformation, ndim: int) -> tx.Optional[_Structure]:
         exact = True
     else:
         head = parts[0] if len(parts) == 1 else Sequence(transformations=parts)
-        affine = head.to_affine(error=None)
+        affine = head.to_affine(on_error=None)
         exact = affine is not None and affine.matrix is not None
         if affine is None or affine.matrix is None:
-            affine = head.to_affine(ignore=True, error=None)
+            affine = head.to_affine(ignore=True, on_error=None)
         if affine is None or affine.matrix is None:
             return None
         linear = np.asarray(affine.matrix, dtype=float)[:, :-1]

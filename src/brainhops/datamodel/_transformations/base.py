@@ -766,7 +766,7 @@ class Transformation(
             in `without`. The value `True` means every part that is not
             of the target kind, as in `with_only(kind)`.
         **kwargs : Any
-            Keyword arguments of `to`, such as `lossy=` and `error=`.
+            Keyword arguments of `to`, such as `lossy=` and `on_error=`.
 
         Returns
         -------
@@ -906,9 +906,9 @@ class Transformation(
         """Convert the transformation to an affine map.
 
         See `to_kind` for how the transformation is filtered and
-        converted. `to_affine(error=None)` returns `None` when the
+        converted. `to_affine(on_error=None)` returns `None` when the
         transformation is not affine, and
-        `to_affine(ignore=True, error=None)` returns the affine part of
+        `to_affine(ignore=True, on_error=None)` returns the affine part of
         a chain whose other parts, such as fields, are ignored.
 
         Parameters

@@ -101,7 +101,7 @@ def _evaluate(
     if isinstance(xform, Identity):
         matrix = np.eye(len(target.order), len(source.order) + 1)
     else:
-        affine = xform.to_affine(error=None)
+        affine = xform.to_affine(on_error=None)
         assert affine is not None
         matrix = np.asarray(affine.matrix, dtype=float)
     vector = np.asarray([point[name] for name in source.names] + [1.0])
@@ -660,7 +660,7 @@ def test_a_transformation_into_the_intrinsic_space_is_read_inverted() -> None:
     )
     assert placement.input.name == "intrinsic"
     assert placement.output.name == "world"
-    matrix = np.asarray(placement.to_affine(error=None).matrix)
+    matrix = np.asarray(placement.to_affine(on_error=None).matrix)
     np.testing.assert_allclose(np.diag(matrix[:, :3]), [1 / 8, 1 / 4, 1 / 2])
 
 

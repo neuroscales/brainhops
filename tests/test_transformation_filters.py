@@ -154,15 +154,15 @@ def test_a_part_that_changes_the_number_of_axes_is_refused() -> None:
 
 def test_to_affine_ignores_the_fields_of_a_chain() -> None:
     chain = _chain()
-    assert chain.to_affine(error=None) is None
-    affine = chain.to_affine(ignore=True, error=None)
+    assert chain.to_affine(on_error=None) is None
+    affine = chain.to_affine(ignore=True, on_error=None)
     np.testing.assert_allclose(affine.matrix, MATRIX)
     affine = chain.to_affine(ignore=DisplacementField)
     np.testing.assert_allclose(affine.matrix, MATRIX)
 
 
 def test_to_affine_passes_its_options_to_to() -> None:
-    assert _field().to_affine(error=None) is None
+    assert _field().to_affine(on_error=None) is None
     with pytest.raises(ConversionError):
         _field().to_affine()
 
