@@ -509,7 +509,7 @@ class OmeZarrImage(
                 # A level whose data is a lazy array of a chunked store,
                 # or a Dask array, keeps its chunks, so that each of its
                 # blocks is written into chunks of its own.
-                native = store_chunks(getattr(image, "dataobj", None))
+                native = store_chunks(getattr(image, "data", None))
                 if native is not None and len(native) == len(storage_perm):
                     options["chunks"] = tuple(native[p] for p in storage_perm)
             node.create_array(str(index), data=stored, **options)
@@ -586,9 +586,7 @@ class OmeZarrImage(
             self.to_node(node, chunks=chunks, version=version, **kwargs)
             return
         location = absolute_location(location)
-        levels = [
-            getattr(level, "dataobj", None) for level in self.images or ()
-        ]
+        levels = [getattr(level, "data", None) for level in self.images or ()]
         if not any(reads_inside(raw, location) for raw in levels):
             node = open_group(location, mode="w")
             self.to_node(node, chunks=chunks, version=version, **kwargs)

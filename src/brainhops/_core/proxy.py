@@ -1,10 +1,11 @@
-"""Lazy arrays that read their values only when they are converted.
+"""Lazy arrays that read their values only when they are needed.
 
 A proxy stands for an array whose values lie elsewhere, usually in a
-file, and reads them only when NumPy converts it with `np.asarray`.
-Indexing a proxy or transposing it returns another proxy, which reads
-only the values that it selects. The design is described in the memo
-`spec/design/array-proxies.md`.
+file, and reads them only when NumPy converts it with `np.asarray`, or
+when a computation, such as `proxy + 1` or `np.mean(proxy)`, needs
+them. Indexing a proxy, transposing it or reshaping it returns another
+proxy, which reads only the values that it needs. The design is
+described in the memo `spec/design/array-proxies.md`.
 
 [`ArrayProxyProtocol`][] states what a consumer of a proxy may rely on,
 and [`ArrayProxy`][] is the base class of every proxy of brainhops. The
@@ -13,7 +14,8 @@ proxies fall in three groups:
 - a [`StoredProxy`][] presents an array as its storage holds it, and
   reads it one box at a time. The proxy of each file format is one, and
   so is a [`PermutedProxy`][], which presents the axes of another
-  stored proxy in another order;
+  stored proxy in another order, and a [`ReshapedProxy`][], which
+  presents the values of another proxy in another shape;
 - an [`IndexedProxy`][] presents a part of a stored proxy, which an
   index selects. Indexing a stored proxy returns one;
 - a [`ScaledProxy`][] presents the values of another proxy multiplied
@@ -23,8 +25,11 @@ proxies fall in three groups:
 Indexing and transposing keep these layers in a fixed order. A scaled
 proxy holds an indexed proxy, or a stored one, and an indexed proxy
 holds a stored proxy, so a chain of indexes never builds a chain of
-proxies. Each layer keeps the proxy below it as `base`, and the `root`
-of every proxy is the stored proxy at the bottom.
+proxies. A reshape that cannot be done otherwise starts the order
+again: a reshaped proxy is a stored proxy that holds any other proxy,
+and reshaping it again reshapes that proxy. Each layer keeps the proxy
+below it as `base`, and the `root` of every proxy is the stored proxy
+that a reader built, at the bottom.
 """
 
 __all__ = [
@@ -35,6 +40,7 @@ __all__ = [
     "IndexedProxy",
     "NewAxis",
     "ScaledProxy",
+    "ReshapedProxy",
 ]
 
 # stdlib
@@ -46,10 +52,12 @@ import operator
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import HideIfDefault, Magic
+from numpy.lib.mixins import NDArrayOperatorsMixin
 
 # core
 from . import backends
 from .linalg import ArrayProtocol
+from .properties import alias
 
 _Box: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 """The box that [`StoredProxy._read`][brainhops._core.proxy.StoredProxy._read]
@@ -98,8 +106,10 @@ class ArrayProxyProtocol(tx.Protocol):
 # ----------------------------------------------------------------------
 
 
-class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
-    """A lazy array, which reads its values when it is converted.
+class ArrayProxy(
+    NDArrayOperatorsMixin, Magic, eq=False, convert=True, repr=HideIfDefault()
+):
+    """A lazy array, which reads its values when they are needed.
 
     A proxy is the object that a reader keeps instead of the voxels of a
     file, so that the voxels are read only when they are needed, and
@@ -122,8 +132,25 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
     their types, and its representation shows the fields that do not
     hold their defaults. The methods that a subclass defines are
     abstract, since the metaclass of `Magic` is that of an abstract base
-    class, so a subclass that forgets one cannot be built. A proxy is
-    compared by identity.
+    class, so a subclass that forgets one cannot be built.
+
+    A proxy can also be used where an array is expected, and it reads
+    its values only when a computation needs them. The operators of
+    Python, such as `proxy + 1` or `proxy == 0`, the functions of NumPy,
+    such as `np.mean(proxy)`, and the methods of a NumPy array, such as
+    `proxy.sum()`, all compute on the values. Asking for the shape, the
+    type of the values or a transposition reads nothing, through the
+    proxy or through NumPy, as in `np.shape(proxy)`, and so does a
+    reshape, which returns another proxy. A computation runs in the
+    backend that `promote_backends` of `brainhops._core.backends`
+    chooses for its operands: next to a CuPy array, the proxy is read
+    onto the GPU, next to a Dask array, it becomes a Dask array that
+    reads nothing yet, and alone, it becomes what
+    [`to_backend`][brainhops._core.proxy.ArrayProxy.to_backend] makes of
+    it. The values that a computation reads are not kept, so a second
+    computation reads them again. A proxy is read-only: assigning values
+    into it, or using it as the output of a computation, raises a
+    `TypeError`. Like a NumPy array, a proxy cannot be hashed.
     """
 
     @property
@@ -169,9 +196,14 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
         return math.prod(self.shape)
 
     @property
+    def itemsize(self) -> int:
+        """The number of bytes that one value takes once it is read."""
+        return np.dtype(self.dtype).itemsize
+
+    @property
     def nbytes(self) -> int:
         """The number of bytes that the values take once they are read."""
-        return self.size * np.dtype(self.dtype).itemsize
+        return self.size * self.itemsize
 
     def __len__(self) -> int:
         shape = self.shape
@@ -203,7 +235,8 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
     def transpose(self, *axes: tx.Any) -> "ArrayProxy":
         """Return a proxy with its axes in another order, as NumPy does.
 
-        Without an argument, the order of the axes is reversed.
+        Without an argument, or with `None`, the order of the axes is
+        reversed.
 
         Parameters
         ----------
@@ -226,6 +259,68 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
     def T(self) -> "ArrayProxy":
         """The proxy with its axes in reverse order."""
         return self.transpose()
+
+    def reshape(
+        self,
+        *shape: tx.Any,
+        order: str = "C",
+        copy: tx.Optional[bool] = None,
+    ) -> "ArrayProxy":
+        """Return a proxy of the values in another shape, as NumPy does.
+
+        Nothing is read. A reshape that only adds or removes axes of
+        length one is an index of the proxy. A strided proxy whose
+        values NumPy could reshape without copying them gives another
+        strided proxy (see
+        [`StridedProxy`][brainhops._core.strided.StridedProxy]). Any
+        other reshape gives a [`ReshapedProxy`][], which reads the
+        values that a selection needs, and at most a few extra rows.
+
+        Parameters
+        ----------
+        *shape : int or sequence of int
+            The new shape, given as integers or as one sequence. One
+            length may be `-1`, and it is then inferred from the others.
+        order : {"C", "F"}, default="C"
+            The order in which the values are read and placed: the last
+            axis varies fastest in C order, and the first one in Fortran
+            order.
+        copy : bool, optional
+            Accepted for compatibility with `np.reshape`. A proxy never
+            copies values, since it reads them when they are needed.
+
+        Returns
+        -------
+        ArrayProxy
+            The reshaped proxy.
+
+        Raises
+        ------
+        ValueError
+            If the new shape does not hold as many values as the proxy,
+            or `order` is neither `"C"` nor `"F"`.
+        """
+        new = _new_shape(shape, self.shape)
+        if order == "F":
+            return self.T.reshape(new[::-1]).T
+        if order != "C":
+            raise ValueError(f"order must be 'C' or 'F', not {order!r}.")
+        if new == tuple(self.shape):
+            return self
+        index = _singleton_index(tuple(self.shape), new)
+        if index is not None:
+            return self[index]
+        return self._reshaped(new)
+
+    def _reshaped(self, shape: tx.Tuple[int, ...]) -> "ArrayProxy":
+        """Return the proxy in another shape, in C order.
+
+        The shape holds as many values as the proxy, and the reshape
+        does more than add or remove axes of length one. By default, the
+        result is a [`ReshapedProxy`][] of the proxy, and a subclass
+        that can do better overrides this method.
+        """
+        return ReshapedProxy(self, shape)
 
     @abc.abstractmethod
     def __array__(
@@ -305,7 +400,9 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
         receives the type of the values through its `meta` argument, so
         it does not read the proxy to learn it. With a CUDA device, each
         block is moved to the GPU once it is read, which gives the
-        setting `"dask+cupy"`.
+        setting `"dask+cupy"`. The functions of Dask, such as
+        `dask.array.transpose`, call this method under the name
+        `to_dask_array` when they receive a proxy.
 
         Parameters
         ----------
@@ -335,8 +432,147 @@ class ArrayProxy(Magic, eq=False, convert=True, repr=HideIfDefault()):
             "meta": np.empty((0,) * self.ndim, self.dtype),
         }
         options.update(kwargs)
-        lazy = da.from_array(self, **options)
+        lazy = da.from_array(_DaskSource(self), **options)
         return backends.to_dask(lazy, device=device)
+
+    # Dask looks for a method of this name when one of its functions,
+    # such as `dask.array.transpose`, receives a proxy, and calls it
+    # instead of wrapping the proxy itself.
+    to_dask_array = to_dask
+
+    # --- computations -------------------------------------------------
+
+    def __array_ufunc__(
+        self, ufunc: np.ufunc, method: str, *inputs: tx.Any, **kwargs: tx.Any
+    ) -> tx.Any:
+        """Apply a universal function of NumPy, such as `np.add`.
+
+        The operators of Python, such as `proxy + 1`, call this method
+        too. The proxies among the operands are
+        converted to the backend of the computation, and so are the
+        arrays of other backends. When the computation writes into the
+        arrays given as `out`, it runs in their backend. Otherwise, the
+        backend is the one that `promote_backends` chooses for the
+        operands.
+
+        Parameters
+        ----------
+        ufunc : np.ufunc
+            The universal function.
+        method : str
+            The method of the function, such as `"__call__"` or
+            `"reduce"`.
+        *inputs : Any
+            The operands.
+        **kwargs : Any
+            The options of the function.
+
+        Returns
+        -------
+        Any
+            The result, or `NotImplemented` when an operand is of a type
+            that the proxy does not know.
+
+        Raises
+        ------
+        TypeError
+            If a proxy is given as `out`.
+        """
+        out = kwargs.get("out", ())
+        if any(isinstance(x, ArrayProxy) for x in out):
+            raise TypeError(_READ_ONLY)
+        if not all(_known(type(x)) for x in inputs + out):
+            return NotImplemented
+        setting = backends.promote_backends(*_arrays(out or inputs))
+        inputs = _to_backend(inputs, setting)
+        return getattr(ufunc, method)(*inputs, **kwargs)
+
+    def __array_function__(
+        self,
+        func: tx.Callable,
+        types: tx.Collection[type],
+        args: tx.Tuple[tx.Any, ...],
+        kwargs: tx.Dict[str, tx.Any],
+    ) -> tx.Any:
+        """Apply a function of NumPy, such as `np.concatenate`.
+
+        When the computation runs in NumPy, the implementation of NumPy
+        receives the proxies themselves. It asks them for what it needs,
+        so that `np.shape` reads nothing, `np.transpose` and
+        `np.reshape` return proxies, and `np.mean` calls the method of
+        the proxy, which reads the values. In any other backend, the
+        proxies and the arrays of other backends are converted to the
+        backend that `promote_backends` chooses for them, and the
+        function of that backend runs.
+
+        Parameters
+        ----------
+        func : callable
+            The function of NumPy.
+        types : collection of type
+            The types of the operands that define `__array_function__`.
+        args : tuple
+            The positional arguments of the call.
+        kwargs : dict
+            The keyword arguments of the call.
+
+        Returns
+        -------
+        Any
+            The result, or `NotImplemented` when an operand is of a type
+            that the proxy does not know.
+        """
+        if not all(_known(t) for t in types):
+            return NotImplemented
+        arrays = list(_arrays((args, kwargs)))
+        setting = backends.promote_backends(*arrays)
+        implementation = getattr(func, "_implementation", None)
+        in_numpy = all(
+            backends.resolve_backend(x, setting) == "numpy" for x in arrays
+        )
+        if in_numpy and implementation is not None:
+            args, kwargs = _to_backend((args, kwargs), "numpy", proxies=False)
+            return implementation(*args, **kwargs)
+        args, kwargs = _to_backend((args, kwargs), setting)
+        return func(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> tx.Any:
+        # Python calls this method only for a name that the proxy does
+        # not have. The other public attributes of NumPy arrays are
+        # taken from the array that `to_backend` makes. A method reads
+        # the values when it is called, so that asking whether a proxy
+        # has it reads nothing, and another attribute, such as `real`,
+        # reads them at once. A name that the class defines comes here
+        # only when its property raised an `AttributeError`, which is
+        # raised again rather than hidden.
+        if name not in _FORWARDED or hasattr(type(self), name):
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}"
+            )
+        if not callable(getattr(np.ndarray, name)):
+            return getattr(self.to_backend(), name)
+
+        def method(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
+            return getattr(self.to_backend(), name)(*args, **kwargs)
+
+        method.__name__ = name
+        method.__doc__ = getattr(np.ndarray, name).__doc__
+        return method
+
+    def __bool__(self) -> bool:
+        return bool(self.to_numpy())
+
+    def __int__(self) -> int:
+        return int(self.to_numpy())
+
+    def __float__(self) -> float:
+        return float(self.to_numpy())
+
+    def __complex__(self) -> complex:
+        return complex(self.to_numpy())
+
+    def __index__(self) -> int:
+        return operator.index(self.to_numpy())
 
 
 # ----------------------------------------------------------------------
@@ -398,6 +634,31 @@ class StoredProxy(ArrayProxy):
             The values of the box, with the axes that slices keep, in the
             order of the stored array.
         """
+
+    def _reshaped_box(
+        self, box: _Box, shape: tx.Tuple[int, ...]
+    ) -> tx.Optional[ArrayProxy]:
+        """Return a box of the proxy in another shape, or `None`.
+
+        An [`IndexedProxy`][] whose selection is a box asks its stored
+        proxy for this, so that a stored proxy that can present a box in
+        another shape without reading it, as a strided proxy can, does
+        so. By default, the stored proxy cannot, and the indexed proxy
+        is wrapped in a [`ReshapedProxy`][].
+
+        Parameters
+        ----------
+        box : tuple of int or slice
+            The selection, with one entry for each axis of the proxy.
+        shape : tuple of int
+            The new shape, which holds as many values as the box.
+
+        Returns
+        -------
+        ArrayProxy or None
+            The reshaped box, or `None`.
+        """
+        return None
 
     def __getitem__(self, index: tx.Any) -> ArrayProxy:
         """Return a proxy that selects a part of the values.
@@ -743,6 +1004,22 @@ class IndexedProxy(ArrayProxy):
         base = self.base.transpose(stored)
         return _indexed(base, tuple(entry for entry, _ in moved))
 
+    def _reshaped(self, shape: tx.Tuple[int, ...]) -> ArrayProxy:
+        """Return the selected values in another shape.
+
+        When the selection is a box, made of integers and slices, the
+        stored proxy is asked to present the box in the new shape, which
+        a strided proxy does by changing its strides. Otherwise, the
+        result is a [`ReshapedProxy`][] of this proxy.
+        """
+        if all(
+            isinstance(e, (int, np.integer, slice)) for e in self.selection
+        ):
+            reshaped = self.base._reshaped_box(self.selection, shape)
+            if reshaped is not None:
+                return reshaped
+        return ReshapedProxy(self, shape)
+
     def __array__(
         self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
     ) -> np.ndarray:
@@ -882,10 +1159,11 @@ class ScaledProxy(ArrayProxy):
     only. It is the floating-point type that NumPy gives for the stored
     type and a float32, so that integers of 8 or 16 bits and float32
     values give float32, and other integers and float64 values give
-    float64. A reader that needs another type passes it as `dtype=`.
-    The factors are cast to the type of the scaled values
-    before they are applied, so a factor of a wider type neither widens
-    the result nor makes a wider copy of the values.
+    float64. A reader that needs another type passes it as `dtype=`,
+    and indexing, transposing or reshaping the proxy keeps that type.
+    The factors are cast to the type of the scaled values before they
+    are applied, so a factor of a wider type neither widens the result
+    nor makes a wider copy of the values.
     """
 
     base: tx.Any
@@ -995,6 +1273,27 @@ class ScaledProxy(ArrayProxy):
             dtype=self._dtype,
         )
 
+    def _reshaped(self, shape: tx.Tuple[int, ...]) -> ArrayProxy:
+        """Return the scaled proxy of the values in another shape.
+
+        `base` and the factors are reshaped when each factor still
+        broadcasts against the new shape: for each group of axes that
+        the reshape splits or merges, a factor has either length one on
+        every axis of the group or the full length on all of them. The
+        factor of each AFNI sub-brick, which runs along the last axis
+        only, does not when that axis is merged with others. The scaled
+        proxy is then wrapped in a [`ReshapedProxy`][].
+        """
+        factors = []
+        for factor in (self.slope, self.inter):
+            reshaped = _reshape_factor(factor, self.shape, shape)
+            if factor is not None and reshaped is None:
+                return ReshapedProxy(self, shape)
+            factors.append(reshaped)
+        return ScaledProxy(
+            self.base.reshape(shape), *factors, dtype=self._dtype
+        )
+
     def __array__(
         self, dtype: tx.Any = None, copy: tx.Optional[bool] = None
     ) -> np.ndarray:
@@ -1029,6 +1328,283 @@ class ScaledProxy(ArrayProxy):
                 values = np.asarray(apply(values, factor))
                 owned = True
         return _convert(values, dtype, copy)
+
+
+# ----------------------------------------------------------------------
+#   RESHAPED PROXIES
+# ----------------------------------------------------------------------
+
+
+class ReshapedProxy(StoredProxy):
+    """A lazy array of the values of another proxy, in another shape.
+
+    The values are those of `base`, placed in the new shape in C order,
+    as `np.reshape` places them. A reshaped proxy is indexed and
+    transposed as the proxy of a file is, and its `root` is the root of
+    `base`. Reshaping it again reshapes `base`.
+
+    A read gets the rows of `base` that hold the selected values: along
+    each group of axes that the reshape splits or merges, at most one
+    extra row on each side.
+
+    [`ArrayProxy.reshape`][brainhops._core.proxy.ArrayProxy.reshape]
+    returns a reshaped proxy when the reshape does more than add or
+    remove axes of length one, unless `base` is a strided proxy whose
+    values NumPy could reshape without copying them.
+    """
+
+    base: tx.Any
+    """The proxy whose values are presented in another shape."""
+
+    # A field cannot implement the abstract property `shape`, so the
+    # shape is kept in a private field, given as `shape=`.
+    _shape: tx.Tuple[int, ...]
+    """The new shape, given as `shape=`."""
+
+    shape = alias("_shape", readonly=True)
+    """The new shape."""
+
+    @property
+    def dtype(self) -> np.dtype:
+        """The type of the values of `base`."""
+        return self.base.dtype
+
+    @property
+    def root(self) -> StoredProxy:
+        """The stored proxy that a reader built, below `base`."""
+        return self.base.root
+
+    def __post_init__(self) -> None:
+        if math.prod(self._shape) != math.prod(self.base.shape):
+            raise ValueError(
+                f"A proxy of shape {tuple(self.base.shape)} cannot be "
+                f"reshaped to {self._shape}."
+            )
+
+    def _reshaped(self, shape: tx.Tuple[int, ...]) -> ArrayProxy:
+        """Return `base` in another shape, so that reshapes do not nest."""
+        return self.base.reshape(shape)
+
+    def _read(self, box: _Box) -> np.ndarray:
+        """Read a box of the reshaped values.
+
+        Parameters
+        ----------
+        box : tuple of int or slice
+            The box to read, as
+            [`StoredProxy._read`][brainhops._core.proxy.StoredProxy._read]
+            receives it.
+
+        Returns
+        -------
+        np.ndarray
+            The values of the box.
+        """
+        old_shape = tuple(self.base.shape)
+        old_box = []
+        picks = []
+        sizes = []
+        shape = []
+        for new_axes, old_axes in _groups(old_shape, self._shape):
+            # The positions that the box selects along the group, each
+            # given as its position among the values of the group in C
+            # order. Positive steps make the first one the smallest and
+            # the last one the largest.
+            ranges = []
+            for axis in new_axes:
+                entry = box[axis]
+                if isinstance(entry, (int, np.integer)):
+                    ranges.append(range(int(entry), int(entry) + 1))
+                else:
+                    ranges.append(range(entry.start, entry.stop, entry.step))
+                    shape.append(len(ranges[-1]))
+            group = [self._shape[axis] for axis in new_axes]
+            flat = _flat_positions(ranges, group)
+            # The box of `base` that holds the positions: the leading
+            # axes where the first and the last position agree, then
+            # the range between them on the next axis, and the whole of
+            # the remaining axes.
+            stored = [old_shape[axis] for axis in old_axes]
+            first = _unravel(int(flat[0]), stored)
+            last = _unravel(int(flat[-1]), stored)
+            starts = []
+            stops = []
+            apart = False
+            for low, high, n in zip(first, last, stored):
+                if apart:
+                    low, high = 0, n - 1
+                starts.append(low)
+                stops.append(high + 1)
+                apart = apart or low != high
+            old_box.extend(slice(a, b, 1) for a, b in zip(starts, stops))
+            # The box holds the consecutive positions of the group from
+            # its first value on.
+            picks.append(flat - _ravel(starts, stored))
+            sizes.append(math.prod(b - a for a, b in zip(starts, stops)))
+        values = np.asarray(self.base[tuple(old_box)])
+        values = values.reshape(sizes)[np.ix_(*picks)]
+        return values.reshape(shape)
+
+
+def _new_shape(
+    shape: tx.Tuple[tx.Any, ...], old: tx.Sequence[int]
+) -> tx.Tuple[int, ...]:
+    """Return the shape that the arguments of `reshape` ask for.
+
+    Raises
+    ------
+    ValueError
+        If the shape has more than one `-1`, or does not hold as many
+        values as `old`.
+    """
+    if len(shape) == 1 and not isinstance(shape[0], (int, np.integer)):
+        shape = tuple(shape[0])
+    shape = [operator.index(n) for n in shape]
+    size = math.prod(old)
+    unknown = [i for i, n in enumerate(shape) if n == -1]
+    if len(unknown) > 1:
+        raise ValueError("Only one length of a new shape can be -1.")
+    if unknown:
+        known = math.prod(n for n in shape if n != -1)
+        if known == 0 or size % known:
+            raise ValueError(
+                f"A proxy of shape {tuple(old)} cannot be reshaped to "
+                f"{tuple(shape)}."
+            )
+        shape[unknown[0]] = size // known
+    if any(n < 0 for n in shape) or math.prod(shape) != size:
+        raise ValueError(
+            f"A proxy of shape {tuple(old)} cannot be reshaped to "
+            f"{tuple(shape)}."
+        )
+    return tuple(shape)
+
+
+def _singleton_index(
+    old: tx.Tuple[int, ...], new: tx.Tuple[int, ...]
+) -> tx.Optional[tx.Tuple[tx.Any, ...]]:
+    """Return the index that reshapes `old` into `new`, or `None`.
+
+    The index exists when the reshape only adds or removes axes of length
+    one: it holds `None` for each added axis, `0` for each removed one,
+    and a whole slice for each kept one.
+    """
+    if [n for n in old if n != 1] != [n for n in new if n != 1]:
+        return None
+    index = []
+    i = j = 0
+    while i < len(old) or j < len(new):
+        if i < len(old) and j < len(new) and old[i] == new[j]:
+            index.append(slice(None))
+            i += 1
+            j += 1
+        elif i < len(old) and old[i] == 1:
+            index.append(0)
+            i += 1
+        else:
+            index.append(None)
+            j += 1
+    return tuple(index)
+
+
+def _groups(
+    old: tx.Sequence[int], new: tx.Sequence[int]
+) -> tx.List[tx.Tuple[range, range]]:
+    """Return the groups of axes that a reshape splits or merges.
+
+    Each group is a range of axes of `new` and a range of axes of `old`
+    that hold as many values, and the groups are the smallest such
+    ranges. A range may be empty on one side when the other side holds
+    axes of length one only. The arrays hold at least one value.
+    """
+    groups = []
+    i = j = 0
+    while i < len(new) or j < len(old):
+        a, b = i, j
+        size_new = size_old = 1
+        if i < len(new):
+            size_new *= new[i]
+            i += 1
+        if j < len(old):
+            size_old *= old[j]
+            j += 1
+        while size_new != size_old:
+            if size_new < size_old:
+                size_new *= new[i]
+                i += 1
+            else:
+                size_old *= old[j]
+                j += 1
+        groups.append((range(a, i), range(b, j)))
+    return groups
+
+
+def _flat_positions(
+    ranges: tx.Sequence[range], shape: tx.Sequence[int]
+) -> np.ndarray:
+    """Return the positions in C order of the values that ranges select.
+
+    The positions are those of the values of an array of shape `shape`
+    whose index along each axis lies in the range of that axis, in the
+    order of these values.
+    """
+    flat = np.zeros((1,) * len(shape), dtype=np.intp)
+    stride = 1
+    for axis in range(len(shape) - 1, -1, -1):
+        positions = np.asarray(ranges[axis], dtype=np.intp) * stride
+        flat = flat + positions.reshape(
+            (1,) * axis + (-1,) + (1,) * (len(shape) - axis - 1)
+        )
+        stride *= shape[axis]
+    return flat.reshape(-1)
+
+
+def _ravel(index: tx.Sequence[int], shape: tx.Sequence[int]) -> int:
+    """Return the position in C order of an index in an array of a shape."""
+    position = 0
+    for i, n in zip(index, shape):
+        position = position * n + i
+    return position
+
+
+def _unravel(position: int, shape: tx.Sequence[int]) -> tx.List[int]:
+    """Return the index of a position in C order in an array of a shape."""
+    index = []
+    for n in reversed(shape):
+        position, i = divmod(position, n)
+        index.append(i)
+    return index[::-1]
+
+
+def _reshape_factor(
+    factor: tx.Optional[np.ndarray],
+    old: tx.Tuple[int, ...],
+    new: tx.Tuple[int, ...],
+) -> tx.Optional[np.ndarray]:
+    """Return a factor of a scaled proxy for the values in another shape.
+
+    The factor has one axis for each axis of the values. For each group
+    of axes that the reshape splits or merges, it must have length one
+    on every axis of the group, or the full length on all of them.
+
+    Returns
+    -------
+    np.ndarray or None
+        The reshaped factor, or `None` when the factor is `None` or does
+        not broadcast against the new shape.
+    """
+    if factor is None or not math.prod(old):
+        return None
+    lengths = []
+    for new_axes, old_axes in _groups(old, new):
+        stored = [factor.shape[axis] for axis in old_axes]
+        if all(n == 1 for n in stored):
+            lengths.extend(1 for _ in new_axes)
+        elif stored == [old[axis] for axis in old_axes]:
+            lengths.extend(new[axis] for axis in new_axes)
+        else:
+            return None
+    return factor.reshape(lengths)
 
 
 def _index_factor(
@@ -1238,6 +1814,9 @@ def _permutation(axes: tx.Tuple[tx.Any, ...], ndim: int) -> tx.Tuple[int, ...]:
     ValueError
         If the axes are not a permutation of `ndim` axes.
     """
+    if axes == (None,):
+        # `np.transpose(proxy)` calls `proxy.transpose(None)`.
+        axes = ()
     if len(axes) == 1 and not isinstance(axes[0], (int, np.integer)):
         axes = tuple(axes[0])
     if not axes:
@@ -1278,6 +1857,154 @@ def _convert(
         values = values.astype(dtype, copy=False)
     if copy:
         values = np.array(values, copy=True)
+    return values
+
+
+# ----------------------------------------------------------------------
+#   COMPUTATIONS
+# ----------------------------------------------------------------------
+
+_IN_PLACE = frozenset(
+    ("fill", "itemset", "partition", "put", "resize", "setfield", "sort")
+)
+"""The methods of NumPy arrays that change the array in place.
+
+A proxy does not take them from the array that it reads, because the
+change would be made to values that are then thrown away.
+"""
+
+_STORAGE = frozenset(
+    ("base", "ctypes", "data", "device", "flags", "setflags", "strides")
+)
+"""The attributes of NumPy arrays that describe their memory.
+
+A proxy does not take them from the array that it reads, because they
+would describe a temporary array rather than the proxy.
+"""
+
+_FORWARDED = (
+    frozenset(name for name in dir(np.ndarray) if not name.startswith("_"))
+    - _IN_PLACE
+    - _STORAGE
+)
+"""The attributes that a proxy takes from the array that it reads."""
+
+_READ_ONLY = (
+    "A proxy is read-only. Read its values with np.asarray(proxy), or "
+    "convert the object that holds it with as_numpy(), before changing "
+    "them."
+)
+
+
+class _DaskSource:
+    """The view of a proxy that Dask reads block by block.
+
+    `dask.array.from_array` copies an array-like argument that has a
+    `copy` method, and a proxy has one, which reads all its values.
+    Dask also keeps a block as it is when the block behaves as an array,
+    as a proxy does, so the blocks would reach the computation unread.
+    Dask therefore receives this view, which only has what Dask reads:
+    the shape, the type of the values, the preferred blocks, and the
+    indexing, which reads a block into a NumPy array.
+    """
+
+    def __init__(self, proxy: ArrayProxy) -> None:
+        self.proxy = proxy
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        return self.proxy.shape
+
+    @property
+    def dtype(self) -> np.dtype:
+        return self.proxy.dtype
+
+    @property
+    def ndim(self) -> int:
+        return self.proxy.ndim
+
+    @property
+    def chunks(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        return self.proxy.chunks
+
+    def __getitem__(self, index: tx.Any) -> np.ndarray:
+        return np.asarray(self.proxy[index])
+
+
+def _known(cls: type) -> bool:
+    """Tell whether a proxy can compute with operands of a type.
+
+    The type is a proxy, a NumPy, CuPy or Dask array, or a type that
+    does not take part in the dispatch of NumPy, such as a number.
+    """
+    if not hasattr(cls, "__array_ufunc__"):
+        return True
+    if issubclass(cls, (ArrayProxy, np.ndarray)):
+        return True
+    if backends.cp and issubclass(cls, backends.cp.ndarray):
+        return True
+    return bool(backends.da) and issubclass(cls, backends.da.Array)
+
+
+def _is_array(x: tx.Any) -> bool:
+    """Tell whether an operand is a proxy or a NumPy, CuPy or Dask array."""
+    return isinstance(x, ArrayProxy) or backends._is_loaded(x)
+
+
+def _arrays(values: tx.Any) -> tx.Iterator[tx.Any]:
+    """Yield the proxies and the arrays among the arguments of a call.
+
+    The arguments may be nested in lists, tuples and dictionaries, as
+    the arrays that `np.concatenate` receives.
+    """
+    if _is_array(values):
+        yield values
+    elif isinstance(values, (list, tuple)):
+        for value in values:
+            yield from _arrays(value)
+    elif isinstance(values, dict):
+        for value in values.values():
+            yield from _arrays(value)
+
+
+def _to_backend(
+    values: tx.Any, setting: tx.Optional[str], *, proxies: bool = True
+) -> tx.Any:
+    """Convert the proxies and the arrays among the arguments of a call.
+
+    The lists, tuples and dictionaries that hold them are rebuilt around
+    the converted arrays, and the other arguments are kept as they are.
+
+    Parameters
+    ----------
+    values : Any
+        The arguments.
+    setting : str or None
+        The backend setting of the conversion, or `None` for the
+        current setting.
+    proxies : bool, default=True
+        Whether the proxies are converted. Otherwise they are kept, and
+        only the arrays are converted.
+
+    Returns
+    -------
+    Any
+        The converted arguments.
+    """
+    if isinstance(values, ArrayProxy):
+        return backends.to_backend(values, setting) if proxies else values
+    if backends._is_loaded(values):
+        return backends.to_backend(values, setting)
+    if isinstance(values, (list, tuple)):
+        converted = [_to_backend(x, setting, proxies=proxies) for x in values]
+        if isinstance(values, tuple) and hasattr(values, "_fields"):
+            return type(values)(*converted)
+        return type(values)(converted)
+    if isinstance(values, dict):
+        return {
+            key: _to_backend(x, setting, proxies=proxies)
+            for key, x in values.items()
+        }
     return values
 
 

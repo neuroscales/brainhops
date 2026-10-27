@@ -21,7 +21,6 @@ from bagof.magic import replace  # noqa: E402
 from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
-from brainhops._core.backends import backend  # noqa: E402
 from brainhops._core.strided import StridedProxy  # noqa: E402
 from brainhops.datamodel.metadata import MetadataLossWarning  # noqa: E402
 from brainhops.datamodel.systems import CoordinateSystem, RASmm  # noqa: E402
@@ -326,11 +325,13 @@ def test_from_bytes_and_fileobj(tmp_path) -> None:  # noqa: ANN001
     a = MghImage.from_bytes(raw)
     b = MghImage.from_bytes(gzip.decompress(raw))
     with open(source, "rb") as f:
-        # As for NIfTI, the voxels are read lazily from the open stream.
+        # As for NIfTI, the voxels are read lazily from the open stream,
+        # so they can be read only while the stream is open.
         c = MghImage.from_fileobj(f)
         assert np.array_equal(np.asarray(c.data), _data())
-    for image in (a, b, c):
+    for image in (a, b):
         assert np.array_equal(np.asarray(image.data), _data())
+    for image in (a, b, c):
         assert image.metadata.raw.tags == TAGS
         assert np.allclose(image.metadata.raw.vox2ras, a.metadata.raw.vox2ras)
 
@@ -894,11 +895,8 @@ def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
     # An edit in place would not reach `rawdata`, which is what is
     # written.
     image = MghImage.load(_write(tmp_path, "vol.mgh", _data()))
-    with backend("numpy"):
-        data = image.data
-    assert not data.flags.writeable
-    with pytest.raises(ValueError):
-        data[0, 0, 0] = 1
+    with pytest.raises(TypeError):
+        image.data[0, 0, 0] = 1
 
 
 def test_metadata_reads_and_writes_the_record(tmp_path) -> None:  # noqa: ANN001

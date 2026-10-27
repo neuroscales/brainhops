@@ -466,7 +466,8 @@ def test_a_volume_of_one_scale_is_read_as_an_image(single) -> None:  # noqa: ANN
     assert image.shape == values.shape
     with backend("numpy"):
         assert np.array_equal(image.data, values)
-        assert not image.data.flags.writeable
+    with pytest.raises(TypeError):
+        image.data[(0,) * image.ndim] = 1
     pyramid = PrecomputedMultiScaleImage.load(directory)
     assert len(pyramid.images) == 1
 
@@ -555,7 +556,7 @@ def test_dask_reads_the_volume_lazily(pyramid) -> None:  # noqa: ANN001
     directory, fine, _ = pyramid
     level = io.images.load(directory).images[0]
     with backend("dask"):
-        data = level.data
+        data = level.to_backend()
     assert type(data).__module__.startswith("dask")
     assert level.rawdata._store is None
     assert np.array_equal(np.asarray(data), fine)

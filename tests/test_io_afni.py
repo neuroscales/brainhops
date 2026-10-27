@@ -458,12 +458,12 @@ def test_brick_scaling_factors(tmp_path) -> None:  # noqa: ANN001
 def test_an_uncompressed_brik_is_memory_mapped(tmp_path) -> None:  # noqa: ANN001
     image = AfniImage.load(_source(tmp_path))
     with backend("numpy"):
-        data = image.data
+        data = image.to_backend()
     assert isinstance(data.base, np.memmap) or isinstance(data, np.memmap)
     assert not data.flags.writeable
     eager = AfniImage.load(_source(tmp_path), mmap=False)
     with backend("numpy"):
-        data = eager.data
+        data = eager.to_backend()
     assert not isinstance(data, np.memmap)
     assert not isinstance(data.base, np.memmap)
     assert np.array_equal(data, DATA)
@@ -1040,7 +1040,7 @@ def test_decoded_data_is_read_only(tmp_path) -> None:  # noqa: ANN001
     path = _dataset(tmp_path, head, _brik([a, DATA], ["<h", "<f"]))
     for source in (_source(tmp_path, name="one+orig"), path):
         with backend("numpy"):
-            data = AfniImage.load(source).data
+            data = AfniImage.load(source).to_backend()
         assert not data.flags.writeable
 
 
@@ -1120,12 +1120,12 @@ def test_nothing_but_the_data_reads_the_voxels(
     assert "_cache_data" not in vars(image)
     # Dask keeps the voxels lazy until they are computed.
     with backend("dask"):
-        lazy = AfniImage.load(path).data
+        lazy = AfniImage.load(path).to_backend()
     assert reads.count == 0
     assert np.asarray(lazy).shape == expected
     assert reads.count == 1
     with backend("numpy"):
-        data = image.data
+        data = image.to_backend()
     assert data.shape == expected and data.dtype == np.float32
     assert np.allclose(data[..., 0] if nvals > 1 else data, 2 * DATA)
     assert reads.count == 2

@@ -439,11 +439,13 @@ def test_an_empty_selection_reads_nothing(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_the_decoded_data_are_read_only(single_file) -> None:  # noqa: ANN001
+    # The data are the lazy array of the file, which refuses an edit in
+    # place, and the conversions give arrays of the values.
+    image = ImarisImage.load(single_file[0])
+    with pytest.raises(TypeError):
+        image.data[(0,) * image.ndim] = 1
     with backend("numpy"):
-        image = ImarisImage.load(single_file[0])
-        data = image.data
-        assert isinstance(data, np.ndarray)
-        assert not data.flags.writeable
+        assert isinstance(image.to_backend(), np.ndarray)
 
 
 def test_dask_blocks_hold_whole_chunks(single_file) -> None:  # noqa: ANN001
@@ -451,7 +453,7 @@ def test_dask_blocks_hold_whole_chunks(single_file) -> None:  # noqa: ANN001
     image = ImarisImage.load(single_file[0])
     assert image.rawdata.chunks == (1, 1, 2, 4, 4)
     with backend("dask"):
-        data = ImarisImage.load(single_file[0]).data
+        data = ImarisImage.load(single_file[0]).to_backend()
     assert isinstance(data, da.Array)
     for axis, size in enumerate((4, 4, 2)):
         assert all(n % size == 0 for n in data.chunks[axis][:-1])

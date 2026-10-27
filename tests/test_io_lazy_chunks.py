@@ -249,7 +249,8 @@ def test_nifti_volume_is_read_in_whole_slices(
     nb.save(nb.Nifti1Image(values, np.eye(4)), str(path))
     budget = 3 * 6 * 5 * 4
     with dask.config.set({"array.chunk-size": budget}), backend("dask"):
-        data = io.images.load(path).data
+        image = io.images.load(path)
+        data = image.to_backend()
     assert isinstance(data, da.Array)
     assert data.chunksize == (6, 5, 3)
     np.testing.assert_array_equal(data.compute(), values)
@@ -268,7 +269,8 @@ def test_nifti_series_is_read_in_whole_volumes(
     nb.save(nb.Nifti1Image(values, np.eye(4)), str(path))
     budget = 2 * 6 * 5 * 8 * 4
     with dask.config.set({"array.chunk-size": budget}), backend("dask"):
-        data = io.images.load(path).data
+        image = io.images.load(path)
+        data = image.to_backend()
     assert isinstance(data, da.Array)
     assert data.chunksize == SPATIAL + (2,)
     np.testing.assert_array_equal(data.compute(), values)
@@ -281,7 +283,7 @@ def test_mgh_image_is_read_in_whole_slices(tmp_path: Path) -> None:
     nb.save(nb.MGHImage(values, np.eye(4)), str(path))
     budget = 2 * 6 * 5 * 4
     with dask.config.set({"array.chunk-size": budget}), backend("dask"):
-        data = io.images.load(path).data
+        data = io.images.load(path).to_backend()
     assert isinstance(data, da.Array)
     assert data.chunksize == (6, 5, 2)
     np.testing.assert_array_equal(data.compute(), values)
@@ -302,7 +304,7 @@ def test_nifti_field_is_read_in_whole_components(tmp_path: Path) -> None:
     budget = 2 * 6 * 5 * 8 * 4
     with dask.config.set({"array.chunk-size": budget}), backend("dask"):
         field = NiftiRASDisplacementField.from_filename(path)
-        stored = field.data
+        stored = field.to_backend()
         displacements = field.transformations[1].data
     assert isinstance(stored, da.Array)
     assert stored.chunksize == SPATIAL + (2,)
@@ -333,7 +335,7 @@ def test_n5_dataset_is_read_in_its_blocks(tmp_path: Path) -> None:
     }
     ts.open(spec).result().write(values).result()
     with backend("dask"):
-        data = io.images.load(tmp_path / "d").data
+        data = io.images.load(tmp_path / "d").to_backend()
     assert isinstance(data, da.Array)
     assert data.chunksize == (4, 3, 8)
     np.testing.assert_array_equal(data.compute(), values)
@@ -368,7 +370,7 @@ def test_precomputed_scale_is_read_in_its_chunks(tmp_path: Path) -> None:
                 block.astype("<u2").tobytes(order="F")
             )
     with backend("dask"):
-        data = io.images.load(directory).data
+        data = io.images.load(directory).to_backend()
     assert isinstance(data, da.Array)
     assert data.chunksize == (3, 5, 2, 2)
     np.testing.assert_array_equal(data.compute(), values)
@@ -423,7 +425,7 @@ def test_bdv_view_is_read_in_its_hdf5_chunks(tmp_path: Path) -> None:
         # BigDataViewer stores the voxels in the order z, y, x.
         f.create_dataset("t00000/s00/0/cells", data=values.T, chunks=(2, 3, 4))
     with backend("dask"):
-        data = io.images.load(tmp_path / "dataset.xml").data
+        data = io.images.load(tmp_path / "dataset.xml").to_backend()
     assert isinstance(data, da.Array)
     assert data.chunksize == (4, 3, 2)
     np.testing.assert_array_equal(data.compute(), values)

@@ -345,7 +345,7 @@ def to_numpy(x: ArrayLike, **kwargs) -> "nparray":
     if is_dask(x):
         x = x.compute()
     if is_cupy(x):
-        return x.get()
+        x = x.get()
     return np.asarray(x, **kwargs)
 
 
@@ -447,12 +447,16 @@ def to_device(
     """Copy an array to a GPU or to memory, keeping its package kind.
 
     A Dask array stays a Dask array, with CuPy or NumPy chunks, and an
-    array in memory becomes a CuPy or a NumPy array. An array that is
-    already on that device, or that is not an array, is returned as it
-    is.
+    array in memory becomes a CuPy or a NumPy array. A lazy array, such
+    as the array of a file, is read onto the device: it becomes a NumPy
+    or a CuPy array when it is small, and a Dask array of NumPy or CuPy
+    chunks when it is large, as `"auto"` decides (see [`to_backend`][]).
+    An array that is already on that device, or a value that is not an
+    array, is returned as it is.
     """
-    if not _is_loaded(x):
+    if not hasattr(x, "shape"):
         return x
+    x = to_backend(x, "native")
     if _compatible_device(x, device):
         return x
     to_gpu, device = _normalize_device(device)
@@ -469,13 +473,15 @@ def to_backend(
     backend: tx.Optional[BackendLike] = None,
     *,
     device: tx.Union[str, int, None] = None,
-    **kwargs,
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> ArrayProtocol:
     """Convert an array, or a lazy array of a file, as a setting says.
 
     Under `"native"`, a loaded array is returned as it is, and a lazy array is
     resolved with `"auto"`. Converting to NumPy or CuPy computes a Dask
-    array and reads a lazy array. Converting to Dask reads nothing.
+    array and reads a lazy array. Converting to Dask reads nothing. A
+    value that is not an array, such as `None` or a number, is returned
+    as it is.
 
     Parameters
     ----------
@@ -485,6 +491,9 @@ def to_backend(
         The setting. By default, the current setting is used.
     device : str | int, optional
         The device for converted arrays. The backend supplies its default.
+    dtype : dtype-like, optional
+        The type of the values of the result. By default, the type of
+        the values is kept.
 
     Returns
     -------
@@ -496,15 +505,21 @@ def to_backend(
     ImportError
         If a package that the setting needs is not installed.
     """
+    if not hasattr(x, "shape"):
+        return x
     target = resolve_backend(x, backend)
     _check_dependencies(target)
     if target == "numpy":
-        return to_numpy(x, **kwargs)
-    if target == "cupy":
-        return to_cupy(x, device=device, **kwargs)
-    if device is None:
-        device = "cuda" if target == "dask+cupy" else "cpu"
-    return to_dask(x, device=device, **kwargs)
+        x = to_numpy(x)
+    elif target == "cupy":
+        x = to_cupy(x, device=device)
+    else:
+        if device is None:
+            device = "cuda" if target == "dask+cupy" else "cpu"
+        x = to_dask(x, device=device)
+    if dtype is not None and x.dtype != np.dtype(dtype):
+        x = x.astype(dtype)
+    return x
 
 
 def promote_backends(*arrays_or_backends: tx.Any) -> tx.Optional[str]:
@@ -549,16 +564,20 @@ def promote_backends(*arrays_or_backends: tx.Any) -> tx.Optional[str]:
 
 
 def to_promoted_backend(
-    *arrays: tx.Unpack[tx.Tuple[ArrayLike, ...]], **kwargs
+    *arrays: tx.Unpack[tx.Tuple[ArrayLike, ...]],
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> tx.Tuple[ArrayLike, ...]:
     """Move arrays to the backend in which a computation combines them.
 
     When computing on multiple arrays that live on different backends,
     this function moves them all to compatible backends.
 
-    When one of the arrays is on a GPU, the others are copied to it:
-    a NumPy array becomes a CuPy array, and a Dask array of NumPy chunks
-    becomes a Dask array of CuPy chunks.
+    Under a setting other than `"native"`, every array is converted to
+    that setting, so that the result of the computation follows it.
+    Under `"native"`, a lazy array, such as the array of a file, becomes
+    what [`to_backend`][] makes of it, and when one of the arrays is on a
+    GPU, the others are copied to it: a NumPy array becomes a CuPy array,
+    and a Dask array of NumPy chunks becomes a Dask array of CuPy chunks.
 
     A NumPy array that meets a Dask array in memory is returned as it is,
     because Dask accepts NumPy operands.
@@ -570,26 +589,30 @@ def to_promoted_backend(
     ----------
     *arrays : Any
         The arrays that the computation combines.
+    dtype : dtype-like, optional
+        The type of the values of the arrays. By default, each array
+        keeps the type of its values.
 
     Returns
     -------
     tuple
         The arrays, in the same order.
     """
-    if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
-        # A value without a shape, such as `None` or a number, is not an
-        # array and is kept as it is.
-        return tuple(
-            to_backend(x, "native", **kwargs) if hasattr(x, "shape") else x
-            for x in arrays
-        )
-    return tuple(to_device(x, "cuda", **kwargs) for x in arrays)
+    # Each array is first converted with the setting, which reads a lazy
+    # array of a file and leaves a loaded array as it is under "native".
+    arrays = tuple(to_backend(x, dtype=dtype) for x in arrays)
+    if any(_on_gpu(x) for x in arrays):
+        arrays = tuple(to_device(x, "cuda") for x in arrays)
+    return arrays
 
 
 def to_backend_of(
     x: ArrayProtocol, reference: ArrayProtocol, **kwargs
 ) -> ArrayProtocol:
     """Move an array to the backend of a reference array.
+
+    A lazy array, such as the array of a file, is read onto that device
+    (see [`to_device`][]).
 
     Parameters
     ----------
@@ -598,15 +621,15 @@ def to_backend_of(
         An argument that is not an array is returned as it is.
     reference : Any
         The array whose device `x` takes.
+    **kwargs : Any
+        Options of [`to_device`][].
 
     Returns
     -------
     Any
         The moved array.
     """
-    if not _is_loaded(x) or not _is_loaded(reference):
-        return x
-    device = get_device(reference)
+    device = get_device(reference) if _is_loaded(reference) else None
     if device is None:
         device = "cpu"
     return to_device(x, device=device, **kwargs)
@@ -897,10 +920,12 @@ def array_backend(
 ) -> ModuleType:
     """Return the array package of an array, module or setting.
 
-    The result is `numpy`, `cupy` or `dask.array`. `None`, or an object of
-    no known backend, gives the package in which the current setting
-    creates new arrays: NumPy under `"native"` and `"auto"`, CuPy under
-    `"cupy"` and `"auto+cupy"`, and Dask under `"dask"` and `"dask+cupy"`.
+    The result is `numpy`, `cupy` or `dask.array`. A lazy array, such as
+    the array of a file, gives the package of the array that
+    [`to_backend`][] makes of it. `None`, or an object of no known
+    backend, gives the package in which the current setting creates new
+    arrays: NumPy under `"native"` and `"auto"`, CuPy under `"cupy"` and
+    `"auto+cupy"`, and Dask under `"dask"` and `"dask+cupy"`.
 
     Raises
     ------
@@ -940,6 +965,8 @@ def array_backend(
         return cp
     if da and isinstance(x, da.Array):
         return da
+    if hasattr(x, "shape") and hasattr(x, "dtype"):
+        return array_backend(resolve_backend(x))
 
     return array_backend()
 

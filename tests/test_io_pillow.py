@@ -149,11 +149,13 @@ def test_read_data_is_a_view_of_the_decoded_array(tmp_path: Path) -> None:
     with backend("numpy"):
         image = load(_write(tmp_path, "a.png", GREY))
         # F-ordered grey data is the transpose of the C-ordered array.
-        assert image.data.flags.f_contiguous
-        assert image.data.base is not None
-        # The decoded data is read-only, since the writer writes
+        values = image.to_backend()
+        assert values.flags.f_contiguous
+        assert values.base is not None
+        # The data refuse an edit in place, since the writer writes
         # `rawdata`.
-        assert not image.data.flags.writeable
+        with pytest.raises(TypeError):
+            image.data[0, 0] = 1
 
 
 def test_read_bilevel(tmp_path: Path) -> None:

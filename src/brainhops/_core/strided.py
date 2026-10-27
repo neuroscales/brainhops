@@ -18,6 +18,11 @@ axis. A stride may be negative, which reverses the axis. The strides
 describe C order, Fortran order, a permutation of the axes, reversed
 axes and padding between rows or slices, without copying anything.
 
+Transposing the proxy, and reshaping it when NumPy could reshape the
+values without copying them, give another strided proxy of the same
+bytes with other strides, so that the result reads only what it needs
+as the proxy does.
+
 The design is the third layer of the memo `spec/design/array-proxies.md`,
 in a simpler form: the proxy reads the range of bytes that holds the
 selected box, rather than a merged list of byte ranges.
@@ -36,7 +41,12 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.properties import alias
-from brainhops._core.proxy import StoredProxy
+from brainhops._core.proxy import (
+    ArrayProxy,
+    StoredProxy,
+    _permutation,
+    _whole,
+)
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import DTypeLike
 
@@ -258,6 +268,107 @@ class StridedProxy(StoredProxy):
         return int(np.argmax(reach))
 
     # ------------------------------------------------------------------
+    #   RESHAPING
+    # ------------------------------------------------------------------
+
+    def _reads_strided(self) -> bool:
+        """Tell whether the values are read with the strides of the proxy.
+
+        A subclass that decodes its values in another way, such as packed
+        bits, returns false, and is then reshaped as any other proxy.
+        """
+        return True
+
+    def transpose(self, *axes: tx.Any) -> StoredProxy:
+        """Return the proxy with its axes in another order.
+
+        The result is a strided proxy of the same bytes, whose shape and
+        strides are permuted, so that it reads the bytes of a selection
+        and gives Dask slabs of its slowest axis, as the proxy does. Its
+        `root` is the root of the proxy, as for a reshape. A subclass
+        that does not read its values with strides gives a
+        [`PermutedProxy`][brainhops._core.proxy.PermutedProxy] instead.
+
+        Parameters
+        ----------
+        *axes : int or sequence of int
+            The permutation, given as integers or as one sequence. Axis
+            `i` of the result is axis `axes[i]` of the proxy.
+
+        Returns
+        -------
+        StoredProxy
+            The transposed proxy.
+
+        Raises
+        ------
+        ValueError
+            If the axes are not a permutation of the axes of the proxy.
+        """
+        if not self._reads_strided():
+            return super().transpose(*axes)
+        perm = _permutation(axes, len(self._shape))
+        if perm == tuple(range(len(perm))):
+            return self
+        return self._restrided(
+            [self._shape[i] for i in perm], [self.strides[i] for i in perm]
+        )
+
+    def _reshaped(self, shape: tx.Tuple[int, ...]) -> ArrayProxy:
+        """Return the proxy in another shape, by changing its strides.
+
+        When NumPy could reshape the values of the proxy without copying
+        them, the result is a strided proxy of the same bytes with the
+        new shape and the strides that NumPy would give, and reading it
+        reads only the bytes of a selection, as the proxy does. Its
+        `root` is the root of the proxy, so that a writer still sees
+        which file it reads, but it is not an instance of the class of
+        the proxy, so that a writer does not copy its bytes as those of
+        the whole file. Any other reshape gives a
+        [`ReshapedProxy`][brainhops._core.proxy.ReshapedProxy].
+        """
+        box = _whole(self._shape)
+        reshaped = self._reshaped_box(box, shape)
+        if reshaped is None:
+            return super()._reshaped(shape)
+        return reshaped
+
+    def _reshaped_box(
+        self, box: tx.Tuple[tx.Any, ...], shape: tx.Tuple[int, ...]
+    ) -> tx.Optional[StoredProxy]:
+        """Return a box of the proxy in another shape, or `None`.
+
+        The box is a strided array of the same bytes, with its own first
+        value and strides, so it can be reshaped as the proxy is, when
+        NumPy could do it without copying the values.
+        """
+        if not self._reads_strided() or not math.prod(shape):
+            return None
+        first, old_shape, old_strides = self._layout(box)
+        strides = _restride(old_shape, old_strides, shape)
+        if strides is None:
+            return None
+        return self._restrided(shape, strides, first)
+
+    def _restrided(
+        self,
+        shape: tx.Sequence[int],
+        strides: tx.Sequence[int],
+        offset: tx.Optional[int] = None,
+    ) -> "_RestridedProxy":
+        """Return a strided proxy of the same bytes with other strides."""
+        return _RestridedProxy(
+            self.source,
+            self._dtype,
+            shape,
+            strides,
+            self.offset if offset is None else offset,
+            start=self.start,
+            mmap=self.mmap,
+            base=self.root,
+        )
+
+    # ------------------------------------------------------------------
     #   READING
     # ------------------------------------------------------------------
 
@@ -276,11 +387,11 @@ class StridedProxy(StoredProxy):
         low, _ = self._whole_span
         return self._read_bytes(low, self.nbytes_stored)
 
-    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
-        # The stored values of a box. The position of its first value, its
-        # shape and its strides follow from the index, and the bytes
-        # between its first and its last value are read and viewed with
-        # those strides.
+    def _layout(
+        self, index: tx.Tuple[tx.Any, ...]
+    ) -> tx.Tuple[int, tx.List[int], tx.List[int]]:
+        # The position of the first value of a box, its shape and its
+        # strides, which follow from the index.
         first = self.offset
         shape = []
         strides = []
@@ -292,6 +403,12 @@ class StridedProxy(StoredProxy):
             first += start * stride
             shape.append(len(range(start, stop, step)))
             strides.append(step * stride)
+        return first, shape, strides
+
+    def _read(self, index: tx.Tuple[tx.Any, ...]) -> np.ndarray:
+        # The stored values of a box. The bytes between its first and its
+        # last value are read and viewed with the strides of the box.
+        first, shape, strides = self._layout(index)
         dtype = self._dtype
         local = _local(self.source)
         if (
@@ -345,6 +462,24 @@ class StridedProxy(StoredProxy):
         return content
 
 
+class _RestridedProxy(StridedProxy):
+    """A strided proxy that a reshape or a transpose of another one gives.
+
+    It reads the bytes of `base`, the proxy that the reader built, with
+    other strides, and its `root` is the root of `base`. A reshape or a
+    transpose of it holds the same `base`, so these proxies do not
+    nest.
+    """
+
+    base: tx.Any = None
+    """The stored proxy that a reader built, whose bytes it reads."""
+
+    @property
+    def root(self) -> StoredProxy:
+        """The root of `base`."""
+        return self.base.root
+
+
 # ----------------------------------------------------------------------
 #   HELPERS
 # ----------------------------------------------------------------------
@@ -361,6 +496,56 @@ def _contiguous_strides(
         strides[axis] = step
         step *= shape[axis]
     return strides
+
+
+def _restride(
+    shape: tx.Sequence[int],
+    strides: tx.Sequence[int],
+    new: tx.Sequence[int],
+) -> tx.Optional[tx.List[int]]:
+    """Return the strides of a reshape in C order that copies nothing.
+
+    The strides are those that NumPy gives to the view that it returns
+    when it reshapes an array of shape `shape` and strides `strides`
+    without copying it. A reshape groups neighbouring axes that hold as
+    many values on both sides, and a view exists when, within each group,
+    the old axes are laid out one after the other, each stride being the
+    next one times the next length.
+
+    Returns
+    -------
+    list of int or None
+        The new strides, or `None` when NumPy would have to copy the
+        values. The arrays hold at least one value.
+    """
+    # Axes of length one have no layout, so they are left out.
+    kept = [(n, s) for n, s in zip(shape, strides) if n != 1]
+    old = [n for n, _ in kept]
+    old_strides = [s for _, s in kept]
+    result = [0] * len(new)
+    i = j = 0
+    while i < len(new) and j < len(old):
+        a, b = i, j
+        size_new, size_old = new[i], old[j]
+        i += 1
+        j += 1
+        while size_new != size_old:
+            if size_new < size_old:
+                size_new *= new[i]
+                i += 1
+            else:
+                size_old *= old[j]
+                j += 1
+        for k in range(b, j - 1):
+            if old_strides[k] != old[k + 1] * old_strides[k + 1]:
+                return None
+        result[i - 1] = old_strides[j - 1]
+        for k in range(i - 1, a, -1):
+            result[k - 1] = result[k] * new[k]
+    # The axes of length one that end the new shape take any stride.
+    for k in range(i, len(new)):
+        result[k] = result[i - 1] if i else 0
+    return result
 
 
 def _span(

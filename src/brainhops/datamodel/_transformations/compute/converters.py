@@ -32,7 +32,7 @@ from ..concrete import (
     _is_tangent,
     _values2data,
 )
-from ..meta import SubspaceTransformation, _close_subspace
+from ..meta import Projection, SubspaceTransformation, _close_subspace
 from ..sequence import Sequence
 from ..tangents import (
     AffineExponential,
@@ -42,7 +42,7 @@ from ..tangents import (
     StationaryVelocityField,
 )
 from .convert import convert, converter
-from .utils import get_ndim
+from .utils import axis_counts, axis_list, get_ndim
 
 # typing
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
@@ -499,6 +499,50 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
                 matrix[out_axis, in_axis] = inner_matrix[r, c]
             matrix[out_axis, n_in] = inner_matrix[r, m_in]
     return cls(matrix=matrix, input=t.input, output=t.output)
+
+
+@converter
+def _(t: Projection, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
+    return _projection_to_matrix(t, cls, homogeneous=True, **kwargs)
+
+
+@converter
+def _(t: Projection, cls: tx.Type[LINEAR], **kwargs) -> LINEAR:
+    return _projection_to_matrix(t, cls, homogeneous=False, **kwargs)
+
+
+def _projection_to_matrix(
+    t: Projection, cls: tx.Type[TRANSFORMATION], homogeneous: bool, **kwargs
+) -> TRANSFORMATION:
+    # The matrix of a projection selects the kept input axes, in order,
+    # and has a row of zeros for each created axis, whose coordinate is
+    # zero. Its size is read from the systems of the projection, which a
+    # composer closes from a neighbour when they are missing.
+    if t.is_identity():
+        return convert(convert(t, Identity), cls, **kwargs)
+    n_in, n_out = axis_counts(t)
+    if n_in is None or n_out is None:
+        raise ConversionError(
+            "The number of axes of this projection is unknown, so it "
+            "cannot be written as a matrix, whose size is read from it. "
+            "Declare a closed input or output system, or compose the "
+            "projection with a neighbour that states the number of axes."
+        )
+    dropped, created = axis_list(t.dropped), axis_list(t.created)
+    kept = [i for i in range(n_in) if i not in dropped]
+    rows = [o for o in range(n_out) if o not in created]
+    if len(kept) != len(rows):
+        raise ConversionError(
+            f"A projection that drops the axes {dropped} and creates the "
+            f"axes {created} cannot map {n_in} axes onto {n_out} axes."
+        )
+    if "matrix" not in kwargs:
+        matrix = np.zeros((n_out, n_in + 1 if homogeneous else n_in))
+        matrix[rows, kept] = 1.0
+        kwargs["matrix"] = matrix
+    kwargs.setdefault("input", t.input)
+    kwargs.setdefault("output", t.output)
+    return cls(**kwargs)
 
 
 @converter

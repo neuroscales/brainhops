@@ -288,7 +288,7 @@ def test_a_layout_is_undone_on_read(tmp_path, layout) -> None:  # noqa: ANN001
     assert isinstance(image, MrtrixImage)
     assert image.shape == DATA.shape
     with backend("numpy"):
-        data = image.data
+        data = image.to_backend()
     assert np.array_equal(data, DATA)
     # The data is a read-only view of a memory map, not a copy.
     assert isinstance(data, np.memmap) or isinstance(data.base, np.memmap)
@@ -871,15 +871,17 @@ def test_nothing_but_the_data_reads_the_voxels(
     assert "_cache_data" not in vars(image)
     # Dask keeps the voxels lazy until they are computed.
     with backend("dask"):
-        lazy = MrtrixImage.load(source).data
+        lazy = MrtrixImage.load(source).to_backend()
     assert reads.count == 0
     assert np.asarray(lazy).shape == DATA.shape
     # A read of the voxels reads the file once.
     assert reads.count == 1
     reads.count = 0
+    with pytest.raises(TypeError):
+        image.data[0, 0, 0] = 1
     with backend("numpy"):
-        data = image.data
-    assert data.dtype == np.float32 and not data.flags.writeable
+        data = image.to_backend()
+    assert data.dtype == np.float32
     stored = np.arange(DATA.size).reshape(DATA.shape)
     assert np.allclose(data, -1 + 0.5 * stored)
     assert reads.count >= 1

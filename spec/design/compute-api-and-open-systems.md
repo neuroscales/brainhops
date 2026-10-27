@@ -2,7 +2,9 @@
 
 Part B of this memo, on open coordinate systems, is implemented in #112
 and #115. Part A, on the public operations `compute`, `simplify`,
-`factor`, `restrict` and `project`, is agreed but not implemented yet.
+`factor`, `restrict` and `project`, is agreed. Its first part, which
+lets `compute` read, compose and cancel projections, is implemented in
+#570, and the rest is not implemented yet.
 
 Part A defines a small set of public operations on transformations. Part B
 lets a coordinate system state that some of its axes are unknown, which
@@ -283,13 +285,21 @@ concrete containers share this interface: the immutable `AxisTuple`,
 typed per position and used by fixed-dimension systems, and the mutable
 `AxisList`, used by systems that may be open.
 
-Entries and positions are kept distinct. `len()`, iteration, `==`, `[i]`
-and `index` are about entries, including `...`, whereas `ndim`,
+Entries and positions are kept distinct. `len()`, iteration, `==` and
+`[i]` are about entries, including `...`, whereas `ndim`,
 `at(position)`, `expand`, `restrict`, `embed` and `compatible_with` are
 about positions in the space. In `[x, ..., t]`, entry 2 is `t`, while
 position 2 is one of the axes that `...` stands for, which `at` returns as
 an unknown `Axis()`. Lookup by name (`axes["x"]`, `"x" in axes`) reads only
 the explicit axes.
+
+`index` and `indices` find the axes that match a query, which is a name, a
+template axis, an axis class, a dictionary of axis fields or a function
+(#574). They return numbers that are entries and positions at once: an
+axis before `...` is counted from the start and an axis after `...` from
+the end, so that in `[x, ..., t]` the index of `t` is `-1`, and `axes[-1]`
+and `axes.at(-1)` are both `t`. `restrict` accepts the same queries,
+alone or among positions and names.
 
 ### B.3 Coordinate systems
 
@@ -362,13 +372,12 @@ raise `WriterError` when more axes are stated than the data has.
 
 ### B.7 Smaller changes
 
-`smartproperty` takes a single `unset=` option, which says when a stored
-value reads as "not set": `None` (the default), a predicate, or a tuple
-of these. A property over an inherited field whose default is an empty
-container takes the field over under a private name with
-`Inherit("x", default=None)` instead of reading an empty container as
-unset. `lazyproperty` takes no `unset=` option: it computes
-its value when nothing is stored and caches it. Every setter of either
+`smartproperty` computes its value when the stored value is `None`, and
+has no option to read any other value as "not set". A property over an
+inherited field whose default is an empty container takes the field
+over under a private name with `Inherit("x", default=None)`, so that an
+empty container is a value. `lazyproperty` computes its value when
+nothing is stored and caches it. Every setter of either
 property deletes the cached value of the property before it runs, and
 the cached values named by `invalidates=` after it runs.
 
@@ -387,18 +396,38 @@ the cached values named by `invalidates=` after it runs.
 
 ## Remaining work
 
-Part A will land in one pull request. It gives `Projection` coordinate
-systems and creation at `0`; replaces the restrictors of #104 with pair
-rewrite rules; adds `Transformation.restrict` and `project` and removes
-the transformation-level `embed`; makes `factor` a public pure rewrite and
-`compute` a single pass; makes reslice ask for `simplify="numeric"`; and
-adds the multi-block `SubspaceTransformation` and axis references by name.
-It will be checked by the parity sweep, the idempotence test and reslice
-timings.
+Part A lands in several pull requests. The first one, #570, wires
+`Projection` into `compute`:
+
+- created axes are `0`, and a projection that drops axes has no
+  inverse;
+- a projection derives the system on one side from a closed system on
+  the other side;
+- a projection whose number of axes is known converts to `Linear` and
+  `Affine`, so its kind is linear, as well as surjective or injective;
+- composers combine a projection with an affine-like neighbour, or with
+  a subspace that wraps an affine, and take the number of axes from that
+  neighbour when the projection does not state it;
+- a pair rule merges two adjacent projections into one, so that a drop
+  after the creation of the same axes cancels.
+
+Until the commutation rules exist, a composing `compute` multiplies a
+projection into its affine neighbours, and the factor pass still leaves
+unfactored a chain whose two ends have different numbers of axes.
+
+The remaining pull requests replace the restrictors of #104 with pair
+rewrite rules, including the commutation `π ∘ T → T' ∘ π'`; add
+`Transformation.restrict` and `project` and remove the
+transformation-level `embed`; make `factor` a public pure rewrite and
+`compute` a single pass; make reslice ask for `simplify="numeric"`; and
+add the multi-block `SubspaceTransformation` and axis references by name.
+They will be checked by the parity sweep, the idempotence test and
+reslice timings.
 
 ## Decisions
 
-Part A, agreed and not yet implemented:
+Part A, agreed. Decisions 4 and 7 are implemented in #570, and the
+others are not implemented yet:
 
 1. Restriction takes no `policy`; the policy belongs to `compute` and
    `simplify`.
@@ -433,13 +462,14 @@ Part B, implemented:
     and `RSAmm` are millimetre-only.
 20. `order` is declared on `CoordinateSystem`.
 21. `axes.R`, `L`, `A`, `P`, `S` and `I` are classes.
-22. `smartproperty` takes a single `unset=` option, and every setter of
-    a cached property deletes the cached value of that property.
+22. `smartproperty` computes its value when the stored value is `None`,
+    and every setter of a cached property deletes the cached value of
+    that property.
+23. `index` and `indices` return numbers that are entries and positions
+    at once, counted from the end after `...`, and `index`, `indices`
+    and `restrict` accept queries (#574).
 
 ## Open questions
 
-1. A.9 needs a public function that maps an axis reference to a position.
-   `AxisSequence.restrict` performs that step internally, while `index` and
-   `[name]` return entries, which are positions only in closed sequences.
-2. `Axis.merge_with` has no consumer. Part A will either use it, for
+1. `Axis.merge_with` has no consumer. Part A will either use it, for
    example when factors declare full-space systems, or remove it.

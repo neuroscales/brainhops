@@ -15,13 +15,14 @@ from bagof.magic import replace
 # core
 from brainhops._core.backends import (
     array_backend,
+    to_backend,
     to_promoted_backend,
 )
 from brainhops._core.bsplines import pull_field
 
 # api
 from brainhops.datamodel._sugar import get_axes
-from brainhops.errors import CompositionError
+from brainhops.errors import CompositionError, ConversionError
 
 # transformations
 from ..base import Transformation
@@ -37,7 +38,12 @@ from ..concrete import (
     Translation,
     _grid_like,
 )
-from ..meta import SubspaceTransformation, _close_subspace
+from ..meta import (
+    Projection,
+    SubspaceTransformation,
+    _close_projection,
+    _close_subspace,
+)
 from ..sequence import Sequence, _interpolates
 from .compose import compose, composer
 from .utils import axis_counts
@@ -244,9 +250,8 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    field = Ti.field
+    field, scale = to_promoted_backend(Ti.field, To.scale)
     grid = _grid_like(field)
-    field, scale = to_promoted_backend(field, To.scale)
     field = scale * field + (scale - 1) * grid
     return DisplacementField(
         field=field,
@@ -261,7 +266,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    field = Ti.field
+    field = to_backend(Ti.field)
     grid = _grid_like(field)
     field = (grid + field)[..., To.permutation] - grid
     return DisplacementField(
@@ -292,9 +297,8 @@ def _check_square(To: tx.Union[Linear, Affine]) -> None:
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    field = Ti.field
+    field, matrix = to_promoted_backend(Ti.field, To.matrix)
     grid = _grid_like(field)
-    field, matrix = to_promoted_backend(field, To.matrix)
     field = (grid + field) @ matrix.T - grid
     return DisplacementField(
         field=field,
@@ -310,9 +314,8 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
-    field = Ti.field
+    field, matrix = to_promoted_backend(Ti.field, To.matrix)
     grid = _grid_like(field)
-    field, matrix = to_promoted_backend(field, To.matrix)
     field = (grid + field) @ matrix[:, :-1].T + matrix[:, -1] - grid
     return DisplacementField(
         field=field,
@@ -519,6 +522,52 @@ def _(To: SubspaceTransformation, Ti: _AffineIsh) -> Affine:
         )
     To = _close_subspace(To, n_in=axis_counts(Ti)[1])
     return compose(To.to(Affine), Ti)
+
+
+# ----------------------------------------------------------------------
+#     PROJECTION o AFFINE
+# ----------------------------------------------------------------------
+# A projection is composed as its matrix, which selects the kept axes and has
+# a row of zeros for each created axis. The size of the matrix comes from the
+# systems of the projection or, when they are missing, from the neighbour,
+# since the space between two transformations is a single space. Two
+# projections never reach these composers, because a pair simplifier merges
+# them first.
+
+
+def _projection_matrix(t: Projection) -> Affine:
+    # Without a number of axes, the projection stays next to its neighbour,
+    # which the sequence engine does on a CompositionError.
+    try:
+        return t.to(Affine)
+    except ConversionError as error:
+        raise CompositionError(str(error)) from error
+
+
+@composer
+def _(To: Projection, Ti: _AffineIsh) -> Affine:
+    To = _close_projection(To, n_in=axis_counts(Ti)[1])
+    return compose(_projection_matrix(To), Ti)
+
+
+@composer
+def _(To: _AffineIsh, Ti: Projection) -> Affine:
+    Ti = _close_projection(Ti, n_out=axis_counts(To)[0])
+    return compose(To, _projection_matrix(Ti))
+
+
+@composer
+def _(To: Projection, Ti: SubspaceTransformation) -> Transformation:
+    # The subspace composer that receives the matrix of the projection
+    # refuses a subspace that wraps a field, and closes an open subspace.
+    To = _close_projection(To, n_in=axis_counts(Ti)[1])
+    return compose(_projection_matrix(To), Ti)
+
+
+@composer
+def _(To: SubspaceTransformation, Ti: Projection) -> Transformation:
+    Ti = _close_projection(Ti, n_out=axis_counts(To)[0])
+    return compose(To, _projection_matrix(Ti))
 
 
 @composer

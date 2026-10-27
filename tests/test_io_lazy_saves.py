@@ -68,13 +68,12 @@ def test_an_image_saved_over_itself_keeps_its_data(
     cls(data=DATA).save(target)
     with backend(name):
         image = cls.load(target)
-        cached = image.data
+        # The data are the lazy array of the file, which reads the file
+        # by name, so only the values that the caller reads outlive it.
+        cached = image.data.to_numpy()
         image.save(target, **options)
         assert np.array_equal(np.asarray(image.data), DATA)
-        if name == "numpy":
-            # A lazy Dask array that the caller keeps reads the files by
-            # name, as the image did, so only loaded data outlives them.
-            assert np.array_equal(cached, DATA)
+        assert np.array_equal(cached, DATA)
         image.save(target)
         assert np.array_equal(np.asarray(cls.load(target).data), DATA)
 
@@ -94,11 +93,10 @@ def test_a_nifti_field_saved_over_itself_keeps_its_values(
     NiftiRASCoordinateField(field=values).save(target)
     with backend(name):
         field = NiftiRASCoordinateField.load(target)
-        cached = field.data
+        cached = field.data.to_numpy()
         field.save(target, dtype="float64")
         assert np.array_equal(np.asarray(field.data), values)
-        if name == "numpy":
-            assert np.array_equal(cached, values)
+        assert np.array_equal(cached, values)
     back = NiftiRASCoordinateField.load(target)
     assert np.array_equal(np.asarray(back.data), values)
 
