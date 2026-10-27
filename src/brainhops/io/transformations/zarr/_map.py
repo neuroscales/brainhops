@@ -71,7 +71,6 @@ import typing_extensions as tx
 from abczarr.ome.v0_6 import transformations as _ot
 from bagof.dispatchers import Function, NoMethodError
 
-from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
@@ -1074,8 +1073,8 @@ def _part_matrix(
         if inputs != outputs:
             return None
         return np.eye(outputs, inputs + 1)
-    affine = _as_affine(part)
-    if affine is None:
+    affine = part.to_affine(error=None)
+    if affine is None or affine.matrix is None:
         return None
     matrix = np.asarray(affine.matrix, dtype=float)
     if matrix.shape != (outputs, inputs + 1):
