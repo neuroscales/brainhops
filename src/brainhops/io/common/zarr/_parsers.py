@@ -10,10 +10,10 @@ from abczarr import open as open_node
 
 # core
 from brainhops._core import path
+from brainhops._core.path import is_local
 
 # internals
 from brainhops.datamodel.base import DataModelBase
-from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

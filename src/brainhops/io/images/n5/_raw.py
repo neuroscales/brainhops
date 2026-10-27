@@ -3,7 +3,6 @@
 # stdlib
 import copy
 import json
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -220,38 +219,6 @@ class N5Raw(Raw, BinaryFileReader):
             is `True`.
         """
         return score(sniff_attributes(file), error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold dataset attributes.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not the
-            attributes of a dataset.
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            The confidence, `Confidence.CERTAIN` or `Confidence.NO`.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content is not the attributes of a dataset and `error`
-            is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
 
 # ----------------------------------------------------------------------

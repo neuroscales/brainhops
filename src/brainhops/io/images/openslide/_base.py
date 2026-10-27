@@ -20,7 +20,6 @@ from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -160,7 +159,7 @@ class OpenSlideReader(BinaryFileReader):
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open("rb") as f:
             content = f.read()
-        slide = _Slide.from_content(content, _to_filename(filename))
+        slide = _Slide.from_content(content, path.base_name(filename))
         return cls.from_source(slide, **kwargs)
 
     @classmethod
@@ -182,7 +181,7 @@ class OpenSlideReader(BinaryFileReader):
             return cls.from_source(_Slide(local), **kwargs)
         with preserve_position(file):
             content = file.read()
-        slide = _Slide.from_content(content, _to_filename(file))
+        slide = _Slide.from_content(content, path.base_name(file))
         return cls.from_source(slide, **kwargs)
 
     @classmethod

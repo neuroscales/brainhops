@@ -21,9 +21,9 @@ from brainhops.io.base.parsers import (
 
 nb = pytest.importorskip("nibabel")
 
+from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiBasedTransformation,
     NiftiRASCoordinateField,
     NiftiVoxelToRAS,
 )
@@ -38,14 +38,14 @@ NIFTI_FORMATS = [
     SpmCoordinateField,
 ]
 
-# Methods that each NIfTI format specializes, in `NiftiImage` or in
-# `NiftiBasedTransformation` and the formats below it. The generic
-# `from_file` and `from_bytes` of the ladder reach them.
+# Methods that each NIfTI format specializes, in `NiftiReaderWriter`, which
+# both `NiftiImage` and `NiftiBasedTransformation` list first, or in the
+# formats below them. The generic `from_file`, `from_bytes` and
+# `sniff_bytes` of the ladder reach them.
 SPECIALIZED = [
     "from_filename",
     "from_fileobj",
     "sniff_fileobj",
-    "sniff_bytes",
 ]
 
 
@@ -57,7 +57,7 @@ def _owner(cls: type, name: str) -> type:
 @pytest.mark.parametrize("method", SPECIALIZED)
 def test_the_format_specific_reader_wins(cls: type, method: str) -> None:
     owner = _owner(cls, method)
-    assert issubclass(owner, (NiftiImage, NiftiBasedTransformation))
+    assert issubclass(owner, NiftiReaderWriter)
 
 
 @pytest.mark.parametrize("cls", NIFTI_FORMATS, ids=lambda c: c.__name__)

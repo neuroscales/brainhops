@@ -17,6 +17,8 @@ import typing_extensions as tx
 # core
 from brainhops._core import path
 from brainhops._core.backends import to_backend
+
+# io
 from brainhops._core.typing import ArrayProtocol
 
 # datamodel
@@ -27,9 +29,6 @@ from brainhops.datamodel.enums import (
     InterpolationOrder,
     StoreEnum,
 )
-
-# io
-from brainhops.io.base._utils_files import sibling
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserError,
@@ -182,7 +181,7 @@ def read_volume(
             return None
         filename = path.Path(name)
     else:
-        filename = sibling(location, name)
+        filename = path.Path(location).parent / name
     try:
         from brainhops.io.images.minc import MincImage
     except ImportError as error:
