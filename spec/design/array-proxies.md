@@ -584,7 +584,8 @@ the members that a subclass must define stay abstract. A field cannot
 implement an abstract property, so a proxy that receives its shape or
 its type keeps it in a private field, given by its public name, and
 returns it from the property: the `_shape` and `_dtype` of
-`StridedProxy` are given as `shape=` and `dtype=`. A proxy compares
+`StridedProxy`, and the `_shape` of `ReshapedProxy`, are given as
+`shape=` and `dtype=`. A proxy compares
 its values with `==`, as a NumPy array does (see "Computing with a
 proxy"). The fields of a subclass convert their arguments to their
 types, and its representation is the one that `Magic` builds, which

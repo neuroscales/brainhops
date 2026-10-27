@@ -357,7 +357,7 @@ class StridedProxy(StoredProxy):
             self.offset if offset is None else offset,
             start=self.start,
             mmap=self.mmap,
-            origin=self.root,
+            base=self.root,
         )
 
     # ------------------------------------------------------------------
@@ -457,17 +457,19 @@ class StridedProxy(StoredProxy):
 class _RestridedProxy(StridedProxy):
     """A strided proxy that a reshape or a transpose of another one gives.
 
-    It reads the bytes of the proxy that it was reshaped or transposed
-    from, with other strides, and its `root` is the root of that proxy.
+    It reads the bytes of `base`, the proxy that the reader built, with
+    other strides, and its `root` is the root of `base`. A reshape or a
+    transpose of it holds the same `base`, so these proxies do not
+    nest.
     """
 
-    origin: tx.Any = None
-    """The stored proxy that a reader built, which the values come from."""
+    base: tx.Any = None
+    """The stored proxy that a reader built, whose bytes it reads."""
 
     @property
     def root(self) -> StoredProxy:
-        """The root of the proxy that this one was reshaped from."""
-        return self.origin.root
+        """The root of `base`."""
+        return self.base.root
 
 
 # ----------------------------------------------------------------------

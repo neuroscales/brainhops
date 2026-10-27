@@ -57,6 +57,7 @@ from numpy.lib.mixins import NDArrayOperatorsMixin
 # core
 from . import backends
 from .linalg import ArrayProtocol
+from .properties import alias
 
 _Box: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 """The box that [`StoredProxy._read`][brainhops._core.proxy.StoredProxy._read]
@@ -446,8 +447,8 @@ class ArrayProxy(
     ) -> tx.Any:
         """Apply a universal function of NumPy, such as `np.add`.
 
-        The operators of a proxy call this method too, through
-        `NDArrayOperatorsMixin`. The proxies among the operands are
+        The operators of Python, such as `proxy + 1`, call this method
+        too. The proxies among the operands are
         converted to the backend of the computation, and so are the
         arrays of other backends. When the computation writes into the
         arrays given as `out`, it runs in their backend. Otherwise, the
@@ -1324,37 +1325,31 @@ class ScaledProxy(ArrayProxy):
 class ReshapedProxy(StoredProxy):
     """A lazy array of the values of another proxy, in another shape.
 
-    The values are those of `base`, read in C order and placed in C
-    order in the new shape, as `np.reshape` places them. The proxy is a
-    stored proxy whose storage is `base`, so that indexing it and
-    transposing it work as for the proxy of a file, and its `root` is
-    the root of `base`. Reshaping it again reshapes `base`, so reshaped
-    proxies never nest.
+    The values are those of `base`, placed in the new shape in C order,
+    as `np.reshape` places them. A reshaped proxy is indexed and
+    transposed as the proxy of a file is, and its `root` is the root of
+    `base`. Reshaping it again reshapes `base`.
 
-    A read maps the box that it receives to a box of `base`. A reshape
-    splits or merges groups of neighbouring axes, and for each group,
-    the box of `base` runs from the row of the first selected value to
-    the row of the last one, so that a read gets at most one extra row
-    on each side of a group. The values of that box are then reshaped in
-    memory, and the selected ones are taken from them.
+    A read gets the rows of `base` that hold the selected values: along
+    each group of axes that the reshape splits or merges, at most one
+    extra row on each side.
 
     [`ArrayProxy.reshape`][brainhops._core.proxy.ArrayProxy.reshape]
-    builds a reshaped proxy only when it cannot do better, which is when
-    the reshape does more than add or remove axes of length one, and
-    when `base` is not a strided proxy whose values NumPy could reshape
-    without copying them.
+    returns a reshaped proxy when the reshape does more than add or
+    remove axes of length one, unless `base` is a strided proxy whose
+    values NumPy could reshape without copying them.
     """
 
     base: tx.Any
     """The proxy whose values are presented in another shape."""
 
+    # A field cannot implement the abstract property `shape`, so the
+    # shape is kept in a private field, given as `shape=`.
     _shape: tx.Tuple[int, ...]
     """The new shape, given as `shape=`."""
 
-    @property
-    def shape(self) -> tx.Tuple[int, ...]:
-        """The new shape."""
-        return self._shape
+    shape = alias("_shape", readonly=True)
+    """The new shape."""
 
     @property
     def dtype(self) -> np.dtype:
