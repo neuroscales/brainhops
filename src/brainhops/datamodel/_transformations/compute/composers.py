@@ -15,6 +15,7 @@ from bagof.magic import replace
 # core
 from brainhops._core.backends import (
     array_backend,
+    to_backend,
     to_promoted_backend,
 )
 from brainhops._core.bsplines import pull_field
@@ -265,7 +266,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 @composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
-    (field,) = to_promoted_backend(Ti.field)
+    field = to_backend(Ti.field)
     grid = _grid_like(field)
     field = (grid + field)[..., To.permutation] - grid
     return DisplacementField(

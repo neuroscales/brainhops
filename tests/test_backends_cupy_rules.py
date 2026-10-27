@@ -183,3 +183,16 @@ def test_a_cupy_field_is_composed_with_a_lazy_field(cp) -> None:  # noqa: ANN001
 def test_the_coefficients_of_a_cupy_field_stay_on_the_gpu(cp) -> None:  # noqa: ANN001
     expected = DisplacementField(FIELD).coefficients
     _on_gpu(cp, DisplacementField(cp.asarray(FIELD)).coefficients, expected)
+
+
+def test_a_proxy_is_read_before_it_meets_the_gpu(cp) -> None:  # noqa: ANN001
+    # Under the default setting, a lazy array is read and moved to the
+    # GPU of the arrays that it is combined with.
+    from brainhops._core.backends import to_backend_of, to_promoted_backend
+
+    gpu = cp.asarray(VOLUME)
+    moved = to_promoted_backend(gpu, _proxy(VOLUME), np.eye(3))
+    assert all(isinstance(x, cp.ndarray) for x in moved)
+    _on_gpu(cp, to_backend_of(_proxy(VOLUME), gpu), VOLUME)
+    converted = to_promoted_backend(gpu, _proxy(VOLUME), dtype=np.float64)
+    assert all(x.dtype == np.float64 for x in converted)

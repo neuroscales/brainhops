@@ -516,7 +516,7 @@ def coeff2value_field(
     ArrayLike
         The values, with the same shape as `field`.
     """
-    (field,) = to_promoted_backend(field)
+    field = to_backend(field)
     xp = array_backend(field)
     ndim = field.shape[-1]
     field = xp.moveaxis(field, -1, 0)
@@ -954,7 +954,7 @@ def value2coeff_field(
     ArrayLike
         The coefficients, with the same shape as `field`.
     """
-    (field,) = to_promoted_backend(field)
+    field = to_backend(field)
     xp = array_backend(field)
     ndim = field.shape[-1]
     field = xp.moveaxis(field, -1, 0)

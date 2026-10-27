@@ -216,3 +216,28 @@ def test_fields_are_composed_on_the_gpu() -> None:
         field = (first @ second).compute().field
     assert isinstance(field, cp.ndarray)
     np.testing.assert_allclose(field.get(), expected)
+
+
+# --- Conversions ------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", ["numpy", "dask", "auto", "native"])
+@pytest.mark.parametrize("source", ["numpy", "dask"])
+def test_a_conversion_gives_the_requested_type(
+    source: str, target: str
+) -> None:
+    # The type of the values is honoured whatever the source and target.
+    from brainhops._core.backends import to_backend
+
+    values = VOLUME if source == "numpy" else da.from_array(VOLUME, chunks=6)
+    converted = to_backend(values, target, dtype=np.float64)
+    assert converted.dtype == np.float64
+    assert to_backend(values, target).dtype == VOLUME.dtype
+
+
+def test_a_value_that_is_not_an_array_is_kept() -> None:
+    from brainhops._core.backends import to_backend
+
+    assert to_backend(None) is None
+    assert to_backend(2.5, "dask") == 2.5
+    assert to_promoted_backend(None, 3, VOLUME)[:2] == (None, 3)

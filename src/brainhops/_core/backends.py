@@ -345,7 +345,7 @@ def to_numpy(x: ArrayLike, **kwargs) -> "nparray":
     if is_dask(x):
         x = x.compute()
     if is_cupy(x):
-        return x.get()
+        x = x.get()
     return np.asarray(x, **kwargs)
 
 
@@ -469,13 +469,15 @@ def to_backend(
     backend: tx.Optional[BackendLike] = None,
     *,
     device: tx.Union[str, int, None] = None,
-    **kwargs,
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> ArrayProtocol:
     """Convert an array, or a lazy array of a file, as a setting says.
 
     Under `"native"`, a loaded array is returned as it is, and a lazy array is
     resolved with `"auto"`. Converting to NumPy or CuPy computes a Dask
-    array and reads a lazy array. Converting to Dask reads nothing.
+    array and reads a lazy array. Converting to Dask reads nothing. A
+    value that is not an array, such as `None` or a number, is returned
+    as it is.
 
     Parameters
     ----------
@@ -485,6 +487,9 @@ def to_backend(
         The setting. By default, the current setting is used.
     device : str | int, optional
         The device for converted arrays. The backend supplies its default.
+    dtype : dtype-like, optional
+        The type of the values of the result. By default, the type of
+        the values is kept.
 
     Returns
     -------
@@ -496,15 +501,21 @@ def to_backend(
     ImportError
         If a package that the setting needs is not installed.
     """
+    if not hasattr(x, "shape"):
+        return x
     target = resolve_backend(x, backend)
     _check_dependencies(target)
     if target == "numpy":
-        return to_numpy(x, **kwargs)
-    if target == "cupy":
-        return to_cupy(x, device=device, **kwargs)
-    if device is None:
-        device = "cuda" if target == "dask+cupy" else "cpu"
-    return to_dask(x, device=device, **kwargs)
+        x = to_numpy(x)
+    elif target == "cupy":
+        x = to_cupy(x, device=device)
+    else:
+        if device is None:
+            device = "cuda" if target == "dask+cupy" else "cpu"
+        x = to_dask(x, device=device)
+    if dtype is not None and x.dtype != np.dtype(dtype):
+        x = x.astype(dtype)
+    return x
 
 
 def promote_backends(*arrays_or_backends: tx.Any) -> tx.Optional[str]:
@@ -549,7 +560,8 @@ def promote_backends(*arrays_or_backends: tx.Any) -> tx.Optional[str]:
 
 
 def to_promoted_backend(
-    *arrays: tx.Unpack[tx.Tuple[ArrayLike, ...]], **kwargs
+    *arrays: tx.Unpack[tx.Tuple[ArrayLike, ...]],
+    dtype: tx.Optional[DTypeLike] = None,
 ) -> tx.Tuple[ArrayLike, ...]:
     """Move arrays to the backend in which a computation combines them.
 
@@ -573,31 +585,30 @@ def to_promoted_backend(
     ----------
     *arrays : Any
         The arrays that the computation combines.
+    dtype : dtype-like, optional
+        The type of the values of the arrays. By default, each array
+        keeps the type of its values.
 
     Returns
     -------
     tuple
         The arrays, in the same order.
     """
-    if _BACKEND != "native":
-        return tuple(
-            to_backend(x, **kwargs) if hasattr(x, "shape") else x
-            for x in arrays
-        )
-    if not any(_on_gpu(x) for x in arrays if _is_loaded(x)):
-        # A value without a shape, such as `None` or a number, is not an
-        # array and is kept as it is.
-        return tuple(
-            to_backend(x, "native", **kwargs) if hasattr(x, "shape") else x
-            for x in arrays
-        )
-    return tuple(to_device(x, "cuda", **kwargs) for x in arrays)
+    # Each array is first converted with the setting, which reads a lazy
+    # array of a file and leaves a loaded array as it is under "native".
+    arrays = tuple(to_backend(x, dtype=dtype) for x in arrays)
+    if any(_on_gpu(x) for x in arrays if _is_loaded(x)):
+        arrays = tuple(to_device(x, "cuda") for x in arrays)
+    return arrays
 
 
 def to_backend_of(
     x: ArrayProtocol, reference: ArrayProtocol, **kwargs
 ) -> ArrayProtocol:
     """Move an array to the backend of a reference array.
+
+    A lazy array, such as the array of a file, is first converted as
+    [`to_backend`][] converts it under `"native"`.
 
     Parameters
     ----------
@@ -606,12 +617,15 @@ def to_backend_of(
         An argument that is not an array is returned as it is.
     reference : Any
         The array whose device `x` takes.
+    **kwargs : Any
+        Options of [`to_device`][].
 
     Returns
     -------
     Any
         The moved array.
     """
+    x = to_backend(x, "native")
     if not _is_loaded(x) or not _is_loaded(reference):
         return x
     device = get_device(reference)
