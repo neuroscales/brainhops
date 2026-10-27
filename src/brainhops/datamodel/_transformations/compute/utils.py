@@ -1,8 +1,12 @@
+import contextlib
+import contextvars
+
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core.backends import array_backend
 from brainhops.datamodel._sugar import get_axes
-from brainhops.errors import ConversionError
+from brainhops.errors import ConversionError, RestrictionError
 
 if tx.TYPE_CHECKING:
     from brainhops.datamodel.systems import CoordinateSystem
@@ -260,3 +264,71 @@ def affine_matrix(t: "Transformation") -> tx.Any:
         return UNREADABLE
     matrix = affine.matrix
     return None if matrix is None else np.asarray(matrix)
+
+
+# ----------------------------------------------------------------------
+#   FREE AXES
+# ----------------------------------------------------------------------
+# A projection may create an axis whose value is NaN, which the result of
+# `compute` must not depend on. Composers call `compute` on partial
+# products, in which such an axis may still reach an output that a later
+# projection drops, so only the outermost call checks its result, and only
+# when it composes, since `simplify` leaves the projections in place.
+
+_COMPUTE_DEPTH: contextvars.ContextVar = contextvars.ContextVar(
+    "compute_depth", default=0
+)
+
+
+@contextlib.contextmanager
+def compute_depth() -> tx.Iterator[int]:
+    """Track nested calls to `compute`, and give the depth of this one.
+
+    The outermost call has depth zero.
+    """
+    depth = _COMPUTE_DEPTH.get()
+    token = _COMPUTE_DEPTH.set(depth + 1)
+    try:
+        yield depth
+    finally:
+        _COMPUTE_DEPTH.reset(token)
+
+
+def refuse_free_axes(t: "Transformation") -> None:
+    """Raise if a computed transformation depends on a free axis.
+
+    A free axis is created by a projection whose `at` holds NaN. The
+    result depends on it when such a projection is left in it, or when an
+    affine holds the NaN that the axis carries into the outputs that read
+    it. Fields are not inspected, because they may hold NaN for other
+    reasons.
+
+    Raises
+    ------
+    RestrictionError
+        If the transformation depends on a free axis.
+    """
+    # These imports stay local because the modules `concrete`, `meta` and
+    # `sequence` import this module when they load.
+    from ..concrete import Affine
+    from ..meta import Projection, SubspaceTransformation, _has_free_axes
+    from ..sequence import Sequence
+
+    def depends(leaf: "Transformation") -> bool:
+        if isinstance(leaf, Sequence):
+            return any(depends(x) for x in leaf.transformations or [])
+        if isinstance(leaf, SubspaceTransformation):
+            return depends(leaf.transformation)
+        if isinstance(leaf, Projection):
+            return _has_free_axes(leaf)
+        if type(leaf) is Affine and leaf.matrix is not None:
+            xp = array_backend(leaf.matrix)
+            return bool(xp.any(xp.isnan(leaf.matrix)))
+        return False
+
+    if depends(t):
+        raise RestrictionError(
+            "The result depends on an axis that a projection creates free, "
+            "with NaN in `at`, so it has no defined value. Give the axis a "
+            "value, or keep only the outputs that do not read it."
+        )

@@ -809,6 +809,13 @@ def _affine_to_ome(
             "This image is placed by a transformation that is not an affine, "
             "so it cannot be written as OME-Zarr multiscale metadata."
         )
+    # A projection writes the values of its created axes in the translation
+    # of its matrix, and a free axis, whose value is NaN, has none to write.
+    if np.any(np.isnan(np.asarray(affine.matrix, dtype=float))):
+        raise OmeMappingError(
+            "This transformation depends on an axis that a projection "
+            "creates free, which has no value to write."
+        )
     matrix = permute_affine(affine.matrix, storage_perm)
     decomposed = scale_translation_from_affine(matrix, ndim)
     if decomposed is None:
