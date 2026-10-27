@@ -9,7 +9,6 @@ import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
-from nibabel.arrayproxy import ArrayProxy
 
 # internals
 from brainhops._core import path
@@ -30,6 +29,7 @@ from ._constants import (
     _NIFTI_INTENT_VECTOR,
     _NIFTI_SPECIFIC_AXES,
 )
+from ._data import _NiftiProxy, stored_dtype, whole_file
 from ._raw import NiftiRaw, read_nifti
 from ._vocabulary import encode
 
@@ -107,11 +107,13 @@ def _new_nifti(
 
     The array is stored as given, so lazy and device arrays are not
     materialised. nibabel chooses the stored data type from the array and
-    refuses the types that NIfTI cannot store. Arrays of 64-bit integers
-    are refused as well, because many tools cannot read them. When a
-    header is given, the image is then built again over that header,
-    which receives the chosen data type. A NIfTI-2 header gives a NIfTI-2
-    image whatever the extents.
+    refuses the types that NIfTI cannot store. The lazy array of a whole
+    NIfTI file gives the type that its file stores, whatever the type of
+    its scaled values. Arrays of 64-bit integers are refused as well,
+    because many tools cannot read them. When a header is given, the
+    image is then built again over that header, which receives the
+    chosen data type. A NIfTI-2 header gives a NIfTI-2 image whatever
+    the extents.
 
     Raises
     ------
@@ -120,6 +122,8 @@ def _new_nifti(
         holds 64-bit integers.
     """
     dtype = getattr(data, "dtype", None)
+    if dtype is not None:
+        dtype = stored_dtype(data)
     # nibabel 5 refuses 64-bit integers here, but nibabel 4 only warns and
     # writes them. The check is made here so that the outcome does not
     # depend on the version of nibabel.
@@ -137,8 +141,10 @@ def _new_nifti(
         image_cls = nb.Nifti2Image
     try:
         image = image_cls(data, affine)
+        if dtype is not None and dtype != np.dtype(data.dtype):
+            image.set_data_dtype(dtype)
     except ValueError as error:
-        dtype = getattr(data, "dtype", "unknown")
+        dtype = getattr(data, "dtype", "unknown") if dtype is None else dtype
         raise WriterError(
             f"NIfTI cannot store an array of type {dtype}: {error}"
         ) from error
@@ -277,7 +283,7 @@ def _reset_structural_fields(header: nb.Nifti1Header) -> None:
 
 
 def _stored_scaling(
-    header: tx.Optional[nb.Nifti1Header], proxy: ArrayProxy
+    header: tx.Optional[nb.Nifti1Header], proxy: _NiftiProxy
 ) -> tx.Tuple[tx.Any, tx.Any]:
     """Return the `scl_slope` and `scl_inter` to write with unscaled voxels.
 
@@ -317,19 +323,21 @@ def _record_image(
     type follow the array. Without a record, the header is new, and its
     affine is `affine` or the identity.
 
-    The array of the image is `raw` as it is given. A nibabel proxy keeps
-    the data type and the scaling that its file stored, so the header
-    records how the proxy is stored and [`_written_nifti`][] writes it
-    unscaled, byte for byte. When the `overrides`, which the caller
-    applies afterwards, change the data type or the scaling, the proxy is
-    read and scaled again when it is written instead.
+    The array of the image is `raw` as it is given. The lazy array of a
+    whole NIfTI file keeps the data type and the scaling that its file
+    stored, so the header records how the file stores it and
+    [`_written_nifti`][] writes it unscaled, byte for byte. When the
+    `overrides`, which the caller applies afterwards, change the data
+    type or the scaling, the lazy array is read and scaled again when it
+    is written instead.
     """
     header = None if record is None else record.header
     scaling = None
-    if isinstance(raw, ArrayProxy) and not (
+    whole = whole_file(raw)
+    if whole is not None and not (
         _STORAGE_OVERRIDES.intersection(overrides or {})
     ):
-        scaling = _stored_scaling(header, raw)
+        scaling = _stored_scaling(header, whole)
     if header is None:
         affine = np.eye(4) if affine is None else affine
         image = _new_nifti(raw, affine)
@@ -346,7 +354,7 @@ def _record_image(
     return image
 
 
-def _stores_proxy(header: nb.Nifti1Header, proxy: ArrayProxy) -> bool:
+def _stores_proxy(header: nb.Nifti1Header, proxy: _NiftiProxy) -> bool:
     """Tell whether a header stores the voxels of a proxy as they are.
 
     The header must have the data type of the stored voxels, and a slope
@@ -363,12 +371,14 @@ def _stores_proxy(header: nb.Nifti1Header, proxy: ArrayProxy) -> bool:
 def _stores_array(header: nb.Nifti1Header, array: ArrayProtocol) -> bool:
     """Tell whether a header stores an array as it is.
 
-    A proxy is stored as it is when the header has its stored data type
-    and its scaling. Any other array is stored as it is when the header
-    has its data type and no scaling.
+    The lazy array of a whole NIfTI file is stored as it is when the
+    header has the data type and the scaling of that file. Any other
+    array is stored as it is when the header has its data type and no
+    scaling.
     """
-    if isinstance(array, ArrayProxy):
-        return _stores_proxy(header, array)
+    whole = whole_file(array)
+    if whole is not None:
+        return _stores_proxy(header, whole)
     slope, inter = header.get_slope_inter()
     return (
         header.get_data_dtype() == array.dtype
@@ -400,15 +410,16 @@ def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:
     The record is written as it is, since it already encodes the layout
     of the array and the geometry, and nibabel writes a copy of it, so
     the record is not changed. nibabel chooses the offset of the voxels
-    again, as for a new header. A proxy that the header stores as it is,
-    as an encoder leaves an untouched proxy, is written unscaled, so that
-    its voxels are copied byte for byte. Any other array is written with
-    the data type of the header, and nibabel scales it when the header
-    has no scaling.
+    again, as for a new header. The lazy array of a whole file that the
+    header stores as it is, as an encoder leaves an untouched lazy
+    array, is written unscaled, so that its voxels are copied byte for
+    byte. Any other array is written with the data type of the header,
+    and nibabel scales it when the header has no scaling.
     """
     header = record.header
-    if isinstance(raw, ArrayProxy) and _stores_proxy(header, raw):
-        raw = raw.get_unscaled()
+    whole = whole_file(raw)
+    if whole is not None and _stores_proxy(header, whole):
+        raw = whole
     image_cls = nb.Nifti1Image
     if isinstance(header, nb.Nifti2Header):
         image_cls = nb.Nifti2Image

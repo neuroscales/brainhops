@@ -20,6 +20,7 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
+from brainhops.io.common.nifti._data import _NiftiProxy
 from brainhops.io.common.nifti._header import (
     _NiftiObject,
     _written_nifti,
@@ -44,7 +45,8 @@ class NiftiBasedTransformation(
     A NIfTI transformation holds the header of its file as
     [`NiftiMetadata`][], and the array of the file as it is stored in
     `rawdata`. When the transformation is read from a file, `rawdata` is
-    a nibabel proxy, which reads the array only when it is needed. Each
+    a lazy array, which reads the array of the file only when it is
+    needed. Each
     concrete format decodes its `data`, and the transformation of the
     data model, from `rawdata` and from the header, and caches what it
     decodes.
@@ -75,11 +77,12 @@ class NiftiBasedTransformation(
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array of the file as it is stored, or `None` without one.
 
-    After a read, `rawdata` is a nibabel proxy, which applies the
-    scaling of the header when it is read. A transformation that keeps
-    its data in the header, such as an affine, has no array. `rawdata`
-    describes the file as it was read, or as the transformation was last
-    consolidated, so assigning `data` leaves it as it is.
+    After a read, `rawdata` is a lazy array of the file, which applies
+    the scaling of the header when it is read, as nibabel applies it. A
+    transformation that keeps its data in the header, such as an affine,
+    has no array. `rawdata` describes the file as it was read, or as the
+    transformation was last consolidated, so assigning `data` leaves it
+    as it is.
     """
 
     # --- reading ------------------------------------------------------
@@ -158,17 +161,19 @@ class NiftiBasedTransformation(
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
         """Read a transformation from the path of a NIfTI file.
 
-        A local file is handed to nibabel by name, so that nibabel opens
-        it whenever the array is read and can memory-map it. A remote file
-        is read into memory instead.
+        A local file is kept by its name, so that the lazy array opens it
+        whenever the array is read, and memory-maps it when the file is
+        not compressed. A remote file is read into memory instead.
 
         Parameters
         ----------
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of the nibabel readers, such as `mmap` and
-            `keep_file_open`.
+            Reader options that nibabel's readers also take. `mmap`
+            tells whether the array of a local file that is not
+            compressed is memory-mapped. The other options, such as
+            `keep_file_open`, are ignored.
 
         Returns
         -------
@@ -191,16 +196,18 @@ class NiftiBasedTransformation(
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
         """Read a transformation from an open NIfTI stream.
 
-        The proxy reads the array from the stream when it is needed, so
-        the stream must stay open while the data may be read.
+        The lazy array reads the array from the stream when it is needed,
+        so the stream must stay open while the data may be read.
 
         Parameters
         ----------
         file : BinaryIO
             The stream, which may be compressed with gzip.
         **kwargs : Any
-            Options of the nibabel readers, such as `mmap` and
-            `keep_file_open`.
+            Reader options that nibabel's readers also take. `mmap`
+            tells whether the array of a local file that is not
+            compressed is memory-mapped. The other options, such as
+            `keep_file_open`, are ignored.
 
         Returns
         -------
@@ -214,9 +221,12 @@ class NiftiBasedTransformation(
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """Build a transformation from a nibabel image or header.
 
-        The array of an image becomes `rawdata` as it is, and a copy of
-        its header becomes the record of the metadata. A header alone
-        gives a transformation without an array.
+        The array of an image becomes `rawdata`, and a copy of its header
+        becomes the record of the metadata. A header alone gives a
+        transformation without an array. The array proxy of an image that
+        nibabel read from a file is replaced by the lazy array that
+        [`from_filename`][] builds for that file, and any other array is
+        kept as it is.
 
         Parameters
         ----------
@@ -379,7 +389,9 @@ def _nibabel_parts(
 ) -> tx.Tuple[tx.Optional[ArrayProtocol], _NiftiHeader]:
     """Return the array and the header of a nibabel image or header.
 
-    A header alone has no array.
+    A header alone has no array. The array proxy of an image that nibabel
+    read from a file is replaced by the lazy array that brainhops reads
+    the same file with.
 
     Raises
     ------
@@ -387,7 +399,7 @@ def _nibabel_parts(
         If `nifti` is neither a NIfTI image nor a NIfTI header.
     """
     if isinstance(nifti, nb.Nifti1Image):
-        return nifti.dataobj, nifti.header
+        return _NiftiProxy.from_nibabel(nifti.dataobj), nifti.header
     if isinstance(nifti, nb.Nifti1Header):
         return None, nifti
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")

@@ -1,9 +1,10 @@
 """FreeSurfer MGH and MGZ images.
 
 An `.mgh` file holds a 3D or 4D volume with its geometry, and an `.mgz`
-file holds the same bytes compressed with gzip. Both are read and written
-through `nibabel` (`pip install brainhops[mgh]`) and are recognized from
-their content, whatever the file name.
+file holds the same bytes compressed with gzip. nibabel parses their
+headers and writes their files (`pip install brainhops[mgh]`), and
+brainhops reads their voxels itself. Both are recognized from their
+content, whatever the file name.
 
 ```python
 import brainhops.io as io

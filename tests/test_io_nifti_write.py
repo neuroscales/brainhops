@@ -35,6 +35,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.common.nifti._data import _NiftiProxy  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinateField,
@@ -1178,7 +1179,10 @@ def test_a_nibabel_image_becomes_a_proxy_and_a_record(tmp_path) -> None:  # noqa
     source = _write_image(tmp_path, "source.nii", np.ones((3, 4, 5), "f4"))
     nifti = nb.load(str(source))
     image = NiftiImage.from_nibabel(nifti)
-    assert image.rawdata is nifti.dataobj
+    # The proxy of nibabel is replaced by the lazy array of the same file.
+    assert isinstance(image.rawdata, _NiftiProxy)
+    assert image.rawdata.source == str(source)
+    assert np.array_equal(np.asarray(image.rawdata), nifti.dataobj)
     assert image.metadata.raw.header is not nifti.header
     assert np.allclose(image.to_nibabel().affine, nifti.affine)
     empty = NiftiImage.from_nibabel(nifti.header)

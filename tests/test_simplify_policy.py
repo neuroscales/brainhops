@@ -62,7 +62,27 @@ def test_scalar_forms() -> None:
     for v in ("analytic", analytic):
         assert normalize_simplify(v) == {None: analytic}
     for v in (True, "numeric", "Numeric", numeric):
-        assert normalize_simplify(v) == {None: numeric}
+        assert normalize_simplify(v) == {None: analytic, AFF: numeric}
+    # An explicit None key keeps meaning that every transformation is
+    # read numerically.
+    assert normalize_simplify({None: "numeric"}) == {None: numeric}
+
+
+def test_bare_numeric_reaches_every_matrix_transformation() -> None:
+    from brainhops.datamodel.transformations import Projection
+
+    table = normalize_simplify("numeric")
+    aff = Affine(matrix=np.array([[2.0, 0.0, 0.0], [0.0, 3.0, 0.0]]))
+    sub = SubspaceTransformation(
+        transformation=aff, input_axes=[0, 1], output_axes=[0, 1]
+    )
+    for t in (aff, aff.inverse(), Projection(dropped=[1]), sub):
+        assert resolve_simplify(t, table) is numeric, t
+    for t in (
+        DisplacementField(field=_small()),
+        CoordinateField(field=_small()),
+    ):
+        assert resolve_simplify(t, table) is analytic, t
 
 
 def test_key_and_list_restrict_to_those() -> None:
@@ -246,6 +266,23 @@ def test_numeric_downcast() -> None:
     assert isinstance(lin.compute(simplify=True), Scaling)
 
 
+def test_bare_numeric_reads_an_affine() -> None:
+    # An exactly diagonal Affine becomes a Scaling.
+    aff = Affine(matrix=np.array([[2.0, 0.0, 0.0], [0.0, 3.0, 0.0]]))
+    assert isinstance(aff.simplify("numeric"), Scaling)
+
+
+def test_bare_numeric_does_not_read_a_field() -> None:
+    zero = DisplacementField(field=np.zeros((5, 5, 2)))
+    assert isinstance(zero.simplify("numeric"), DisplacementField)
+    assert isinstance(zero.simplify(True), DisplacementField)
+
+
+def test_explicit_none_key_reads_a_field() -> None:
+    zero = DisplacementField(field=np.zeros((5, 5, 2)))
+    assert isinstance(zero.simplify({None: "numeric"}), Identity)
+
+
 def test_simplify_sugar_compute_keyword() -> None:
     aff = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
     # "Translation" does not admit this affine.
@@ -287,7 +324,9 @@ def test_numeric_downcast_feeds_composition() -> None:
     t1 = Translation(translation=[1.0, 2.0])
     t2 = Translation(translation=[3.0, 4.0])
     seq = Sequence(transformations=[t1, zero, t2])
-    numeric_result = seq.compute(simplify="numeric")
+    # The constant field is read numerically only when the None key asks
+    # for it.
+    numeric_result = seq.compute(simplify={None: "numeric"})
     assert isinstance(numeric_result, Translation)
     np.testing.assert_allclose(
         np.asarray(numeric_result.translation), [4.0, 6.0]
@@ -427,9 +466,13 @@ def test_analytic_never_reads_a_value() -> None:
 
 
 def test_the_value_guard_is_not_vacuous() -> None:
-    # Numeric does read the field, so the guard can fire.
+    # A numeric fallback does read the field, so the guard can fire.
     with pytest.raises(AssertionError, match="values were read"):
-        _guarded_sequence().compute(mode=False, simplify="numeric")
+        _guarded_sequence().compute(mode=False, simplify={None: "numeric"})
+
+
+def test_bare_numeric_never_reads_a_field_value() -> None:
+    _guarded_sequence().compute(mode=False, simplify="numeric")
 
 
 # ----------------------------------------------------------------------

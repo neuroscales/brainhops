@@ -48,27 +48,6 @@ class ZarrReader(BinaryFileReader):
     HINTS = ("zarr",)
 
     @classmethod
-    def sniff_file(
-        cls,
-        file: path.FileLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        # abczarr raises, rather than returning `None`, when a path holds
-        # no store, and a sniffer only scores.
-        try:
-            node = open_node(file, OPEN_MODE)
-            score = Confidence.NO if node is None else cls._score_store(node)
-        except Exception:  # noqa: BLE001
-            score = Confidence.NO
-
-        if score == Confidence.NO and error is not False:
-            if error is True:
-                error = ParserExistsError
-            raise error(f"No Zarr store at {file}")
-        return score
-
-    @classmethod
     def sniff_filename(
         cls,
         filename: path.FilenameLike,
@@ -76,8 +55,21 @@ class ZarrReader(BinaryFileReader):
         **kwargs,
     ) -> float:
         # The inherited sniffer opens the name as a stream, which fails on a
-        # directory.
-        return cls.sniff_file(filename, error=error, **kwargs)
+        # directory, so the store is opened as `from_store` opens it.
+        # abczarr raises, rather than returning `None`, when a path holds no
+        # store, and a sniffer only scores.
+        try:
+            location = absolute_location(path.Path(filename))
+            node = open_node(location, OPEN_MODE)
+            score = Confidence.NO if node is None else cls._score_store(node)
+        except Exception:  # noqa: BLE001
+            score = Confidence.NO
+
+        if score == Confidence.NO and error is not False:
+            if error is True:
+                error = ParserExistsError
+            raise error(f"No Zarr store at {filename}")
+        return score
 
     @classmethod
     def sniff_fileobj(
@@ -170,17 +162,34 @@ class ZarrReader(BinaryFileReader):
         return cls.from_node(node, **kwargs)
 
     @classmethod
-    def from_file(cls, file: "path.FileLike", **kwargs) -> tx.Self:
-        if isinstance(file, str):
-            file = path.Path(file)
+    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
+        """Read an object from the Zarr store at a path.
 
-        if isinstance(file, path.PathLike):
-            return cls.from_store(file, **kwargs)
+        The inherited reader opens the path as a file, which fails because
+        a Zarr store is a directory. This method reads the store with
+        [`from_store`][ZarrReader.from_store] instead. The inherited
+        `load` and `from_file` pass a path to this method, and a
+        dispatcher calls it by name, so all of them read the store in the
+        same way.
 
-        if hasattr(file, "read"):
-            return cls.from_fileobj(file, **kwargs)
+        Parameters
+        ----------
+        filename : str or PathLike
+            The location of the store.
+        **kwargs : Any
+            `mode` and `driver`, and the options of the reader.
 
-        raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+        Returns
+        -------
+        Self
+            The object read from the store.
+
+        Raises
+        ------
+        ParserExistsError
+            If no Zarr store exists at `filename`.
+        """
+        return cls.from_store(path.Path(filename), **kwargs)
 
     from_fileobj = disabled(
         ParserTypeError,
