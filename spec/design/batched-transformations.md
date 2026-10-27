@@ -83,16 +83,15 @@ which positions along that axis the elements sit.
 
 A batched transformation is a new class, `BatchedTransformation`, which
 holds the type of its elements, their parameters stacked along leading
-dimensions, and the description of its batch axes.
+dimensions, and the positions of the elements along the batch axes.
 
 ```python
 BatchedTransformation(
     Affine,
     data=matrices,  # shape (N, 3, 4)
-    batch_axes=["t"],
     positions=None,  # element k sits at t = k
-    input=...,
-    output=...,
+    input=...,  # (x, y, z, t)
+    output=...,  # (x', y', z', t)
 )
 ```
 
@@ -101,12 +100,40 @@ The first argument, `element_type`, is a concrete transformation class:
 one of the tangent classes, or a field. `data` has the shape of the data
 of one element preceded by one dimension per batch axis, and the
 keywords that encode an element, such as `degree`, `bound`, `store` and
-`log`, are shared by all the elements. `batch_axes` names the batch axes
-by position or by name, following A.9, and every other axis of the space
-is an axis of the elements, in order on both sides. `positions` gives,
-for each batch axis, the coordinate of each element along that axis. Its
-default is the index of the element, which is what a file that knows
-nothing about the timing of the volumes can give.
+`log`, are shared by all the elements. `positions` gives, for each
+batch axis, the coordinate of each element along that axis. Its default
+is the index of the element, which is what a file that knows nothing
+about the timing of the volumes can give.
+
+### Which axes are batch axes
+
+The batch axes are not named by an argument. They are the last `k` axes
+of the space, on both sides, in the order of the batch dimensions of the
+data, and every other axis is an axis of the elements, in order on both
+sides. The input and output systems therefore say what the batch axes
+are, and the data says how many there are.
+
+For the types whose data has a fixed number of dimensions, `k` is read
+from the data. The matrix of an affine has two dimensions, so the data
+of a batch of affines has `k + 2`. The data of a field has one dimension
+per axis of its grid and one for its components, so the shape
+`(N, X, Y, Z, 3)` alone does not tell a batch of 3D fields from a single
+field on a 4D grid with 3 components (#588). A batch carries its batch
+axes through, however, so its output space has the axes of the elements
+and the `k` batch axes, and `k` is the number of output axes minus the
+number of components. A batch of fields is therefore refused when its
+output system does not give the number of its axes. A system that is
+open at its end, such as `(x, y, z, ...)`, is refused for any batch,
+because its last axes are not known.
+
+Two other ways of finding the batch axes were rejected. An argument
+`batch_axes` that names them repeats what the systems and the data
+already say, and it is one more reference to check against them.
+Taking the discrete axes of the systems as batch axes does not work
+either, because the NIfTI reader never marks time as discrete, whereas
+a channel axis is discrete without being a batch axis. A batch whose
+batch axes are not the last axes of its space is written as a batch
+between two permutations.
 
 ### Elements are created on demand
 
@@ -156,24 +183,22 @@ Every concrete class has a class method `batch`, which builds a batch of
 its own type from a stacked array without creating any element. It takes
 the stack, or one of the views of the class, such as
 `homogeneous_matrix`, `field` or `coefficients`, together with
-`batch_axes` and `positions`. The encoding of the elements, such as
+`positions`. The encoding of the elements, such as
 `degree`, `bound`, `store` and `log`, and their systems are given as the
 other keywords of the constructor of the class, whose defaults apply to
 the keywords that are not given.
 
 ```python
-Affine.batch(matrices, batch_axes=["t"])
-Affine.batch(homogeneous_matrix=matrices, batch_axes=["t"])
-DisplacementField.batch(fields, batch_axes=["t"], degree=3)
+Affine.batch(matrices, input=series, output=series)
+Affine.batch(homogeneous_matrix=matrices)
+DisplacementField.batch(fields, output=series, degree=3)
 ```
 
-The systems that `batch` receives are those of one element. The batch
-axes are new axes, given as axes or as names, and a name stands for a
-discrete axis with that name. They are placed after the axes of the
-elements, which is the order of the axes of an image such as
-`(x, y, z, t)`, whereas the data always keeps the batch dimensions
-first. A batch whose axes are in another order is built with the
-constructor of `BatchedTransformation`, from systems of the whole space.
+The systems that `batch` receives are those of the whole space, as for
+the constructor of `BatchedTransformation`, so that `series` above is a
+system such as `(x, y, z, t)`. Putting the batch axes last matches the
+order of the axes of an image, whereas the data always keeps the batch
+dimensions first.
 
 Since `batch` accepts the views of the class, the conversions between a
 view and the stored data must work on stacks, which the first step of
@@ -185,10 +210,13 @@ refuses `batch`, since a batch of identities is the identity. The meta
 transformations, whose parameters are other transformations, have no
 `batch` either.
 
-`BatchedTransformation.stack(elements, batch_axes=...)` builds a batch
+`BatchedTransformation.stack(elements, batch_axis=...)` builds a batch
 from instances that already exist, and copies their data into one
 array. It checks that the elements have the same type, the same encoding
-and the same shape. It suits a format that stores each element on its
+and the same shape. The elements do not know the batch axis, so
+`batch_axis` gives it, and it is added after the axes of their systems.
+An axis about which nothing is known is added when `batch_axis` is not
+given. It suits a format that stores each element on its
 own, such as the directory of one file per volume that MCFLIRT writes,
 whereas a format that stores a stack passes its array to `batch`.
 `stack` also accepts meta transformations, and moves the batch inside
