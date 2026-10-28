@@ -2,7 +2,7 @@
 
 Status: proposed, and not implemented. The rules that the operations
 of Part A must follow for a batched transformation are recorded in
-section A.10 of `compute-api-and-open-systems.md` (#577). This memo
+section A.10 of `compute-api-and-open-systems.md`. This memo
 proposes how a batched transformation is represented, and it lists what
 has to change in the data model, the compute machinery, the resampler,
 the readers and writers, and the command line (#576).
@@ -279,8 +279,9 @@ otherwise. The second rule is an open question (section 10).
 
 ## 4. Rules in the compute machinery
 
-Each rule below is registered through the dispatched functions that
-Part A of `compute-api-and-open-systems.md` defines.
+Each rule below is registered through the dispatched functions of the
+compute machinery: the pattern readers and block restrictors of
+`compute/prune.py`, and the simplifiers, converters and composers.
 
 ### Dependency pattern
 
@@ -326,7 +327,7 @@ inverse of a batch of fields loops over the elements.
 
 ### Composition
 
-Three composers are proposed.
+Four composers are proposed.
 
 1. Two batches with the same batch axes compose element by element. A
    batch axis that only one of them has, or that has length 1 in one of
@@ -341,6 +342,11 @@ Three composers are proposed.
    each point, selects the element at that position, and applies it,
    which gives a `CoordinateField`. This is how a batch is evaluated at
    points, and the monolithic path of the resampler uses it.
+4. A batch that follows a projection creating one of its batch axes at
+   a value gives the elements at that value, as the restrictor does.
+   The pruning leaves such a projection just before the element that
+   reads the created axis, so this composer is how a composing
+   `compute` selects an element (section 5).
 
 Rules 1 and 2 reuse the composers of the element types on the stacked
 data. These composers currently index the first dimensions of a matrix
@@ -373,16 +379,17 @@ A new kind of step is proposed for a group that contains a batch axis.
 The planner loops over the samples of the output grid along that axis.
 For each sample `k`, it restricts the chain with `at` set to `k` on the
 grid axis, and plans the remaining group as it does today. The forward
-pass of A.4 carries the value of the grid axis through the
-voxel-to-world map of the image, where it becomes the time of volume
-`k`, and through the batch, where it selects the element at that time,
-so that the batch reduces to one element. The output time axis then
-reads no input, and the end `κ` of the normal form selects one volume of
-the input data. This is the reduction that A.3 already describes for one
-volume of a series. It requires the forward pass to propagate constants,
-which means that an element whose kept outputs read only axes with known
-values gives these outputs a known value in turn. A.4 does not state
-this yet.
+pass of the pruning in `simplify` carries the value of the grid axis to
+the first element that reads it, the voxel-to-world map of the image,
+and a composing `compute` folds the value into that element by a matrix
+product. The time output of the product is then a constant row, which
+the numeric policy turns into a created axis, at the time of volume `k`.
+When the created axis reaches the batch, the composer of a batch with a
+projection that creates one of its batch axes selects the element at
+that time, so that the batch reduces to one element. The output time
+axis then reads no input, and the end `κ` of the normal form selects
+one volume of the input data. This is the reduction that A.3 already
+describes for one volume of a series.
 
 The loop costs one plan per volume. A vectorised version would need a
 pull whose coordinates differ along the batch dimensions. `pull` in
@@ -424,8 +431,7 @@ current reader.
 | SPM realignment                   | `rp_*.txt` `(N, 6)`; `.mat` `(4, 4, N)`    | no reader                                          | new reader of `rp_*.txt`                               |
 | elastix                           | `*StackTransform`                          | `ParserNotImplementedError`                        | batch of the inner transform                           |
 | BigStitcher XML                   | one registration per time point and view   | one view, chosen by `setup=` and `timepoint=`      | batch over time points for one setup                   |
-| NIfTI vector field, SPM `y_`      | `(X, Y, Z, T, 3)`                          | read as a 4D grid of 3-vectors, silently wrong     | batch of fields along `T`                              |
-| NIfTI `DISPVECT`, ITK, NiftyReg   | `(X, Y, Z, T, 3)`                          | `ParserContentError` when `T > 1`                  | batch of fields along `T`                              |
+| NIfTI fields, SPM `y_`, ITK       | `(X, Y, Z, T, 3)`                          | `ParserContentError` when `T > 1`                  | batch of fields along `T`                              |
 | OME-NGFF `coordinates`, `displacements` | array with an extra discrete axis    | the extra axis is read as a grid axis              | batch when the axis is discrete and is not an output   |
 
 The AFNI reader reads the first volume by default today. Reading the
@@ -436,10 +442,6 @@ since `ArrayReader.sniff_filename` rejects a directory. SPM stores in
 its realignment `.mat` file the voxel-to-world matrix of each volume,
 which is the geometry of the image rather than a transformation, so it
 belongs to the image readers (section 7).
-
-The silent misreading of a 5D NIfTI vector field with more than one
-volume is a bug today, independently of batches. Until batches exist,
-the reader should raise, as the `DISPVECT` reader does.
 
 The shared helpers in `io/transformations/base/` assume a single matrix
 or a single field. `matrix_to_model` in `_records.py` drops the last row
@@ -490,22 +492,21 @@ following changes.
 ## 9. Order of the work
 
 The work depends on Part A of `compute-api-and-open-systems.md`. The
-selection of an element and the resampling loop use `Projection.at`,
-the two passes of `simplify` and `Transformation.restrict`, which are
-the three pull requests listed there. Batches of fields whose number of
-components differs from the dimension of their grid need #588.
+selection of an element and the resampling loop use `Projection.at` and
+the pruning in `simplify`, which are implemented, and
+`Transformation.restrict`, which is not. Batches of fields whose number
+of components differs from the dimension of their grid need #588.
 
 1. Make the existing code safe for stacks, without changing its
    behaviour on a single element. `to_homogeneous` broadcasts its
    padding row, the square checks of `_core/linalg.py` read the last two
    dimensions, and the composers, converters, checkers and restrictors
    index the last dimensions of a matrix. The ordinary types refuse
-   data with leading dimensions. The NIfTI vector reader raises on a
-   field with more than one volume.
+   data with leading dimensions.
 2. Add `BatchedTransformation`, with the class method `batch` of the
    concrete classes, `stack`, indexing, the systems, `inverse` and
    `sqrt`, the pattern reader, the restrictor, the simplifier and the
-   three composers of section 4.
+   four composers of section 4.
 3. Add the resampling step of section 5, the check of discrete axes in
    the monolithic path, and the per-element Jacobian.
 4. Add the readers and writers of section 6, starting with X5, AFNI and
