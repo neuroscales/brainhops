@@ -13,11 +13,7 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import (
-    is_local_file,
-    is_same_file,
-    replace_file,
-)
+from brainhops._core.path import is_same_file, replace_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
@@ -441,7 +437,7 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
             f"cannot be read here. Decompress it, or recompress it with "
             f"gzip."
         )
-    if is_local_file(brik) and not suffix:
+    if brik.is_local() and not suffix:
         size = brik.stat().st_size
         if size < record.nbytes:
             raise ParserContentError(
@@ -457,7 +453,7 @@ def _read_bricks(header: AfniRaw, brik: path.Path, mmap: bool) -> np.ndarray:
     local, uncompressed, of a single type, and `mmap` is true.
     """
     nbytes = header.nbytes
-    local = is_local_file(brik)
+    local = brik.is_local()
     with brik.open("rb") as f:
         stream = open_compressed(f)
         compressed = stream is not f

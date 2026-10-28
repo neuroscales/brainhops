@@ -10,7 +10,6 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
@@ -424,7 +423,7 @@ def read_mrtrix(
                 f"MRtrix header {origin})"
             )
     if named or name != ".":
-        if is_local_file(source) and not _is_gzip(source):
+        if source.is_local() and not _is_gzip(source):
             size = source.stat().st_size
             if size < offset + record.nbytes:
                 raise ParserContentError(

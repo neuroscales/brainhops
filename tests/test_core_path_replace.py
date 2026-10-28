@@ -1,15 +1,16 @@
 """Checking and replacing files, as the readers and writers do."""
 
+import errno
 import io
 import os
 
 import pytest
 import typing_extensions as tx
+from bagof.paths import CommitError
 
 from brainhops._core.path import (
     Path,
     as_path_or_stream,
-    is_local_file,
     is_same_file,
     replace_directory,
     replace_file,
@@ -66,19 +67,6 @@ def test_a_file_name_is_converted_to_a_path_once(tmp_path) -> None:  # noqa: ANN
     assert as_path_or_stream(stream) is stream
     assert as_path_or_stream(b"1") == b"1"
     assert as_path_or_stream(None) is None
-
-
-def test_only_an_existing_local_file_is_a_local_file(tmp_path) -> None:  # noqa: ANN001
-    file = tmp_path / "file.bin"
-    file.write_bytes(b"1")
-    assert is_local_file(Path(file))
-    assert not is_local_file(Path(tmp_path / "missing.bin"))
-    assert not is_local_file(Path(tmp_path))
-    assert not is_local_file(Path("memory://bucket/file.bin"))
-    # A value that is not a path, such as a stream, is not a local file.
-    assert not is_local_file(None)
-    with file.open("rb") as stream:
-        assert not is_local_file(stream)
 
 
 def test_is_same_file_resolves_links(tmp_path) -> None:  # noqa: ANN001
@@ -213,9 +201,18 @@ def test_an_atomic_write_replaces_a_local_file(tmp_path) -> None:  # noqa: ANN00
 
 def test_a_new_directory_is_written(tmp_path) -> None:  # noqa: ANN001
     target = tmp_path / "new.store"
-    replace_directory(target, _fill({"a": b"1"}))
+    names = []
+
+    def write(directory: Path) -> None:
+        names.append(directory)
+        _fill({"a": b"1"})(directory)
+
+    replace_directory(target, write)
     assert _tree(target) == {"a": b"1"}
     assert _names(tmp_path) == ["new.store"]
+    # The new directory has the name of the target, in another directory.
+    assert names[0].name == "new.store"
+    assert names[0].parent != Path(tmp_path)
 
 
 def test_an_existing_directory_is_replaced_whole(tmp_path) -> None:  # noqa: ANN001
@@ -282,27 +279,48 @@ def test_a_directory_never_replaces_a_file(tmp_path) -> None:  # noqa: ANN001
     assert _names(tmp_path) == ["kept.store"]
 
 
+def test_a_file_that_appears_during_the_write_is_kept(tmp_path) -> None:  # noqa: ANN001
+    target = tmp_path / "kept.store"
+
+    def write(directory: Path) -> None:
+        target.write_bytes(b"kept")
+        _fill({"a": b"new"})(directory)
+
+    with pytest.raises(OSError) as info:
+        replace_directory(target, write)
+    assert info.value.errno == errno.ENOTDIR
+    assert target.read_bytes() == b"kept"
+    assert _names(tmp_path) == ["kept.store"]
+
+
 def test_the_old_directory_is_kept_if_it_cannot_be_moved_back(
     tmp_path,  # noqa: ANN001
     monkeypatch,  # noqa: ANN001
 ) -> None:
+    # bagof-paths 0.3.1 removed the old directory in this case
+    # (bagofseeds/bagof-paths#57), and 0.3.2 keeps it.
     target = tmp_path / "kept.store"
     target.mkdir()
     (target / "a").write_bytes(b"kept")
-    replace = Path.replace
+    rename = os.rename
     calls = []
 
-    def fail_after_the_first_move(self: Path, other: tx.Any) -> Path:
-        calls.append(self)
+    def fail_after_the_first_move(source: tx.Any, destination: tx.Any) -> None:
+        calls.append(source)
         if len(calls) > 1:
             raise OSError("the move failed")
-        return replace(self, other)
+        rename(source, destination)
 
-    monkeypatch.setattr(Path, "replace", fail_after_the_first_move)
-    with pytest.raises(OSError, match="the move failed"):
+    monkeypatch.setattr(os, "rename", fail_after_the_first_move)
+    with pytest.raises(CommitError, match="the move failed") as info:
         replace_directory(target, _fill({"a": b"new"}))
-    # The old directory was moved aside and is still there, and the new
-    # directory is removed.
-    (kept,) = [name for name in _names(tmp_path) if ".old." in name]
-    assert _names(tmp_path) == [kept]
-    assert _tree(tmp_path / kept) == {"a": b"kept"}
+    monkeypatch.undo()
+    # The old directory was moved aside and is still there, in a hidden
+    # directory of its own that the error names, and the new directory
+    # is kept too, since it may be the only complete version.
+    previous = Path(info.value.previous)
+    assert previous.name == "kept.store"
+    assert previous.parent.parent == Path(tmp_path)
+    assert _tree(previous) == {"a": b"kept"}
+    assert _tree(Path(info.value.staged)) == {"a": b"new"}
+    assert not target.exists()

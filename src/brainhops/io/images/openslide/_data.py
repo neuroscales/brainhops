@@ -87,7 +87,7 @@ def local_path(file: tx.Any) -> tx.Optional[path.Path]:
         if not isinstance(name, str):
             return None
         file = path.Path(name)
-    return file if path.is_local_file(file) else None
+    return file if file.is_local() and file.is_file() else None
 
 
 def detect(filename: path.Path) -> tx.Tuple[str, int]:

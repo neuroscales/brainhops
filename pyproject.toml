@@ -22,8 +22,10 @@ dependencies = [
     # leaves the query of a URL out of the name of a path. 0.3.1 refuses
     # an atomic write over a directory, cleans up after a failed one,
     # names the target in its errors, never treats an fsspec chain as
-    # local, and compares paths whose files do not exist yet.
-    "bagof-paths ~= 0.3.1",
+    # local, and compares paths whose files do not exist yet. 0.3.2
+    # never removes the old directory when a staged directory cannot be
+    # moved into place and the old one cannot be moved back.
+    "bagof-paths ~= 0.3.2",
     # Units are parsed by pint, imported on first use. 0.21.1 is the last
     # release for Python 3.8; 0.24 is the first to support numpy 2.
     "pint >= 0.21; python_version < '3.9'",

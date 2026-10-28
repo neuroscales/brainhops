@@ -14,7 +14,6 @@ from bagof.magic import ConvertTo, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import preserve_position
@@ -119,7 +118,8 @@ def _decode(
         mmap
         and len(locations) == 1
         and header.encoding == "raw"
-        and is_local_file(single)
+        and isinstance(single, path.Path)
+        and single.is_local()
         and nbytes > 0
     ):
         local = single
@@ -533,7 +533,7 @@ def _check_size(
         local, offset = files[0], 0
     else:
         local, offset = source, len(record.stored)
-    if not is_local_file(local):
+    if not (isinstance(local, path.Path) and local.is_local()):
         return
     needed = offset + max(record.byte_skip, 0) + record.nbytes
     size = local.stat().st_size

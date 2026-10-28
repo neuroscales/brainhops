@@ -39,7 +39,7 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo
 
 # internals
-from brainhops._core.path import Path, as_path_or_stream, is_local_file
+from brainhops._core.path import Path, as_path_or_stream
 from brainhops._core.properties import alias
 from brainhops._core.proxy import (
     ArrayProxy,
@@ -416,7 +416,7 @@ class StridedProxy(StoredProxy):
         # last value are read and viewed with the strides of the box.
         first, shape, strides = self._layout(index)
         dtype = self._dtype
-        local = is_local_file(self.source)
+        local = isinstance(self.source, Path) and self.source.is_local()
         if (
             local
             and self.mmap

@@ -10,7 +10,6 @@ from bagof.magic import ConvertTo, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import open_compressed, preserve_position
@@ -117,7 +116,7 @@ def _opened(source: tx.Union[path.Path, bytes]) -> tx.Union[path.Path, bytes]:
     """
     if not isinstance(source, path.Path):
         return bytes(source)
-    if is_local_file(source):
+    if source.is_local():
         with source.open("rb") as f:
             if f.read(2) != b"\x1f\x8b":
                 return source
