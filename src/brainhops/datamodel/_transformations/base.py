@@ -18,12 +18,10 @@ from brainhops.errors import (
 from . import nocycles
 from .compute.check import is_kind
 from .compute.convert import convert
+from .compute.filter import MatchLike, replace_parts
 from .compute.simplify import SimplifyLike
 from .compute.utils import require_endomorphism
 from .modes import ModeLike
-
-if tx.TYPE_CHECKING:
-    from .compute.filter import MatchLike
 
 if tx.TYPE_CHECKING:
     from .concrete import CoordinateField
@@ -642,7 +640,7 @@ class Transformation(
 
     # --- filters ------------------------------------------------------
 
-    def without(self, match: "MatchLike") -> "Transformation":
+    def without(self, match: MatchLike) -> "Transformation":
         """Return the transformation with some parts replaced by the identity.
 
         A caller uses this method to ignore a class of transformations,
@@ -683,11 +681,9 @@ class Transformation(
         ValueError
             If a part to replace changes the number of axes.
         """
-        from .compute.filter import replace_parts
-
         return replace_parts(self, match, keep=False)
 
-    def with_only(self, match: "MatchLike") -> "Transformation":
+    def with_only(self, match: MatchLike) -> "Transformation":
         """Return the transformation with only some parts kept.
 
         This method is the complement of
@@ -723,8 +719,6 @@ class Transformation(
         ValueError
             If a part to replace changes the number of axes.
         """
-        from .compute.filter import replace_parts
-
         return replace_parts(self, match, keep=True)
 
     # --- conversions to a kind ----------------------------------------
@@ -732,8 +726,8 @@ class Transformation(
     def to_translation(
         self,
         *,
-        include: tx.Optional["MatchLike"] = None,
-        exclude: tx.Optional["MatchLike"] = None,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a translation.
@@ -780,8 +774,8 @@ class Transformation(
     def to_scaling(
         self,
         *,
-        include: tx.Optional["MatchLike"] = None,
-        exclude: tx.Optional["MatchLike"] = None,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a scaling.
@@ -828,8 +822,8 @@ class Transformation(
     def to_permutation(
         self,
         *,
-        include: tx.Optional["MatchLike"] = None,
-        exclude: tx.Optional["MatchLike"] = None,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a permutation.
@@ -876,8 +870,8 @@ class Transformation(
     def to_rotation(
         self,
         *,
-        include: tx.Optional["MatchLike"] = None,
-        exclude: tx.Optional["MatchLike"] = None,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a rotation.
@@ -924,8 +918,8 @@ class Transformation(
     def to_linear(
         self,
         *,
-        include: tx.Optional["MatchLike"] = None,
-        exclude: tx.Optional["MatchLike"] = None,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to a linear map.
@@ -972,8 +966,8 @@ class Transformation(
     def to_affine(
         self,
         *,
-        include: tx.Optional["MatchLike"] = None,
-        exclude: tx.Optional["MatchLike"] = None,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
         **kwargs,
     ) -> "Transformation":
         """Convert the transformation to an affine map.
@@ -1026,8 +1020,8 @@ class Transformation(
         self,
         target: type,
         *,
-        include: tx.Optional["MatchLike"],
-        exclude: tx.Optional["MatchLike"],
+        include: tx.Optional[MatchLike],
+        exclude: tx.Optional[MatchLike],
         on_loss: ErrorAction = UNSET,
         on_error: ErrorPolicy = UNSET,
         **kwargs,

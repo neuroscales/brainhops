@@ -3,6 +3,9 @@
 The design is recorded in spec/design/transformation-filters.md.
 """
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 import typing_extensions as tx
@@ -262,7 +265,7 @@ def test_another_iterable_is_not_a_matcher(match: object) -> None:
 def test_a_result_without_parameters_is_refused(
     method: str, xform: object
 ) -> None:
-    # Without a dimension, the result would have no matrix or no data.
+    # Without a dimension, the result would have no parameters.
     with pytest.raises(ConversionError):
         getattr(xform, method)()
     assert getattr(xform, method)(on_error=None) is None
@@ -272,3 +275,19 @@ def test_to_makes_no_check_of_the_parameters() -> None:
     affine = Identity().to(Affine)
     assert type(affine) is Affine
     assert affine.matrix is None
+
+
+# --- the order of the imports -----------------------------------------
+
+
+def test_the_filters_import_before_the_transformations() -> None:
+    # The filters read the classes of the transformations from the
+    # registries of `nocycles`, which the modules that define these
+    # classes fill after the filters are loaded.
+    code = (
+        "from brainhops.datamodel._transformations.compute import filter\n"
+        "from brainhops.datamodel.transformations import Affine\n"
+        "chain = Affine([[2.0, 1.0]]) @ Affine([[3.0, 0.0]])\n"
+        "assert filter.replace_parts(chain, Affine, keep=False) is not chain\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

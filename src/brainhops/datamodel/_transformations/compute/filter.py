@@ -12,10 +12,10 @@ from bagof.magic import replace
 
 from brainhops.datamodel import kinds
 
-from ..base import Transformation
-from ..concrete import Identity
-from ..inverse import Inverse
-from ..sequence import Sequence
+from .. import nocycles
+
+if tx.TYPE_CHECKING:
+    from ..base import Transformation
 
 __all__ = ["MatchLike", "matches", "replace_parts"]
 
@@ -45,6 +45,36 @@ must name a kind.
 _COLLECTIONS = (list, tuple, set, frozenset)
 
 
+def _classes() -> tx.Tuple[tx.Any, tx.Any, tx.Any, tx.Any]:
+    """Return the classes that the filters test and build.
+
+    The classes are `Transformation`, `Identity`, `Inverse` and
+    `Sequence`, in this order. The module that defines each of them
+    imports this one, through `base`, so the classes are read from the
+    registries of `nocycles` when a function of this module runs,
+    rather than imported. The package of the transformations imports
+    every one of those modules before any transformation can exist, so
+    the registries are filled by then.
+
+    Raises
+    ------
+    RuntimeError
+        If a registry is still empty.
+    """
+    classes = (
+        nocycles.TRANSFORMATION,
+        nocycles.IDENTITY,
+        nocycles.DERIVED.get("inverse"),
+        nocycles.SEQUENCE,
+    )
+    if any(cls is None for cls in classes):
+        raise RuntimeError(
+            "The classes of the transformations are not registered yet. "
+            "Import brainhops.datamodel.transformations first."
+        )
+    return classes
+
+
 def matches(xform: "Transformation", match: MatchLike) -> bool:
     """
     Return whether a matcher selects a transformation.
@@ -68,16 +98,17 @@ def matches(xform: "Transformation", match: MatchLike) -> bool:
         If `match` is not a matcher, such as a transformation, a
         generator or another iterable.
     """
+    transformation = _classes()[0]
     if isinstance(match, str):
         return xform.is_kind(match)
     if isinstance(match, type):
-        if issubclass(match, Transformation):
+        if issubclass(match, transformation):
             return isinstance(xform, match)
         return xform.is_kind(match)
     if isinstance(match, _COLLECTIONS):
         return any(matches(xform, item) for item in match)
     # A transformation is callable, but calling it applies it.
-    if callable(match) and not isinstance(match, Transformation):
+    if callable(match) and not isinstance(match, transformation):
         return bool(match(xform))
     raise TypeError(
         f"Cannot select a transformation with {match!r}. A matcher is a "
@@ -124,12 +155,13 @@ def replace_parts(
     ValueError
         If a part to replace changes the number of axes.
     """
+    _, _, inverse, sequence = _classes()
     if matches(xform, match):
         # The node is decided as a whole.
         return xform if keep else _as_identity(xform)
-    if not isinstance(xform, (Sequence, Inverse)):
+    if not isinstance(xform, (sequence, inverse)):
         return _as_identity(xform) if keep else xform
-    if isinstance(xform, Inverse):
+    if isinstance(xform, inverse):
         forward = xform.forward
         if forward is None:
             return _as_identity(xform) if keep else xform
@@ -159,4 +191,5 @@ def _as_identity(xform: "Transformation") -> "Transformation":
             f"Cannot replace a {type(xform).__name__} that maps "
             f"{ndim_in} axes to {ndim_out} axes with the identity."
         )
-    return Identity(input=source, output=target)
+    identity = _classes()[1]
+    return identity(input=source, output=target)
