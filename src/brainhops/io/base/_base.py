@@ -5,12 +5,17 @@ __all__ = [
 ]
 
 import typing_extensions as tx
-from bagof.magic import Field, fields
+from bagof.magic import Field, fields, replace
 
 from brainhops._core import backends, path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
-from brainhops.datamodel.metadata._report import call_under_policy
+from brainhops.datamodel.metadata._report import (
+    ConversionReport,
+    apply_loss_policy,
+    call_under_policy,
+)
+from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
@@ -647,24 +652,46 @@ class _FileBasedModelMixin:
         method, which each format that holds a record overrides. The
         method acts on what the record cannot hold by calling
         `apply_loss_policy`, which reads the policy in effect, and passes
-        no policy on to the calls that it makes. In this class, which
-        knows no record, it raises.
+        no policy on to the calls that it makes.
+
+        This class knows no record, so there is nothing to encode, and
+        the method returns the object unchanged. A field of the metadata
+        given by keyword cannot be stored either, so it is reported as
+        lost, and the policy in effect decides what happens to the
+        report. The object keeps the value that it held.
 
         Parameters
         ----------
         inplace : bool, default=False
-            Whether to change this object rather than a copy.
+            Whether to return this object rather than a copy.
         **fields : Any
-            Fields of the metadata to override, and options of the format.
+            Fields of the metadata to override. A format without a
+            record takes no other option.
+
+        Returns
+        -------
+        Self
+            An unchanged copy, or this object with `inplace=True`.
 
         Raises
         ------
-        AttributeError
-            Always, because the format has no record to encode.
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If a field is given under the `"raise"` policy.
         """
-        raise AttributeError(
-            f"{type(self).__name__} has no record to consolidate."
-        )
+        unknown = sorted(set(fields) - set(FIELDS))
+        if unknown:
+            raise TypeError(
+                f"{type(self).__name__}.consolidate() got unknown "
+                f"option(s): {', '.join(unknown)}"
+            )
+        if fields:
+            name = type(self).__name__
+            report = ConversionReport(source=name, target=name)
+            report.lost.update(fields)
+            apply_loss_policy(report)
+        return self if inplace else replace(self)
 
     @classmethod
     def _data_model(cls) -> type:

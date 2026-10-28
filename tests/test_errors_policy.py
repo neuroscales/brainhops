@@ -383,6 +383,29 @@ def test_a_consolidation_returns_what_the_policy_returns() -> None:
     assert copy.metadata.description is None
 
 
+def test_a_format_without_a_record_consolidates_to_itself() -> None:
+    from brainhops.io.transformations.matrix import MatMatrixAffine
+
+    # The format has no record, so there is nothing to encode.
+    xform = MatMatrixAffine(np.eye(4))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        copy = xform.consolidate()
+    assert copy is not xform
+    np.testing.assert_array_equal(copy.matrix, xform.matrix)
+    assert xform.consolidate(inplace=True) is xform
+    # A field given by keyword cannot be stored, and the policy decides
+    # what happens to its loss.
+    with pytest.warns(MetadataLossWarning):
+        xform.consolidate(description="T1w")
+    report = ConversionReport()
+    assert xform.consolidate(description="T1w", on_loss=report) is not None
+    assert report.lost == {"description": "T1w"}
+    assert xform.consolidate(description="T1w", on_error=None) is None
+    with pytest.raises(TypeError):
+        xform.consolidate(nonsense=1)
+
+
 def test_a_save_acts_on_a_loss_once_the_file_is_written(
     tmp_path: Path,
 ) -> None:

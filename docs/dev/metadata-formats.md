@@ -130,7 +130,10 @@ write is asked to store, consolidates the metadata with
 and its data over the record of the result, and acts on the report once
 with `apply_loss_policy`. A format whose model owns a slot, such as the
 time step of a NIfTI image, reports a field that it encoded over with
-`overruled_fields`. A writer that writes the record of a consolidated
+`overruled_fields`. A format that holds no record does not define
+`_consolidate`, because the hook of the common base has nothing to
+encode: it returns the object unchanged, and it reports each field
+given by keyword as lost with `apply_loss_policy`. A writer that writes the record of a consolidated
 copy splits its options with `metadata_options`, so that the fields go
 to `consolidate` and the other options to the writer of the record.
 

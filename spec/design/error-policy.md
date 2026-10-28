@@ -169,7 +169,12 @@ The policy is applied in three ways.
   one public `consolidate(*, inplace=False, on_error=UNSET,
   on_loss=UNSET, **fields)`, which calls the protected hook
   `_consolidate(inplace=inplace, **fields)` under the policy. A format
-  overrides only the hook, which takes no policy.
+  overrides only the hook, which takes no policy. The hook of the base
+  class, which knows no record, has nothing to consolidate, so it
+  returns the object itself with `inplace=True` and an unchanged copy
+  otherwise. It reports a field given by keyword as lost, with
+  `apply_loss_policy()`, so that the policy decides what happens to
+  it.
 - The base class of the writers, `_WriterMixin`, wraps each entry point
   (`save`, `to_file`, `to_filename`, `to_fileobj`, `to_bytes`,
   `to_text`, `to_lines` and `to_h5`) that a class defines, when the
