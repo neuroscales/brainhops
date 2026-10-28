@@ -155,7 +155,7 @@ def test_a_part_that_changes_the_number_of_axes_is_refused() -> None:
 def test_to_affine_ignores_the_fields_of_a_chain() -> None:
     chain = _chain()
     assert chain.to_affine(on_error=None) is None
-    affine = chain.to_affine(include="affine", on_error=None)
+    affine = chain.to_affine(include="affine")
     np.testing.assert_allclose(affine.matrix, MATRIX)
     affine = chain.to_affine(exclude=DisplacementField)
     np.testing.assert_allclose(affine.matrix, MATRIX)

@@ -481,8 +481,18 @@ def _to_voxel_displacement(
     # L^-1 of the linear part of the placement: raw @ L^-T. The product is
     # computed in the backend of the displacements, so that a Dask array is
     # converted block by block rather than read into memory.
-    matrix = voxel2world.to_affine(on_error=None).matrix
-    inverse = to_numpy(_affine_inv(matrix))
+    # `_check_affine_voxel2world` checks the placement of the finest
+    # level only, and the placement of a coarser level also goes through
+    # its level transform, which may not reduce to an affine.
+    affine = voxel2world.to_affine(on_error=None)
+    if affine is None:
+        raise OmeFieldError(
+            "A level of this OME displacement field is placed by a "
+            "transformation that cannot be reduced to an affine, so its "
+            "displacements cannot be rescaled to voxel units. Only an "
+            "affine placement is supported for a displacement field."
+        )
+    inverse = to_numpy(_affine_inv(affine.matrix))
     ab = array_backend(raw)
     return raw @ ab.asarray(inverse[:, :-1].T)
 

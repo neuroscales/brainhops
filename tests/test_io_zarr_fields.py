@@ -378,6 +378,23 @@ def test_reader_refuses_nonlinear_placed_displacement() -> None:
         _ = reader.transformations
 
 
+def test_reader_refuses_a_level_placed_by_a_nonlinear_map() -> None:
+    # The placement of the finest level is affine, but the level
+    # transform is not, so the displacements of the level cannot be
+    # rescaled to voxel units.
+    reader = OmeZarrField(
+        raw_levels=[np.zeros((4, 4, 2))],
+        level_transforms=[DisplacementField(field=np.zeros((4, 4, 2)))],
+        axes=[
+            Axis(type="space"),
+            Axis(type="space"),
+            Axis(type="displacement"),
+        ],
+    )
+    with pytest.raises(OmeFieldError, match="A level"):
+        _ = reader.transformations
+
+
 def test_reader_selects_a_level_by_target_resolution() -> None:
     reader, placement, _, _, _, _ = _displacement_reader()
     # The finest voxel size is (2, 0.5); a doubled target selects level 1.
