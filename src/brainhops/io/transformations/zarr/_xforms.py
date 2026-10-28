@@ -18,7 +18,7 @@ from bagof.magic import Forget, KwOnly
 # core
 from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.backends import array_backend, to_backend, to_numpy
-from brainhops._core.path import is_local, replace_directory
+from brainhops._core.path import Path, replace_directory
 
 # datamodel
 from brainhops.datamodel._sugar import vector_axis
@@ -362,7 +362,7 @@ class OmeZarrField(
         ):
             self.to_node(abczarr.open_group(location, mode="w"), **kwargs)
             return
-        if not is_local(location):
+        if not Path(location).is_local():
             raise WriterError(
                 "This field reads the remote store that it would be written "
                 f"to, {location}, and a remote store cannot be replaced in "

@@ -27,7 +27,7 @@ from io import BytesIO, TextIOBase
 import typing_extensions as tx
 
 from brainhops._core import path, peek
-from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import replace_file
 from brainhops._core.streams import (
     compression_suffix,
     decompress,
@@ -294,7 +294,7 @@ class _SnifferMixin(_FileNamesMixin):
             filename = path.Path(filename)
 
         if isinstance(filename, path.PathLike):
-            if not path.exists(filename):
+            if not path.Path(filename).exists():
                 if error:
                     if error is True:
                         error = SnifferExistsError
@@ -604,7 +604,7 @@ class _ReaderMixin:
         if isinstance(filename, str):
             filename = path.Path(filename)
 
-        if not path.exists(filename):
+        if not path.Path(filename).exists():
             raise ParserExistsError(f"No such file: {filename}")
         with open_decompressed(filename, cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
@@ -780,7 +780,7 @@ class _WriterMixin:
                 else:
                     stream.write(self.to_bytes(**kwargs))
 
-        if not is_local(filename):
+        if not filename.is_local():
             buffer = BytesIO()
             encode(buffer)
             filename.write_bytes(buffer.getvalue())

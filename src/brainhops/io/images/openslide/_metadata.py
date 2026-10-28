@@ -214,7 +214,7 @@ class OpenSlideMetadata(BinaryFileReader, MetadataFormat):
             return cls.from_raw(_read_local(local))
         if isinstance(filename, str):
             filename = path.Path(filename)
-        if not path.exists(filename):
+        if not path.Path(filename).exists():
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open("rb") as f:
             content = f.read()

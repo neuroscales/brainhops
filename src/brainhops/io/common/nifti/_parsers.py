@@ -9,7 +9,7 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core.path import is_local, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import is_seekable, preserve_position
 
@@ -163,9 +163,9 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         """
         mmap = _mmap_option(kwargs)
         filename = path.Path(filename)
-        if not path.exists(filename):
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
-        if not is_local(filename):
+        if not filename.is_local():
             # The lazy array keeps the stream that it reads, and a stream
             # opened here would be closed when this method returns, so a
             # remote file is read into memory.

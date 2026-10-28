@@ -15,7 +15,7 @@ from brainhops._core import backends, path
 from brainhops._core.dependencies import da
 
 # internals
-from brainhops._core.path import is_local, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, StoredProxy
 
@@ -298,7 +298,7 @@ def _all_document_keys() -> tx.Tuple[str, ...]:
 def _local(location: tx.Any) -> bool:
     """Tell whether a store location is a path on the local file system."""
     try:
-        return is_local(location)
+        return path.Path(location).is_local()
     except Exception:  # noqa: BLE001
         return False
 

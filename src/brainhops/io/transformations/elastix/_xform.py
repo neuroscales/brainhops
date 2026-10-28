@@ -6,7 +6,6 @@ __all__ = [
     "ElastixTomlTransform",
 ]
 
-import os
 from warnings import warn
 
 import typing_extensions as tx
@@ -902,15 +901,13 @@ def _place_initial(
     if initial is None or name is None or is_absolute(name):
         return
     target = path.Path(filename).parent / name
-    if is_same_file(target, written) or (
-        os.fspath(target) == os.fspath(written)
-    ):
+    if is_same_file(target, written) or target == path.Path(written):
         raise WriterError(
             f"The elastix initial transform {name!r} would be written over "
             f"{written}, which names it."
         )
     content = initial.to_bytes()
-    if path.exists(target):
+    if target.exists():
         with path.Path(target).open("rb") as file:
             if file.read() != content:
                 raise WriterError(

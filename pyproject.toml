@@ -17,7 +17,10 @@ dependencies = [
     # lets a subclass forget an inherited field (`Forget`) or take it over
     # under another name (`Inherit`).
     "bagof-magic ~= 0.3",
-    "bagof-paths ~= 0.2",
+    # 0.3 gives a path the method `is_local`, makes `exists` return
+    # False instead of raising when a name is too long to look up, and
+    # leaves the query of a URL out of the name of a path.
+    "bagof-paths ~= 0.3",
     # Units are parsed by pint, imported on first use. 0.21.1 is the last
     # release for Python 3.8; 0.24 is the first to support numpy 2.
     "pint >= 0.21; python_version < '3.9'",

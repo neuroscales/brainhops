@@ -11,7 +11,6 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
-from brainhops._core.path import is_local
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import Internal
 from brainhops.io.base.parsers import (
@@ -59,7 +58,7 @@ def dataset_location(filename: tx.Any) -> str:
     """
     if isinstance(filename, str):
         filename = path.Path(filename)
-    if is_local(filename):
+    if path.Path(filename).is_local():
         local = os.path.abspath(os.fspath(filename))
         if os.path.isdir(local):
             if not os.path.isfile(os.path.join(local, _INFO)):
@@ -284,7 +283,7 @@ class _PrecomputedProxy(StoredProxy):
 
 def _is_local_location(location: str) -> bool:
     """Tell whether the location of a volume is a local directory."""
-    return is_local(path.Path(location))
+    return path.Path(location).is_local()
 
 
 def _kvstore_spec(location: str) -> tx.Any:

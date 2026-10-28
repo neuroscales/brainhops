@@ -477,7 +477,7 @@ def _read_file(
     """
     if isinstance(filename, str):
         filename = path.Path(filename)
-    if not path.exists(filename):
+    if not path.Path(filename).exists():
         raise ParserExistsError(f"No such file: {filename}")
     with path.Path(filename).open("rb") as file:
         text = file.read().decode(encoding)

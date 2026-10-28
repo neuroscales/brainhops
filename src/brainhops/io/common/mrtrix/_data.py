@@ -398,7 +398,7 @@ def read_mrtrix(
         file = path.Path(file)
     named = isinstance(file, path.PathLike)
     if named:
-        if not path.exists(file):
+        if not path.Path(file).exists():
             raise ParserExistsError(f"No such file: {file}")
         with path.Path(file).open("rb") as f:
             record = MrtrixRaw.from_fileobj(f)
@@ -418,7 +418,7 @@ def read_mrtrix(
             )
         source = path.Path(origin).parent / name
         start = 0
-        if not path.exists(source):
+        if not source.exists():
             raise ParserExistsError(
                 f"No such file: {source} (the data file named by the "
                 f"MRtrix header {origin})"

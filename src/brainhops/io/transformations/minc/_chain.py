@@ -1103,7 +1103,7 @@ def _place_volumes(
             continue
         with path.Path(source).open("rb") as file:
             content = file.read()
-        if path.exists(target):
+        if target.exists():
             with path.Path(target).open("rb") as file:
                 if file.read() == content:
                     continue

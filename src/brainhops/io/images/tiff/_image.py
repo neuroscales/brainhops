@@ -104,7 +104,7 @@ class _TiffReader:
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
-        if not path.exists(filename):
+        if not path.Path(filename).exists():
             raise ParserExistsError(f"No such file: {filename}")
         return cls.from_source(
             backend.TiffSource.from_file(filename), **kwargs

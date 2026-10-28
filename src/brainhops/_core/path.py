@@ -1,8 +1,11 @@
-"""Type hints for files and paths, and helpers that find and replace files.
+"""Type hints for files and paths, and helpers to name and replace files.
 
 The type hints describe the files, paths and contents that the readers
 and writers accept. The helpers work on any path that [`Path`][] wraps,
-local or remote. A writer replaces a local file at once with
+local or remote, and cover what [`Path`][] does not do by itself. A
+reader asks [`Path`][] directly whether a file exists, with its method
+`exists`, and whether a path names a file on the local file system,
+with its method `is_local`. A writer replaces a local file at once with
 [`atomic_write_bytes`][] or [`replace_file`][], so that a lazy array
 that reads the old file is never left reading a file that is half
 written. A writer replaces a local directory, such as the store of a
@@ -30,9 +33,6 @@ __all__ = [
     "FileOrContentLike",
     "TextFileOrContentLike",
     "BinaryFileOrContentLike",
-    "exists",
-    "LOCAL_PROTOCOLS",
-    "is_local",
     "base_name",
     "is_local_file",
     "replace_directory",
@@ -41,11 +41,9 @@ __all__ = [
     "atomic_write_bytes",
 ]
 
-import errno
 import uuid
 from os import PathLike
 from pathlib import Path as LocalPath
-from urllib.parse import urlsplit
 
 import typing_extensions as tx
 from bagof.paths import Path, PurePath, UnsupportedPathOperation
@@ -81,42 +79,9 @@ BinaryFileOrContentLike = tx.Union[BinaryFileLike, BinaryContentLike]
 """Name of a file, binary file object, or binary content."""
 
 
-def exists(filename: FilenameLike) -> bool:
-    """Return whether a file exists.
-
-    A name that is too long for the operating system (`ENAMETOOLONG`) is
-    reported as not existing instead of raising an error. Such a name is
-    usually file content that was passed where a path was expected. Other
-    errors raised by the file system are propagated.
-    """
-    if isinstance(filename, str):
-        filename = Path(filename)
-    try:
-        return filename.exists()
-    except OSError as e:
-        if e.errno == errno.ENAMETOOLONG:
-            return False
-        raise
-
-
 # ----------------------------------------------------------------------
 #   LOCAL AND REMOTE PATHS
 # ----------------------------------------------------------------------
-
-
-LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
-"""The protocols of paths on the local file system."""
-
-
-def is_local(file: FilenameLike) -> bool:
-    """Return whether a path names a file on the local file system.
-
-    Raises
-    ------
-    TypeError
-        If `file` is not a path, for example an open file.
-    """
-    return Path(file).protocol.lower() in LOCAL_PROTOCOLS
 
 
 def base_name(other: tx.Any) -> tx.Optional[str]:
@@ -125,26 +90,21 @@ def base_name(other: tx.Any) -> tx.Optional[str]:
     A format reads the extension of a file from this name, and an open
     file is named by its `name` attribute. The name is read from the
     text of the path with [`PurePath`][], without touching storage. The
-    query and the fragment of a URL are not part of the name, so
-    `https://host/x.nii.gz?token=...` names `x.nii.gz`. For an fsspec
-    chain such as `simplecache::s3://...`, the name comes from the last
-    link.
+    query of a URL is not part of the name, and neither is the fragment
+    of an HTTP URL, so `https://host/x.nii.gz?token=...` names
+    `x.nii.gz`. For an fsspec chain such as `simplecache::s3://...`, the
+    name comes from the last link. For content, such as bytes, or for an
+    open file without a name, the function returns `None`.
     """
     if not isinstance(other, (str, PathLike)):
         other = getattr(other, "name", None)
         if not isinstance(other, str):
             return None
     try:
-        file = PurePath(other)
-        name = file.name
+        return PurePath(other).name
     except UnsupportedPathOperation:
         # A path object that no driver knows is read from its text.
-        file = PurePath(str(other))
-        name = file.name
-    if file.protocol not in LOCAL_PROTOCOLS:
-        url = urlsplit(str(file))
-        name = PurePath(url._replace(query="", fragment="").geturl()).name
-    return name
+        return PurePath(str(other)).name
 
 
 def is_local_file(file: tx.Any) -> bool:
@@ -157,7 +117,7 @@ def is_local_file(file: tx.Any) -> bool:
     if not isinstance(file, (str, PathLike)):
         return False
     file = Path(file)
-    return is_local(file) and file.is_file()
+    return file.is_local() and file.is_file()
 
 
 def is_same_file(first: tx.Any, second: tx.Any) -> bool:
@@ -172,7 +132,7 @@ def is_same_file(first: tx.Any, second: tx.Any) -> bool:
         if not isinstance(file, (str, PathLike)):
             return False
         file = Path(file)
-        if not is_local(file):
+        if not file.is_local():
             return False
         files.append(file.resolve())
     return files[0] == files[1]
@@ -266,7 +226,7 @@ def replace_directory(
     OSError
         If the directory cannot be written or moved.
     """
-    if not is_local(dirname):
+    if not Path(dirname).is_local():
         raise ValueError(f"Only a local directory can be replaced: {dirname}")
     target = Path(dirname).resolve()
     token = uuid.uuid4().hex
@@ -316,7 +276,7 @@ def atomic_write_bytes(filename: FilenameLike, content: bytes) -> None:
         If the file cannot be written, with the name of the target.
     """
     filename = Path(filename)
-    if not is_local(filename):
+    if not filename.is_local():
         filename.write_bytes(content)
         return
 

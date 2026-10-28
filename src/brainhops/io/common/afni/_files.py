@@ -51,7 +51,7 @@ def afni_dataset_files(
     brik = None
     for suffix in _BRIK_SUFFIXES:
         candidate = parent / (stem + brik_ext + suffix)
-        if path.exists(candidate):
+        if candidate.exists():
             brik = candidate
             break
     if brik is None:

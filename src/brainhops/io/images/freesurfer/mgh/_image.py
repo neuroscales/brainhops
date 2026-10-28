@@ -314,7 +314,7 @@ class MghImage(
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
-        if not path.exists(filename):
+        if not path.Path(filename).exists():
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_mgh(filename, **kwargs)
         return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))

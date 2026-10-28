@@ -670,7 +670,7 @@ class TiffSource:
         if isinstance(file, (bytes, bytearray, memoryview)):
             return cls(content=bytes(file))
         if isinstance(file, (str, path.PathLike)):
-            if path.is_local(file):
+            if path.Path(file).is_local():
                 return cls(filename=str(path.Path(file)))
             with path.Path(file).open("rb") as f:
                 return cls(content=f.read())

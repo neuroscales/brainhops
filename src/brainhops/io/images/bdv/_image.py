@@ -496,7 +496,7 @@ def _sniff_path(
     """Score the XML file at a path as a dataset stored in HDF5."""
     if isinstance(filename, str):
         filename = path.Path(filename)
-    if not path.exists(filename):
+    if not path.Path(filename).exists():
         return _score(False, error)
     with filename.open("rb") as file:
         return _sniff_stream(file, error)

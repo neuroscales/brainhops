@@ -129,7 +129,7 @@ def read_dataset(
     """
     if isinstance(filename, str):
         filename = path.Path(filename)
-    if not path.exists(filename):
+    if not path.Path(filename).exists():
         raise ParserExistsError(f"No such file: {filename}")
     with filename.open("rb") as file:
         raw = BdvRaw.from_bytes(file.read())
@@ -146,7 +146,7 @@ def read_dataset(
             f"listed as missing in this BigDataViewer dataset."
         )
     hdf5 = raw.hdf5_filename(filename)
-    if not path.exists(hdf5):
+    if not path.Path(hdf5).exists():
         raise ParserExistsError(
             f"No such file: {hdf5}, which the BigDataViewer dataset "
             f"{filename} names."

@@ -483,7 +483,7 @@ def read_nrrd(
     if isinstance(file, str):
         file = path.Path(file)
     if _is_path(file):
-        if not path.exists(file):
+        if not path.Path(file).exists():
             raise ParserExistsError(f"No such file: {file}")
         with path.Path(file).open("rb") as f:
             record = NrrdRaw.from_fileobj(f)
@@ -506,7 +506,7 @@ def read_nrrd(
                 f"which cannot be found from a stream that has no file "
                 f"name. Read it from its path instead."
             )
-        if not path.exists(datafile):
+        if not datafile.exists():
             raise ParserExistsError(
                 f"No such file: {datafile} (a data file named by the NRRD "
                 f"header {origin})"

@@ -130,7 +130,7 @@ def read_pillow_image(
     if _is_path(file):
         if isinstance(file, str):
             file = path.Path(file)
-        if not path.exists(file):
+        if not path.Path(file).exists():
             raise ParserExistsError(f"No such file: {file}")
         with path.Path(file).open("rb") as f:
             record = PillowRaw.from_fileobj(f, frame=frame)

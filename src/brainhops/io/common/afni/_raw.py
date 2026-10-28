@@ -483,7 +483,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         """
         _no_options(kwargs)
         head, _, _ = afni_dataset_files(filename)
-        if not path.exists(head):
+        if not head.exists():
             raise ParserExistsError(f"No such file: {head}")
         with head.open("rb") as f:
             return cls.from_bytes(f.read())
@@ -791,7 +791,7 @@ def _sniffed_raw_at(
 ) -> tx.Tuple[tx.Optional[AfniRaw], tx.Optional[Exception]]:
     """Read and validate the record of the dataset that a path names."""
     head, _, _ = afni_dataset_files(filename)
-    if not path.exists(head):
+    if not head.exists():
         return None, ParserExistsError(f"No such file: {head}")
     with head.open("rb") as f:
         return _sniffed_raw(f)

@@ -13,7 +13,7 @@ import typing_extensions as tx
 from brainhops._core import path
 
 # io
-from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import replace_file
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -180,7 +180,7 @@ class Hdf5Reader(BinaryFileReader):
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
-        if not path.exists(filename):
+        if not path.Path(filename).exists():
             return _raise_or(
                 error, SnifferExistsError, f"No such file: {filename}"
             )
@@ -298,7 +298,7 @@ class Hdf5Reader(BinaryFileReader):
         """
         if isinstance(filename, str):
             filename = path.Path(filename)
-        if not path.exists(filename):
+        if not path.Path(filename).exists():
             raise ParserExistsError(f"No such file: {filename}")
         with h5py.File(str(filename), "r") as f:
             return cls.from_h5(f, **kwargs)
@@ -397,7 +397,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             with h5py.File(name, "w-") as f:
                 writer(f)
 
-        if is_local(filename):
+        if path.Path(filename).is_local():
             replace_file(filename, write)
         else:
             with h5py.File(str(filename), "w") as f:

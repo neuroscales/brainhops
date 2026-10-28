@@ -10,7 +10,6 @@ from abczarr import open as open_node
 
 # core
 from brainhops._core import path
-from brainhops._core.path import is_local
 
 # internals
 from brainhops.datamodel.base import DataModelBase
@@ -339,7 +338,7 @@ def absolute_location(location: tx.Any) -> tx.Any:
     """
     if isinstance(location, str):
         location = path.Path(location)
-    if isinstance(location, path.PathLike) and is_local(location):
+    if isinstance(location, path.PathLike) and path.Path(location).is_local():
         return path.Path(os.path.abspath(os.fspath(location)))
     return location
 

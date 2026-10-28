@@ -14,7 +14,6 @@ from bagof.magic import KwOnly, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.path import (
-    is_local,
     is_local_file,
     is_same_file,
     replace_file,
@@ -408,7 +407,7 @@ def read_afni(
         that cannot be read or is too short.
     """
     head, brik, _ = afni_dataset_files(filename)
-    if not path.exists(head):
+    if not head.exists():
         raise ParserExistsError(f"No such file: {head}")
     record = AfniRaw.from_filename(head).validate()
     return record, brik_proxy(record, brik, mmap)
@@ -429,7 +428,7 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
         If the BRIK is compressed in a way that cannot be read, or is too
         short.
     """
-    if not path.exists(brik):
+    if not path.Path(brik).exists():
         raise ParserExistsError(
             f"No such file: {brik} (the BRIK of the AFNI dataset). A "
             f"dataset without a BRIK (a 'warp-on-demand' dataset) cannot "
@@ -523,7 +522,7 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: path.Path) -> None:
         with open(name, "xb") as f:
             write(f)
 
-    if is_local(brik):
+    if path.Path(brik).is_local():
         replace_file(brik, write_named)
         return
     whole = whole_brik(data)

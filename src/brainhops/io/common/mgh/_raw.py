@@ -3,7 +3,6 @@
 # stdlib
 import gzip
 from io import BytesIO
-from urllib.parse import urlsplit
 
 # dependencies
 import numpy as np
@@ -14,7 +13,6 @@ from nibabel.volumeutils import array_to_file
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base._raw import Raw
@@ -342,10 +340,11 @@ def _geometry(header: _mgh.MGHHeader) -> _Geometry:
 def _compressed_name(filename: path.FilenameLike) -> bool:
     """Tell whether a file name asks for gzip, by its `.mgz` or `.gz` suffix.
 
-    The name is read from the path of the URL, so that a query does not
-    hide the suffix.
+    The name is read with [`base_name`][brainhops._core.path.base_name],
+    which leaves out the query of a URL, so that a query does not hide
+    the suffix.
     """
-    name = urlsplit(str(filename)).path.lower()
+    name = (path.base_name(filename) or "").lower()
     return name.endswith((".mgz", ".gz"))
 
 
@@ -403,7 +402,7 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, _MghProxy]:
         file = path.Path(file)
     if not isinstance(file, path.PathLike):
         return _read_mgh_stream(file, mmap)
-    if not is_local(file):
+    if not path.Path(file).is_local():
         with file.open("rb") as stream:
             return _read_mgh_stream(BytesIO(stream.read()), mmap)
     filename = str(file)

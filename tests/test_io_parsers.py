@@ -5,7 +5,7 @@ import io as _io
 import pytest
 import typing_extensions as tx
 
-from brainhops._core.path import exists
+from brainhops._core.path import Path
 from brainhops.io.base._base import (
     FileFormat,
     format_registry,
@@ -169,7 +169,7 @@ def test_sniffing_a_missing_file_scores_zero(tmp_path) -> None:  # noqa: ANN001
 def test_a_name_too_long_to_look_up_is_a_missing_file() -> None:
     """Content passed as a path is a missing file, not an OSError."""
     content = "HELLO world\n" * 100
-    assert not exists(content)
+    assert not Path(content).exists()
     assert Greeting.sniff_file(content) == Confidence.NO
     with pytest.raises(ParserExistsError):
         Greeting.from_file(content)

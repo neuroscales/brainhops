@@ -6,7 +6,6 @@ import typing_extensions as tx
 from brainhops._core.path import (
     Path,
     atomic_write_bytes,
-    is_local,
     is_local_file,
     is_same_file,
     replace_directory,
@@ -41,10 +40,11 @@ def _names(directory: tx.Any) -> tx.List[str]:
 
 
 def test_local_and_remote_paths_are_told_apart(tmp_path) -> None:  # noqa: ANN001
-    assert is_local(tmp_path)
-    assert is_local(str(tmp_path))
-    assert is_local(f"file://{tmp_path}")
-    assert not is_local("memory://bucket/file.nii")
+    # The readers and writers tell them apart with `Path.is_local`.
+    assert Path(tmp_path).is_local()
+    assert Path(str(tmp_path)).is_local()
+    assert Path(f"file://{tmp_path}").is_local()
+    assert not Path("memory://bucket/file.nii").is_local()
 
 
 def test_only_an_existing_local_file_is_a_local_file(tmp_path) -> None:  # noqa: ANN001

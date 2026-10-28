@@ -11,7 +11,6 @@ from bagof.magic import NoInit, NoRepr
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import ts
-from brainhops._core.path import is_local
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops.io.base.parsers import (
@@ -60,7 +59,7 @@ def node_location(filename: tx.Any) -> str:
     """
     if isinstance(filename, str):
         filename = path.Path(filename)
-    if not is_local(filename):
+    if not path.Path(filename).is_local():
         raise ParserTypeError(
             f"brainhops reads local N5 containers only, not {filename}."
         )

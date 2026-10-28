@@ -20,7 +20,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import replace_file
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base.parsers import WriterError
@@ -451,7 +451,7 @@ def write_target(filename: tx.Any, write: tx.Callable[[tx.Any], None]) -> None:
     """
     if isinstance(filename, str):
         filename = path.Path(filename)
-    if is_local(filename):
+    if path.Path(filename).is_local():
         replace_file(filename, write)
         return
     buffer = io.BytesIO()

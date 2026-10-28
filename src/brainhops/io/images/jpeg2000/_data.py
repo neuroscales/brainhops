@@ -18,7 +18,7 @@ from bagof.magic import NoRepr
 from PIL import Image, ImageFile
 
 from brainhops._core import path
-from brainhops._core.path import is_local, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import alias
 
 # internals
@@ -194,9 +194,9 @@ def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:
     if isinstance(file, str):
         file = path.Path(file)
     if isinstance(file, os.PathLike):
-        if not path.exists(file):
+        if not path.Path(file).exists():
             raise ParserExistsError(f"No such file: {file}")
-        if is_local(file):
+        if path.Path(file).is_local():
             filename = os.fspath(file)
             with open(filename, "rb") as f:
                 record = Jpeg2000Raw.from_fileobj(f)

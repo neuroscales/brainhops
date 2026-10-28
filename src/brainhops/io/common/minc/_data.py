@@ -156,7 +156,7 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
     if isinstance(file, str):
         file = path.Path(file)
     if isinstance(file, os.PathLike):
-        if not path.exists(file):
+        if not path.Path(file).exists():
             raise ParserExistsError(f"No such file: {file}")
         with path.Path(file).open("rb") as f:
             record = MincRaw.from_fileobj(f)
