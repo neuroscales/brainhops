@@ -37,9 +37,9 @@ two are the same map inside the grid and only extend differently
 beyond it, and a velocity is integrated. A field interpolated with
 another degree than 1 is sampled at its nodes, which is a loss: the
 converter raises a `LossyConversionError`, and
-`t.to(M3zMorph, lossy=True)` returns the sampled morph. A morph that is
-converted to its own class is changed by the rules of any chain, which
-keep its type.
+`t.to(M3zMorph, on_loss="ignore")` returns the sampled morph. A morph that
+is converted to its own class is changed by the rules of any chain,
+which keep its type.
 """
 
 import numpy as np

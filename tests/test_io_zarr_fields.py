@@ -13,7 +13,6 @@ from brainhops.datamodel import transformations as X
 from brainhops.datamodel._transformations.compute.multiscale import (
     nearest_level,
 )
-from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -140,8 +139,8 @@ def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
     assert len(parts) == 3
     assert isinstance(parts[1], DisplacementField)
     # The outer parts reduce to affines, for inversion and vector rotation.
-    assert _as_affine(parts[0]) is not None
-    assert _as_affine(parts[2]) is not None
+    assert parts[0].to_affine(on_error=None) is not None
+    assert parts[2].to_affine(on_error=None) is not None
 
 
 def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:
@@ -379,6 +378,23 @@ def test_reader_refuses_nonlinear_placed_displacement() -> None:
         _ = reader.transformations
 
 
+def test_reader_refuses_a_level_placed_by_a_nonlinear_map() -> None:
+    # The placement of the finest level is affine, but the level
+    # transform is not, so the displacements of the level cannot be
+    # rescaled to voxel units.
+    reader = OmeZarrField(
+        raw_levels=[np.zeros((4, 4, 2))],
+        level_transforms=[DisplacementField(field=np.zeros((4, 4, 2)))],
+        axes=[
+            Axis(type="space"),
+            Axis(type="space"),
+            Axis(type="displacement"),
+        ],
+    )
+    with pytest.raises(OmeFieldError, match="A level"):
+        _ = reader.transformations
+
+
 def test_reader_selects_a_level_by_target_resolution() -> None:
     reader, placement, _, _, _, _ = _displacement_reader()
     # The finest voxel size is (2, 0.5); a doubled target selects level 1.
@@ -419,3 +435,33 @@ def test_the_generic_load_reads_a_field_rather_than_an_image(
         name="generic.zarr",
     )
     assert isinstance(io.load(path), OmeZarrField)
+
+
+def _placement_without_matrix() -> X.Transformation:
+    # The lazy inverse of an affine whose matrix is not set converts to an
+    # affine that has no matrix either.
+    return X.Inverse(forward=Affine())
+
+
+def test_a_placement_without_a_matrix_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from brainhops.io.transformations.zarr import _xforms
+
+    # Such a placement is taken for the identity, so the test makes it a
+    # placement that the check reaches.
+    monkeypatch.setattr(_xforms, "is_identity", lambda t: False)
+    field = SimpleNamespace(voxel2world=_placement_without_matrix())
+    with pytest.raises(OmeFieldError):
+        OmeZarrField._check_affine_voxel2world(field)
+
+
+def test_a_placement_without_a_matrix_becomes_the_identity() -> None:
+    from brainhops.io.transformations.zarr._xforms import (
+        _affine_or_identity,
+    )
+
+    affine = _affine_or_identity(_placement_without_matrix(), 3)
+    np.testing.assert_array_equal(np.asarray(affine.matrix), np.eye(4)[:3])

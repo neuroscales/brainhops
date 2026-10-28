@@ -9,7 +9,7 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.metadata._vocabulary import VOCABULARY
 from brainhops.io.base._base import register_format
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
@@ -85,17 +85,15 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
         """
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "X5Metadata":
         """Encode the fields that differ from the record into a copy of it.
 
-        The contract is that of
-        [`MetadataFormat.consolidate`][brainhops.io.metadata.MetadataFormat.consolidate]:
+        The contract is that of `consolidated`:
         the changes are written into the JSON metadata of the transform
         of a copy of the record, and the result is decoded from it
         afresh. A record without such a transform stores nothing, and a
@@ -105,9 +103,6 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields to override before the encoding.
 
@@ -128,7 +123,6 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
             _encode,
             None,
             inplace=inplace,
-            on_loss=on_loss,
             fields=fields,
         )
 
@@ -177,11 +171,10 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
         """
         return cls.from_raw(X5Raw.from_h5(h5file, load=load))
 
+    @takes_error_policy
     def to_h5(
         self,
         h5file: h5py.File,
-        *,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> None:
         """Write the consolidated record into an empty HDF5 file.
@@ -195,12 +188,10 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
         ----------
         h5file : h5py.File
             The empty file, open for writing.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the record cannot hold.
         **fields : Any
             Fields to override, as in [`consolidate`][].
         """
-        raw = self.consolidate(on_loss=on_loss, **fields).raw
+        raw = self.consolidate(**fields).raw
         (X5Raw() if raw is None else raw).to_h5(h5file)
 
 

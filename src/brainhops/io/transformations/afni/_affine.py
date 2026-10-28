@@ -13,7 +13,10 @@ from brainhops._core.properties import (
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.errors import ConversionError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -301,12 +304,11 @@ class AfniAffine(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         oneline: tx.Optional[bool] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "AfniAffine":
         """Encode the pending matrix and systems into a new record.
@@ -326,7 +328,8 @@ class AfniAffine(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an AFNI
         affine file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -337,9 +340,6 @@ class AfniAffine(
             (`-1Dmatrix_save`), or a single matrix as 3 lines of 4
             numbers (`cat_matvec`). It defaults to the layout of the
             record, or to one row per matrix without a record.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -365,7 +365,7 @@ class AfniAffine(
         metadata = metadata_to_write(
             self.metadata, AfniAffineMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -413,6 +413,7 @@ class AfniAffine(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the AFNI matrix file of the affine.
 
@@ -439,6 +440,7 @@ class AfniAffine(
         """
         return self.consolidate(**kwargs).metadata.to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.List[str]:
         """Return the lines of the AFNI matrix file of the affine.
 

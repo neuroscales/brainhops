@@ -17,6 +17,7 @@ from brainhops._core import path
 from brainhops._core.path import is_local
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -245,6 +246,7 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the fixed header as an MGH file stores it.
 
@@ -266,6 +268,7 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
         self.header.writehdr_to(buffer)
         return buffer.getvalue().ljust(MGH_HEADER_SIZE, b"\0")
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the fixed header to a path.
 

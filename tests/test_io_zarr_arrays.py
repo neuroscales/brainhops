@@ -23,6 +23,8 @@ from brainhops.io.base.parsers import WriterError
 
 abczarr = pytest.importorskip("abczarr")
 
+from abczarr.errors import UnsupportedZarrOperation  # noqa: E402
+
 from brainhops.io.common.zarr import ZarrMetadata, ZarrRaw  # noqa: E402
 from brainhops.io.common.zarr import _data as zarr_data  # noqa: E402
 from brainhops.io.common.zarr._data import _ZarrProxy  # noqa: E402
@@ -220,7 +222,13 @@ def test_a_remote_save_over_its_own_store_is_refused() -> None:
     from bagof.paths import Path
 
     store = Path("memory://brainhops-tests/arrays/own.zarr")
-    ZarrImage(data=DATA).save(store)
+    try:
+        ZarrImage(data=DATA).save(store)
+    except UnsupportedZarrOperation as error:
+        # The TensorStore driver, the only Zarr driver available on
+        # Python 3.8, refuses memory:// locations, because the memory
+        # store of TensorStore is not the memory file system of fsspec.
+        pytest.skip(f"the Zarr driver cannot write to memory://: {error}")
     image = ZarrImage.load(store)
     image.data = DATA + 1
     with pytest.raises(WriterError, match="remote store"):

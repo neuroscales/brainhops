@@ -16,7 +16,10 @@ from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
@@ -340,14 +343,13 @@ class Jpeg2000Image(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         container: tx.Optional[str] = None,
         num_resolutions: tx.Optional[int] = None,
         comment: tx.Optional[str] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options,
     ) -> "Jpeg2000Image":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -388,7 +390,8 @@ class Jpeg2000Image(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a JPEG
         2000 file holds no field of the vocabulary yet, so a field that
-        is set is reported as lost, once, by `on_loss`.
+        is set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -403,9 +406,6 @@ class Jpeg2000Image(
             pixels again.
         comment : str, optional
             The comment of the file, in place of those of the record.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, which encode the
             pixels again, such as `irreversible=True,
@@ -445,7 +445,7 @@ class Jpeg2000Image(
         metadata = metadata_to_write(
             self.metadata, Jpeg2000Metadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         options = encoder_options(options)
@@ -520,6 +520,7 @@ class Jpeg2000Image(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the JPEG 2000 file of the image.
 
@@ -545,6 +546,7 @@ class Jpeg2000Image(
         """
         return _written(self.consolidate(**kwargs))
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the JPEG 2000 file of the image to a stream.
 
@@ -562,6 +564,7 @@ class Jpeg2000Image(
             kwargs["container"] = _container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a path.
 

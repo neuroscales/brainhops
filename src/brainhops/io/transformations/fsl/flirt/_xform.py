@@ -21,8 +21,13 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.errors import IncompatibleSystemError
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
+from brainhops.errors import (
+    IncompatibleSystemError,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -389,11 +394,10 @@ class FlirtTransform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending FLIRT matrix into a new record.
@@ -411,15 +415,13 @@ class FlirtTransform(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a FLIRT
         matrix holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -446,7 +448,7 @@ class FlirtTransform(
         metadata = metadata_to_write(
             self.metadata, FlirtMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         for end in ("input", "output"):
@@ -471,6 +473,7 @@ class FlirtTransform(
         self.flirt_matrix = None
         return self
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the FLIRT file of the transformation.
 
@@ -483,7 +486,7 @@ class FlirtTransform(
         Parameters
         ----------
         **kwargs : Any
-            `on_loss` and the fields of the metadata, which are given to
+            The fields of the metadata, which are given to
             [`consolidate`][].
 
         Returns
@@ -509,6 +512,7 @@ class FlirtTransform(
             )
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the FLIRT file of the transformation.
 
@@ -517,7 +521,7 @@ class FlirtTransform(
         Parameters
         ----------
         **kwargs : Any
-            `on_loss` and the fields of the metadata, which are given to
+            The fields of the metadata, which are given to
             [`consolidate`][].
 
         Returns

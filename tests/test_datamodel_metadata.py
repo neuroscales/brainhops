@@ -50,7 +50,10 @@ from brainhops.datamodel.metadata import (
     metadata_loss_policy,
 )
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
-from brainhops.datamodel.metadata._report import apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    call_under_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import (
     FIELDS,
     GROUPS,
@@ -302,7 +305,7 @@ def test_to_copies_generic_metadata() -> None:
     with warnings.catch_warnings(), metadata_loss_policy("raise"):
         warnings.simplefilter("error")
         report = ConversionReport()
-        Metadata(echo_time=0.03).to(Metadata, on_loss=report)
+        Metadata(echo_time=0.03).to(Metadata, on_error=report)
     assert not report.lossy
 
 
@@ -321,21 +324,23 @@ def test_the_policies() -> None:
     assert record[0].message.report.lost == {"echo_time": 0.03}
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        apply_loss_policy(_lossy(), "ignore")
+        call_under_policy(lambda: apply_loss_policy(_lossy()), "ignore")
         # Nothing lost: silent whatever the policy.
-        apply_loss_policy(ConversionReport(), "raise")
+        call_under_policy(
+            lambda: apply_loss_policy(ConversionReport()), "raise"
+        )
     with pytest.raises(MetadataLossError) as info:
-        apply_loss_policy(_lossy(), "raise")
+        call_under_policy(lambda: apply_loss_policy(_lossy()), "raise")
     assert info.value.report.lost == {"echo_time": 0.03}
     with pytest.raises(ValueError):
-        apply_loss_policy(_lossy(), "loud")
+        call_under_policy(lambda: apply_loss_policy(_lossy()), "loud")
 
 
-def test_a_report_as_on_loss_is_filled_silently() -> None:
+def test_a_report_as_the_policy_is_filled_silently() -> None:
     sink = ConversionReport()
     with warnings.catch_warnings(), metadata_loss_policy("raise"):
         warnings.simplefilter("error")
-        apply_loss_policy(_lossy(), sink)
+        call_under_policy(lambda: apply_loss_policy(_lossy()), sink)
     assert sink.lost == {"echo_time": 0.03}
     assert (sink.source, sink.target) == ("a", "b")
 
