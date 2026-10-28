@@ -65,7 +65,7 @@ from brainhops.io.transformations.base.fields import (
 
 # this format
 from ._base import NiftiBasedTransformation, _consolidated_metadata
-from ._views import _field_to_disk, _field_to_model
+from ._views import _check_single_field, _field_to_disk, _field_to_model
 
 _NDIM = 3
 """Spatial dimension supported by the displacement reader."""
@@ -93,7 +93,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
     """
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as a field of RAS coordinates.
 
@@ -142,7 +142,9 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         is decoded from `rawdata`. NIfTI stores a vector field with
         shape (X, Y, Z, 1, 3), and the data is decoded without the
         singleton axis, since the array would otherwise be sampled as a
-        4-D grid of vectors.
+        4-D grid of vectors. A file whose fourth axis is longer than one
+        holds a field per volume, which is not supported yet, so reading
+        its data raises `ParserContentError`.
         """
         if self.rawdata is None:
             return None
@@ -210,7 +212,8 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
-            If the field has no coordinates.
+            If the field has no coordinates, or if its array holds a
+            field for each of several volumes.
         """
         fields, overrides = _split_options(options)
         name = type(self).__name__
@@ -228,6 +231,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            _check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -339,10 +343,12 @@ StationaryVelocityField], integrated with `steps` squaring steps
         Vectors that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`: NIfTI stores the field with
-        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. The
-        vectors are the RAS displacements of the file, or its velocity
-        with `log`. Assigning the data drops the chain decoded from the
-        previous data.
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. A file
+        whose fourth axis is longer than one holds a field per volume,
+        which is not supported yet, so reading its data raises
+        `ParserContentError`. The vectors are the RAS displacements of
+        the file, or its velocity with `log`. Assigning the data drops
+        the chain decoded from the previous data.
         """
         if self.rawdata is None:
             return None
@@ -416,7 +422,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         return _with_encoding(obj, encoding)
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as a field of RAS displacements.
 
@@ -589,6 +595,9 @@ StationaryVelocityField], integrated with `steps` squaring steps
             metadata.
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
+        WriterError
+            If the stored array holds a field for each of several
+            volumes.
         """
         fields, overrides = _split_options(options)
         name = type(self).__name__
@@ -608,6 +617,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            _check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -701,7 +711,8 @@ def _coordinates_encoded(
     Raises
     ------
     WriterError
-        If the field has no coordinates.
+        If the field has no coordinates, or if its array holds a field
+        for each of several volumes.
     """
     # NIfTI stores sampled coordinates.
     if StoreEnum(field.store) is not StoreEnum.values:
@@ -715,6 +726,7 @@ def _coordinates_encoded(
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
         )
+    _check_single_field(raw, WriterError)
     record = None if base is None else base.copy()
     image = _record_image(raw, record, overrides=overrides)
     _set_coordinates_intent(image.header)
@@ -750,6 +762,7 @@ def _displacement_encoded(
         and field._transformations is None
         and log == field.log
     ):
+        _check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
         image = _record_image(stored, record, overrides=overrides)
         if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:

@@ -427,21 +427,40 @@ class SimplifyTable(dict):
         |--------------|--------------------|
         | `None`       | `{None: none}`     |
         | `False`      | `{None: none}`     |
-        | `True`       | `{None: numeric}`  |
+        | `True`       | `{None: analytic, Affine: numeric}` |
         | `"none"`     | `{None: none}`     |
         | `"analytic"` | `{None: analytic}` |
-        | `"numeric"`  | `{None: numeric}`  |
-        | a `policy: SimplifyPolicy`                 | `{None: policy}`                                |
+        | `"numeric"`  | `{None: analytic, Affine: numeric}` |
+        | `SimplifyPolicy.numeric`                   | `{None: analytic, Affine: numeric}`             |
+        | another `policy: SimplifyPolicy`           | `{None: policy}`                                |
         | a `key: str &verbar; type`                 | `{None: none, lowered(key): analytic}`          |
         | a `Iterable[key: str]`                     | `{None: none, lowered(key): analytic, ...}`     |
         | a `Dict[key: str, policy: SimplifyPolicy}` | `{None: <fallback>, lowered(key): policy, ...}` |
+
+        A bare numeric policy reads values only for matrix
+        transformations, that is, for members of the Affine family. These
+        transformations include projections, typed lazy inverses and
+        subspaces that wrap an affine. Every other transformation, such as
+        a field, is simplified analytically. A mapping whose key None maps
+        to numeric reads the values of every transformation.
         """  # noqa: E501
         if isinstance(value, Mapping):
             return cls.from_mapping(value)
 
         # A single policy value sets the fallback and names no family.
         if _is_policy_like(value):
-            return cls({None: normalize_policy(value)})
+            policy = normalize_policy(value)
+            if policy is SimplifyPolicy.numeric:
+                # Reading values is cheap for a matrix and can be costly for
+                # a field, so a bare numeric policy reads values only for
+                # matrix transformations.
+                return cls(
+                    {
+                        None: SimplifyPolicy.analytic,
+                        normalize_family("affine"): SimplifyPolicy.numeric,
+                    }
+                )
+            return cls({None: policy})
 
         # Otherwise, the value names families. Those families are simplified
         # analytically, and the fallback stays none, so that every other

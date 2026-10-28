@@ -1,4 +1,5 @@
-from numbers import Integral
+import math
+from numbers import Integral, Real
 
 import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
@@ -15,8 +16,13 @@ from . import nocycles
 from .base import Transformation
 from .compute.simplify import SimplifyLike
 from .compute.simplify import simplify as _simplify
-from .compute.utils import axis_list, require_endomorphism
-from .modes import ModeLike
+from .compute.utils import (
+    axis_list,
+    compute_depth,
+    refuse_free_axes,
+    require_endomorphism,
+)
+from .modes import ModeLike, normalize_modes
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
@@ -47,7 +53,13 @@ class MetaTransformation(_MetaBackendMixin, Transformation):
         # computing it amounts to simplifying it, and the registered
         # simplifier recurses into the transformations that it wraps. `mode`
         # only controls composition, and there is nothing here to compose.
-        return _simplify(self, policy=simplify)
+        with compute_depth() as depth:
+            result = _simplify(self, policy=simplify)
+        # Only a composition removes the free axes that nothing reads, so
+        # the result is checked when something may be composed.
+        if depth == 0 and normalize_modes(mode):
+            refuse_free_axes(result)
+        return result
 
 
 class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
@@ -150,9 +162,19 @@ class Projection(MetaTransformation):
 
     A projection removes the axes listed in `dropped` and therefore maps a
     space to one of lower dimension. An embedding adds the axes listed in
-    `created`, whose coordinates are zero. The axes that are kept stay in
-    the same order, so a projection is a linear map whose matrix selects
-    the kept axes and has a row of zeros for each created axis.
+    `created`, whose coordinates are zero unless `at` gives other values.
+    The axes that are kept stay in the same order, so a projection is an
+    affine map whose matrix selects the kept axes and has a row of zeros
+    for each created axis, with the value of that axis as its
+    translation. It is linear when every created axis is at zero.
+
+    A created axis whose value is NaN is free: it stands for an input
+    that the result must not depend on, as when a transformation is
+    restricted to some of its axes. In the matrix products of `compute`,
+    an exact zero coefficient cancels the NaN, so that a free axis that
+    no output reads disappears, while an output that reads it gets a NaN
+    translation. A `compute` that composes raises when its result still
+    depends on a free axis.
 
     The positions in `dropped` refer to the input axes and the positions
     in `created` to the output axes, so a projection does not need to know
@@ -176,6 +198,11 @@ class Projection(MetaTransformation):
 
     Other Parameters
     ----------------
+    at : array_like of float, optional
+        Value of each created axis, in the order of `created`. All
+        values are zero when it is omitted, as in the `projectAxis` of
+        OME-NGFF, and the projection then stores these zeros. NaN makes
+        an axis free.
     input : CoordinateSystem, optional
         Input coordinate system of the full space. If not given, it is
         derived from the output system when that system is closed.
@@ -186,7 +213,7 @@ class Projection(MetaTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: _FieldNames = "dropped", "created"
+    data_fields: _FieldNames = "dropped", "created", "at"
 
     # --- attributes ---------------------------------------------------
 
@@ -195,6 +222,24 @@ class Projection(MetaTransformation):
 
     created: NotKwOnly[npvector[Integral]] = ()
     """Axes of the output coordinate system to add."""
+
+    at: npvector[Real] = ()
+    """Value of each created axis, which is NaN when the axis is free."""
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        values = [] if self.at is None else list(self.at)
+        created = axis_list(self.created)
+        if values and len(values) != len(created):
+            raise ValueError(
+                f"A projection needs one value in `at` per created axis, "
+                f"but it creates {len(created)} and `at` holds "
+                f"{len(values)}."
+            )
+        if not values:
+            # An omitted `at` is stored as one zero per created axis, so
+            # that the code that reads `at` needs no special case.
+            self.at = [0.0] * len(created)
+        super().__post_init__(arguments)
 
     # --- properties ---------------------------------------------------
 
@@ -231,6 +276,7 @@ class Projection(MetaTransformation):
         return self.to(
             dropped=self.created,
             created=self.dropped,
+            at=(),
             input=self._output,
             output=self._input,
         )
@@ -529,3 +575,8 @@ def _close_projection(
             f"neighbour states: {error}"
         ) from error
     return t.to(**changes) if changes else t
+
+
+def _has_free_axes(t: Projection) -> bool:
+    """Return whether a projection creates an axis whose value is NaN."""
+    return any(math.isnan(value) for value in t.at)

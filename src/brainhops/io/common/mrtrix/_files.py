@@ -19,11 +19,9 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes, is_same_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
-from brainhops.io.base._utils_files import same_file as _same_file
-from brainhops.io.base._utils_files import sibling as _sibling
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import WriterError
 
 # this format
@@ -386,7 +384,7 @@ def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _MrtrixProxy):
         return False
-    return any(_same_file(raw.source, file) for file in written)
+    return any(is_same_file(raw.source, file) for file in written)
 
 
 def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
@@ -405,11 +403,9 @@ def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
     list of path
         The header file, and the data file of a `.mih` header.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if str(filename).lower().endswith(".mih"):
-        base = filename.name[: -len(".mih")]
-        return [filename, _sibling(filename, base + ".dat")]
+    filename = path.Path(filename)
+    if filename.suffix.lower() == ".mih":
+        return [filename, filename.with_suffix(".dat")]
     return [filename]
 
 
@@ -512,10 +508,10 @@ def write_mrtrix(
         header = written_header(record, raw, files[1].name)
         content = header.to_bytes()
         data = payload(header, raw)
-        write_file(files[1], data)
-        write_file(files[0], content)
+        atomic_write_bytes(files[1], data)
+        atomic_write_bytes(files[0], content)
         return
     content = mrtrix_bytes(record, raw)
     if str(files[0]).lower().endswith(".gz"):
         content = gzip.compress(content)
-    write_file(files[0], content)
+    atomic_write_bytes(files[0], content)

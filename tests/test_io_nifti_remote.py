@@ -20,7 +20,7 @@ from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
 from brainhops.io.common.nifti import _header as nifti_header  # noqa: E402
-from brainhops.io.common.nifti import _raw as nifti_raw  # noqa: E402
+from brainhops.io.common.nifti import _parsers as nifti_parsers  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
 
@@ -211,7 +211,9 @@ def test_a_local_path_is_read_by_name(
     def no_stream(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         raise AssertionError("a local path was read as a stream")
 
-    monkeypatch.setattr(nifti_raw, "_read_nifti_stream", no_stream)
+    monkeypatch.setattr(
+        nifti_parsers.NiftiReaderWriter, "from_fileobj", classmethod(no_stream)
+    )
 
     for file in (str(target), target, Path(target), f"file://{target}"):
         image = NiftiImage.load(file)

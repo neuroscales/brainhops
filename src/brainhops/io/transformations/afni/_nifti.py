@@ -57,6 +57,7 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
+    _check_single_field,
     _field_to_disk,
     _field_to_model,
 )
@@ -173,8 +174,11 @@ class AfniNiftiWarp(
         Sub-bricks that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`: AFNI stores the sub-bricks with shape
-        (X, Y, Z, 1, n), and the singleton axis is dropped. Assigning the
-        data drops the chain decoded from the previous data.
+        (X, Y, Z, 1, n), and the singleton axis is dropped. A file whose
+        fourth axis is longer than one holds a field per volume, which
+        is not supported yet, so reading its data raises
+        `ParserContentError`. Assigning the data drops the chain decoded
+        from the previous data.
         """
         if self.rawdata is None:
             return None
@@ -204,7 +208,7 @@ class AfniNiftiWarp(
 
         A stream that starts with a NIfTI header in the layout of AFNI is
         read again with its extensions, which the labels of the
-        sub-bricks are in, and scored with `_score_nibabel`. Any other
+        sub-bricks are in, and scored with `score_header`. Any other
         NIfTI header scores `Confidence.NO`, and a stream that holds no
         NIfTI header is declined by
         [`NiftiRaw.sniff_fileobj`][brainhops.io.common.nifti.NiftiRaw.sniff_fileobj].
@@ -237,7 +241,7 @@ class AfniNiftiWarp(
                 record = NiftiRaw.from_fileobj(file, check=False)
         except Exception:  # noqa: BLE001
             return Confidence.NO
-        return cls._score_nibabel(record.header)
+        return cls.score_header(record.header)
 
     @classmethod
     def from_filename(cls, filename: tx.Any, **kwargs) -> "AfniNiftiWarp":
@@ -311,7 +315,7 @@ class AfniNiftiWarp(
         return _checked(super().from_nibabel(nifti, **kwargs))
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """Score a header as an AFNI warp.
 
         The layout of AFNI, with an AFNI extension that labels the
@@ -461,8 +465,9 @@ class AfniNiftiWarp(
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
-            If the warp has no values, or its chain is not a displacement
-            field between two affines.
+            If the warp has no values, if its chain is not a
+            displacement field between two affines, or if its array
+            holds a field for each of several volumes.
         UnrepresentableTransformationError
             If the chain, or an assigned `input` or `output`, does not map
             RAS to RAS, or the grid of the chain is oblique.
@@ -488,6 +493,7 @@ class AfniNiftiWarp(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
+            _check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, on_loss, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -572,7 +578,8 @@ def _encoded(
     Raises
     ------
     WriterError
-        If the warp has no values.
+        If the warp has no values, or if its array holds a field for
+        each of several volumes.
     """
     if xform._transformations is None:
         if xform._data is not None:
@@ -583,6 +590,7 @@ def _encoded(
             raise WriterError(
                 "This warp has no values, so there is nothing to write."
             )
+        _check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
         image = _record_image(stored, record, overrides=overrides)
     else:

@@ -13,14 +13,13 @@ __all__ = ["Source", "parse", "sniff"]
 import inspect
 from collections.abc import Iterable
 from io import BytesIO, StringIO
-from os import DirEntry, PathLike, sep
-from os.path import basename
-from urllib.parse import urlsplit
+from os import PathLike
 
 import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
+from brainhops._core.streams import compression_suffix
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
@@ -152,88 +151,44 @@ class Source:
     def name(self) -> tx.Optional[str]:
         """The base name of the file that the input names, or `None`."""
         if self.path is not None:
-            return _to_filename(self.path)
+            return path.base_name(self.path)
         if isinstance(self.other, (str, bytes, bytearray, PathLike)):
             # Content wrapped by Source.content is never a file name.
             return None
-        return _to_filename(self.other)  # An open file is named by its .name.
+        # An open file is named by its .name.
+        return path.base_name(self.other)
 
     def __repr__(self) -> str:
         name = self.name
         return f"file {name!r}" if name else "input content"
 
 
-def _to_filename(other: tx.Any) -> tx.Optional[str]:
-    """Return the base name of the file that `other` names, or `None`.
-
-    The name is taken from the text of the path without touching storage,
-    because `os.fspath` raises on remote paths and downloads cloud paths.
-    For a URL, the name is the last segment of its path, without query or
-    fragment, so `https://host/x.nii.gz?token=...` names `x.nii.gz`. For an
-    fsspec chain such as `simplecache::s3://...`, the name comes from the
-    last link.
-    """
-    # TODO: move to brainhops._core.path, and rename, since it returns a
-    # base name rather than a file name.
-
-    if isinstance(other, DirEntry):
-        # str() of a DirEntry gives its repr.
-        text = other.path
-    elif isinstance(other, (str, path.PathLike)):
-        text = str(other)
-    else:
-        text = getattr(other, "name", None)
-        if not isinstance(text, str):
-            return None
-    return _base_name(text)
-
-
-def _base_name(text: str) -> str:
-    """Return the last component of a local path or of the path of a URL."""
-    # TODO: use bagof.paths.Path instead.
-    if "::" in text and "://" in text:
-        # In an fsspec chain, the last link is the file, and the other links
-        # are layers such as caches or archives.
-        text = text.rsplit("::", 1)[-1]
-    if _has_scheme(text):
-        # Only the path of the URL is kept, because the query and the
-        # fragment may contain slashes and dots.
-        text = urlsplit(text).path
-        # Trailing slashes are stripped so that a directory store, such as a
-        # .zarr folder, still gets a name.
-        return text.rstrip("/").rsplit("/", 1)[-1]
-    return basename(text.rstrip("/" + sep))
-
-
-def _has_scheme(text: str) -> bool:
-    """Return whether `text` starts with a URL scheme such as `s3:`.
-
-    A scheme has at least two characters, so a drive such as `C:` is not one.
-    """
-    # TODO: use bagof.paths.Path instead.
-    scheme, colon, _ = text.partition(":")
-    return (
-        bool(colon)
-        and len(scheme) > 1
-        and scheme.isascii()
-        and scheme[0].isalpha()
-        and all(c.isalnum() or c in "+-." for c in scheme)
-    )
+def _match_extension(name: str, cls: type) -> tx.Optional[int]:
+    """Return the length of the longest declared extension that ends a name."""
+    extension = None
+    for ext in cls.EXTENSIONS:
+        if name.endswith(ext) and (extension is None or len(ext) > extension):
+            extension = len(ext)
+    return extension
 
 
 def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
     """Measure how much of a file name a format accounts for.
 
     The result holds the lengths of the longest matching declared extension and
-    prefix, so that `.nii.gz` beats `.gz` and `iy_` beats `y_`. The result is
-    `None` when no extension matches, or when the format declares prefixes
-    and none of them matches, because a prefix is a requirement rather than a
-    hint.
+    prefix, so that `.nii.gz` beats `.gz` and `iy_` beats `y_`. Any format
+    may be compressed, so a name that ends with a compression suffix such as
+    `.gz` also matches the extensions of the name without it, and the suffix
+    counts in the length of the match. The result is `None` when no extension
+    matches, or when the format declares prefixes and none of them matches,
+    because a prefix is a requirement rather than a hint.
     """
-    extension = None
-    for ext in cls.EXTENSIONS:
-        if name.endswith(ext) and (extension is None or len(ext) > extension):
-            extension = len(ext)
+    extension = _match_extension(name, cls)
+    suffix = compression_suffix(name)
+    if extension is None and suffix is not None:
+        inner = _match_extension(name[: -len(suffix)], cls)
+        if inner is not None:
+            extension = inner + len(suffix)
     if extension is None:
         return None
 

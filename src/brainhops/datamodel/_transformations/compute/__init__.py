@@ -10,9 +10,12 @@ implementations registered with that dispatcher.
 | conversion | `convert`     | `converters`    |
 | conversion | `simplify`    | `simplifiers`   |
 | product    | `compose`     | `composers`     |
-| restriction| `restrict`    | `restrictors`   |
+| pruning    | `prune`       | `pruners`       |
 
-The `adaptors` module bridges two consecutive transformations whose
+The `prune` module reads the dependency pattern of each element and
+cuts it down to a closed block, to remove the axes that a chain does not
+need and to cut an element into the groups of the factor pass. The
+`adaptors` module bridges two consecutive transformations whose
 coordinate systems differ only by a reordering, rescaling or flip of the
 axes they share. The `factor` module rewrites a transformation into a
 normal form built from groups of axes. The `separable` module plans a

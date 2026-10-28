@@ -5,6 +5,8 @@ for other vectors. DISPVECT files read as RAS displacements in mm, and
 coordinate fields are written as VECTOR.
 """
 
+import operator
+
 import numpy as np
 import pytest
 
@@ -16,6 +18,7 @@ from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.datamodel._transformations import (  # noqa: E402
     tangents as _tangents,
 )
+from brainhops.errors import ParserContentError, WriterError  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinateField,
     NiftiRASDisplacementField,
@@ -456,6 +459,94 @@ def test_assigned_vectors_are_pending(standard_warp, tmp_path) -> None:  # noqa:
     assert field.rawdata is proxy
     written = np.asarray(nb.load(str(target)).dataobj)
     np.testing.assert_array_equal(written, 0)
+
+
+# ----------------------------------------------------------------------
+#   A FIELD PER VOLUME
+# ----------------------------------------------------------------------
+# A five-dimensional file whose fourth axis is longer than one holds a
+# field for each volume of a time series. Batched transformations are
+# not supported yet (#576), so the readers refuse such a file instead of
+# reading it as a four-dimensional grid of vectors, and the writers
+# refuse to write such an array.
+
+BATCHED = (4, 4, 4, 2, 3)
+"""The shape of a file that holds a field for each of two volumes."""
+
+PER_VOLUME = "A field per volume is not supported yet"
+"""The start of the sentence that the errors about such a file share."""
+
+
+def _write_batched(path, intent: int):  # noqa: ANN001, ANN202
+    """Write a file that holds a field for each of two volumes."""
+    img = nb.Nifti1Image(np.zeros(BATCHED, "float32"), VOX2RAS)
+    img.header.set_intent(intent, name=MAPPING if intent == VECTOR else "")
+    nb.save(img, str(path))
+    return path
+
+
+@pytest.mark.parametrize(
+    "name, intent, cls, view",
+    [
+        ("field.nii.gz", VECTOR, NiftiRASCoordinateField, "field"),
+        ("field.nii.gz", 0, NiftiRASCoordinateField, "field"),
+        ("y_field.nii.gz", VECTOR, SpmCoordinateField, "rasfield.field"),
+        ("field.nii.gz", DISPVECT, NiftiRASDisplacementField, "displacement"),
+    ],
+)
+def test_a_field_per_volume_is_refused_on_read(
+    tmp_path,  # noqa: ANN001
+    name: str,
+    intent: int,
+    cls: type,
+    view: str,
+) -> None:
+    """The data and the view that samples it both refuse the file."""
+    path = _write_batched(tmp_path / name, intent)
+    field = io.transformations.load(path)
+    assert type(field) is cls
+    with pytest.raises(ParserContentError, match=PER_VOLUME):
+        field.data  # noqa: B018
+    with pytest.raises(ParserContentError, match=PER_VOLUME):
+        operator.attrgetter(view)(field)
+
+
+@pytest.mark.parametrize("options", [{}, {"description": "a copy"}])
+@pytest.mark.parametrize(
+    "name, intent",
+    [
+        ("field.nii.gz", VECTOR),
+        ("y_field.nii.gz", VECTOR),
+        ("field.nii.gz", DISPVECT),
+    ],
+)
+def test_a_field_per_volume_that_was_read_is_not_written(
+    tmp_path,  # noqa: ANN001
+    name: str,
+    intent: int,
+    options: dict,
+) -> None:
+    field = io.transformations.load(_write_batched(tmp_path / name, intent))
+    target = tmp_path / "out" / name
+    target.parent.mkdir()
+    with pytest.raises(WriterError, match=PER_VOLUME):
+        field.save(target, **options)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [NiftiRASCoordinateField, SpmCoordinateField, NiftiRASDisplacementField],
+)
+def test_an_assigned_field_per_volume_is_not_written(
+    tmp_path,  # noqa: ANN001
+    cls: type,
+) -> None:
+    field = cls(data=np.zeros(BATCHED, "float32"))
+    target = tmp_path / "y_field.nii.gz"
+    with pytest.raises(WriterError, match=PER_VOLUME):
+        field.save(target)
+    assert not target.exists()
 
 
 # ----------------------------------------------------------------------

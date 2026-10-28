@@ -124,12 +124,29 @@ def test_the_format_declaring_the_extension_is_used(formats, tmp_path) -> None: 
 
 
 def test_the_longest_extension_wins(formats, tmp_path) -> None:  # noqa: ANN001
-    formats("Short", EXTENSIONS=(".gz",))
-    formats("Long", EXTENSIONS=(".note.gz",))
-    io.save(Note(text="hi"), tmp_path / "x.note.gz")
-    assert _written(tmp_path / "x.note.gz") == "Long:hi"
-    io.save(Note(text="hi"), tmp_path / "x.gz")
-    assert _written(tmp_path / "x.gz") == "Short:hi"
+    formats("Short", EXTENSIONS=(".txt",))
+    formats("Long", EXTENSIONS=(".note.txt",))
+    io.save(Note(text="hi"), tmp_path / "x.note.txt")
+    assert _written(tmp_path / "x.note.txt") == "Long:hi"
+    io.save(Note(text="hi"), tmp_path / "x.txt")
+    assert _written(tmp_path / "x.txt") == "Short:hi"
+
+
+@pytest.mark.parametrize("suffix", [".gz", ".bz2", ".xz"])
+def test_any_format_is_compressed_by_its_suffix(
+    formats,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+    suffix: str,
+) -> None:
+    from brainhops._core.streams import decompress
+
+    formats("A", EXTENSIONS=(".a",))
+    formats("B", EXTENSIONS=(".b",))
+    target = tmp_path / ("x.b" + suffix)
+    io.save(Note(text="hi"), target)
+    content = target.read_bytes()
+    assert content != decompress(content)
+    assert decompress(content).decode().rstrip("\n") == "B:hi"
 
 
 def test_a_longer_extension_is_not_given_up_for_a_shorter_one(
@@ -138,11 +155,11 @@ def test_a_longer_extension_is_not_given_up_for_a_shorter_one(
 ) -> None:
     # The format of the longer extension cannot hold the object, so nothing
     # is written, without falling back to the shorter extension.
-    formats("Short", EXTENSIONS=(".gz",))
-    formats("Long", model=OtherNote, EXTENSIONS=(".note.gz",))
+    formats("Short", EXTENSIONS=(".txt",))
+    formats("Long", model=OtherNote, EXTENSIONS=(".note.txt",))
     with pytest.raises(WriterError, match="Long"):
-        io.save(Note(text="hi"), tmp_path / "x.note.gz")
-    assert not (tmp_path / "x.note.gz").exists()
+        io.save(Note(text="hi"), tmp_path / "x.note.txt")
+    assert not (tmp_path / "x.note.txt").exists()
 
 
 def test_a_required_prefix_is_more_specific(formats, tmp_path) -> None:  # noqa: ANN001
@@ -251,10 +268,10 @@ def test_a_hint_does_not_override_a_longer_extension(
     formats,  # noqa: ANN001
     tmp_path,  # noqa: ANN001
 ) -> None:
-    formats("Short", EXTENSIONS=(".gz",), HINTS=("note",))
-    formats("Long", EXTENSIONS=(".note.gz",), HINTS=("note",))
-    io.save(Note(text="hi"), tmp_path / "x.note.gz", hint="note")
-    assert _written(tmp_path / "x.note.gz") == "Long:hi"
+    formats("Short", EXTENSIONS=(".txt",), HINTS=("note",))
+    formats("Long", EXTENSIONS=(".note.txt",), HINTS=("note",))
+    io.save(Note(text="hi"), tmp_path / "x.note.txt", hint="note")
+    assert _written(tmp_path / "x.note.txt") == "Long:hi"
 
 
 def test_a_hinted_format_is_written_whatever_the_name(

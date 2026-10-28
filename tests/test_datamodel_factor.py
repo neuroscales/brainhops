@@ -11,6 +11,10 @@ import pytest
 import brainhops._ext.invfield as invfield
 from brainhops.datamodel._transformations import sequence as seqmod
 from brainhops.datamodel._transformations.compute import factor as fac
+from brainhops.datamodel._transformations.compute.simplify import (
+    SimplifyTable,
+)
+from brainhops.datamodel._transformations.modes import normalize_modes
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -32,6 +36,8 @@ from brainhops.datamodel.transformations import (
 #   HELPERS
 # ----------------------------------------------------------------------
 
+_NUMERIC = SimplifyTable.from_like("numeric")
+
 
 def _sub(inner: Transformation, axes: list) -> SubspaceTransformation:
     idx = np.asarray(axes, dtype=int)
@@ -46,8 +52,8 @@ def _field(x: Transformation) -> np.ndarray:
 
 
 def _engine_factored(seq: Sequence) -> Transformation:
-    """Factor as the compute loop does, composing inside each group."""
-    return fac.factor_sequence(seq, compute=True, simplify="analytic")
+    """Factor as `compute` does, composing inside each group."""
+    return fac.factor_sequence(seq, compute=True, policy="numeric")
 
 
 def _factors(result: Transformation) -> list:
@@ -156,7 +162,7 @@ def test_factor_unfactor_equivalence_block_and_diagonal() -> None:
         )
     )
     seq = Sequence([grid, block])
-    nf = seq.compute(factor=True)
+    nf = seq.compute(factor=True, simplify="numeric")
     assert _factor_axes(nf) == [(0, 1), (2,)]
     assert np.allclose(_field(Sequence(list(nf.transformations))), _field(seq))
 
@@ -195,7 +201,7 @@ def test_subspace_piece_meeting_an_affine_piece_in_a_group() -> None:
     seq = Sequence(
         [grid, _sub(Linear(matrix=lin), [0, 1]), Affine(matrix=couple)]
     )
-    nf = seq.compute(factor=True)
+    nf = seq.compute(factor=True, simplify="numeric")
     assert _factor_axes(nf) == [(0, 1, 2), (3,)]
     x = np.array(grid.field, dtype=float)
     x[..., :2] = x[..., :2] @ lin.T
@@ -237,7 +243,7 @@ def test_trailing_permutation_scatters_work_axes() -> None:
     seq = Sequence(
         [grid, Permutation(permutation=np.array([2, 3, 0, 1])), block]
     )
-    nf = seq.compute(factor=True)
+    nf = seq.compute(factor=True, simplify="numeric")
     *body, perm = nf.transformations
     assert isinstance(perm, Permutation)
     assert _factor_axes(nf) == [(0,), (1,), (2, 3)]
@@ -273,7 +279,9 @@ def test_normal_form_is_idempotent_same_objects() -> None:
         ]
     )
     nf = seq.compute(factor=True)
-    again = Sequence(list(nf.transformations)).compute(factor=True)
+    again = Sequence(list(nf.transformations)).compute(
+        factor=True, simplify="numeric"
+    )
     assert len(again.transformations) == len(nf.transformations)
     assert all(
         a is b for a, b in zip(again.transformations, nf.transformations)
@@ -296,9 +304,9 @@ def test_reversed_order_gives_the_same_partition() -> None:
 
 def _pieces(els: list, ndim: int) -> list:
     """Return the restricted pieces of every group, before composition."""
-    stages = fac._build_stages(els, ndim, fac.PatternCache())
+    stages = fac._build_stages(els, ndim, fac.PatternCache(), _NUMERIC)
     groups = fac._partition(stages, ndim)
-    return [fac._restrict_group(group, stages) for group in groups]
+    return [fac._restrict_group(group, stages, _NUMERIC) for group in groups]
 
 
 def test_restrict_keeps_scaling_and_translation_types() -> None:
@@ -315,11 +323,19 @@ def test_restrict_keeps_scaling_and_translation_types() -> None:
 
 
 def test_restrict_keeps_permutation_type() -> None:
-    els = [Permutation(permutation=np.asarray([1, 0, 2]))]
+    # The affine couples the two axes that the permutation swaps, so the
+    # piece of the permutation in their group is a smaller permutation.
+    # In the group of the third axis, the piece of the permutation is the
+    # identity, which is omitted.
+    matrix = np.eye(3, 4)
+    matrix[0, 1] = 0.5
+    els = [Permutation(permutation=np.asarray([1, 0, 2])), Affine(matrix)]
     pieces = _pieces(els, 3)
-    assert len(pieces) == 3
-    for sub in pieces:
-        assert [type(t).__name__ for t in sub] == ["Permutation"]
+    assert [[type(t).__name__ for t in sub] for sub in pieces] == [
+        ["Permutation", "Affine"],
+        ["Affine"],
+    ]
+    assert list(pieces[0][0].permutation) == [1, 0]
 
 
 def test_restrict_drops_matrix_less_affine() -> None:
@@ -368,7 +384,7 @@ def _widened_chain() -> Sequence:
 def test_widened_intermediate_stage_factors() -> None:
     # The warp couples x and y through the embedded z, and t passes through.
     seq = _widened_chain()
-    nf = seq.compute(factor=True)
+    nf = seq.compute(factor=True, simplify="numeric")
     assert _factor_axes(nf) == [(0, 1), (2,)]
     assert np.allclose(_field(Sequence(list(nf.transformations))), _field(seq))
 
@@ -530,32 +546,113 @@ def test_adversarial_shear_pairs_converge() -> None:
     assert np.allclose(_field(result), np.asarray(grid.field))
 
 
-def test_cap_raises_on_non_identity_preserving_pass(
+def test_compute_runs_a_rebuilding_factor_pass_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A pass that never reaches a fixed point must hit the iteration cap and
-    # raise.
+    # The computation is a single pass, so a factor pass that rebuilds
+    # every element on each call is run once, and the chain is returned
+    # with the elements that it rebuilt.
     from bagof.magic import replace
 
-    def broken(
+    calls = []
+
+    def rebuilding(
         seq: object,
+        policy: object = None,
         compute: object = False,
-        simplify: object = None,
         cache: object = None,
     ) -> object:
+        calls.append(seq)
         leaves = list(seq.transformations or [])
-        if not leaves:
-            return seq
         fresh = [
             replace(t, output=getattr(t, "_output", None)) for t in leaves
         ]
         return replace(seq, transformations=fresh)
 
-    monkeypatch.setattr(seqmod, "factor_sequence", broken)
+    monkeypatch.setattr(seqmod, "factor_sequence", rebuilding)
     grid = CartesianField(shape=(4, 5))
     seq = Sequence([grid, Scaling(scale=np.array([2.0, 3.0]))])
-    with pytest.raises(RuntimeError, match="did not converge"):
-        seq.compute(factor=True)
+    result = seq.compute(factor=True)
+    assert len(calls) == 1
+    assert np.allclose(_field(result), _field(seq))
+
+
+def test_a_declined_chain_is_factored_once_it_is_composed() -> None:
+    # The translation shifts the two axes that the projection creates,
+    # so the factor stage cannot carry their values to the end of the
+    # chain and declines it. Composition folds these values into the
+    # rows of a matrix, and the composed chain is then factored.
+    grid = CartesianField(shape=(3,))
+    seq = Sequence(
+        [
+            grid,
+            Affine(matrix=np.array([[2.0, 1.0]])),
+            Projection(created=[1, 2], at=[-2.0, 3.0]),
+            Translation(translation=np.array([0.5, 1.0, -1.0])),
+        ]
+    )
+    simplified = seq.simplify("numeric")
+    assert simplified.factor("numeric") is simplified
+    nf = seq.compute(factor=True, simplify="numeric")
+    first, factor, tail = nf.transformations
+    assert first is grid
+    assert _factor_axes(nf) == [(0,)]
+    assert list(tail.created) == [1, 2]
+    assert np.allclose(tail.at, [-1.0, 2.0])
+    assert np.allclose(_field(nf), _field(seq))
+    again = Sequence(list(nf.transformations)).compute(
+        factor=True, simplify="numeric"
+    )
+    assert [type(t) for t in again.transformations] == [
+        type(t) for t in nf.transformations
+    ]
+
+
+def test_a_subspace_that_moves_its_axes_composes_under_factor() -> None:
+    # A subspace transformation that moves its axes is never a factor of
+    # the normal form, so it composes with its neighbours.
+    move = SubspaceTransformation(
+        transformation=None,
+        input_axes=np.array([1, 2]),
+        output_axes=np.array([2, 1]),
+    )
+    linear = Linear(matrix=np.array([[2.0, 0, 1], [0, 3, 0], [1, 0, 4]]))
+    seq = Sequence([CartesianField(shape=(3, 4, 5)), move, linear])
+    result = seq.compute(factor=True)
+    first, second = result.transformations
+    assert isinstance(first, CartesianField)
+    assert not isinstance(second, SubspaceTransformation)
+    assert np.allclose(_field(result), _field(seq))
+
+
+def test_a_product_composes_with_the_neighbour_of_its_first_factor() -> None:
+    # The reindexing subspace cannot compose with the subspace that
+    # follows it, whose axes it does not line up with, but it composes
+    # with the product of that subspace and the linear map. A single
+    # sweep of the composition stage tries the product against it.
+    move = SubspaceTransformation(
+        transformation=None,
+        input_axes=np.array([1, 2]),
+        output_axes=np.array([2, 1]),
+    )
+    inner = Sequence(
+        [
+            Scaling(scale=np.array([1.7, 0.5])),
+            Translation(translation=np.array([-2.0, 1.0])),
+        ]
+    )
+    linear = Linear(
+        matrix=np.array([[0.8, 0.4, 0.0], [0.1, 0.9, 0.0], [0.0, 0.0, 1.3]])
+    )
+    seq = Sequence([move, _sub(inner, [0, 2]), linear])
+    modes = normalize_modes(True)
+    policy = SimplifyTable.from_like("analytic")
+    result = seqmod._compose_chain(seq, modes, policy)
+    assert not isinstance(result, Sequence)
+    grid = CartesianField(shape=(3, 4, 5))
+    assert np.allclose(
+        _field(Sequence([grid, result])), _field(Sequence([grid, seq]))
+    )
 
 
 # ----------------------------------------------------------------------
@@ -586,12 +683,10 @@ def test_sequence_inner_split_across_groups_is_kept() -> None:
 def test_unrestrictable_element_leaves_the_chain_unfactored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from brainhops.errors import RestrictionError
-
     def refuse(*args: object) -> None:
-        raise RestrictionError("cannot")
+        return None
 
-    monkeypatch.setattr(fac, "restrict", refuse)
+    monkeypatch.setattr(fac, "restrict_block", refuse)
     seq = Sequence(
         [CartesianField(shape=(4, 5)), Scaling(scale=np.array([2.0, 3.0]))]
     )
@@ -689,7 +784,7 @@ def test_reindex_split_across_groups() -> None:
     )
     affine = Affine(matrix=matrix, input=_XYZ, output=_XYZ)
     seq = Sequence([_grid_xyz(), _reindex([0, 2], [2, 0]), affine])
-    nf = seq.compute(factor=True)
+    nf = seq.compute(factor=True, simplify="numeric")
     assert _factor_axes(nf) == [(0,), (1, 2)]
     ground = _coords()[..., [2, 1, 0]] @ matrix[:, :3].T + matrix[:, 3]
     assert np.allclose(_normal_form_field(nf), ground)
@@ -800,11 +895,10 @@ def test_rectangular_chain_left_unfactored() -> None:
     assert list(nf.transformations) == list(seq.transformations)
 
 
-def test_a_chain_that_drops_an_axis_is_composed_but_not_factored() -> None:
-    # The two ends of the chain have different numbers of axes, so the
-    # chain is not factored. The projection is linear, so it composes with
-    # the scaling into an affine that keeps the first two axes, and it is
-    # never dropped.
+def test_a_chain_that_drops_an_axis_factors_with_a_leading_drop() -> None:
+    # The projection drops the third output, so the third input is never
+    # read. The normal form drops it right after the grid and factors
+    # the two other axes.
     grid = CartesianField(shape=(4, 5, 6))
     seq = Sequence(
         [
@@ -814,13 +908,13 @@ def test_a_chain_that_drops_an_axis_is_composed_but_not_factored() -> None:
         ]
     )
     nf = seq.compute(factor=True)
-    first, last = nf.transformations
+    first, drop, *factors = nf.transformations
     assert first is grid
-    assert not any(
-        isinstance(t, SubspaceTransformation) for t in nf.transformations
-    )
+    assert isinstance(drop, Projection)
+    assert list(drop.dropped) == [2] and not list(drop.created)
+    assert [list(f.input_axes) for f in factors] == [[0], [1]]
     expected = np.array([[2.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0]])
-    assert np.allclose(last.to(Affine).matrix, expected)
+    assert np.allclose(Sequence(nf[1:]).to(Affine).matrix, expected)
 
 
 def test_default_compute_unchanged_by_factor_flag() -> None:
@@ -853,7 +947,7 @@ def test_leaf_factor_delegates_to_sequence() -> None:
         )
     )
     grid = CartesianField(shape=(4, 5, 6))
-    nf = Sequence([grid, diag]).compute(factor=True)
+    nf = Sequence([grid, diag]).compute(factor=True, simplify="numeric")
     assert _factor_axes(nf) == [(0,), (1,), (2,)]
 
 
@@ -872,7 +966,7 @@ def _diagonal() -> Affine:
 def test_leaf_factor_method_splits_a_diagonal_affine() -> None:
     # A leaf factors as a chain of one element, with one factor per axis.
     leaf = _diagonal()
-    nf = leaf.factor()
+    nf = leaf.factor("numeric")
     assert _factor_axes(nf) == [(0,), (1,), (2,)]
     grid = CartesianField(shape=(4, 5, 6))
     assert np.allclose(
@@ -905,11 +999,13 @@ def _scaled_and_swapped() -> Sequence:
 
 
 def test_factor_method_is_structural_by_default() -> None:
-    # Nothing is composed, so each factor holds the sub-chain of its group.
+    # Nothing is composed, so each factor holds the piece of its group, and
+    # the factor of the unit scale is kept, because the analytic policy
+    # does not read the scale.
     seq = _scaled_and_swapped()
     nf = seq.factor()
     assert _factor_axes(nf) == [(0,), (1,), (2,)]
-    assert all(isinstance(f.transformation, Sequence) for f in _factors(nf))
+    assert all(isinstance(f.transformation, Scaling) for f in _factors(nf))
     assert isinstance(nf.transformations[0], CartesianField)
     assert isinstance(nf.transformations[-1], Permutation)
     assert np.allclose(_field(nf), _field(seq))
@@ -917,9 +1013,9 @@ def test_factor_method_is_structural_by_default() -> None:
 
 def test_factor_method_with_compute_folds_each_group_into_one() -> None:
     seq = _scaled_and_swapped()
-    nf = seq.factor(compute=True)
+    nf = seq.factor("numeric", compute=True)
     # The unit scale on the last axis leaves an identity, whose factor is
-    # dropped once the group is composed.
+    # dropped once the group is composed under the numeric policy.
     assert _factor_axes(nf) == [(0,), (1,)]
     assert not any(
         isinstance(f.transformation, Sequence) for f in _factors(nf)
@@ -931,6 +1027,16 @@ def test_factor_method_with_compute_folds_each_group_into_one() -> None:
 def test_factor_method_is_one_idempotent_pass(compute: bool) -> None:
     nf = _scaled_and_swapped().factor(compute=compute)
     assert nf.factor(compute=compute) is nf
+
+
+def test_grouping_follows_the_policy() -> None:
+    # Under the analytic policy, an affine couples all its axes, so a
+    # diagonal affine forms a single group and is left unfactored. The
+    # numeric policy reads its exact zeros and splits it.
+    seq = Sequence([CartesianField(shape=(4, 5, 6)), _diagonal()])
+    assert seq.factor() is seq
+    assert _factor_axes(seq.factor("numeric")) == [(0,), (1,), (2,)]
+    assert seq.factor({None: "analytic"}) is seq
 
 
 def test_factor_method_returns_self_when_the_chain_does_not_factor() -> None:

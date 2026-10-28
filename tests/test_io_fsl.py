@@ -17,7 +17,9 @@ import brainhops.io as io  # noqa: E402
 from brainhops._core.backends import backend, backends  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
+    ParserContentError,
     UnrepresentableTransformationError,
+    WriterError,
 )
 from brainhops.io.transformations.fsl import FlirtTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
@@ -528,6 +530,32 @@ def test_fnirt_refuses_to_encode_an_assigned_chain(tmp_path) -> None:  # noqa: A
     assert not (tmp_path / "copy.nii").exists()
 
 
+def test_fnirt_refuses_a_field_per_volume(tmp_path) -> None:  # noqa: ANN001
+    # A field for each of two volumes is a batched transformation, which
+    # is not supported yet (#576), so it is neither read as a grid of
+    # vectors nor written.
+    img = nb.Nifti1Image(np.zeros((4, 4, 4, 2, 3), np.float32), REF_AFFINE)
+    img.header["intent_code"] = 2006
+    path = tmp_path / "warp.nii"
+    nb.save(img, str(path))
+    warp = FnirtWarpField.load(path, moving=_image(MOV_SHAPE, MOV_AFFINE))
+    with pytest.raises(ParserContentError, match="per volume"):
+        _ = warp.transformations
+    for options in ({}, {"description": "a copy"}):
+        with pytest.raises(WriterError, match="per volume"):
+            warp.save(tmp_path / "copy.nii", **options)
+    assert not (tmp_path / "copy.nii").exists()
+
+
+def test_fnirt_refuses_to_write_an_assigned_field_per_volume(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    warp = FnirtWarpField(data=np.zeros((4, 4, 4, 2, 3), np.float32))
+    with pytest.raises(WriterError, match="per volume"):
+        warp.save(tmp_path / "warp.nii")
+    assert not (tmp_path / "warp.nii").exists()
+
+
 # ----------------------------------------------------------------------
 #   FNIRT (real fixtures)
 # ----------------------------------------------------------------------
@@ -557,7 +585,7 @@ def test_generic_reader_does_not_claim_fsl_intents() -> None:
 
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
     # A score of 1.0 would mean that the generic reader claims the file.
-    assert NiftiRASCoordinateField._score_nibabel(img.header) < 1.0
+    assert NiftiRASCoordinateField.score_header(img.header) < 1.0
 
 
 def test_coefficient_field_exposes_degree_and_coeff() -> None:

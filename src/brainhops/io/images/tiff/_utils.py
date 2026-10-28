@@ -646,15 +646,6 @@ def level_factors(
 #   READING
 # ----------------------------------------------------------------------
 
-_LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
-
-
-def _is_local(file: tx.Any) -> bool:
-    try:
-        return path.Path(file).protocol.lower() in _LOCAL_PROTOCOLS
-    except Exception:
-        return False
-
 
 class TiffSource:
     """A handle from which a TIFF file can be opened again to read its pixels.
@@ -679,7 +670,7 @@ class TiffSource:
         if isinstance(file, (bytes, bytearray, memoryview)):
             return cls(content=bytes(file))
         if isinstance(file, (str, path.PathLike)):
-            if _is_local(file):
+            if path.is_local(file):
                 return cls(filename=str(path.Path(file)))
             with path.Path(file).open("rb") as f:
                 return cls(content=f.read())

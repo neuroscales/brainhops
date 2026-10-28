@@ -27,7 +27,6 @@ from brainhops.io.base._dispatch import (
     _match_name,
     _normalize_hints,
     _tiers,
-    _to_filename,
 )
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
@@ -177,7 +176,7 @@ def save(
     MetadataLossError
         If metadata is lost under the `"raise"` policy.
     """
-    name = _to_filename(file)
+    name = path.base_name(file)
     if name is None:
         if isinstance(obj, FileFormat) and isinstance(obj, FileWriter):
             obj.save(file, **kwargs)

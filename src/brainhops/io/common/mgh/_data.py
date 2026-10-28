@@ -11,10 +11,11 @@ import typing_extensions as tx
 from nibabel.arrayproxy import ArrayProxy as _NibabelArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 
+from brainhops._core.path import is_same_file
+
 # internals
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.strided import StridedProxy
-from brainhops.io.base._utils_files import same_file
 
 
 class _MghProxy(StridedProxy):
@@ -123,4 +124,4 @@ def reads_mgh(raw: tx.Any, file: tx.Any) -> bool:
         Whether `raw` reads `file`.
     """
     root = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(root, _MghProxy) and same_file(root.source, file)
+    return isinstance(root, _MghProxy) and is_same_file(root.source, file)
