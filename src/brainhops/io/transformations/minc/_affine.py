@@ -16,6 +16,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -582,6 +583,7 @@ class XfmAffine(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the affine to a path or a file object.
 
@@ -605,6 +607,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         record.to_file(file, **options)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the affine to a file, replacing a local file at once.
 
@@ -624,6 +627,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         record.to_filename(filename, **options)
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the affine to an open file, in text or binary mode.
 
@@ -643,6 +647,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         record.to_fileobj(file, **options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the MNI transform file that encodes the affine.
 
@@ -665,6 +670,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         return record.to_text(**options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the MNI transform file that encodes the affine.
 
@@ -687,6 +693,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the MNI transform file that encodes the affine.
 

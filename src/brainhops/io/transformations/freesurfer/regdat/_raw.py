@@ -7,6 +7,7 @@ import re
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -203,6 +204,7 @@ class RegisterDatRaw(Raw, TextFileReader, TextFileWriter):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the `register.dat` file that the record holds.
 
@@ -237,6 +239,7 @@ class RegisterDatRaw(Raw, TextFileReader, TextFileWriter):
             return iter(self.lines)
         return iter(_encode(self))
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the `register.dat` file.
 

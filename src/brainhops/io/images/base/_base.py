@@ -30,8 +30,10 @@ class ImageFormat(
     `on_loss=` keywords (see
     [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
     happens to what the file cannot hold. A format overrides the hook
-    `_consolidate` and defines its writers without these keywords,
-    because the base classes apply the policy around them.
+    `_consolidate`, around which the base class applies the policy, and
+    puts the decorator `takes_error_policy` above each writer that it
+    defines, which applies the policy around the writer. Neither the
+    hook nor a writer declares these keywords.
     """
 
     PRIORITY: tx.ClassVar[int] = 10

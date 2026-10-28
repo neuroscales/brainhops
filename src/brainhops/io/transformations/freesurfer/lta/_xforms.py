@@ -25,6 +25,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import format_registry, register_format
@@ -466,6 +467,7 @@ class LtaTransformation(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the transformation to a path or file object in the LTA format.
 
@@ -489,6 +491,7 @@ class LtaTransformation(
         record, options = _lta_written(self, kwargs)
         return record.to_file(file, **options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the LTA file that encodes the transformation.
 
@@ -514,6 +517,7 @@ class LtaTransformation(
         record, options = _lta_written(self, kwargs)
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the LTA file content that encodes the transformation.
 

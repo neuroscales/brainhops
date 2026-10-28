@@ -21,6 +21,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
@@ -782,6 +783,7 @@ class NrrdImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a NRRD file with attached samples.
 
@@ -809,6 +811,7 @@ class NrrdImage(
         record = _nrrd_written(image, ())
         return record.to_bytes() + _payload(image, record)
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,

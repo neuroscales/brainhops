@@ -19,6 +19,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 
 # io
@@ -496,6 +497,7 @@ class AfniBrikWarp(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,

@@ -15,6 +15,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.errors import ConversionError
 from brainhops.io.base._base import register_format
@@ -412,6 +413,7 @@ class AfniAffine(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the AFNI matrix file of the affine.
 
@@ -438,6 +440,7 @@ class AfniAffine(
         """
         return self.consolidate(**kwargs).metadata.to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.List[str]:
         """Return the lines of the AFNI matrix file of the affine.
 

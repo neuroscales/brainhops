@@ -20,6 +20,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
@@ -575,6 +576,7 @@ class MghImage(
         record, raw = _mgh_written(image)
         return _mgh.MGHImage(raw, record.vox2ras, header=record.header)
 
+    @takes_error_policy
     def to_bytes(self, compress: bool = False, **kwargs) -> bytes:
         """Return the MGH encoding: header, voxels, footer and tags.
 
@@ -604,6 +606,7 @@ class MghImage(
         content = encode_mgh(*_mgh_written(self.consolidate(**kwargs)))
         return gzip.compress(content) if compress else content
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a path.
 

@@ -175,11 +175,16 @@ The policy is applied in three ways.
   otherwise. It reports a field given by keyword as lost, with
   `apply_loss_policy()`, so that the policy decides what happens to
   it.
-- The base class of the writers, `_WriterMixin`, wraps each entry point
-  (`save`, `to_file`, `to_filename`, `to_fileobj`, `to_bytes`,
-  `to_text`, `to_lines` and `to_h5`) that a class defines, when the
-  class is created. The wrapper removes the two keywords and calls the
-  method with `call_under_policy()`. The body of a generator, such as a
+- Each entry point of a writer (`save`, `to_file`, `to_filename`,
+  `to_fileobj`, `to_bytes`, `to_text`, `to_lines` and `to_h5`) carries
+  the decorator `takes_error_policy()`, written above the method in the
+  base class of the writers, `_WriterMixin`, and in every class that
+  defines or overrides one. The decorator is explicit, so that a reader
+  of a format sees which methods take a policy. Its wrapper removes the
+  two keywords and calls the method with `call_under_policy()`. An
+  override that calls its base class with `super()` passes no policy,
+  so the inner call runs under the policy of the outer one, and a
+  method that is already decorated is not decorated again. The body of a generator, such as a
   `to_lines` written with `yield`, runs only while its items are read,
   so its wrapper is a generator that sets the policy in effect while
   the body computes each item, and not while the caller handles it. An
@@ -188,7 +193,10 @@ The policy is applied in three ways.
 
 A test checks that no method of a format under `brainhops.io` declares
 `on_error=` or `on_loss=`, except the `consolidate` of the base class
-and `MetadataFormat.from_instance()`. One consequence of E8 is that a
+and `MetadataFormat.from_instance()`. Another test checks that every
+entry point of a writer that a class under `brainhops.io` defines
+carries the decorator, so that a forgotten decorator fails the suite.
+One consequence of E8 is that a
 conversion that the body of a format makes without a policy, such as
 the conversion of a field, follows the policy of the caller rather than
 the default `"warn"`.

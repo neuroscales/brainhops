@@ -20,7 +20,10 @@ from brainhops.datamodel.metadata import (
     MetadataLossWarning,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.transformations import Linear, Rotation
 from brainhops.errors import (
     UNSET,
@@ -605,6 +608,7 @@ def test_a_nested_writer_follows_the_policy_of_the_outer_call(
 class _LineWriter(TextFileWriter):
     """A writer whose lines lose metadata after the first one."""
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         yield "first"
         apply_loss_policy(
@@ -664,6 +668,20 @@ _ENTRY_POINTS = {
 }
 
 
+# The entry points of a writer, which carry the decorator
+# `takes_error_policy` wherever a class defines them.
+_WRITER_ENTRY_POINTS = (
+    "save",
+    "to_file",
+    "to_filename",
+    "to_fileobj",
+    "to_bytes",
+    "to_text",
+    "to_lines",
+    "to_h5",
+)
+
+
 def _subclasses(cls: type) -> tx.Set[type]:
     found = set()
     pending = [cls]
@@ -675,24 +693,36 @@ def _subclasses(cls: type) -> tx.Set[type]:
     return found
 
 
+def _io_classes() -> tx.Set[type]:
+    # Every class of `brainhops.io` that a format, a reader or a writer
+    # inherits from, once every module of the package is imported.
+    import importlib
+    import pkgutil
+
+    import brainhops.io
+    from brainhops.io.base import FileFormat
+    from brainhops.io.base.parsers import FileReader, _WriterMixin
+
+    for module in pkgutil.walk_packages(
+        brainhops.io.__path__, "brainhops.io."
+    ):
+        importlib.import_module(module.name)
+    classes = set()
+    for base in (FileFormat, FileReader, _WriterMixin):
+        classes.add(base)
+        for cls in _subclasses(base):
+            classes.update(cls.__mro__)
+    return {
+        cls for cls in classes if cls.__module__.startswith("brainhops.io")
+    }
+
+
 def test_no_method_of_a_format_declares_a_policy() -> None:
     import inspect
 
-    import brainhops.io.images  # noqa: F401
-    import brainhops.io.metadata  # noqa: F401
-    import brainhops.io.transformations  # noqa: F401
-    from brainhops.io.base import FileFormat
-    from brainhops.io.base.parsers import FileReader, FileWriter
-
-    classes = set()
-    for base in (FileFormat, FileReader, FileWriter):
-        for cls in _subclasses(base):
-            classes.update(cls.__mro__)
     declared = []
     entry_points = set()
-    for cls in classes:
-        if not cls.__module__.startswith("brainhops.io"):
-            continue
+    for cls in _io_classes():
         for name, member in vars(cls).items():
             function = getattr(member, "__func__", member)
             if not inspect.isfunction(function):
@@ -707,3 +737,26 @@ def test_no_method_of_a_format_declares_a_policy() -> None:
             declared.append(".".join(key))
     assert sorted(declared) == []
     assert entry_points == _ENTRY_POINTS
+
+
+def test_every_entry_point_of_a_writer_takes_a_policy() -> None:
+    import inspect
+
+    from brainhops.io.base.parsers import _WriterMixin
+
+    decorated = 0
+    forgotten = []
+    for cls in _io_classes():
+        if not issubclass(cls, _WriterMixin):
+            continue
+        for name in _WRITER_ENTRY_POINTS:
+            member = vars(cls).get(name)
+            if not inspect.isfunction(member):
+                continue
+            if getattr(member, "takes_error_policy", False):
+                decorated += 1
+            else:
+                forgotten.append(f"{cls.__module__}.{cls.__qualname__}.{name}")
+    assert sorted(forgotten) == []
+    # The base of the writers defines seven of the entry points itself.
+    assert decorated > 7

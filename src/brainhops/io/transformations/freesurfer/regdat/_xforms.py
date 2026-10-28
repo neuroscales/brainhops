@@ -24,6 +24,7 @@ from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
@@ -454,6 +455,7 @@ class RegisterDatTransformation(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the transformation to a path or a file object.
 
@@ -477,6 +479,7 @@ class RegisterDatTransformation(
         record, options = _written(self, kwargs)
         return record.to_file(file, **options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the `register.dat` file of the transformation.
 
@@ -502,6 +505,7 @@ class RegisterDatTransformation(
         record, options = _written(self, kwargs)
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the `register.dat` file of the transformation.
 

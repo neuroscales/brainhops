@@ -14,6 +14,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
@@ -505,6 +506,7 @@ class X5Transform(
         self.position = None
         return self
 
+    @takes_error_policy
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the transformation into an empty HDF5 file.
 
@@ -528,6 +530,7 @@ class X5Transform(
         """
         _record(self.consolidate(**kwargs)).to_h5(h5file)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to the file at a path, replacing it.
 
@@ -551,6 +554,7 @@ class X5Transform(
         """
         _record(self.consolidate(**kwargs)).to_filename(filename)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the X5 file that encodes the transformation.
 

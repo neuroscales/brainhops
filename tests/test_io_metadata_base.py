@@ -29,6 +29,7 @@ from brainhops.datamodel.metadata import (
     MetadataLossWarning,
     metadata_loss_policy,
 )
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     TextFileReader,
@@ -167,6 +168,7 @@ class TextDictRaw(DictRaw, TextFileReader, TextFileWriter):
             raise TypeError(f"Unknown option(s): {', '.join(kwargs)}")
         return cls(line.split("=", 1) for line in lines if line.strip())
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         if kwargs:
             raise TypeError(f"Unknown option(s): {', '.join(kwargs)}")

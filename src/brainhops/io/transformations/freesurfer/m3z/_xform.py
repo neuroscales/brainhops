@@ -17,6 +17,7 @@ from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
@@ -489,6 +490,7 @@ class M3zMorph(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, compress: bool = True, **kwargs) -> bytes:
         """Return the content of the morph file that encodes this morph.
 
@@ -520,6 +522,7 @@ class M3zMorph(
         record = _record(self.consolidate(**kwargs))
         return record.to_bytes(compress=compress)
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,

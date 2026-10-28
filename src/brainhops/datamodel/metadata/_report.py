@@ -444,17 +444,24 @@ def call_under_policy(
 
 def takes_error_policy(method: tx.Callable) -> tx.Callable:
     """
-    Make a method take an error policy as its `on_error=` and `on_loss=`
-    keywords.
+    Give a method the keywords `on_error=` and `on_loss=` of a policy.
 
-    The writers of the file formats rely on this decorator: their
-    common base, `_WriterMixin`, wraps with it each entry point that a
-    format defines, such as `to_bytes` or `save`. The wrapper removes
-    `on_error=` and `on_loss=` from the keyword arguments and calls the
-    method with [`call_under_policy`][], so that the body of the method
-    never receives a policy and passes none on. A single action of
+    The writers of the file formats use this decorator. It is written
+    above each entry point of a writer, such as `to_bytes` or `save`,
+    both in their common base, `_WriterMixin`, and in each format that
+    defines or overrides one. The wrapper removes `on_error=` and
+    `on_loss=` from the keyword arguments and calls the method with
+    [`call_under_policy`][], so that the body of the method never
+    receives a policy and passes none on. A single action of
     `on_error=` applies to a `ConversionError`, which covers a loss of
-    metadata, and never to an `OSError`.
+    metadata, and never to an `OSError`. The method itself declares
+    neither keyword and does not document them.
+
+    An override that calls the method of its base class through
+    `super()` passes no policy, so the inner call runs under the policy
+    of the outer one, and only the outer call returns a value in place
+    of a result. A method that is already decorated is returned as it
+    is, so that it is never wrapped twice.
 
     A generator function, such as a `to_lines` method, runs its body
     only while its result is iterated. The wrapper of such a method
@@ -476,6 +483,8 @@ def takes_error_policy(method: tx.Callable) -> tx.Callable:
     callable
         The decorated method.
     """
+    if getattr(method, "takes_error_policy", False):
+        return method
     if inspect.isgeneratorfunction(method):
 
         @functools.wraps(method)
@@ -501,8 +510,8 @@ def takes_error_policy(method: tx.Callable) -> tx.Callable:
                 stacklevel=3,
             )
 
-    # Marks the method, so that a base class that decorates the methods
-    # of its subclasses does not decorate it twice.
+    # Marks the method, so that it is not decorated twice, and so that
+    # a test can check that every entry point of a writer is decorated.
     wrapper.takes_error_policy = True
     return wrapper
 

@@ -17,6 +17,7 @@ from brainhops.datamodel._transformations.compute.converters import (
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.errors import (
     IncompatibleSystemError,
@@ -312,6 +313,7 @@ class NiftyRegAffine(
         self.data = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the transformation to a path or a file object.
 
@@ -335,6 +337,7 @@ class NiftyRegAffine(
         record, options = _written(self, kwargs)
         return record.to_file(file, **options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that encodes the transformation.
 
@@ -360,6 +363,7 @@ class NiftyRegAffine(
         record, options = _written(self, kwargs)
         return record.to_text(**options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file that encodes the transformation.
 

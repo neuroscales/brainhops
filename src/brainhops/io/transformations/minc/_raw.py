@@ -11,6 +11,7 @@ from bagof.magic import Magic, field
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -347,6 +348,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file that the record holds.
 
@@ -392,6 +394,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
                 return self.text
         return encoded
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file that the record holds.
 
@@ -407,6 +410,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
         """
         yield from self.to_text(**kwargs).splitlines()
 
+    @takes_error_policy
     def to_bytes(self, encoding: str = "utf-8", **kwargs) -> bytes:
         """Return the bytes of the file that the record holds.
 

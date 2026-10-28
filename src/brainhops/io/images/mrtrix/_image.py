@@ -18,6 +18,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
@@ -536,6 +537,7 @@ class MrtrixImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a single-file, uncompressed `.mif` image.
 
@@ -563,6 +565,7 @@ class MrtrixImage(
         image = self.consolidate(**_options(kwargs))
         return mrtrix_bytes(image.metadata.raw, image.rawdata)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write to a path, in the variant that its extension names.
 

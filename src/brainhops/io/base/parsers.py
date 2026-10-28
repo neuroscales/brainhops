@@ -20,7 +20,6 @@ __all__ = [
     "disabled",
 ]
 
-import inspect
 from collections.abc import Iterable
 from contextvars import ContextVar
 from io import BytesIO, TextIOBase
@@ -740,27 +739,28 @@ class _WriterMixin:
     in effect (see
     [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
 
-    The mixin wraps the entry points that it defines, and those that
-    each subclass defines, so that a format never declares the two
-    keywords. The wrapper removes them from the keyword arguments and
-    applies the policy around the call: while the body runs, the action
-    for a loss is the policy in effect, which the consolidation of the
-    object reads, and an error that the body raises is handed to the
-    policy. A value to return in place of the result, such as
-    `on_error=None`, is therefore applied once, by the entry point that
-    was called, and an entry point that the body calls without a policy
-    follows the policy of that call. When `to_lines` is a generator,
-    whose body runs only while its lines are read, the wrapper applies
-    the policy while each line is computed, and an error on which the
-    policy does not raise ends the lines there.
+    Each entry point that the mixin defines carries the decorator
+    `takes_error_policy`, and so must each entry point that a subclass
+    defines or overrides, so that a format never declares the two
+    keywords. A test of the suite checks that no entry point lacks the
+    decorator. The decorator removes the keywords from the keyword
+    arguments and applies the policy around the call: while the body
+    runs, the action for a loss is the policy in effect, which the
+    consolidation of the object reads, and an error that the body
+    raises is handed to the policy. A value to return in place of the
+    result, such as `on_error=None`, is therefore applied once, by the
+    entry point that was called, and an entry point that the body calls
+    without a policy, including the method of a base class that an
+    override calls with `super()`, follows the policy of that call.
+    When `to_lines` is a generator, whose body runs only while its lines
+    are read, the decorator applies the policy while each line is
+    computed, and an error on which the policy does not raise ends the
+    lines there.
     """
 
     _WRITE_MODE = "w"
 
-    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
-        super().__init_subclass__(**kwargs)
-        _decorate_writers(cls)
-
+    @takes_error_policy
     def save(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or an open file.
 
@@ -770,6 +770,7 @@ class _WriterMixin:
         """
         return self.to_file(file, **kwargs)
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or a file object.
 
@@ -788,6 +789,7 @@ class _WriterMixin:
 
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the object to a path, always as bytes.
 
@@ -824,6 +826,7 @@ class _WriterMixin:
 
         replace_file(filename, write)
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the object to a file object open for writing.
 
@@ -838,6 +841,7 @@ class _WriterMixin:
         else:
             file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the binary content of the file.
 
@@ -851,6 +855,7 @@ class _WriterMixin:
             f"to_bytes() is not available in writer of type {cls.__name__}"
         )
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file.
 
@@ -859,6 +864,7 @@ class _WriterMixin:
         """
         return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Return the lines of the file, without terminators.
 
@@ -879,38 +885,6 @@ class _WriterMixin:
         raise WriterNotImplementedError(
             f"to_line() is not available in writer of type {cls.__name__}"
         )
-
-
-_WRITER_ENTRY_POINTS = (
-    "save",
-    "to_file",
-    "to_filename",
-    "to_fileobj",
-    "to_bytes",
-    "to_text",
-    "to_lines",
-    "to_h5",
-)
-
-
-def _decorate_writers(cls: type) -> None:
-    """Decorate the entry points of a writer that `cls` itself defines.
-
-    Each entry point is wrapped so that it applies the error policy that
-    it is given (see [`_WriterMixin`][]). An entry point that is already
-    wrapped, such as one that a class assigns from a base class, is left
-    as it is.
-    """
-    for name in _WRITER_ENTRY_POINTS:
-        method = cls.__dict__.get(name)
-        if not inspect.isfunction(method):
-            continue
-        if getattr(method, "takes_error_policy", False):
-            continue
-        setattr(cls, name, takes_error_policy(method))
-
-
-_decorate_writers(_WriterMixin)
 
 
 class FileWriter(_WriterMixin):
@@ -1017,6 +991,7 @@ class TextFileReader(_TextReaderMixin, _TextSnifferMixin, FileReader):
 class TextFileWriter(FileWriter):
     """Output adapters for text, without any reading methods."""
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the text of the file, encoded.
 

@@ -6,6 +6,7 @@ from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
@@ -156,6 +157,7 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             return derived
         return replace(derived, raw=clear_spatial_slots(self.raw))
 
+    @takes_error_policy
     def to_bytes(
         self,
         **fields: tx.Any,
@@ -180,6 +182,7 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         raw = self.consolidate(**fields).raw
         return (NiftiRaw() if raw is None else raw).to_bytes()
 
+    @takes_error_policy
     def to_fileobj(
         self,
         file: tx.BinaryIO,

@@ -13,6 +13,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -465,6 +466,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the ITK `.mat` file of the transformation.
 

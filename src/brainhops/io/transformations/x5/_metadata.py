@@ -9,6 +9,7 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.metadata._vocabulary import VOCABULARY
 from brainhops.io.base._base import register_format
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
@@ -170,6 +171,7 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
         """
         return cls.from_raw(X5Raw.from_h5(h5file, load=load))
 
+    @takes_error_policy
     def to_h5(
         self,
         h5file: h5py.File,

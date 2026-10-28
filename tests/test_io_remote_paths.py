@@ -16,6 +16,7 @@ import brainhops.io as io
 from brainhops._core import path
 from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base import FileFormat
 from brainhops.io.base._base import (
     is_format_registry,
@@ -158,6 +159,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
     """Two text note formats, .n and .long.n, registered for one test."""
 
     def make(name: str, extensions: tx.Tuple[str, ...]) -> type:
+        @takes_error_policy
         def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
             yield f"{name}:{self.text}"
 

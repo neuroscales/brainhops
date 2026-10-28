@@ -36,6 +36,7 @@ from brainhops.datamodel.metadata import (
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     call_under_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import GROUPS, VOCABULARY
 from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
@@ -217,6 +218,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             raise ValueError("A BIDS sidecar is a JSON object.")
         return cls.from_raw(obj)
 
+    @takes_error_policy
     def to_text(
         self,
         **fields,
@@ -239,6 +241,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         record = self.consolidate(**fields).raw
         return json.dumps({} if record is None else record, indent=2) + "\n"
 
+    @takes_error_policy
     def to_lines(
         self,
         **fields,

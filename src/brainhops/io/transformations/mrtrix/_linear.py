@@ -23,6 +23,7 @@ from brainhops._core.properties import (
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.errors import (
     IncompatibleSystemError,
@@ -339,6 +340,7 @@ class MrtrixLinearTransform(
         self.data = None
         return self
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that encodes the transformation.
 
@@ -370,6 +372,7 @@ class MrtrixLinearTransform(
         fields, kwargs = metadata_options(kwargs)
         return self.consolidate(**fields).metadata.to_text(**kwargs)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.List[str]:
         """Return the lines of the file that encodes the transformation.
 

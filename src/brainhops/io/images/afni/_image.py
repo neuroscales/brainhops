@@ -26,6 +26,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -687,6 +688,7 @@ class AfniImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,

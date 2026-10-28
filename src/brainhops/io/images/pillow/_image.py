@@ -19,6 +19,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
@@ -640,6 +641,7 @@ class PillowImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(
         self,
         format: tx.Optional[str] = None,
@@ -683,6 +685,7 @@ class PillowImage(
         image = self.consolidate(format=format, dpi=dpi, **options)
         return image.rawdata.read_stored()
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file, in the `format` given or the
         one that the name of the file calls for (see `to_bytes`).
@@ -698,6 +701,7 @@ class PillowImage(
             kwargs["format"] = format_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a file, in the format its extension calls for.
 

@@ -67,7 +67,10 @@ from brainhops.datamodel.metadata import (
     MetadataLossError,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
@@ -549,6 +552,7 @@ class ToyRaw(Magic, BinaryFileReader, BinaryFileWriter):
         note = file.read(length).decode("utf-8")
         return cls(shape=shape, dtype=dtype, spacing=spacing, note=note)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         ndim = len(self.shape)
         note = self.note.encode("utf-8")
@@ -647,6 +651,7 @@ class ToyMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyMetadata":
         return cls.from_raw(ToyRaw.from_fileobj(file, **kwargs))
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         record = ToyRaw() if self.raw is None else self.raw
         return record.to_bytes(**kwargs)
@@ -790,9 +795,11 @@ class ToyImage(
         proxy = _toy_proxy(file, start, metadata.raw)
         return cls(rawdata=proxy, metadata=metadata)
 
+    @takes_error_policy
     def to_bytes(self, **options) -> bytes:
         return _toy_written(self.consolidate(**options))
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Any, **options) -> None:
         filename = os.fspath(filename)
         if not _toy_reads(self.rawdata, filename):
@@ -1156,6 +1163,7 @@ class ToyLevel(
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyLevel":
         raise ParserTypeError("A toy pyramid is a directory, not a stream.")
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Any, **options) -> None:
         directory = os.fspath(filename)
         if not _toyp_reads((self.rawdata,), directory):
@@ -1352,6 +1360,7 @@ class ToyPyramid(
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyPyramid":
         raise ParserTypeError("A toy pyramid is a directory, not a stream.")
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Any, **options) -> None:
         directory = os.fspath(filename)
         if not _toyp_reads(self.rawdata, directory):

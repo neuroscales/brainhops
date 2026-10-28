@@ -10,6 +10,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import TextFileReader, TextFileWriter
@@ -354,6 +355,7 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the `.tfm` file of the transformation.
 
@@ -383,6 +385,7 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         fields, options = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_lines(**options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the `.tfm` file of the transformation.
 

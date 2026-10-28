@@ -19,6 +19,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -750,6 +751,7 @@ class XfmTransform(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transform to a file, with its displacement volumes.
 
@@ -787,6 +789,7 @@ class XfmTransform(
         _place_volumes(record, copy.rawdata, filename)
         atomic_write_bytes(filename, content)
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the transform file to an open file, without its volumes.
 
@@ -806,6 +809,7 @@ class XfmTransform(
         fields, kwargs = metadata_options(kwargs)
         _record(self.consolidate(**fields)).to_fileobj(file, **kwargs)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the MNI transform file that encodes the chain.
 
@@ -828,6 +832,7 @@ class XfmTransform(
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_text(**kwargs)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the MNI transform file that encodes the chain.
 
@@ -850,6 +855,7 @@ class XfmTransform(
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_lines(**kwargs)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the MNI transform file that encodes the chain.
 

@@ -11,6 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -345,6 +346,7 @@ class NeuroglancerTransform(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the JSON text of the transform.
 
@@ -368,6 +370,7 @@ class NeuroglancerTransform(
         """
         return _record(self.consolidate(**kwargs)).to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the JSON text of the transform.
 

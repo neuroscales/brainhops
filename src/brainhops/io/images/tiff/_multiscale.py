@@ -19,6 +19,7 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     MetadataLossError,
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
@@ -442,6 +443,7 @@ class TiffMultiScaleImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Encode the pyramid as TIFF.
 
@@ -487,6 +489,7 @@ class TiffMultiScaleImage(
         write_plan(self._planned(**options), buffer, encoding)
         return buffer.getvalue()
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the pyramid to an open binary file.
 
@@ -503,6 +506,7 @@ class TiffMultiScaleImage(
         kwargs.setdefault("name", path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the pyramid to a file.
 

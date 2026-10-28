@@ -31,6 +31,7 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -336,6 +337,7 @@ class MrtrixWarp(
             f"MRtrix."
         )
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a single-file, uncompressed `.mif` file.
 
@@ -365,6 +367,7 @@ class MrtrixWarp(
         xform = self.consolidate(**writer_options(kwargs), **fields)
         return mrtrix_bytes(xform.metadata.raw, xform.rawdata)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write to a path, in the variant that its extension names.
 

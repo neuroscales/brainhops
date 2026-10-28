@@ -21,6 +21,7 @@ from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -242,6 +243,7 @@ class ElastixTransform(
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file, with the files of its chain.
 
@@ -277,6 +279,7 @@ class ElastixTransform(
         _place_initial(record, filename, filename)
         atomic_write_bytes(filename, content)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the parameter file that encodes the chain.
 
@@ -300,6 +303,7 @@ class ElastixTransform(
         """
         return _record(self.consolidate(**kwargs)).to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         return _record(self.consolidate(**kwargs)).to_lines()
 

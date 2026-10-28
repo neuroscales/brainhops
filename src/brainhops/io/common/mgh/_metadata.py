@@ -13,6 +13,7 @@ from bagof.magic import NoRepr, replace
 from brainhops._core import path
 from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
@@ -134,6 +135,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             fields=fields,
         )
 
+    @takes_error_policy
     def to_bytes(
         self,
         **fields: tx.Any,
@@ -159,6 +161,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         raw = self.consolidate(**fields).raw
         return (MghRaw() if raw is None else raw).to_bytes()
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,

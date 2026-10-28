@@ -18,6 +18,7 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
+    takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Affine, Transformation
@@ -519,6 +520,7 @@ class Jpeg2000Image(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the JPEG 2000 file of the image.
 
@@ -544,6 +546,7 @@ class Jpeg2000Image(
         """
         return _written(self.consolidate(**kwargs))
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the JPEG 2000 file of the image to a stream.
 
@@ -561,6 +564,7 @@ class Jpeg2000Image(
             kwargs["container"] = _container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a path.
 
