@@ -298,10 +298,9 @@ The restrictor of a batch handles two cases. When a batch axis is fixed
 by `at`, it selects the elements at that position, which gives a batch
 with one batch axis fewer, or a single element when no batch axis
 remains. When the block that is kept contains every batch axis, it cuts
-each element down to the block, which only requires the restrictor of
-the element type to index the last dimensions of its data. A kept
-output that reads a free batch axis raises at `compute`, as A.10
-requires, because no single map exists.
+each element down to the block, by indexing the last dimensions of the
+stack. A kept output that reads a free batch axis raises at `compute`,
+as A.10 requires, because no single map exists.
 
 ### Simplification
 
@@ -321,7 +320,9 @@ conversions to and from the tangent classes. The functions of
 `to_homogeneous`, whose padding row has no batch dimensions. That
 function is used by `expm`, `logm` and `sqrtm`. The checks of
 `_core/linalg.py` that require a square matrix also test
-`matrix.ndim == 2`, and must test the last two dimensions instead. The
+`matrix.ndim == 2`, and must test the last two dimensions instead.
+`sqrtm`, `expm` and `logm` call SciPy, which accepts a stack only in
+recent releases, so they apply to each matrix of a stack in turn. The
 inversion of fields in `_ext/invfield` takes a single field, so the
 inverse of a batch of fields loops over the elements.
 
@@ -348,12 +349,15 @@ Four composers are proposed.
    reads the created axis, so this composer is how a composing
    `compute` selects an element (section 5).
 
-Rules 1 and 2 reuse the composers of the element types on the stacked
-data. These composers currently index the first dimensions of a matrix
-(`matrix[:, :-1]`, `matrix.T`, `matrix.shape[0]`), and the converters
-between element types do the same. They must index the last dimensions
-instead (`matrix[..., :-1]`, a swap of the last two axes), which does
-not change their result on a single matrix. A composition that reads or
+Rules 1 and 2 compute on the stacked arrays, with the functions of
+`_core/affines.py` and `_core/linalg.py`, which accept stacks of
+matrices. The element type of the result is the type that the
+composition of two elements would have, such as a scaling for two
+batches of scalings. The composers of the ordinary types are not reused,
+because they receive transformations, and an ordinary transformation
+never holds a stack. They index the first dimensions of a matrix
+(`matrix[:, :-1]`, `matrix.T`, `matrix.shape[0]`), which is correct as
+long as their data has a single element. A composition that reads or
 writes a batch axis in any other way, such as a scaling of the time
 axis, has no composer, and the batch stays in the chain.
 
@@ -497,12 +501,12 @@ the pruning in `simplify`, which are implemented, and
 `Transformation.restrict`, which is not. Batches of fields whose number
 of components differs from the dimension of their grid need #588.
 
-1. Make the existing code safe for stacks, without changing its
-   behaviour on a single element. `to_homogeneous` broadcasts its
+1. Make the matrix functions of `_core` accept stacks, without changing
+   their behaviour on a single matrix: `to_homogeneous` broadcasts its
    padding row, the square checks of `_core/linalg.py` read the last two
-   dimensions, and the composers, converters, checkers and restrictors
-   index the last dimensions of a matrix. The ordinary types refuse
-   data with leading dimensions.
+   dimensions, and `sqrtm`, `expm` and `logm` apply to each matrix of a
+   stack. The ordinary matrix and vector types refuse data with leading
+   dimensions.
 2. Add `BatchedTransformation`, with the class method `batch` of the
    concrete classes, `stack`, indexing, the systems, `inverse` and
    `sqrt`, the pattern reader, the restrictor, the simplifier and the
