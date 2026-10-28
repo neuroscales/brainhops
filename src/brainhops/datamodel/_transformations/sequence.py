@@ -21,7 +21,7 @@ from . import nocycles
 from .base import Transformation, _copied
 from .compute.check import is_kind
 from .compute.compose import compose
-from .compute.factor import PatternCache, factor_sequence
+from .compute.factor import factor_sequence
 from .compute.simplify import SimplifyLike, SimplifyTable
 from .compute.simplify import simplify as _simplify
 from .compute.utils import (
@@ -352,9 +352,12 @@ class Sequence(SequenceMixin, MetaTransformation):
         lazy and still cancels with its forward transformation.
 
         !!! note
-            This is a single pass. It is idempotent on a chain that is
-            already in normal form, and [`compute`][] with `factor=True` is
-            what repeats it until the chain settles.
+            The pass reads the chain as it stands, and it is idempotent.
+            It declines a chain in which an element shifts or scales an
+            output that reads no input, because it carries such a
+            constant only through the elements that pass it through
+            unchanged. [`compute`][] with `factor=True` composes such a
+            chain, and then simplifies and factors the result.
 
         Parameters
         ----------
@@ -431,9 +434,9 @@ class Sequence(SequenceMixin, MetaTransformation):
             elif i == len(self) - 1 and t.output is None and out is not None:
                 t = t.to(output=out)
             if isinstance(t, Sequence):
-                # A nested child, such as a geometry that contributes a grid
-                # and then a transformation, may leave one level of nesting.
-                # The next pass of `_compute_sequence` flattens that level.
+                # A nested child, such as a geometry that contributes a
+                # grid and then a transformation, may leave one level of
+                # nesting, which a second call splices.
                 flattened.extend(t.flatten().transformations or [])
             else:
                 flattened.append(t)
@@ -551,133 +554,144 @@ def _compute_sequence(
     policy: SimplifyTable,
     factor: bool = False,
 ) -> Transformation:
-    """Compute a sequence by bridging, simplifying and composing to a fixpoint.
+    """Compute a sequence in a single pass of five stages.
 
-    The steps are ordered by the cost that each one is allowed to incur.
+    The stages are ordered by the cost that each one is allowed to
+    incur.
 
-    1. Insert a bridge at every boundary where two adjacent transformations
-       disagree on the coordinate system that they share, because composition
-       assumes compatible systems. Bridging is the only step that adds
-       elements, so it belongs to computation rather than simplification. It
-       runs first because a bridge reads its neighbours: for example, a
-       reversed array-index axis needs the extent of the adjacent grid, which
-       the next step may drop. Bridging reads no parameter, so it costs
-       nothing, and two opposite bridges cancel in the next round.
-    2. Simplify the leaves. Simplification precedes every composition because
-       it is the only step that can remove a lazy inverse and its forward at
-       no cost. Once a neighbour has been composed into a field, the pair that
-       would have cancelled no longer exists.
-    3. Compose the runs of adjacent transformations that the mode admits.
+    1. Insert a bridge at every boundary where two adjacent
+       transformations disagree on the coordinate system that they
+       share, because composition assumes compatible systems. Bridging
+       is the only stage that adds elements, so it belongs to
+       computation rather than simplification. It runs first because a
+       bridge reads its neighbours: for example, a reversed array-index
+       axis needs the extent of the adjacent grid, which simplification
+       may drop. Bridging reads no parameter, so it costs nothing, and
+       two opposite bridges cancel when the chain is simplified.
+    2. Flatten the chain, so that the next stages see two leaves as
+       neighbours even when a nesting boundary sits between them.
+    3. Simplify the chain, which also removes the axes that it does not
+       need. Simplification precedes every composition because it is the
+       only stage that can remove a lazy inverse and its forward
+       transformation at no cost. Once a neighbour has been composed
+       into a field, the pair that would have cancelled no longer
+       exists.
+    4. With `factor=True`, rewrite the chain into a normal form
+       organized by groups of axes (see [`factor_sequence`][]). The
+       chain of each factor is composed inside its group by a
+       computation of its own.
+    5. Compose the runs of adjacent transformations that the mode
+       admits. Each product is simplified as it is produced and is tried
+       against its new neighbours, so the result needs no further
+       simplification.
 
-    A round that does not shorten the sequence cannot be improved by another
-    round, so the loop stops. With `factor=True`, the chain is also rewritten
-    into a normal form organized by groups of axes (see [`factor_sequence`][])
-    between steps 2 and 3. Because factoring may lengthen the sequence, the
-    loop instead stops after a round that leaves every leaf as the same
-    object, and an iteration cap raises an error rather than looping forever.
+    The later stages only remove elements or replace neighbours by their
+    product, which keeps the coordinate systems at each boundary, so
+    every bridge is inserted by the first stage. What a product makes
+    possible, such as the cancellation of the two neighbours of a
+    product that is the identity, is done by the composition stage
+    itself. The only work that this stage repeats concerns
+    `factor=True`: a chain that the factor stage declined is simplified
+    and factored once more after it is composed, because composition can
+    fold constants that the factor stage cannot carry.
     """
-    # The factoring pass memoizes the dependency pattern of each leaf across
-    # rounds.
-    cache = PatternCache()
-    iteration = 0
-    max_iter = 0
-    while True:
-        # --- 1. bridge ---
-        # Bridge the direct children before flattening, because a nested
-        # sequence carries its endpoints on itself. Flattening then has no
-        # endpoint to rebuild, so every leaf stays the same object and
-        # cancellation by object identity keeps working.
-        flat = _unnest(_insert_bridges(seq.transformations or []))
-        if not flat:
-            return Identity(input=seq.input, output=seq.output)
-        seq = seq.to(transformations=flat)
-        before = len(flat)
-        if factor and not max_iter:
-            max_iter = _factor_cap(flat)
+    # --- 1. bridge ---
+    # Bridge the direct children before flattening, because a nested
+    # sequence carries its endpoints on itself. Flattening then has no
+    # endpoint to rebuild, so every leaf stays the same object and
+    # cancellation by object identity keeps working.
+    bridged = _insert_bridges(seq.transformations or [])
 
-        # Push the endpoints of the sequence onto its first and last elements
-        # only if the sequence declares any. In the common case without
-        # endpoints, every leaf therefore stays the same object.
-        if seq.input is not None or seq.output is not None:
-            seq = seq.flatten()
+    # --- 2. flatten ---
+    flat = _unnest(bridged)
+    if not flat:
+        return Identity(input=seq.input, output=seq.output)
+    seq = seq.to(transformations=flat)
+    # Push the endpoints of the sequence onto its first and last
+    # elements only if the sequence declares any. In the common case
+    # without endpoints, every leaf therefore stays the same object.
+    if seq.input is not None or seq.output is not None:
+        seq = seq.flatten()
 
-        # --- 2. simplify ---
-        simplified = _simplify(seq, policy=policy)
-        if not isinstance(simplified, Sequence):
-            # The chain collapsed to a single transformation, so nothing is
-            # left to compose.
-            return simplified
-        seq = simplified
+    # --- 3. simplify ---
+    seq = _simplify(seq, policy=policy)
+    if not isinstance(seq, Sequence):
+        # The chain collapsed to a single transformation, so nothing is
+        # left to factor or to compose.
+        return seq
 
-        # --- 2b. factor ---
-        if factor:
-            factored = factor_sequence(seq, policy, compute=modes, cache=cache)
-            if not isinstance(factored, Sequence):
-                return factored
-            seq = factored
+    # --- 4. factor ---
+    if factor:
+        seq = factor_sequence(seq, policy, compute=modes)
+        if not isinstance(seq, Sequence):
+            return seq
 
-        # --- 3. compose ---
-        memo: tx.Set[Family] = set()
-        for submode in modes:
-            result = _compose_mode(seq, submode, memo, factor)
-            if not isinstance(result, Sequence):
-                # Simplify one last time, because the products of composition
-                # are leaves that the simplifier has not seen yet.
-                return _simplify(result, policy=policy)
-            seq = result
+    # --- 5. compose ---
+    return _compose_chain(seq, modes, policy, factor)
 
-        if factor:
-            # The fixpoint is reached when the round left every leaf as the
-            # same object. The simplifier has already seen these leaves, so no
-            # final pass is needed.
-            after = _unnest(seq.transformations)
-            if len(after) == len(flat) and all(
-                a is b for a, b in zip(after, flat)
-            ):
-                return seq
-            iteration += 1
-            if iteration > max_iter:
-                raise RuntimeError(
-                    "compute did not converge under factor=True after "
-                    f"{iteration} iterations; a pass is not "
-                    "identity-preserving on the normal form"
-                )
-        elif len(_unnest(seq.transformations)) >= before:
-            # No pass shrank the sequence, so another round cannot either.
-            # Simplify the composition products one last time.
-            return _simplify(seq, policy=policy)
+
+def _compose_chain(
+    seq: Sequence,
+    modes: tx.List[Family],
+    policy: SimplifyTable,
+    factor: bool = False,
+) -> Transformation:
+    # Compose the runs of transformations that the modes admit, which is
+    # the last stage of `_compute_sequence`.
+    memo: tx.Set[Family] = set()
+    composed: Transformation = seq
+    for mode in modes:
+        composed = _compose_mode(composed, mode, memo, policy, factor)
+        if not isinstance(composed, Sequence):
+            return composed
+    if factor and not _same_leaves(composed, seq):
+        # The factor stage carries a constant output only through the
+        # elements that pass it through unchanged, so it declines a
+        # chain in which an element shifts or scales such an output.
+        # Composition folds these constants into a matrix, whose exact
+        # zeros the pruning and the factor pass can then read, so the
+        # composed chain is simplified and factored. A chain in normal
+        # form has nothing to compose outside its factors, so this
+        # happens only when the factor stage declined the chain. The
+        # factors of the result are composed inside, and nothing outside
+        # them composes under `factor=True`.
+        composed = _simplify(composed, policy=policy)
+        if isinstance(composed, Sequence):
+            composed = factor_sequence(composed, policy, compute=modes)
+    return composed
 
 
 def _compose_mode(
     seq: Sequence,
     mode: Family,
     memo: tx.Set[Family],
+    policy: SimplifyTable,
     factor: bool = False,
 ) -> Transformation:
-    # Compose the runs of transformations that one mode admits. The child
-    # modes are handled first, depth first, so that finer kinds combine before
-    # coarser ones. For example, with `mode="affine"`, adjacent translations
-    # fold into a single translation before they are widened to an affine.
+    # Compose the runs of transformations that one mode admits. The
+    # child modes are handled first, depth first, so that finer kinds
+    # combine before coarser ones. For example, with `mode="affine"`,
+    # adjacent translations fold into a single translation before they
+    # are widened to an affine.
 
-    # --- Flatten sequence
-    if not _is_flat(seq):
-        seq = seq.flatten()
-
-    # --- Check if nothing to do
-    if not seq.transformations:
-        return seq
-
-    # A mode that was already visited has nothing left to fold.
+    # The checks run from the cheapest to the most expensive: a set
+    # lookup, a length test, then a walk over the whole chain.
 
     # --- A mode already visited has nothing left to fold
     if mode in memo:
         return seq
 
-    # Fold the finer child modes first.
+    # --- Check if nothing to do
+    if not seq.transformations:
+        return seq
+
+    # --- Flatten sequence
+    if not _is_flat(seq):
+        seq = seq.flatten()
 
     # --- First, fold every child mode (finer kinds first)
     for child in mode_children(mode):
-        seq = _compose_mode(seq, child, memo, factor)
+        seq = _compose_mode(seq, child, memo, policy, factor)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -686,35 +700,79 @@ def _compose_mode(
 
     # --- Compose transformations that belong to this mode in order
 
-    inputs = list(getattr(seq, "transformations", [seq]))
-    outputs = []
+    # The sweep keeps a stack of the transformations that it has kept so
+    # far, and merges each new transformation into the top of the stack
+    # for as long as a merge applies. A product is therefore also tried
+    # against the transformation on its left, which may have refused the
+    # first factor of the product but accept the product itself.
+    inputs = list(seq.transformations)
+    # The pairs that are neighbours before the sweep have already been
+    # offered to the pair simplifiers, by the simplification stage or by
+    # the sweep that brought them together.
+    neighbours = {(id(a), id(b)) for a, b in zip(inputs, inputs[1:])}
+    stack: tx.List[Transformation] = []
+    for nxt in inputs:
+        while stack:
+            merged = _merge(stack[-1], nxt, mode, policy, factor, neighbours)
+            if merged is None:
+                break
+            stack.pop()
+            nxt = merged
+        stack.append(nxt)
 
-    # Compose each consecutive run that matches the mode. `is_family` sees
-    # through wrappers, so a subspace transformation embedding an affine
-    # matches `mode="affine"` and composes with its neighbours.
-    while inputs:
-        item = inputs.pop(0)
-        if is_family(item, mode):
-            while inputs and is_family(inputs[0], mode):
-                if factor and not _factor_pair_ok(item, inputs[0]):
-                    # Composition must not undo the factoring pass.
-                    break
-                next_input = inputs.pop(0)
-                try:
-                    # Compose in sequence order. `compose` ignores modes, so
-                    # `is_family` is what decides which pairs reach it.
-                    item = compose(next_input, item)
-                except CompositionError:
-                    # Transformations that the mode admits but that cannot
-                    # combine, such as subspace transformations over
-                    # misaligned axes, are kept side by side.
-                    outputs.append(item)
-                    item = next_input
-        outputs.append(item)
+    if len(stack) == 1:
+        return stack[0]
+    return Sequence(transformations=stack)
 
-    if len(outputs) == 1:
-        return outputs[0]
-    return Sequence(transformations=outputs)
+
+def _merge(
+    first: Transformation,
+    second: Transformation,
+    mode: Family,
+    policy: SimplifyTable,
+    factor: bool,
+    neighbours: tx.Set[tx.Tuple[int, int]],
+) -> tx.Optional[Transformation]:
+    # Return the transformation that replaces two neighbours, where
+    # `first` is applied before `second`, or None when the two stay side
+    # by side.
+    merged = None
+    # `is_family` sees through wrappers, so a subspace transformation
+    # embedding an affine matches `mode="affine"` and composes with its
+    # neighbours. `compose` ignores modes, so `is_family` is what
+    # decides which pairs reach it.
+    if (
+        is_family(first, mode)
+        and is_family(second, mode)
+        and (not factor or _factor_pair_ok(first, second))
+    ):
+        try:
+            # Compose in sequence order.
+            merged = compose(second, first)
+        except CompositionError:
+            # Transformations that the mode admits but that cannot
+            # combine, such as subspace transformations over misaligned
+            # axes, are kept side by side.
+            pass
+    if merged is None and (id(first), id(second)) not in neighbours:
+        # Two transformations that a merge has just brought together,
+        # such as the two neighbours of a product that collapsed to the
+        # identity, may cancel even when the mode does not admit them.
+        merged = _simplify(first, second, policy=policy)
+    if merged is None or merged is first or merged is second:
+        return merged
+    # A product is simplified as it is produced, so that, for example, a
+    # product that is exactly the identity becomes an `Identity` and
+    # merges into its neighbours.
+    return _simplify(merged, policy=policy)
+
+
+def _same_leaves(a: Sequence, b: Sequence) -> bool:
+    # Return whether two sequences hold the same objects in the same
+    # order.
+    left = a.transformations or []
+    right = b.transformations or []
+    return len(left) == len(right) and all(x is y for x, y in zip(left, right))
 
 
 def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
@@ -723,15 +781,17 @@ def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
     # axes or with an `Identity`. Next to anything else, the subspace
     # composers would fold the factor in and destroy the normal form.
     # For the same reason, the projection at the end of the normal form
-    # does not compose with the permutation before it.
+    # does not compose with the permutation before it. A subspace
+    # transformation that moves its axes is never a factor, so it
+    # composes as any other transformation does.
     if isinstance(a, CartesianField) or isinstance(b, CartesianField):
         return False
     if (isinstance(a, Projection) and isinstance(b, Permutation)) or (
         isinstance(a, Permutation) and isinstance(b, Projection)
     ):
         return False
-    a_sub = isinstance(a, SubspaceTransformation)
-    b_sub = isinstance(b, SubspaceTransformation)
+    a_sub = _is_factor(a)
+    b_sub = _is_factor(b)
     if not a_sub and not b_sub:
         return True
     if isinstance(a, Identity) or isinstance(b, Identity):
@@ -743,33 +803,18 @@ def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
     return False
 
 
+def _is_factor(t: Transformation) -> bool:
+    # Return whether `t` has the shape of a factor of the normal form,
+    # that is, a subspace transformation that keeps its axes in place.
+    return isinstance(t, SubspaceTransformation) and _axes_tuple(
+        t.input_axes
+    ) == _axes_tuple(t.output_axes)
+
+
 def _axes_tuple(axes: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
-    # Convert an axis vector, which may be an array, to a tuple so that two
-    # vectors can be compared.
+    # Convert an axis vector, which may be an array, to a tuple so that
+    # two vectors can be compared.
     return None if axes is None else tuple(int(x) for x in axes)
-
-
-def _factor_cap(flat: tx.List[Transformation]) -> int:
-    # Return a generous bound on the number of productive rounds. The bound
-    # grows with `n`, an overestimate of the working dimension, and with the
-    # length of the chain. The cap is only a safety net, because a pass that
-    # preserves the normal form converges quickly.
-    n = 0
-    for t in flat:
-        shape = getattr(t, "shape", None)
-        if shape is not None:
-            n = max(n, len(shape))
-        if not isinstance(t, Inverse):
-            # Reading the matrix of an inverse would materialize it.
-            matrix = getattr(t, "matrix", None)
-            if matrix is not None:
-                rows, cols = matrix.shape
-                n = max(n, int(rows), int(cols))
-        for name in ("input_axes", "output_axes"):
-            axes = getattr(t, name, None)
-            if axes is not None and len(axes):
-                n = max(n, max(int(x) for x in axes) + 1)
-    return max(2 * (n + len(flat)) + 4, 16)
 
 
 # ----------------------------------------------------------------------

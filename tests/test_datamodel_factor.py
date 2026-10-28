@@ -14,6 +14,7 @@ from brainhops.datamodel._transformations.compute import factor as fac
 from brainhops.datamodel._transformations.compute.simplify import (
     SimplifyTable,
 )
+from brainhops.datamodel._transformations.modes import normalize_modes
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -51,7 +52,7 @@ def _field(x: Transformation) -> np.ndarray:
 
 
 def _engine_factored(seq: Sequence) -> Transformation:
-    """Factor as the compute loop does, composing inside each group."""
+    """Factor as `compute` does, composing inside each group."""
     return fac.factor_sequence(seq, compute=True, policy="numeric")
 
 
@@ -545,32 +546,113 @@ def test_adversarial_shear_pairs_converge() -> None:
     assert np.allclose(_field(result), np.asarray(grid.field))
 
 
-def test_cap_raises_on_non_identity_preserving_pass(
+def test_compute_runs_a_rebuilding_factor_pass_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A pass that never reaches a fixed point must hit the iteration cap and
-    # raise.
+    # The computation is a single pass, so a factor pass that rebuilds
+    # every element on each call is run once, and the chain is returned
+    # with the elements that it rebuilt.
     from bagof.magic import replace
 
-    def broken(
+    calls = []
+
+    def rebuilding(
         seq: object,
         policy: object = None,
         compute: object = False,
         cache: object = None,
     ) -> object:
+        calls.append(seq)
         leaves = list(seq.transformations or [])
-        if not leaves:
-            return seq
         fresh = [
             replace(t, output=getattr(t, "_output", None)) for t in leaves
         ]
         return replace(seq, transformations=fresh)
 
-    monkeypatch.setattr(seqmod, "factor_sequence", broken)
+    monkeypatch.setattr(seqmod, "factor_sequence", rebuilding)
     grid = CartesianField(shape=(4, 5))
     seq = Sequence([grid, Scaling(scale=np.array([2.0, 3.0]))])
-    with pytest.raises(RuntimeError, match="did not converge"):
-        seq.compute(factor=True)
+    result = seq.compute(factor=True)
+    assert len(calls) == 1
+    assert np.allclose(_field(result), _field(seq))
+
+
+def test_a_declined_chain_is_factored_once_it_is_composed() -> None:
+    # The translation shifts the two axes that the projection creates,
+    # so the factor stage cannot carry their values to the end of the
+    # chain and declines it. Composition folds these values into the
+    # rows of a matrix, and the composed chain is then factored.
+    grid = CartesianField(shape=(3,))
+    seq = Sequence(
+        [
+            grid,
+            Affine(matrix=np.array([[2.0, 1.0]])),
+            Projection(created=[1, 2], at=[-2.0, 3.0]),
+            Translation(translation=np.array([0.5, 1.0, -1.0])),
+        ]
+    )
+    simplified = seq.simplify("numeric")
+    assert simplified.factor("numeric") is simplified
+    nf = seq.compute(factor=True, simplify="numeric")
+    first, factor, tail = nf.transformations
+    assert first is grid
+    assert _factor_axes(nf) == [(0,)]
+    assert list(tail.created) == [1, 2]
+    assert np.allclose(tail.at, [-1.0, 2.0])
+    assert np.allclose(_field(nf), _field(seq))
+    again = Sequence(list(nf.transformations)).compute(
+        factor=True, simplify="numeric"
+    )
+    assert [type(t) for t in again.transformations] == [
+        type(t) for t in nf.transformations
+    ]
+
+
+def test_a_subspace_that_moves_its_axes_composes_under_factor() -> None:
+    # A subspace transformation that moves its axes is never a factor of
+    # the normal form, so it composes with its neighbours.
+    move = SubspaceTransformation(
+        transformation=None,
+        input_axes=np.array([1, 2]),
+        output_axes=np.array([2, 1]),
+    )
+    linear = Linear(matrix=np.array([[2.0, 0, 1], [0, 3, 0], [1, 0, 4]]))
+    seq = Sequence([CartesianField(shape=(3, 4, 5)), move, linear])
+    result = seq.compute(factor=True)
+    first, second = result.transformations
+    assert isinstance(first, CartesianField)
+    assert not isinstance(second, SubspaceTransformation)
+    assert np.allclose(_field(result), _field(seq))
+
+
+def test_a_product_composes_with_the_neighbour_of_its_first_factor() -> None:
+    # The reindexing subspace cannot compose with the subspace that
+    # follows it, whose axes it does not line up with, but it composes
+    # with the product of that subspace and the linear map. A single
+    # sweep of the composition stage tries the product against it.
+    move = SubspaceTransformation(
+        transformation=None,
+        input_axes=np.array([1, 2]),
+        output_axes=np.array([2, 1]),
+    )
+    inner = Sequence(
+        [
+            Scaling(scale=np.array([1.7, 0.5])),
+            Translation(translation=np.array([-2.0, 1.0])),
+        ]
+    )
+    linear = Linear(
+        matrix=np.array([[0.8, 0.4, 0.0], [0.1, 0.9, 0.0], [0.0, 0.0, 1.3]])
+    )
+    seq = Sequence([move, _sub(inner, [0, 2]), linear])
+    modes = normalize_modes(True)
+    policy = SimplifyTable.from_like("analytic")
+    result = seqmod._compose_chain(seq, modes, policy)
+    assert not isinstance(result, Sequence)
+    grid = CartesianField(shape=(3, 4, 5))
+    assert np.allclose(
+        _field(Sequence([grid, result])), _field(Sequence([grid, seq]))
+    )
 
 
 # ----------------------------------------------------------------------

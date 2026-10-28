@@ -121,9 +121,11 @@ def factor_sequence(
     end. These two projections are the ends of the normal form, and the
     groups are found between them.
 
-    A call performs one round of the pass. `Sequence.compute(factor=True)`
-    runs such rounds between simplification and composition, until a round
-    leaves the chain unchanged.
+    A call performs the pass once, and the pass is idempotent.
+    `Sequence.compute(factor=True)` runs it between simplification and
+    composition. When the pass declines the chain and composition then
+    changes it, `compute` simplifies the composed chain and runs the
+    pass once more on it.
 
     Parameters
     ----------
@@ -148,8 +150,8 @@ def factor_sequence(
         sub-chain of its group, whereas `True` leaves each factor holding a
         single transformation.
     cache : PatternCache, optional
-        Cache of dependency patterns, shared across the rounds of one
-        computation. A fresh cache is used if it is omitted.
+        Cache of dependency patterns, which calls on chains that share
+        elements may share. A fresh cache is used if it is omitted.
 
     Returns
     -------
@@ -261,8 +263,8 @@ def factor_sequence(
         return seq
 
     if _same_structure(body, head, factors, perm, tail):
-        # The fixpoint loop stops when a round leaves every element as the
-        # same object, so returning `seq` itself lets the loop end.
+        # A chain that is already in normal form is returned as the same
+        # object, which makes the pass idempotent.
         return seq
 
     elements: tx.List[Transformation] = []
@@ -605,10 +607,10 @@ def _same_structure(
     perm: tx.Optional[Permutation],
     tail: tx.Optional[Projection],
 ) -> bool:
-    # Decide whether the chain already has the structure of the normal form.
-    # Only the axis lists, the permutation and the ends are compared,
-    # because the inner transformations are assumed to be stable across
-    # rounds.
+    # Decide whether the chain already has the structure of the normal
+    # form. Only the axis lists, the permutation and the ends are
+    # compared, so a chain with the structure of the normal form is kept
+    # as it is, whatever its factors hold.
     expected: tx.List[Transformation] = []
     if head is not None:
         expected.append(head)

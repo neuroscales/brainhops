@@ -760,6 +760,67 @@ def test_random_chains_compute_and_factor(seed: int, policy: str) -> None:
     assert _same_map(chain, rest or [Identity()], n_in, seed)
 
 
+def _structure(t: object) -> list:
+    # Describe a result by the type of each leaf and by the axes of each
+    # subspace transformation, so that two results can be compared.
+    out = []
+    for leaf in _flat(t):
+        entry = [type(leaf).__name__]
+        if isinstance(leaf, SubspaceTransformation):
+            entry.append([int(i) for i in leaf.input_axes])
+            entry.append([int(i) for i in leaf.output_axes])
+        out.append(entry)
+    return out
+
+
+# The chains of the first seeds compose quickly. Under the numeric
+# policy, the factor stage declines the chains of the other seeds, so
+# the composition stage simplifies and factors them again.
+_COMPUTE_SEEDS = [2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 19, 20]
+_COMPUTE_SEEDS += [10, 18, 21, 111, 132, 211, 222, 287, 301, 323, 328]
+_COMPUTE_SEEDS += [329, 336]
+
+
+@pytest.mark.parametrize("factor", [False, True])
+@pytest.mark.parametrize("policy", ["analytic", "numeric"])
+@pytest.mark.parametrize("seed", _COMPUTE_SEEDS)
+def test_compute_is_idempotent_on_random_chains(
+    seed: int, policy: str, factor: bool
+) -> None:
+    # A second computation of the result changes neither its map nor its
+    # structure. The factored chains start with a grid, which is the
+    # sampling domain of the normal form.
+    chain, n_in = _random_chain(seed)
+    leaves = list(chain.transformations)
+    if factor:
+        leaves.insert(0, CartesianField(shape=(3,) * n_in))
+    try:
+        once = Sequence(leaves).compute(simplify=policy, factor=factor)
+    except RestrictionError:
+        return
+    twice = Sequence(_leaves(once)).compute(simplify=policy, factor=factor)
+    assert _structure(twice) == _structure(once)
+    if factor:
+        once, twice = _leaves(once)[1:], _leaves(twice)[1:]
+    assert _same_map(once or [Identity()], twice or [Identity()], n_in)
+
+
+@pytest.mark.parametrize("policy", ["analytic", "numeric"])
+@pytest.mark.parametrize("seed", _COMPUTE_SEEDS)
+def test_factor_succeeds_wherever_compute_succeeds(
+    seed: int, policy: str
+) -> None:
+    chain, n_in = _random_chain(seed)
+    try:
+        chain.compute(simplify=policy)
+    except RestrictionError:
+        with pytest.raises(RestrictionError):
+            chain.compute(simplify=policy, factor=True)
+        return
+    factored = chain.compute(simplify=policy, factor=True)
+    assert _same_map(chain, factored, n_in, seed)
+
+
 def test_a_cut_keeps_the_type() -> None:
     scaling = Scaling(scale=np.array([2.0, 3.0, 4.0]))
     assert isinstance(
