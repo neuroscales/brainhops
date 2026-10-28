@@ -102,36 +102,3 @@ def _axis_taps(
             xp.multiply(index, stride, out=index)
         taps.append((index, weight))
     return taps
-
-
-def _interpolation_rows(
-    n: int, order: int, bound: str, rows: tx.Sequence[int]
-) -> np.ndarray:
-    """Return rows of the matrix that samples coefficients at integers.
-
-    Sampling the spline of coefficients `c` at the integer coordinates
-    `0, ..., n - 1` gives `A @ c`. The prefilter inverts `A`, which this
-    function builds on the host, one row per requested coordinate.
-
-    Parameters
-    ----------
-    n : int
-        The length of the axis.
-    order : int
-        The spline order, from 0 to 7.
-    bound : str
-        The boundary condition, one of the names in `_BOUNDS`.
-    rows : sequence of int
-        The coordinates, which are the indices of the rows.
-
-    Returns
-    -------
-    np.ndarray
-        The rows, with shape `(len(rows), n)` and data type float64.
-    """
-    coords = np.asarray(rows, dtype=np.float64)
-    out = np.zeros((len(coords), n))
-    line = np.arange(len(coords))
-    for index, weight in _axis_taps(np, coords, n, order, bound, np.float64):
-        np.add.at(out, (line, index), weight)
-    return out

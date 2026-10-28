@@ -7,6 +7,8 @@ prefilter is compared with `scipy.ndimage.spline_filter`, and checked to
 give coefficients that interpolate the values exactly.
 """
 
+import fractions
+
 import fake_cupy
 import numpy as np
 import pytest
@@ -397,14 +399,59 @@ def test_spline_coeff_matches_scipy(ndim, order, mode) -> None:  # noqa: ANN001
     )
 
 
+@pytest.mark.parametrize("order", [2, 3, 4, 5, 6, 7])
+def test_poles_are_roots(order) -> None:  # noqa: ANN001
+    # The values of the spline at the integers match SciPy, and the
+    # hard-coded poles are roots of the polynomial that they define, to
+    # the rounding of a float64. The distance to the root is measured
+    # by one step of Newton's method in exact arithmetic.
+    knots = np.arange(order + 2) - (order + 1) / 2
+    spline = scipy.interpolate.BSpline.basis_element(knots, False)
+    values = interpol._coeff._stencil(order)
+    h = order // 2
+    np.testing.assert_allclose(
+        [float(b) for b in values], spline(np.arange(-h, h + 1)), atol=1e-15
+    )
+    poles = interpol._coeff._poles(order)
+    assert len(poles) == h
+    assert list(poles) == sorted(poles)
+    gain = 1.0
+    for z in poles:
+        assert -1 < z < 0
+        exact = fractions.Fraction(z)
+        powers = range(2 * h, -1, -1)
+        value = sum(b * exact**p for b, p in zip(values, powers))
+        slope = sum(p * b * exact ** (p - 1) for b, p in zip(values, powers))
+        assert abs(float(value / slope / exact)) < 2e-16
+        gain *= (1 - z) * (1 - 1 / z)
+    assert interpol._coeff._gain(order) == pytest.approx(gain, rel=1e-15)
+
+
+def _sampled(c, order, bound):  # noqa: ANN001, ANN202
+    # Sample at the integers the spline of the coefficients c along the
+    # first axis, by its definition: a sum of B-splines centred on the
+    # samples of the extended coefficients.
+    n = len(c)
+    h = order // 2
+    knots = np.arange(order + 2) - (order + 1) / 2
+    spline = scipy.interpolate.BSpline.basis_element(knots, False)
+    j = np.arange(-h, n + h)
+    weights = np.nan_to_num(spline(np.arange(n)[:, None] - j[None, :]))
+    ext = np.stack(
+        [_extended(column, bound, -h, n + h) for column in c.T], axis=1
+    )
+    return weights @ ext
+
+
 @pytest.mark.parametrize("bound", ALL_BOUNDS)
 @pytest.mark.parametrize("order", [2, 3, 4, 5, 6, 7])
-@pytest.mark.parametrize("n", [1, 2, 3, 5, 10, 30, 200])
+@pytest.mark.parametrize("n", [1, 2, 3, 4, 5, 7, 10, 30, 200])
 def test_spline_coeff_is_exact(bound, order, n) -> None:  # noqa: ANN001
     # Sampling the coefficients at the integer coordinates gives back
-    # the values.
+    # the values, to rounding errors.
     x = np.random.default_rng(n).standard_normal((n, 3))
     coeff = spline_coeff1d(x, order, bound, axis=0)
+    np.testing.assert_allclose(_sampled(coeff, order, bound), x, atol=1e-14)
     grid = np.arange(n, dtype=float)[:, None]
     values = pull(np.moveaxis(coeff, 0, -1), grid, order, bound)
     np.testing.assert_allclose(values, x.T, atol=1e-11)
@@ -522,3 +569,20 @@ def test_cupy_arrays_stay_on_device(cupy, bound, order, options) -> None:  # noq
     np.testing.assert_allclose(
         coeff.get(), spline_coeff(x, order, bound, ndim=3), atol=1e-12
     )
+
+
+@pytest.mark.parametrize("bound", ALL_BOUNDS)
+@pytest.mark.parametrize("order", [2, 4, 7])
+def test_cupy_spline_coeff_stays_on_device(cupy, bound, order) -> None:  # noqa: ANN001
+    # Every way of computing the coefficients runs on the device: the
+    # recursive filter with and without the truncation of its initial
+    # values, the correction near the edges, and the direct solve for
+    # short axes.
+    rng = np.random.default_rng(order)
+    for n in (1, 2, 3, 5, 30, 100):
+        x = rng.standard_normal((n, 4))
+        coeff = spline_coeff1d(cupy.asarray(x), order, bound, axis=0)
+        assert isinstance(coeff, fake_cupy.ndarray)
+        np.testing.assert_allclose(
+            coeff.get(), spline_coeff1d(x, order, bound, axis=0), atol=1e-14
+        )
