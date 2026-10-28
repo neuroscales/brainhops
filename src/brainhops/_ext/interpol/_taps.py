@@ -26,6 +26,7 @@ def _axis_taps(
     stride: int = 1,
     pool: tx.Optional[_BufferPool] = None,
     axis: int = 0,
+    origin: int = 0,
 ) -> tx.List[tx.Tuple[tx.Any, tx.Any]]:
     """Return the samples and the weights that coordinates read.
 
@@ -63,6 +64,13 @@ def _axis_taps(
         The spatial axis of the coordinates, which names the arrays of
         the taps in the pool, so that the taps of every axis can be held
         at the same time.
+    origin : int, default=0
+        The index along the axis of the first sample of the array that
+        is read, when that array holds only a window of the axis. The
+        indices are shifted by it once the boundary condition has
+        brought them inside the axis of length `n`, so that they index
+        the window. The window must hold every sample that the
+        coordinates read.
 
     Returns
     -------
@@ -98,6 +106,8 @@ def _axis_taps(
         _tap_weight(xp, order, tap, t, out=weight, scratch=scratch)
         xp.add(base, tap, out=index)
         _bound_index(xp, index, n, bound, weight, integer_scratch, scratch)
+        if origin:
+            xp.subtract(index, origin, out=index)
         if stride != 1:
             xp.multiply(index, stride, out=index)
         taps.append((index, weight))

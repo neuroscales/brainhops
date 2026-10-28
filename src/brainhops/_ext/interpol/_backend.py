@@ -52,6 +52,26 @@ def _get_namespace(*arrays: tx.Any) -> ModuleType:
     return np
 
 
+def _is_dask(array: tx.Any) -> bool:
+    """Return whether an array is a dask array, without importing dask.
+
+    The functions of the package hand dask arrays to the module
+    `_dask`, which is the only one that imports dask, so that dask
+    remains an optional dependency.
+
+    Parameters
+    ----------
+    array : object
+        The object to test.
+
+    Returns
+    -------
+    bool
+        True when the object is a dask array.
+    """
+    return hasattr(array, "__dask_graph__") and hasattr(array, "chunks")
+
+
 def _asarray(xp: ModuleType, array: tx.Any, dtype: tx.Any = None) -> tx.Any:
     """Convert an array to the package `xp`, without leaving the device.
 
