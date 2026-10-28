@@ -3,6 +3,7 @@
 import inspect
 
 import numpy as np
+import pytest
 import typing_extensions as tx
 from bagof.magic import fields_dict, replace
 
@@ -983,3 +984,47 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
                 DisplacementField(field=np.zeros((2, 2, 2, 3))),
             ]
         ).to(Affine)
+
+
+# --- one element per matrix or vector type ----------------------------
+
+_STACKED = [
+    (Affine, np.zeros((2, 3, 4))),
+    (Linear, np.zeros((2, 3, 3))),
+    (Scaling, np.ones((2, 3))),
+    (Translation, np.zeros((2, 3))),
+    (Permutation, np.zeros((2, 3), dtype=int)),
+]
+
+
+@pytest.mark.parametrize("cls, stack", _STACKED)
+def test_matrix_and_vector_types_refuse_a_stack(
+    cls: tx.Type[Transformation], stack: np.ndarray
+) -> None:
+    with pytest.raises(ValueError, match="stack of transformations"):
+        cls(stack)
+
+
+@pytest.mark.parametrize("cls, stack", _STACKED)
+def test_matrix_and_vector_types_refuse_a_stack_on_assignment(
+    cls: tx.Type[Transformation], stack: np.ndarray
+) -> None:
+    t = cls(stack[0])
+    with pytest.raises(ValueError, match="stack of transformations"):
+        t.data = stack
+    np.testing.assert_array_equal(t.data, stack[0])
+
+
+def test_a_view_of_an_affine_refuses_a_stack() -> None:
+    t = Affine(np.eye(3, 4))
+    with pytest.raises(ValueError, match="stack of transformations"):
+        t.matrix = np.zeros((2, 3, 4))
+
+
+def test_a_tangent_type_refuses_a_stack() -> None:
+    with pytest.raises(ValueError, match="stack of transformations"):
+        Affine(np.zeros((2, 3, 4)), log=True)
+
+
+def test_a_scaling_still_accepts_a_scalar() -> None:
+    assert Scaling(2.0).data == 2.0

@@ -32,6 +32,7 @@ from .concrete import (
     StoreEnum,
     _data2values,
     _invalidating_property,
+    _set_element_data,
     require_endomorphism,
 )
 
@@ -235,7 +236,7 @@ class AffineExponential(_TangentMixin, Affine, on={"_log": True}):
 
     # --- attribute views ----------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
 
     # --- views --------------------------------------------------------
@@ -327,7 +328,7 @@ class LinearExponential(
     _logmatrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Logarithm of the matrix, an init-only alias of `data`."""
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
 
     logmatrix = alias("data")
@@ -348,7 +349,7 @@ class RotationExponential(MatrixTangentMixin, Rotation, on={"_log": True}):
     _logmatrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Antisymmetric logarithm of the matrix, an init-only alias of `data`."""
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
 
     logmatrix = alias("data")
@@ -372,7 +373,7 @@ class ScalingExponential(_TangentMixin, Scaling, on={"_log": True}):
     _logscale: InitVar[tx.Optional[npvector[Real]]] = None
     """Logarithm of the scaling factors, an init-only alias of `data`."""
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
 
     logscale = alias("data")

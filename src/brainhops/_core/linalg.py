@@ -109,7 +109,8 @@ def sqrtm(
     dtype = promote_dtypes(matrix, float)
     require_square(host, what)
     require_principal(host, what)
-    return like(_ensure_real(scipy.linalg.sqrtm(host)), matrix, dtype=dtype)
+    root = _each_matrix(lambda m: _ensure_real(scipy.linalg.sqrtm(m)), host)
+    return like(root, matrix, dtype=dtype)
 
 
 @batchedmatrix
@@ -122,7 +123,7 @@ def expm(
     """
     host = to_numpy(tangent)
     require_square(host, what)
-    return like(scipy.linalg.expm(host), tangent)
+    return like(_each_matrix(scipy.linalg.expm, host), tangent)
 
 
 @batchedmatrix
@@ -140,7 +141,8 @@ def logm(
     dtype = promote_dtypes(matrix, float)
     require_square(host, what)
     require_principal(host, what)
-    return like(_ensure_real(scipy.linalg.logm(host)), matrix, dtype=dtype)
+    log = _each_matrix(lambda m: _ensure_real(scipy.linalg.logm(m)), host)
+    return like(log, matrix, dtype=dtype)
 
 
 def batchT(x: ArrayProtocol) -> ArrayProtocol:
@@ -264,14 +266,24 @@ def require_positive(array: ArrayProtocol, what: str = "This") -> None:
 
 
 def is_square(matrix: ArrayProtocol) -> bool:
-    """Return whether an array is a square two-dimensional matrix."""
-    return matrix.ndim == 2 and matrix.shape[0] == matrix.shape[1]
+    """Return whether an array is a square matrix or a stack of them.
+
+    The last two dimensions of the array are the rows and the columns of
+    each matrix, and the other dimensions index the matrices of a stack.
+    """
+    return matrix.ndim >= 2 and matrix.shape[-2] == matrix.shape[-1]
 
 
 def require_square(matrix: ArrayProtocol, what: str = "This") -> None:
-    """Raise a [`DomainError`][] unless a matrix is square."""
+    """Raise a [`DomainError`][] unless a matrix is square.
+
+    A stack of matrices passes when its matrices, which span the last two
+    dimensions of the array, are square.
+    """
+    if matrix.ndim < 2:
+        raise DomainError(f"{what} is not defined: it is not a matrix.")
     if not is_square(matrix):
-        rows, cols = matrix.shape
+        rows, cols = matrix.shape[-2:]
         raise DomainError(
             f"{what} is not defined: it maps {cols} axes to {rows} axes."
         )
@@ -319,15 +331,43 @@ def is_principal(linear: ArrayProtocol, return_reason: bool = False):
 
 
 def require_principal(linear: np.ndarray, what: str = "This") -> None:
-    result = is_principal(linear, return_reason=True)
-    if not result:
-        raise DomainError(
-            f"{what} is not defined: it {result}, "
-            f"so it has no principal square root or logarithm."
-        )
+    """Raise a [`DomainError`][] unless a matrix is principal.
+
+    A matrix is principal when it has a real principal square root and
+    logarithm, as tested by [`is_principal`][]. Each matrix of a stack is
+    tested on its own, and the message of the error names the first one
+    that fails.
+    """
+    for index in np.ndindex(*linear.shape[:-2]):
+        result = is_principal(linear[index], return_reason=True)
+        if not result:
+            where = f" at index {index}" if index else ""
+            raise DomainError(
+                f"{what} is not defined{where}: it {result}, "
+                f"so it has no principal square root or logarithm."
+            )
 
 
 # --- backend utils ----------------------------------------------------
+
+
+def _each_matrix(
+    function: tx.Callable[[np.ndarray], np.ndarray], host: np.ndarray
+) -> np.ndarray:
+    """Apply a function of one matrix to each matrix of a NumPy stack.
+
+    The matrix functions of SciPy accept a stack only in recent releases,
+    so the stack is unrolled, and the results are stacked again in the
+    same order.
+    """
+    if host.ndim == 2:
+        return function(host)
+    batch = host.shape[:-2]
+    flat = host.reshape((-1,) + host.shape[-2:])
+    if flat.shape[0] == 0:
+        return np.empty_like(host)
+    results = np.stack([function(matrix) for matrix in flat])
+    return results.reshape(batch + results.shape[1:])
 
 
 def _ensure_real(result: ArrayProtocol) -> ArrayProtocol:

@@ -150,3 +150,24 @@ def test_axis_scales_is_batched() -> None:
     assert got.shape == (2, 2)
     np.testing.assert_allclose(got[0], [1.0, 1.0])
     np.testing.assert_allclose(got[1], [3.0, 4.0])
+
+
+def test_to_homogeneous_pads_each_matrix_of_a_stack() -> None:
+    rng = np.random.default_rng(0)
+    A = _random_affine(rng, 3, 3, batch=(4, 2))
+    H = affines.to_homogeneous(A)
+    np.testing.assert_array_equal(H, _to_homogeneous(A))
+    T = affines.to_homogeneous(A, tangent=True)
+    assert T.shape == (4, 2, 4, 4)
+    np.testing.assert_array_equal(T[..., -1, :], 0)
+
+
+def test_affine_matrix_functions_apply_to_each_matrix_of_a_stack() -> None:
+    rng = np.random.default_rng(1)
+    A = _random_affine(rng, 3, 3, batch=(5,)) * 0.1
+    A[..., :, :-1] += 0.9 * np.eye(3)
+    for function in (affines.sqrtm, affines.logm, affines.expm):
+        result = function(A)
+        assert result.shape == A.shape
+        for k in range(len(A)):
+            np.testing.assert_allclose(result[k], function(A[k]))

@@ -16,6 +16,7 @@ __all__ = [
 from numbers import Integral, Real
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
@@ -83,6 +84,33 @@ def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
+
+
+def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
+    """Raise a `ValueError` if `value` holds more than one element.
+
+    A matrix type holds one matrix and a vector type holds one vector, so
+    their data may not have leading dimensions that stack several of them.
+    Without this check, a stack would be read as a single element, and a
+    view such as `matrix[:, :-1]` would select the wrong axis.
+    """
+    ndim = obj._element_ndim
+    if value is None or ndim is None:
+        return
+    value_ndim = np.ndim(value)
+    if value_ndim > ndim:
+        what = "matrix" if ndim == 2 else "vector"
+        raise ValueError(
+            f"{type(obj).__name__} holds a single {what}, so its data may "
+            f"have at most {ndim} dimensions, but it has {value_ndim}. A "
+            f"stack of transformations is not supported yet."
+        )
+
+
+def _set_element_data(obj: "_CompactTransformation", value: tx.Any) -> None:
+    """Store the data of a matrix or vector type after checking its shape."""
+    _require_element(obj, value)
+    obj._data = value
 
 
 # --- API --------------------------------------------------------------
@@ -642,7 +670,22 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
         return self.compute(**kwargs) if compute else self
 
 
-class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation): ...
+class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation):
+    """Base class of the transformations that a matrix or a vector stores."""
+
+    _element_ndim: tx.ClassVar[tx.Optional[int]] = None
+    """Number of dimensions of the data of one transformation.
+
+    It is 2 for a matrix type and 1 for a vector type. Data with more
+    dimensions is refused, because it would stack several
+    transformations. `None` disables the check.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        # The data given to the constructor is stored without going
+        # through the setter of `data`, so it is checked here.
+        _require_element(self, getattr(self, "_data", None))
 
 
 @kinds.Affine
@@ -681,6 +724,8 @@ class Affine(_CompactTransformation, polymorphic=True):
     """
 
     # --- class attributes ---------------------------------------------
+
+    _element_ndim: tx.ClassVar[tx.Optional[int]] = 2
 
     map_field: _FieldName = "matrix"
     data_fields: _FieldNames = ("data",)
@@ -722,7 +767,7 @@ class Affine(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
     matrix = alias("data")
 
@@ -781,6 +826,8 @@ class Linear(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
+    _element_ndim: tx.ClassVar[tx.Optional[int]] = 2
+
     map_field: _FieldName = "matrix"
     data_fields: _FieldNames = ("data",)
     encoding_fields: _FieldNames = ("log",)
@@ -814,7 +861,7 @@ class Linear(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
     matrix = alias("data")
 
@@ -907,6 +954,8 @@ class Permutation(_CompactTransformation):
 
     # --- class attributes ---------------------------------------------
 
+    _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+
     map_field: _FieldNames = "permutation"
     data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "permutation", "_inverse"
@@ -925,7 +974,7 @@ class Permutation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     permutation = alias("data")
 
     @lazyproperty
@@ -985,6 +1034,8 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
+    _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+
     map_field: _FieldNames = "scale"
     data_fields: _FieldNames = ("data",)
     encoding_fields: _FieldNames = ("log",)
@@ -1015,7 +1066,7 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     log = _invalidating_property("log", fset=False)
     scale = alias("data")
 
@@ -1059,6 +1110,8 @@ class Translation(_CompactTransformation):
 
     # --- class attributes ---------------------------------------------
 
+    _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+
     map_field: _FieldNames = "translation"
     data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "translation", "_sqrt", "_inverse"
@@ -1076,7 +1129,7 @@ class Translation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = _invalidating_property("data", fset=_set_element_data)
     translation = alias("data")
 
     @lazyproperty
