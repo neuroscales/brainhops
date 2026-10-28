@@ -1036,8 +1036,12 @@ class Transformation(
 
         This method is the body of the `to_*` methods, which each name
         their own class. The policy of the call applies to the filtering,
-        the computation and the conversion, and a result without its
-        parameters is refused (see `_check_parameters`).
+        the computation and the conversion. A result whose parameters are
+        unknown, such as the conversion of `Identity()`, whose dimension
+        is not known, is refused with a `ConversionError`. Every class
+        that a `to_*` method converts to holds its parameters in `data`,
+        which is `None` exactly when they are unknown, and its other
+        views, such as `matrix`, are computed from `data`.
         """
 
         def convert_to() -> "Transformation":
@@ -1047,7 +1051,12 @@ class Transformation(
             if exclude is not None:
                 xform = xform.without(exclude)
             result = xform.compute().to(target, **kwargs)
-            _check_parameters(result, target)
+            if result.data is None:
+                raise ConversionError(
+                    f"The {target.__name__} that this "
+                    f"{type(self).__name__} converts to has no "
+                    f"parameters, because its dimension is not known."
+                )
             return result
 
         return call_under_policy(
@@ -1179,18 +1188,3 @@ def _copied(
     if copy and result is original:
         return type(original).from_instance(original)
     return result
-
-
-def _check_parameters(result: tx.Any, target: type) -> None:
-    """Refuse the result of a `to_*` method whose parameters are unknown.
-
-    The parameters are the matrix of a class that has one, and the
-    `data` of a translation, a scaling or a permutation.
-    """
-    name = "matrix" if "matrix" in dir(result) else "data"
-    if getattr(result, name, None) is None:
-        raise ConversionError(
-            f"The {target.__name__} that this {type(result).__name__} "
-            f"converts to has no {name}, because its dimension is not "
-            f"known."
-        )

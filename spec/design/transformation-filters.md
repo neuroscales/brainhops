@@ -100,11 +100,12 @@ computes the transformation first, because a chain must be composed
 before it can be converted, and then calls `Transformation.to` with the
 same keyword arguments as `to()`.
 
-The result of a `to_*` method always has its parameters. A result that
-has no matrix, or, for a translation, a scaling or a permutation, no
-`data`, raises a `ConversionError`, because its dimension is unknown,
-as for `Identity()` or for the inverse of an affine whose matrix is not
-set. The error goes through the error policy of the call, so that
+The result of a `to_*` method always has its parameters. Each of the
+six classes holds its parameters in `data`, and computes its other
+views, such as `matrix`, from `data`, so `data` is `None` exactly when
+the parameters are unknown. A result whose `data` is `None` raises a
+`ConversionError`, because its dimension is unknown, as for
+`Identity()` or for the inverse of an affine whose matrix is not set. The error goes through the error policy of the call, so that
 `to_affine(on_error=None)` returns `None` and a caller tests only for
 `None`, rather than also for a missing matrix. Plain `to()` makes no
 such check, because a transformation without parameters is a valid
