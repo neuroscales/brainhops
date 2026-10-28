@@ -93,6 +93,11 @@ def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
     their data may not have leading dimensions that stack several of them.
     Without this check, a stack would be read as a single element, and a
     view such as `matrix[:, :-1]` would select the wrong axis.
+
+    The data is annotated as `npmatrix` or `npvector`, which names the
+    number of dimensions, but the converter of bagof checks only the type
+    of the values (bagof-converters 0.2.1). This check can be removed once
+    the converter checks the shape that the hint names.
     """
     ndim = obj._element_ndim
     if value is None or ndim is None:

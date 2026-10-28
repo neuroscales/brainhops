@@ -86,7 +86,11 @@ class ToNumpyParameter(Converter):
     the value to memory with
     [`to_backend`][brainhops.backends.to_backend], which copies an array
     from the GPU and computes a Dask array, and then lets the NumPy
-    converter of bagof check the shape and the type of the values.
+    converter of bagof convert the values to the type that the hint
+    names. The NumPy converter of bagof does not check the shape that the
+    hint names (bagof-converters 0.2.1), so `npmatrix` accepts an array
+    with any number of dimensions. A class that relies on the shape must
+    check it itself.
 
     It is the metadata of the annotated hints [`npscalar`][],
     [`npvector`][] and [`npmatrix`][], and it receives the NumPy hint
