@@ -88,10 +88,12 @@ dimensions, and the positions of the elements along the batch axes.
 ```python
 BatchedTransformation(
     Affine,
-    data=matrices,  # shape (N, 3, 4)
-    positions=None,  # element k sits at t = k
+    data=matrices,  # shape (*batch, 3, 4)
+    input_axes=["x", "y", "z"],  # every other axis is a batch axis
+    output_axes=["x", "y", "z"],
+    positions=None,  # element k sits at index k
     input=...,  # (x, y, z, t)
-    output=...,  # (x', y', z', t)
+    output=...,  # (x, y, z, t)
 )
 ```
 
@@ -107,33 +109,41 @@ about the timing of the volumes can give.
 
 ### Which axes are batch axes
 
-The batch axes are not named by an argument. They are the last `k` axes
-of the space, on both sides, in the order of the batch dimensions of the
-data, and every other axis is an axis of the elements, in order on both
-sides. The input and output systems therefore say what the batch axes
-are, and the data says how many there are.
+`input_axes` and `output_axes` give the axes of the elements, by position
+or by name (A.9), with the same meaning as for `SubspaceTransformation`.
+Every other axis is a batch axis, and the batch axes are taken in the
+same order on both sides and in the order of the batch dimensions of
+the data. A batched transformation is therefore a subspace
+transformation whose inner transformation changes along the axes that
+it passes through. A batch axis may sit at different positions in the
+input and output systems, as an axis that a subspace transformation
+passes through may. `output_axes` defaults to `input_axes` when only
+`input_axes` is given.
 
-For the types whose data has a fixed number of dimensions, `k` is read
-from the data. The matrix of an affine has two dimensions, so the data
-of a batch of affines has `k + 2`. The data of a field has one dimension
-per axis of its grid and one for its components, so the shape
-`(N, X, Y, Z, 3)` alone does not tell a batch of 3D fields from a single
-field on a 4D grid with 3 components (#588). A batch carries its batch
-axes through, however, so its output space has the axes of the elements
-and the `k` batch axes, and `k` is the number of output axes minus the
-number of components. A batch of fields is therefore refused when its
-output system does not give the number of its axes. A system that is
-open at its end, such as `(x, y, z, ...)`, is refused for any batch,
-because its last axes are not known.
+When `input_axes` and `output_axes` are not given, the batch axes come
+first and the axes of the elements follow, so that the space is
+`(*batch_axes, *element_axes)`. This is the order of the dimensions of
+the data and the order that broadcasting uses. A batch of motion
+parameters for a series `(x, y, z, t)`, whose time axis is last, names
+its spatial axes, as in the example above.
 
-Two other ways of finding the batch axes were rejected. An argument
-`batch_axes` that names them repeats what the systems and the data
-already say, and it is one more reference to check against them.
-Taking the discrete axes of the systems as batch axes does not work
-either, because the NIfTI reader never marks time as discrete, whereas
-a channel axis is discrete without being a batch axis. A batch whose
-batch axes are not the last axes of its space is written as a batch
-between two permutations.
+The number of batch axes is the number of axes of the space minus the
+number of axes of the elements, and the constructor checks that it
+equals the number of leading dimensions of the data. When the systems
+are not known, the data gives that number for the types whose data has
+a fixed number of dimensions. The matrix of an affine has two
+dimensions, so the data of a batch of affines has two dimensions more
+than it has batch axes. The data of a field has one dimension per axis
+of its grid and one for its components, so the shape
+`(*batch, X, Y, Z, 3)` alone does not tell how many of its leading
+dimensions are batch dimensions (#588). `input_axes` tells it, because
+the grid of each element has one dimension per input axis of the
+elements. A batch of fields is refused when neither `input_axes` nor
+the input system gives that number.
+
+Taking the discrete axes of the systems as batch axes was rejected,
+because the NIfTI reader never marks time as discrete, whereas a
+channel axis is discrete without being a batch axis.
 
 ### Elements are created on demand
 
@@ -183,22 +193,21 @@ Every concrete class has a class method `batch`, which builds a batch of
 its own type from a stacked array without creating any element. It takes
 the stack, or one of the views of the class, such as
 `homogeneous_matrix`, `field` or `coefficients`, together with
-`positions`. The encoding of the elements, such as
-`degree`, `bound`, `store` and `log`, and their systems are given as the
-other keywords of the constructor of the class, whose defaults apply to
-the keywords that are not given.
+`input_axes`, `output_axes` and `positions`. The encoding of the
+elements, such as `degree`, `bound`, `store` and `log`, and their
+systems are given as the other keywords of the constructor of the class,
+whose defaults apply to the keywords that are not given.
 
 ```python
-Affine.batch(matrices, input=series, output=series)
-Affine.batch(homogeneous_matrix=matrices)
-DisplacementField.batch(fields, output=series, degree=3)
+Affine.batch(matrices)  # space (*batch_axes, x, y, z)
+Affine.batch(homogeneous_matrix=matrices, input_axes=[0, 1, 2])
+DisplacementField.batch(fields, input_axes=[0, 1, 2], degree=3)
 ```
 
 The systems that `batch` receives are those of the whole space, as for
-the constructor of `BatchedTransformation`, so that `series` above is a
-system such as `(x, y, z, t)`. Putting the batch axes last matches the
-order of the axes of an image, whereas the data always keeps the batch
-dimensions first.
+the constructor of `BatchedTransformation`. With data that has one
+batch dimension, the last two examples describe a space of four axes
+whose last axis is the batch axis, such as a series `(x, y, z, t)`.
 
 Since `batch` accepts the views of the class, the conversions between a
 view and the stored data must work on stacks, which the first step of
@@ -211,17 +220,16 @@ transformations, whose parameters are other transformations, have no
 `batch` either.
 
 `BatchedTransformation.stack(elements, batch_axis=...)` builds a batch
-from instances that already exist, and copies their data into one
-array. It checks that the elements have the same type, the same encoding
-and the same shape. The elements do not know the batch axis, so
-`batch_axis` gives it, and it is added after the axes of their systems.
-An axis about which nothing is known is added when `batch_axis` is not
-given. It suits a format that stores each element on its
-own, such as the directory of one file per volume that MCFLIRT writes,
-whereas a format that stores a stack passes its array to `batch`.
-`stack` also accepts meta transformations, and moves the batch inside
-them, so that a `BatchedTransformation` always holds stacked data
-directly.
+from instances that already exist, and copies their data into one array.
+It checks that the elements have the same type, the same encoding and
+the same shape. The elements do not know the batch axis, so `batch_axis`
+gives it, and it is added before the axes of their systems. An axis
+about which nothing is known is added when `batch_axis` is not given. It
+suits a format that stores each element on its own, such as the
+directory of one file per volume that MCFLIRT writes, whereas a format
+that stores a stack passes its array to `batch`. `stack` also accepts
+meta transformations, and moves the batch inside them, so that a
+`BatchedTransformation` always holds stacked data directly.
 
 - Sequences of the same length, whose transformations have the same type
   at each position, give a sequence of batches. This is exact, because
