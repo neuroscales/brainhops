@@ -138,8 +138,10 @@ of its grid and one for its components, so the shape
 `(*batch, X, Y, Z, 3)` alone does not tell how many of its leading
 dimensions are batch dimensions (#588). `input_axes` tells it, because
 the grid of each element has one dimension per input axis of the
-elements. A batch of fields is refused when neither `input_axes` nor
-the input system gives that number.
+elements. The output system tells it too, because the output space has
+the components of the elements and the batch axes. A batch of fields is
+refused when neither `input_axes` nor the output system gives that
+number.
 
 Taking the discrete axes of the systems as batch axes was rejected,
 because the NIfTI reader never marks time as discrete, whereas a
