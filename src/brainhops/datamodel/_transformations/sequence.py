@@ -674,17 +674,20 @@ def _compose_mode(
     # adjacent translations fold into a single translation before they
     # are widened to an affine.
 
-    # --- Flatten sequence
-    if not _is_flat(seq):
-        seq = seq.flatten()
+    # The checks run from the cheapest to the most expensive: a set
+    # lookup, a length test, then a walk over the whole chain.
+
+    # --- A mode already visited has nothing left to fold
+    if mode in memo:
+        return seq
 
     # --- Check if nothing to do
     if not seq.transformations:
         return seq
 
-    # --- A mode already visited has nothing left to fold
-    if mode in memo:
-        return seq
+    # --- Flatten sequence
+    if not _is_flat(seq):
+        seq = seq.flatten()
 
     # --- First, fold every child mode (finer kinds first)
     for child in mode_children(mode):
