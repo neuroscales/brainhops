@@ -1,8 +1,5 @@
 """The JPEG 2000 image format: one resolution level of a file."""
 
-# stdlib
-import os
-
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -581,6 +578,7 @@ class Jpeg2000Image(
         **kwargs : Any
             The options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
         if not _reads_file(self.rawdata, filename):
@@ -592,7 +590,7 @@ class Jpeg2000Image(
         # new file, since the lazy array of the old file may be another
         # level, or decode another coded image.
         self.rawdata = _Jpeg2000Proxy(
-            _Jpeg2000Source(filename=os.fspath(filename)),
+            _Jpeg2000Source(filename=filename),
             self.metadata.raw,
             0,
         )
@@ -894,7 +892,7 @@ def _written(image: Jpeg2000Image) -> bytes:
     return image.rawdata.source.read()
 
 
-def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
+def _reads_file(raw: tx.Any, file: path.Path) -> bool:
     """Tell whether a lazy array of samples reads a local file by name."""
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     return isinstance(raw, _Jpeg2000Proxy) and raw.source.is_file(file)

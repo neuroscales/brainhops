@@ -237,8 +237,9 @@ class _SnifferMixin(_FileNamesMixin):
             The confidence, between 0 and 1. An unsupported input scores zero.
         """
         kwargs["error"] = error
+        file = path.as_path_or_stream(file)
 
-        if isinstance(file, (str, path.PathLike)):
+        if isinstance(file, path.Path):
             return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
@@ -262,8 +263,9 @@ class _SnifferMixin(_FileNamesMixin):
     ) -> float:
         """Same as [`sniff`][], for a path or an open file."""
         kwargs["error"] = error
+        file = path.as_path_or_stream(file)
 
-        if isinstance(file, (str, path.PathLike)):
+        if isinstance(file, path.Path):
             return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
@@ -290,11 +292,10 @@ class _SnifferMixin(_FileNamesMixin):
         """
         kwargs["error"] = error
 
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.as_path_or_stream(filename)
 
-        if isinstance(filename, path.PathLike):
-            if not path.Path(filename).exists():
+        if isinstance(filename, path.Path):
+            if not filename.exists():
                 if error:
                     if error is True:
                         error = SnifferExistsError
@@ -547,10 +548,9 @@ class _ReaderMixin:
         if isinstance(other, SourceSpec):
             return cls.from_spec(other, **kwargs)
 
-        if isinstance(other, str):
-            other = path.Path(other)
+        other = path.as_path_or_stream(other)
 
-        if isinstance(other, path.PathLike):
+        if isinstance(other, path.Path):
             return cls.from_file(other, **kwargs)
 
         if hasattr(other, "read"):
@@ -581,7 +581,8 @@ class _ReaderMixin:
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """Read an object from a path or an open file."""
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return cls.from_filename(file, **kwargs)
 
         if hasattr(file, "read"):
@@ -601,10 +602,9 @@ class _ReaderMixin:
         ParserExistsError
             If the file does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
 
-        if not path.Path(filename).exists():
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         with open_decompressed(filename, cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
@@ -748,7 +748,8 @@ class _WriterMixin:
         ParserTypeError
             If `file` is of another type.
         """
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return self.to_filename(file, **kwargs)
 
         if hasattr(file, "write"):

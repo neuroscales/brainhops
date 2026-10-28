@@ -74,9 +74,8 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         ParserExistsError
             If the path does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        filename = path.Path(filename)
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         return cls(metadata=NiftiMetadata.from_filename(filename, **kwargs))
 

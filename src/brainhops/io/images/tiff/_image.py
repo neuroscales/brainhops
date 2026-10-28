@@ -102,9 +102,8 @@ class _TiffReader:
         ParserExistsError
             If the file does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        filename = path.Path(filename)
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         return cls.from_source(
             backend.TiffSource.from_file(filename), **kwargs
@@ -608,14 +607,15 @@ class TiffImage(
         report = ConversionReport(source="TiffImage", target="TiffImage")
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
         apply_loss_policy(report, on_loss, stacklevel=2)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         kwargs.setdefault("name", path.base_name(filename))
         options, encoding = split_options(kwargs)
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(stored, _TiffProxy) and is_same_file(
-            stored.source.filename, filename
+        reading = (
+            isinstance(stored, _TiffProxy)
+            and stored.source.filename is not None
+            and is_same_file(stored.source.filename, filename)
         )
         if not encoding and self._copies_source(**options):
             if not reading:

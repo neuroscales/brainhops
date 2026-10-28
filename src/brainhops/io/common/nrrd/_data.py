@@ -10,7 +10,7 @@ import zlib
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import ConvertTo, NoRepr
 
 # internals
 from brainhops._core import path
@@ -89,11 +89,6 @@ def _gunzip(content: bytes) -> bytes:
     return b"".join(out)
 
 
-def _is_path(file: tx.Any) -> bool:
-    """Tell whether a source of samples is a path rather than a stream."""
-    return isinstance(file, (str, os.PathLike))
-
-
 def _decode(
     header: NrrdRaw,
     locations: tx.Sequence[tx.Tuple[tx.Any, int]],
@@ -127,7 +122,7 @@ def _decode(
         and is_local_file(single)
         and nbytes > 0
     ):
-        local = path.Path(single)
+        local = single
         with local.open("rb") as f:
             f.seek(start)
             for _ in range(header.line_skip):
@@ -149,8 +144,8 @@ def _decode(
     else:
         chunks = []
         for file, start in locations:
-            if _is_path(file):
-                with path.Path(file).open("rb") as f:
+            if isinstance(file, path.Path):
+                with file.open("rb") as f:
                     chunks.append(_decode_part(f, start, header, part))
             else:
                 with preserve_position(file):
@@ -267,13 +262,15 @@ class _NrrdProxy(StoredProxy):
 
     # --- magic attributes ----
 
-    source: tx.Any
+    source: tx.Annotated[
+        tx.Union[path.Path, tx.BinaryIO], ConvertTo(path.as_path_or_stream)
+    ]
     """The path of the header file, or the stream that holds it."""
 
     start: int
     """The position of the header in a stream."""
 
-    files: tx.Tuple[tx.Any, ...]
+    files: tx.Tuple[path.Path, ...]
     """The paths of the data files, which are empty for attached samples."""
 
     record: NoRepr[NrrdRaw]
@@ -336,8 +333,8 @@ class _NrrdProxy(StoredProxy):
         ParserContentError
             If the header no longer describes the samples of the record.
         """
-        if _is_path(self.source):
-            with path.Path(self.source).open("rb") as f:
+        if isinstance(self.source, path.Path):
+            with self.source.open("rb") as f:
                 current = NrrdRaw.from_fileobj(f)
         else:
             with preserve_position(self.source):
@@ -372,8 +369,8 @@ class _NrrdProxy(StoredProxy):
                 "be copied as one file."
             )
         ((file, start),) = self._locations()
-        if _is_path(file):
-            with path.Path(file).open("rb") as f:
+        if isinstance(file, path.Path):
+            with file.open("rb") as f:
                 f.seek(start)
                 return f.read()
         with preserve_position(file):
@@ -430,8 +427,8 @@ _PARTIAL_ENCODINGS = ("raw", "gzip", "bzip2")
 
 def _end_start(file: tx.Any, nbytes: int) -> int:
     """Return the position of the last `nbytes` bytes of a raw file."""
-    if _is_path(file):
-        with path.Path(file).open("rb") as f:
+    if isinstance(file, path.Path):
+        with file.open("rb") as f:
             f.seek(0, os.SEEK_END)
             size = f.tell()
     else:
@@ -480,26 +477,26 @@ def read_nrrd(
         If the content is not a NRRD image, the data files cannot be
         found from a stream without a name, or a local file is too short.
     """
-    if isinstance(file, str):
-        file = path.Path(file)
-    if _is_path(file):
-        if not path.Path(file).exists():
+    file = path.as_path_or_stream(file)
+    if isinstance(file, path.Path):
+        if not file.exists():
             raise ParserExistsError(f"No such file: {file}")
-        with path.Path(file).open("rb") as f:
+        with file.open("rb") as f:
             record = NrrdRaw.from_fileobj(f)
         origin, start = file, 0
     else:
         start = file.tell()
         record = NrrdRaw.from_fileobj(file)
         origin = getattr(file, "name", None)
+        if isinstance(origin, bytes):
+            origin = os.fsdecode(origin)
+        origin = path.as_path_or_stream(origin)
     files = []
     for name in record.data_files:
         if os.path.isabs(name):
             datafile = path.Path(name)
-        elif isinstance(origin, (str, bytes, os.PathLike)):
-            if isinstance(origin, bytes):
-                origin = os.fsdecode(origin)
-            datafile = path.Path(origin).parent / name
+        elif isinstance(origin, path.Path):
+            datafile = origin.parent / name
         else:
             raise ParserContentError(
                 f"The NRRD header names a separate data file ({name!r}), "
@@ -517,7 +514,7 @@ def read_nrrd(
 
 
 def _check_size(
-    record: NrrdRaw, source: tx.Any, files: tx.Sequence[tx.Any]
+    record: NrrdRaw, source: tx.Any, files: tx.Sequence[path.Path]
 ) -> None:
     """Check that a single local file of raw samples is long enough.
 
@@ -538,7 +535,6 @@ def _check_size(
         local, offset = source, len(record.stored)
     if not is_local_file(local):
         return
-    local = path.Path(local)
     needed = offset + max(record.byte_skip, 0) + record.nbytes
     size = local.stat().st_size
     if size < needed:

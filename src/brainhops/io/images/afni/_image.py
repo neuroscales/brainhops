@@ -746,8 +746,7 @@ class AfniImage(
             raise TypeError(
                 f"Unknown AFNI writer option(s): {', '.join(unknown)}"
             )
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes

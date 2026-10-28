@@ -31,14 +31,14 @@ decodes. TensorStore 0.1.45 refuses the others (`png`, `compresso`,
 `jxl` and `crackle`) when it opens a scale."""
 
 
-def dataset_location(filename: tx.Any) -> str:
+def dataset_location(filename: tx.Any) -> path.Path:
     """Return the location of the volume that a name designates.
 
     A volume is designated by its directory or by its `info` file. A
     local name gives the absolute path of the directory. A remote name,
     such as `gs://bucket/volume` or `https://host/volume`, gives the URL
     of the directory, and a URL whose last component is `info` names the
-    `info` file. The trailing slash is removed.
+    `info` file.
 
     Parameters
     ----------
@@ -47,7 +47,7 @@ def dataset_location(filename: tx.Any) -> str:
 
     Returns
     -------
-    str
+    Path
         The local path or the URL of the directory of the volume.
 
     Raises
@@ -56,26 +56,24 @@ def dataset_location(filename: tx.Any) -> str:
         If a local name is neither a directory that holds an `info` file
         nor an `info` file.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if path.Path(filename).is_local():
-        local = os.path.abspath(os.fspath(filename))
-        if os.path.isdir(local):
-            if not os.path.isfile(os.path.join(local, _INFO)):
+    filename = path.Path(filename)
+    if filename.is_local():
+        local = filename.absolute()
+        if local.is_dir():
+            if not (local / _INFO).is_file():
                 raise ParserExistsError(
                     f"No precomputed volume in {local}: it has no info file."
                 )
             return local
-        if os.path.basename(local) == _INFO and os.path.isfile(local):
-            return os.path.dirname(local)
+        if local.name == _INFO and local.is_file():
+            return local.parent
         raise ParserExistsError(f"No precomputed volume at {local}.")
-    location = str(filename).rstrip("/")
-    if location.rsplit("/", 1)[-1] == _INFO:
-        location = location.rsplit("/", 1)[0]
-    return location
+    if filename.name == _INFO:
+        return filename.parent
+    return filename
 
 
-def read_info(location: str) -> bytes:
+def read_info(location: path.Path) -> bytes:
     """Return the content of the `info` file of a volume.
 
     A local file is read directly, and a remote one through the key-value
@@ -84,7 +82,7 @@ def read_info(location: str) -> bytes:
 
     Parameters
     ----------
-    location : str
+    location : Path
         The location of the volume, as [`dataset_location`][] gives it.
 
     Returns
@@ -100,8 +98,7 @@ def read_info(location: str) -> bytes:
         If the volume is remote and TensorStore cannot read its URL.
     """
     if _is_local_location(location):
-        with open(os.path.join(location, _INFO), "rb") as file:
-            return file.read()
+        return (location / _INFO).read_bytes()
     store = _open_kvstore(location)
     result = store.read(_INFO).result()
     if result.state != "value":
@@ -109,7 +106,9 @@ def read_info(location: str) -> bytes:
     return bytes(result.value)
 
 
-def read_precomputed(filename: tx.Any) -> tx.Tuple[str, PrecomputedRaw]:
+def read_precomputed(
+    filename: tx.Any,
+) -> tx.Tuple[path.Path, PrecomputedRaw]:
     """Read the record of a volume, and return it with the location.
 
     Parameters
@@ -119,7 +118,7 @@ def read_precomputed(filename: tx.Any) -> tx.Tuple[str, PrecomputedRaw]:
 
     Returns
     -------
-    str
+    Path
         The location of the volume.
     PrecomputedRaw
         The record of its `info` file.
@@ -135,7 +134,7 @@ def read_precomputed(filename: tx.Any) -> tx.Tuple[str, PrecomputedRaw]:
     return location, PrecomputedRaw.from_bytes(read_info(location))
 
 
-def stream_location(file: tx.Any) -> str:
+def stream_location(file: tx.Any) -> path.Path:
     """Return the location of the volume whose `info` file a stream reads.
 
     Raises
@@ -171,7 +170,7 @@ class _PrecomputedProxy(StoredProxy):
 
     # --- magic attributes ----
 
-    location: tx.Any
+    location: path.Path
     """The local path or the URL of the directory of the volume."""
 
     record: NoRepr[PrecomputedRaw]
@@ -281,23 +280,24 @@ class _PrecomputedProxy(StoredProxy):
         return store
 
 
-def _is_local_location(location: str) -> bool:
+def _is_local_location(location: path.Path) -> bool:
     """Tell whether the location of a volume is a local directory."""
-    return path.Path(location).is_local()
+    return location.is_local()
 
 
-def _kvstore_spec(location: str) -> tx.Any:
+def _kvstore_spec(location: path.Path) -> tx.Any:
     """Return the TensorStore key-value store of a volume's directory.
 
-    A local directory gives a `file` store, and a URL is given to
-    TensorStore as it is, with a trailing slash.
+    A local directory gives a `file` store, and a remote directory is
+    given to TensorStore as its URL, with a trailing slash. TensorStore
+    takes both as text.
     """
     if _is_local_location(location):
-        return {"driver": "file", "path": location + os.sep}
-    return location + "/"
+        return {"driver": "file", "path": os.fspath(location) + os.sep}
+    return location.as_uri().rstrip("/") + "/"
 
 
-def _open_kvstore(location: str) -> tx.Any:
+def _open_kvstore(location: path.Path) -> tx.Any:
     """Open the TensorStore key-value store of a remote volume.
 
     Raises

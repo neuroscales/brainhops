@@ -34,7 +34,7 @@ dataset.
 """
 
 
-def node_location(filename: tx.Any) -> str:
+def node_location(filename: tx.Any) -> path.Path:
     """Return the directory of the N5 node that a name designates.
 
     A node is designated by its directory or by its `attributes.json`
@@ -47,7 +47,7 @@ def node_location(filename: tx.Any) -> str:
 
     Returns
     -------
-    str
+    Path
         The absolute path of the directory of the node.
 
     Raises
@@ -57,21 +57,20 @@ def node_location(filename: tx.Any) -> str:
     ParserExistsError
         If the name is neither a directory nor an `attributes.json` file.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if not path.Path(filename).is_local():
+    filename = path.Path(filename)
+    if not filename.is_local():
         raise ParserTypeError(
             f"brainhops reads local N5 containers only, not {filename}."
         )
-    local = os.path.abspath(os.fspath(filename))
-    if os.path.isdir(local):
+    local = filename.absolute()
+    if local.is_dir():
         return local
-    if os.path.basename(local) == ATTRIBUTES and os.path.isfile(local):
-        return os.path.dirname(local)
+    if local.name == ATTRIBUTES and local.is_file():
+        return local.parent
     raise ParserExistsError(f"No N5 node at {local}.")
 
 
-def read_node(filename: tx.Any) -> tx.Tuple[str, N5Raw]:
+def read_node(filename: tx.Any) -> tx.Tuple[path.Path, N5Raw]:
     """Read the record of a dataset or of a pyramid, with its location.
 
     The attributes of the node are read, and a node that is not a
@@ -86,7 +85,7 @@ def read_node(filename: tx.Any) -> tx.Tuple[str, N5Raw]:
 
     Returns
     -------
-    str
+    Path
         The directory of the node.
     N5Raw
         The record of the node.
@@ -105,8 +104,8 @@ def read_node(filename: tx.Any) -> tx.Tuple[str, N5Raw]:
         return location, record
     levels = []
     while True:
-        level = os.path.join(location, f"s{len(levels)}")
-        if not os.path.isfile(os.path.join(level, ATTRIBUTES)):
+        level = location / f"s{len(levels)}"
+        if not (level / ATTRIBUTES).is_file():
             break
         levels.append(_read_attributes(level))
     if not levels:
@@ -117,17 +116,19 @@ def read_node(filename: tx.Any) -> tx.Tuple[str, N5Raw]:
     return location, with_levels(record, levels)
 
 
-def dataset_location(location: str, record: N5Raw, level: int) -> str:
+def dataset_location(
+    location: path.Path, record: N5Raw, level: int
+) -> path.Path:
     """Return the directory of a dataset of a node.
 
     The dataset is the node itself, or the level `s<level>` of a pyramid.
     """
     if record.levels:
-        return os.path.join(location, f"s{level}")
+        return location / f"s{level}"
     return location
 
 
-def stream_location(file: tx.Any) -> str:
+def stream_location(file: tx.Any) -> path.Path:
     """Return the directory of the node whose attributes a stream reads.
 
     Raises
@@ -160,7 +161,7 @@ class _N5Proxy(StoredProxy):
     open dataset. The proxy keeps no open dataset when it is pickled.
     """
 
-    location: tx.Any
+    location: path.Path
     """The directory of the dataset."""
 
     record: NoRepr[N5Raw]
@@ -230,9 +231,13 @@ class _N5Proxy(StoredProxy):
                 "Reading the samples of an N5 dataset needs TensorStore "
                 "(pip install brainhops[n5])."
             )
+        # TensorStore takes the directory as text.
         spec = {
             "driver": "n5",
-            "kvstore": {"driver": "file", "path": self.location + os.sep},
+            "kvstore": {
+                "driver": "file",
+                "path": os.fspath(self.location) + os.sep,
+            },
         }
         try:
             store = ts.open(spec, read=True, open=True).result()
@@ -254,7 +259,7 @@ class _N5Proxy(StoredProxy):
         return store
 
 
-def _read_attributes(location: str) -> N5Raw:
+def _read_attributes(location: path.Path) -> N5Raw:
     """Read the record of the attributes of one directory, without levels.
 
     A directory without `attributes.json` is a group without attributes.
@@ -264,8 +269,7 @@ def _read_attributes(location: str) -> N5Raw:
     ParserContentError
         If the attributes break the specification.
     """
-    filename = os.path.join(location, ATTRIBUTES)
-    if not os.path.isfile(filename):
+    filename = location / ATTRIBUTES
+    if not filename.is_file():
         return parse_attributes({})
-    with open(filename, "rb") as file:
-        return parse_attributes(json_attributes(file.read()))
+    return parse_attributes(json_attributes(filename.read_bytes()))

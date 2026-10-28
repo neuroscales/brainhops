@@ -176,6 +176,7 @@ def save(
     MetadataLossError
         If metadata is lost under the `"raise"` policy.
     """
+    file = path.as_path_or_stream(file)
     name = path.base_name(file)
     if name is None:
         if isinstance(obj, FileFormat) and isinstance(obj, FileWriter):

@@ -428,7 +428,7 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
         If the BRIK is compressed in a way that cannot be read, or is too
         short.
     """
-    if not path.Path(brik).exists():
+    if not brik.exists():
         raise ParserExistsError(
             f"No such file: {brik} (the BRIK of the AFNI dataset). A "
             f"dataset without a BRIK (a 'warp-on-demand' dataset) cannot "
@@ -518,11 +518,11 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: path.Path) -> None:
             if out is not f:
                 out.close()
 
-    def write_named(name: str) -> None:
-        with open(name, "xb") as f:
+    def write_named(name: path.Path) -> None:
+        with name.open("xb") as f:
             write(f)
 
-    if path.Path(brik).is_local():
+    if brik.is_local():
         replace_file(brik, write_named)
         return
     whole = whole_brik(data)
@@ -591,14 +591,14 @@ def whole_brik(raw: tx.Any) -> tx.Optional[_BrikProxy]:
     return proxy
 
 
-def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
+def reads_brik(raw: tx.Any, brik: path.Path) -> bool:
     """Tell whether an array is a lazy array of a BRIK file.
 
     Parameters
     ----------
     raw : array
         The `rawdata` array of an object.
-    brik : path-like
+    brik : Path
         The BRIK file.
 
     Returns

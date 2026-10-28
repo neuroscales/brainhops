@@ -268,8 +268,7 @@ class ElastixTransform(
             If a file of the chain would be written over the new file, or
             over another file that holds different bytes.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         record = _record(self.consolidate(**kwargs))
         content = record.to_bytes()
         _place_initial(record, filename, filename)
@@ -879,8 +878,8 @@ def _check_lps(xform: ElastixTransform, ndim: int) -> None:
 
 def _place_initial(
     record: ElastixRaw,
-    filename: path.FilenameLike,
-    written: path.FilenameLike,
+    filename: path.Path,
+    written: path.Path,
 ) -> None:
     """Write the files of the chain of a record where its file names them.
 
@@ -900,22 +899,21 @@ def _place_initial(
     initial = record.initial
     if initial is None or name is None or is_absolute(name):
         return
-    target = path.Path(filename).parent / name
-    if is_same_file(target, written) or target == path.Path(written):
+    target = filename.parent / name
+    if is_same_file(target, written) or target == written:
         raise WriterError(
             f"The elastix initial transform {name!r} would be written over "
             f"{written}, which names it."
         )
     content = initial.to_bytes()
     if target.exists():
-        with path.Path(target).open("rb") as file:
-            if file.read() != content:
-                raise WriterError(
-                    f"The elastix initial transform {name!r} must be "
-                    f"written to {target}, which holds another file. "
-                    f"Write the transformation to another directory, or "
-                    f"remove that file."
-                )
+        if target.read_bytes() != content:
+            raise WriterError(
+                f"The elastix initial transform {name!r} must be "
+                f"written to {target}, which holds another file. "
+                f"Write the transformation to another directory, or "
+                f"remove that file."
+            )
     else:
         atomic_write_bytes(target, content)
     _place_initial(initial, target, written)

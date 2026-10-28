@@ -280,7 +280,7 @@ if HAS_TENSORSTORE:
 
 
 def _read_pyramid(
-    cls: type, location: str, record: N5Raw
+    cls: type, location: path.Path, record: N5Raw
 ) -> N5MultiScaleImage:
     """Build the pyramid of every level of a group.
 

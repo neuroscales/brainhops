@@ -398,17 +398,15 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, _MghProxy]:
     if unknown:
         raise TypeError(f"Unknown MGH reader option(s): {', '.join(unknown)}")
     mmap = _mmap_option(kwargs.get("mmap", True))
-    if isinstance(file, str):
-        file = path.Path(file)
-    if not isinstance(file, path.PathLike):
+    file = path.as_path_or_stream(file)
+    if not isinstance(file, path.Path):
         return _read_mgh_stream(file, mmap)
-    if not path.Path(file).is_local():
+    if not file.is_local():
         with file.open("rb") as stream:
             return _read_mgh_stream(BytesIO(stream.read()), mmap)
-    filename = str(file)
-    with open(filename, "rb") as stream:
+    with file.open("rb") as stream:
         raw = MghRaw.from_fileobj(stream)
-    return raw, _MghProxy.from_header(filename, raw.header, mmap=mmap)
+    return raw, _MghProxy.from_header(file, raw.header, mmap=mmap)
 
 
 def _read_mgh_stream(

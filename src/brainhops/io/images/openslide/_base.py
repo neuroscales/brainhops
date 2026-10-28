@@ -150,12 +150,11 @@ class OpenSlideReader(BinaryFileReader):
         ParserExistsError
             If the file does not exist.
         """
+        filename = path.Path(filename)
         local = local_path(filename)
         if local is not None:
             return cls.from_source(_Slide(local), **kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open("rb") as f:
             content = f.read()

@@ -3,12 +3,11 @@ Pillow, and finding them."""
 
 # stdlib
 import contextlib
-import os
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import ConvertTo, NoRepr
 
 from brainhops._core import path
 from brainhops._core.path import is_same_file
@@ -43,8 +42,10 @@ class _PillowProxy(StoredProxy):
     file that it was read from.
     """
 
-    source: tx.Any
-    """"The path of the file, or the stream that holds it."""
+    source: tx.Annotated[
+        tx.Union[path.Path, tx.BinaryIO], ConvertTo(path.as_path_or_stream)
+    ]
+    """The path of the file, or the stream that holds it."""
 
     record: NoRepr[PillowRaw]
     """The record of the frame, which says what the frame decodes to."""
@@ -127,26 +128,25 @@ def read_pillow_image(
     IndexError
         If the file has no such frame.
     """
-    if _is_path(file):
-        if isinstance(file, str):
-            file = path.Path(file)
-        if not path.Path(file).exists():
+    file = path.as_path_or_stream(file)
+    if isinstance(file, path.Path):
+        if not file.exists():
             raise ParserExistsError(f"No such file: {file}")
-        with path.Path(file).open("rb") as f:
+        with file.open("rb") as f:
             record = PillowRaw.from_fileobj(f, frame=frame)
     else:
         record = PillowRaw.from_fileobj(file, frame=frame)
     return record, _PillowProxy(file, record, palette)
 
 
-def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
+def reads_from(raw: tx.Any, filename: path.Path) -> bool:
     """Tell whether a lazy array reads the file at a path.
 
     Parameters
     ----------
     raw : array
         The `rawdata` array of an image.
-    filename : path-like
+    filename : Path
         The path of a file that a writer writes.
 
     Returns
@@ -155,24 +155,21 @@ def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
         Whether `raw` is a lazy array of that file, or an index of one.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _PillowProxy) or not _is_path(raw.source):
+    if not isinstance(raw, _PillowProxy):
+        return False
+    if not isinstance(raw.source, path.Path):
         return False
     return is_same_file(raw.source, filename)
 
 
 @contextlib.contextmanager
-def _opened(source: tx.Any) -> tx.Iterator[tx.BinaryIO]:
+def _opened(
+    source: tx.Union[path.Path, tx.BinaryIO],
+) -> tx.Iterator[tx.BinaryIO]:
     """Open a path, or protect the position of a stream, for reading."""
-    if _is_path(source):
-        if isinstance(source, str):
-            source = path.Path(source)
-        with path.Path(source).open("rb") as f:
+    if isinstance(source, path.Path):
+        with source.open("rb") as f:
             yield f
     else:
         with preserve_position(source):
             yield source
-
-
-def _is_path(file: tx.Any) -> bool:
-    """Tell whether a source is a path rather than a stream."""
-    return isinstance(file, (str, os.PathLike, path.PathLike))

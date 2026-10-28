@@ -8,7 +8,6 @@ the codestream defines (ITU-T T.800, B.5).
 """
 
 # stdlib
-import os
 from io import BytesIO
 
 # dependencies
@@ -41,12 +40,14 @@ class _Jpeg2000Source:
 
     def __init__(
         self,
-        filename: tx.Optional[str] = None,
+        filename: tx.Optional[path.FilenameLike] = None,
         content: tx.Optional[bytes] = None,
     ) -> None:
         if (filename is None) == (content is None):
             raise ValueError("Give either a filename or the content.")
-        self.filename = filename
+        self.filename: tx.Optional[path.Path] = (
+            None if filename is None else path.Path(filename)
+        )
         """The path of a local file, or `None`."""
         self.content = content
         """The bytes of the file, or `None` for a local file."""
@@ -54,22 +55,21 @@ class _Jpeg2000Source:
     def open(self) -> tx.BinaryIO:
         """Open the file in binary mode, as a context manager."""
         if self.filename is not None:
-            return open(self.filename, "rb")
+            return self.filename.open("rb")
         return BytesIO(self.content)
 
     def read(self) -> bytes:
         """Return the bytes of the file."""
         if self.content is not None:
             return self.content
-        with open(self.filename, "rb") as f:
-            return f.read()
+        return self.filename.read_bytes()
 
-    def is_file(self, filename: tx.Any) -> bool:
+    def is_file(self, filename: path.Path) -> bool:
         """Return whether the source is the local file of a path.
 
         Parameters
         ----------
-        filename : path-like
+        filename : Path
             The path.
 
         Returns
@@ -83,7 +83,7 @@ class _Jpeg2000Source:
 
     def __repr__(self) -> str:
         if self.filename is not None:
-            return f"_Jpeg2000Source({self.filename!r})"
+            return f"_Jpeg2000Source({str(self.filename)!r})"
         return f"_Jpeg2000Source(<{len(self.content)} bytes>)"
 
 
@@ -102,8 +102,8 @@ class _Jpeg2000Proxy(StoredProxy):
 
     # --- magic attributes ----
 
-    source: tx.Any
-    """Where the file lies."""
+    source: _Jpeg2000Source
+    """Where the file lies: the path of a local file, or its bytes."""
 
     record: NoRepr[Jpeg2000Raw]
     """
@@ -191,16 +191,14 @@ def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:
     if isinstance(file, (bytes, bytearray)):
         content = bytes(file)
         return read_record(content), _Jpeg2000Source(content=content)
-    if isinstance(file, str):
-        file = path.Path(file)
-    if isinstance(file, os.PathLike):
-        if not path.Path(file).exists():
+    file = path.as_path_or_stream(file)
+    if isinstance(file, path.Path):
+        if not file.exists():
             raise ParserExistsError(f"No such file: {file}")
-        if path.Path(file).is_local():
-            filename = os.fspath(file)
-            with open(filename, "rb") as f:
+        if file.is_local():
+            with file.open("rb") as f:
                 record = Jpeg2000Raw.from_fileobj(f)
-            return record, _Jpeg2000Source(filename=filename)
+            return record, _Jpeg2000Source(filename=file)
         with file.open("rb") as f:
             content = f.read()
         return read_record(content), _Jpeg2000Source(content=content)

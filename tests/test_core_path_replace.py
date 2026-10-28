@@ -1,10 +1,13 @@
 """Checking and replacing files, as the readers and writers do."""
 
+import io
+
 import pytest
 import typing_extensions as tx
 
 from brainhops._core.path import (
     Path,
+    as_path_or_stream,
     atomic_write_bytes,
     is_local_file,
     is_same_file,
@@ -47,35 +50,49 @@ def test_local_and_remote_paths_are_told_apart(tmp_path) -> None:  # noqa: ANN00
     assert not Path("memory://bucket/file.nii").is_local()
 
 
+def test_a_file_name_is_converted_to_a_path_once(tmp_path) -> None:  # noqa: ANN001
+    file = tmp_path / "file.bin"
+    assert as_path_or_stream(file) == Path(file)
+    assert isinstance(as_path_or_stream(file), Path)
+    assert isinstance(as_path_or_stream(str(file)), Path)
+    assert as_path_or_stream(str(file)) == Path(file)
+    assert as_path_or_stream("memory://bucket/file.bin") == Path(
+        "memory://bucket/file.bin"
+    )
+    # A path is returned as it is, and any other value is unchanged.
+    already = Path(file)
+    assert as_path_or_stream(already) is already
+    stream = io.BytesIO(b"1")
+    assert as_path_or_stream(stream) is stream
+    assert as_path_or_stream(b"1") == b"1"
+    assert as_path_or_stream(None) is None
+
+
 def test_only_an_existing_local_file_is_a_local_file(tmp_path) -> None:  # noqa: ANN001
     file = tmp_path / "file.bin"
     file.write_bytes(b"1")
-    assert is_local_file(file)
-    assert is_local_file(str(file))
     assert is_local_file(Path(file))
-    assert not is_local_file(tmp_path / "missing.bin")
-    assert not is_local_file(tmp_path)
-    assert not is_local_file("memory://bucket/file.bin")
+    assert not is_local_file(Path(tmp_path / "missing.bin"))
+    assert not is_local_file(Path(tmp_path))
+    assert not is_local_file(Path("memory://bucket/file.bin"))
+    # A value that is not a path, such as a stream, is not a local file.
     assert not is_local_file(None)
     with file.open("rb") as stream:
         assert not is_local_file(stream)
 
 
-def test_is_same_file_resolves_links_and_refuses_streams(tmp_path) -> None:  # noqa: ANN001
+def test_is_same_file_resolves_links(tmp_path) -> None:  # noqa: ANN001
     real = tmp_path / "real.bin"
     real.write_bytes(b"1")
     link = tmp_path / "link.bin"
     link.symlink_to(real)
-    assert is_same_file(real, link)
-    assert is_same_file(str(real), tmp_path / "." / "real.bin")
-    assert is_same_file(tmp_path / "new.bin", tmp_path / "new.bin")
-    assert not is_same_file(real, tmp_path / "other.bin")
+    assert is_same_file(Path(real), Path(link))
+    assert is_same_file(Path(str(real)), Path(tmp_path / "." / "real.bin"))
+    assert is_same_file(Path(tmp_path / "new.bin"), Path(tmp_path / "new.bin"))
+    assert not is_same_file(Path(real), Path(tmp_path / "other.bin"))
     assert not is_same_file(
-        "memory://bucket/real.bin", "memory://bucket/real.bin"
+        Path("memory://bucket/real.bin"), Path("memory://bucket/real.bin")
     )
-    with real.open("rb") as stream:
-        assert not is_same_file(stream, real)
-    assert not is_same_file(None, real)
 
 
 # ----------------------------------------------------------------------

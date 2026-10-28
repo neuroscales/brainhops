@@ -724,8 +724,7 @@ class PillowImage(
             If neither the extension nor `format` names a format, or if the
             image cannot be stored.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         if "inplace" in kwargs:
             raise TypeError("A writer does not take the option inplace.")
         if kwargs.get("format") is None:

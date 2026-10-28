@@ -465,7 +465,7 @@ if HAS_TENSORSTORE:
 
 def _read_dataset(
     cls: type,
-    location: str,
+    location: path.Path,
     metadata: N5Metadata,
     level: tx.Optional[int],
 ) -> N5Image:

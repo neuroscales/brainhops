@@ -172,9 +172,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
             return cls.from_bytes(filename.read_bytes(), **kwargs)
         with filename.open("rb") as stream:
             record = NiftiRaw.from_fileobj(stream)
-        proxy = _NiftiProxy.from_header(
-            str(filename), record.header, mmap=mmap
-        )
+        proxy = _NiftiProxy.from_header(filename, record.header, mmap=mmap)
         return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(record))
 
     @classmethod
@@ -311,10 +309,13 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         WriterError
             If the object cannot be encoded.
         """
+        filename = path.Path(filename)
         raw = self.rawdata
         root = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(root, _NiftiProxy) and is_same_file(
-            root.source, filename
+        reading = (
+            isinstance(root, _NiftiProxy)
+            and isinstance(root.source, path.Path)
+            and is_same_file(root.source, filename)
         )
         if not reading:
             super().to_filename(filename, **kwargs)

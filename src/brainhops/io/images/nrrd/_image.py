@@ -845,8 +845,7 @@ class NrrdImage(
         TypeError
             If an unknown option is given.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         options = _options(kwargs)
         name = filename.name
         attached = data_file is None and not name.lower().endswith(".nhdr")
@@ -857,7 +856,7 @@ class NrrdImage(
         if attached:
             written = [filename]
         else:
-            written = [filename, path.Path(filename).parent / data_file]
+            written = [filename, filename.parent / data_file]
         reading = _reads_from(self.rawdata, written)
         if reading:
             mmap = self.rawdata.root.mmap
@@ -1375,13 +1374,13 @@ def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
     return record
 
 
-def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
+def _reads_from(raw: tx.Any, written: tx.Sequence[path.Path]) -> bool:
     """Tell whether a lazy array reads one of the files just written."""
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _NrrdProxy):
         return False
     return any(
-        is_same_file(read, file)
+        isinstance(read, path.Path) and is_same_file(read, file)
         for read in (raw.source, *raw.files)
         for file in written
     )

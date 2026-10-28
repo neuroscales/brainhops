@@ -78,7 +78,10 @@ class Source:
         self.pos = None
         self.buffer = None
         self.factory = None
-        self.path = other if isinstance(other, (str, PathLike)) else None
+        named = path.as_path_or_stream(other)
+        self.path: tx.Optional[path.Path] = (
+            named if isinstance(named, path.Path) else None
+        )
 
         if hasattr(other, "read"):
             if self._seekable(other):
@@ -140,12 +143,11 @@ class Source:
         """
         if self.path is None:
             return None
-        filename = path.Path(self.path)
         try:
-            exists = filename.exists()
+            exists = self.path.exists()
         except Exception:
             return None  # A remote store may not support existence checks.
-        return None if exists else filename
+        return None if exists else self.path
 
     @property
     def name(self) -> tx.Optional[str]:

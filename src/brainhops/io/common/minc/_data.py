@@ -1,13 +1,12 @@
 """MINC voxels: the lazy array that reads them with nibabel."""
 
 # stdlib
-import os
 from io import BytesIO
 
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoRepr
+from bagof.magic import ConvertTo, NoRepr
 
 # internals
 from brainhops._core import path
@@ -46,7 +45,9 @@ class _MincProxy(StoredProxy):
 
     # --- magic attributes ----
 
-    source: tx.Any
+    source: tx.Annotated[
+        tx.Union[path.Path, bytes], ConvertTo(path.as_path_or_stream)
+    ]
     """The path of the file, or the bytes of the decompressed file."""
 
     record: NoRepr[MincRaw]
@@ -108,15 +109,14 @@ class _MincProxy(StoredProxy):
         return _read_minc(_opened(self.source), self.record.version, read)
 
 
-def _opened(source: tx.Any) -> tx.Union[path.Path, bytes]:
+def _opened(source: tx.Union[path.Path, bytes]) -> tx.Union[path.Path, bytes]:
     """Return what nibabel reads the voxels from: a name or the bytes.
 
     A local file that is not compressed is read by name, and any other
     file is read and decompressed into bytes.
     """
-    if isinstance(source, (bytes, bytearray)):
+    if not isinstance(source, path.Path):
         return bytes(source)
-    source = path.Path(source)
     if is_local_file(source):
         with source.open("rb") as f:
             if f.read(2) != b"\x1f\x8b":
@@ -153,12 +153,11 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
     ParserContentError
         If the content is not a MINC file that nibabel can read.
     """
-    if isinstance(file, str):
-        file = path.Path(file)
-    if isinstance(file, os.PathLike):
-        if not path.Path(file).exists():
+    file = path.as_path_or_stream(file)
+    if isinstance(file, path.Path):
+        if not file.exists():
             raise ParserExistsError(f"No such file: {file}")
-        with path.Path(file).open("rb") as f:
+        with file.open("rb") as f:
             record = MincRaw.from_fileobj(f)
         return record, _MincProxy(file, record)
     with preserve_position(file):

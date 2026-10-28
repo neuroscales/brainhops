@@ -26,6 +26,7 @@ if not features.check("jpg_2000"):  # pragma: no cover
     pytest.skip("Pillow was built without OpenJPEG", allow_module_level=True)
 
 import brainhops.io as bio  # noqa: E402
+from brainhops._core import path as path_module  # noqa: E402
 from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.images import (  # noqa: E402
     MultiScaleImage,
@@ -705,7 +706,7 @@ def test_a_pyramid_saved_over_its_own_file(tmp_path: Path) -> None:
     pyramid = load(path, pixel_size=0.5, unit="mm")
     pyramid.save(path)
     assert pyramid._images is None
-    assert pyramid.rawdata.source.is_file(path)
+    assert pyramid.rawdata.source.is_file(path_module.Path(path))
     np.testing.assert_allclose(
         pyramid.images[1].transformation.scale, [1.0, 1.0]
     )

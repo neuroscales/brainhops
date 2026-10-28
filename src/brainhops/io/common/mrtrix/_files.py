@@ -366,14 +366,14 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
 # ----------------------------------------------------------------------
 
 
-def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
+def reads_from(raw: tx.Any, written: tx.Sequence[path.Path]) -> bool:
     """Tell whether a lazy array reads one of the files that are written.
 
     Parameters
     ----------
     raw : array
         The `rawdata` array of an object.
-    written : sequence of path
+    written : sequence of Path
         The files that a writer writes.
 
     Returns
@@ -384,10 +384,13 @@ def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _MrtrixProxy):
         return False
+    if not isinstance(raw.source, path.Path):
+        # A stream is never one of the files that are written.
+        return False
     return any(is_same_file(raw.source, file) for file in written)
 
 
-def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
+def written_files(filename: path.FilenameLike) -> tx.List[path.Path]:
     """Return the files that writing to a path writes.
 
     A `.mih` header names its data, which is written next to it in a
@@ -400,7 +403,7 @@ def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
 
     Returns
     -------
-    list of path
+    list of Path
         The header file, and the data file of a `.mih` header.
     """
     filename = path.Path(filename)

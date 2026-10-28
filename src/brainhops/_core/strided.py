@@ -36,10 +36,10 @@ import math
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import ConvertTo
 
 # internals
-from brainhops._core import path
-from brainhops._core.path import is_local_file
+from brainhops._core.path import Path, as_path_or_stream, is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import (
     ArrayProxy,
@@ -87,8 +87,14 @@ class StridedProxy(StoredProxy):
     implement.
     """
 
-    source: tx.Any
-    """The file, by its path, or a stream open in binary mode."""
+    source: tx.Annotated[
+        tx.Union[Path, tx.BinaryIO], ConvertTo(as_path_or_stream)
+    ]
+    """
+    The file, by its path, or a stream open in binary mode. A file name
+    given as a string or a path-like object is converted to a
+    [`Path`][brainhops._core.path.Path].
+    """
 
     _dtype: np.dtype
     """The type of the stored values, with their byte order, given as
@@ -421,7 +427,7 @@ class StridedProxy(StoredProxy):
             # the box when its values are used.
             low, high = self._whole_span
             buffer = np.memmap(
-                path.Path(self.source),
+                self.source,
                 dtype=np.uint8,
                 mode="r",
                 offset=self.start + low,
@@ -446,8 +452,8 @@ class StridedProxy(StoredProxy):
         # `nbytes` bytes of the decoded stream, from `position`.
         if nbytes <= 0:
             return b""
-        if isinstance(self.source, (str, path.PathLike)):
-            with path.Path(self.source).open("rb") as f:
+        if isinstance(self.source, Path):
+            with self.source.open("rb") as f:
                 f.seek(self.start)
                 content = _read_at(f, position, nbytes)
         else:
@@ -580,10 +586,10 @@ def _chunk_bytes() -> int:
     return int(parse_bytes(size)) if isinstance(size, str) else int(size)
 
 
-def _compressed(local: path.FilenameLike, start: int = 0) -> bool:
+def _compressed(local: Path, start: int = 0) -> bool:
     # Whether the content of a local file from `start` is compressed,
     # judged by its magic bytes.
-    with path.Path(local).open("rb") as f:
+    with local.open("rb") as f:
         f.seek(start)
         stream = open_compressed(f)
         return stream is not f
@@ -599,6 +605,6 @@ def _read_at(file: tx.BinaryIO, offset: int, nbytes: int) -> bytes:
 
 
 def _describe(source: tx.Any) -> str:
-    if isinstance(source, (str, path.PathLike)):
+    if isinstance(source, Path):
         return repr(str(source))
     return repr(source)

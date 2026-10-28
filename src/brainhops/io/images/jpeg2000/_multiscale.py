@@ -1,8 +1,5 @@
 """The JPEG 2000 image format: every resolution level of a file."""
 
-# stdlib
-import os
-
 # dependencies
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
@@ -465,6 +462,7 @@ class Jpeg2000MultiScaleImage(
         **kwargs : Any
             The options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
         if not _reads_file(self.rawdata, filename):
@@ -473,7 +471,7 @@ class Jpeg2000MultiScaleImage(
         self.consolidate(inplace=True, **kwargs)
         atomic_write_bytes(filename, _written(self))
         self.rawdata = _Jpeg2000Proxy(
-            _Jpeg2000Source(filename=os.fspath(filename)),
+            _Jpeg2000Source(filename=filename),
             self.metadata.raw,
             0,
         )

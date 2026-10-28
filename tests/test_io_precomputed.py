@@ -17,6 +17,7 @@ import pickle
 import numpy as np
 import pytest
 from bagof.magic import replace
+from bagof.paths import Path
 
 ts = pytest.importorskip("tensorstore")
 
@@ -382,11 +383,13 @@ def test_a_name_that_is_not_a_volume_is_refused(tmp_path) -> None:  # noqa: ANN0
 
 def test_remote_names_are_given_to_tensorstore() -> None:
     # The URL is not opened: no network is used by the tests.
-    assert dataset_location("gs://bucket/volume/") == "gs://bucket/volume"
-    assert dataset_location("gs://bucket/volume/info") == "gs://bucket/volume"
-    assert dataset_location("https://host/a/volume") == "https://host/a/volume"
-    assert _kvstore_spec("gs://bucket/volume") == "gs://bucket/volume/"
-    spec = ts.KvStore.Spec(_kvstore_spec("https://host/a/volume")).to_json()
+    volume = Path("gs://bucket/volume")
+    assert dataset_location("gs://bucket/volume/") == volume
+    assert dataset_location("gs://bucket/volume/info") == volume
+    https = Path("https://host/a/volume")
+    assert dataset_location("https://host/a/volume") == https
+    assert _kvstore_spec(volume) == "gs://bucket/volume/"
+    spec = ts.KvStore.Spec(_kvstore_spec(https)).to_json()
     assert spec == {
         "driver": "http",
         "base_url": "https://host",
@@ -403,13 +406,13 @@ def test_a_remote_volume_is_read_through_tensorstore(  # noqa: ANN201
     directory, fine, _ = pyramid
     expected = PrecomputedMetadata.load(directory).raw
     monkeypatch.setattr(_data, "_is_local_location", lambda location: False)
-    location = "file://" + str(directory)
+    location = Path("file://" + str(directory))
     record = PrecomputedRaw.from_bytes(read_info(location))
     assert record == expected
     proxy = _PrecomputedProxy(location, record, record.scales[0])
     assert np.array_equal(np.asarray(proxy), fine)
     with pytest.raises(ParserExistsError):
-        read_info("file://" + str(directory / "fine"))
+        read_info(Path("file://" + str(directory / "fine")))
 
 
 # ----------------------------------------------------------------------

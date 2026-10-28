@@ -209,12 +209,11 @@ class OpenSlideMetadata(BinaryFileReader, MetadataFormat):
             If OpenSlide cannot read the file.
         """
         _no_options(cls, kwargs)
+        filename = path.Path(filename)
         local = local_path(filename)
         if local is not None:
             return cls.from_raw(_read_local(local))
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open("rb") as f:
             content = f.read()
@@ -303,7 +302,7 @@ def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
         )
 
 
-def _read_local(filename: str) -> OpenSlideRaw:
+def _read_local(filename: path.Path) -> OpenSlideRaw:
     """Read the record of a local slide, and close the slide."""
     handle = open_handle(filename)
     try:

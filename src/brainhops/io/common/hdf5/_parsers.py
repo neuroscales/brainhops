@@ -141,7 +141,8 @@ class Hdf5Reader(BinaryFileReader):
         """
         if isinstance(file, h5py.File):
             return cls.sniff_h5(file, error=error)
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return cls.sniff_filename(file, error=error, **kwargs)
         return cls.sniff_fileobj(file, error=error, **kwargs)
 
@@ -178,9 +179,8 @@ class Hdf5Reader(BinaryFileReader):
         SnifferContentError
             If the file is not of this format and `error` is `True`.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        filename = path.Path(filename)
+        if not filename.exists():
             return _raise_or(
                 error, SnifferExistsError, f"No such file: {filename}"
             )
@@ -266,7 +266,8 @@ class Hdf5Reader(BinaryFileReader):
         """
         if isinstance(file, h5py.File):
             return cls.from_h5(file, **kwargs)
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return cls.from_filename(file, **kwargs)
         return cls.from_fileobj(file, **kwargs)
 
@@ -296,10 +297,10 @@ class Hdf5Reader(BinaryFileReader):
         ParserExistsError
             If the path does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        filename = path.Path(filename)
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
+        # h5py opens a file by its name, given as text.
         with h5py.File(str(filename), "r") as f:
             return cls.from_h5(f, **kwargs)
 

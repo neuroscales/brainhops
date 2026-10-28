@@ -312,9 +312,8 @@ class MghImage(
         ParserExistsError
             If the path does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.Path(filename).exists():
+        filename = path.Path(filename)
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_mgh(filename, **kwargs)
         return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))
@@ -626,6 +625,7 @@ class MghImage(
             Arguments of [`to_bytes`][], which are `compress` and the
             options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         compress = kwargs.pop("compress", _compressed_name(filename))
         if not _reads_file(self.rawdata, filename):
             atomic_write_bytes(
@@ -1090,7 +1090,7 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
     return image.metadata.raw, image.rawdata
 
 
-def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
+def _reads_file(raw: tx.Any, file: path.Path) -> bool:
     """Tell whether a lazy array of voxels reads a file by its name."""
     return reads_mgh(raw, file)
 
