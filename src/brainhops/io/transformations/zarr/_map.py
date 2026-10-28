@@ -816,6 +816,19 @@ def _affine_to_ome(
             "This transformation depends on an axis that a projection "
             "creates free, which has no value to write."
         )
+    # Every entry maps the axes of the image onto as many axes, so an
+    # element that adds or removes axes, such as a projection inside a
+    # sequence that is not computed, would lose rows or columns when its
+    # matrix is reordered.
+    shape = np.shape(affine.matrix)
+    if shape != (len(storage_perm), len(storage_perm) + 1):
+        raise OmeMappingError(
+            f"This transformation maps {shape[1] - 1} axes onto {shape[0]} "
+            f"axes, whereas each transformation of an image of "
+            f"{len(storage_perm)} axes is written as a map of these axes "
+            f"onto as many axes. A sequence whose elements add or remove "
+            f"axes can be written once it is computed."
+        )
     matrix = permute_affine(affine.matrix, storage_perm)
     decomposed = scale_translation_from_affine(matrix, ndim)
     if decomposed is None:
