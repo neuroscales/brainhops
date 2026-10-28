@@ -13,7 +13,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._backend import _asarray, _get_namespace
+from ._backend import _asarray, _BufferPool, _get_namespace
 from ._bounds import _normalize_bound
 from ._coeff import (
     _normalize_dtype,
@@ -31,6 +31,42 @@ samples. The value comes from torch-interpol.
 """
 
 
+_BLOCK_VALUES = 65536
+"""Default number of values in each temporary array of a block.
+
+The blocked strategy of [`pull`][] processes the output in blocks small
+enough that the arrays of a block stay in the cache of the processor
+while all the taps are added. A block holds at most `_BLOCK_POINTS`
+points, and as many batch items as fit in this number of values. With
+float32 values, the arrays of one tap then take 256 KiB, a quarter of
+the 1 MiB second-level cache of each core of the machine on which the
+value was measured.
+"""
+
+_BLOCK_POINTS = 16384
+"""Most points that a block of the blocked strategy holds.
+
+The indices and the weights of the taps of a block are computed for
+its points, and their size grows with the number of points and with
+the order, but not with the number of batch items.
+"""
+
+_TAP_SCRATCH = (
+    "first",
+    "fraction",
+    "base",
+    "scratch",
+    "integer scratch",
+    "inside",
+    "mask",
+    "distance",
+)
+"""Names of the arrays of the pool that only the taps of a block use."""
+
+_STRATEGIES = ("auto", "blocked", "batched")
+"""The values of the argument `strategy` of [`pull`][]."""
+
+
 def pull(
     input: tx.Any,
     grid: tx.Any,
@@ -38,6 +74,8 @@ def pull(
     bound: tx.Any = "reflect",
     extrapolate: tx.Any = True,
     prefilter: bool = False,
+    strategy: str = "auto",
+    block_size: tx.Optional[int] = None,
 ) -> tx.Any:
     """Interpolate an array at the coordinates of a grid.
 
@@ -59,14 +97,33 @@ def pull(
     which broadcast against each other with the rules of NumPy. This
     convention is the one of torch-interpol.
 
-    The computation is fully batched: the indices and the weights along
-    each axis are computed once for all the points, and the only loop in
-    Python is over the `order + 1` samples, or taps, that each axis
-    reads. Each tap gathers the samples of all the points and all the
-    batch items at once. The memory that the computation uses is
-    therefore about `2 * ndim * (order + 1)` arrays of the size of the
-    grid, for the indices and the weights, and two arrays of the size of
-    the output, for the gathered samples and their sum.
+    Each output value is a sum over the `order + 1` samples, or taps,
+    that each axis reads. The code loops in Python over these taps and
+    over blocks of the output, and each tap gathers the samples of all
+    the points and batch items of a block at once. The two strategies
+    differ in the size of the blocks:
+
+    - The blocked strategy splits the output points, and the batch
+      items when there are many, into blocks of at most `block_size`
+      values, and adds all the taps of a block before it moves on to
+      the next one. The indices and the weights of the taps are
+      computed once per block of points and reused for all its batch
+      items. With the default size, the arrays of a block stay in the
+      cache of the processor, so that each tap reads and writes the
+      cache instead of the main memory. On a processor, this made the
+      resampling of volumes of 128 to 192 voxels per side 1.6 to 2.4
+      times faster than the batched strategy, and the temporary arrays
+      take a few megabytes instead of hundreds.
+    - The batched strategy makes a single block of all the points and
+      all the batch items. Each step is then one operation on whole
+      arrays, which suits a GPU, where every operation launches a
+      kernel and the memory is fast, so that more blocks would only add
+      launches. Its temporary arrays take about `2 * ndim * (order + 1)`
+      arrays of the size of the grid, for the indices and the weights,
+      and two arrays of the size of the output.
+
+    The default strategy, "auto", is the blocked one for NumPy arrays
+    and the batched one for CuPy arrays. Both give the same values.
 
     Order 0 takes the nearest sample, and a coordinate exactly halfway
     between two samples takes the upper one, as in SciPy. Outside the
@@ -99,6 +156,15 @@ def pull(
         Whether to compute the spline coefficients of the input first,
         with [`spline_coeff`][brainhops._ext.interpol.spline_coeff], so
         that the spline passes through the values of the input.
+    strategy : {"auto", "blocked", "batched"}, default="auto"
+        How the computation is split, as explained above. The value
+        "auto" chooses the blocked strategy for NumPy arrays and the
+        batched one for CuPy arrays.
+    block_size : int, optional
+        The largest number of values, that is, batch items times points,
+        in each temporary array of the blocked strategy. A block also
+        holds at most 16384 points. By default, it is 65536. The batched
+        strategy ignores it.
 
     Returns
     -------
@@ -129,6 +195,9 @@ def pull(
         _normalize_bound(b) for b in _normalize_per_axis(bound, ndim, "bound")
     ]
     margin = _normalize_extrapolate(extrapolate)
+    blocked = _select_strategy(xp, strategy) == "blocked"
+    if block_size is not None and int(block_size) < 1:
+        raise ValueError(f"The block size must be positive: {block_size}.")
     dtype = _normalize_dtype(input.dtype)
     if prefilter and max(orders) > 1:
         input = spline_coeff(input, orders, bounds, ndim)
@@ -144,61 +213,114 @@ def pull(
     npoints = int(math.prod(spatial_out))
     # The flat index of a voxel is the sum of its indices times these.
     strides = [int(math.prod(spatial_in[d + 1 :])) for d in range(ndim)]
+    pool = _BufferPool(xp)
 
     # When NumPy's `take` writes into an output array and checks the
     # indices, it goes through a buffer, which `mode="clip"` avoids. The
     # indices are always valid, so clipping never changes them.
     take_options = {"mode": "clip"} if xp is np else {}
 
-    if int(math.prod(batch_grid)) == 1:
+    shared = int(math.prod(batch_grid)) == 1
+    if shared:
         # The same points for every batch item: the input is read in
-        # place, and each tap gathers whole rows of the batch.
-        grid = grid.reshape((npoints, ndim))
+        # place, as an array `(outer, voxels, inner)`, and each tap
+        # gathers whole rows of the batch. The batch axes of a block are
+        # the outer and the inner ones.
+        grid = grid.reshape((1, 1, npoints, ndim))
         view, outer, inner = _as_view3d(xp, input, len(batch_input))
-
-        def gather(index: tx.Any, values: tx.Any) -> None:
-            xp.take(view, index, axis=1, out=values, **take_options)
-
-        def spread(weight: tx.Any) -> tx.Any:
-            return weight[:, None]
-
-        shape = (view.shape[0], npoints, view.shape[2])
+        block_batch = (view.shape[0], view.shape[2])
+        out = xp.empty((view.shape[0], npoints, view.shape[2]), dtype=dtype)
+        grid_batch = (1, 1)
     else:
         # Points that depend on the batch: each tap gathers from the flat
         # input with indices that broadcast over the batch.
-        grid = grid.reshape(batch_grid + (npoints, ndim))
+        grid_batch = (1,) * (len(batch) - len(batch_grid)) + batch_grid
+        grid = grid.reshape(grid_batch + (npoints, ndim))
         flat, offset = _flat_with_offsets(xp, input, batch, ndim)
-        flat_index = xp.empty(batch + (npoints,), dtype=np.intp)
+        block_batch = batch
+        out = xp.empty(batch + (npoints,), dtype=dtype)
 
-        def gather(index: tx.Any, values: tx.Any) -> None:
+    nitems = int(math.prod(block_batch))
+    if blocked:
+        size = _BLOCK_VALUES if block_size is None else int(block_size)
+        # The inner batch axis is kept whole when it fits in a block,
+        # since a block of it can only be gathered by slower indexing.
+        whole = size // max(1, block_batch[-1]) if shared else size
+        points = max(1, min(npoints, _BLOCK_POINTS, whole))
+        items = max(1, size // points)
+    else:
+        points = max(1, npoints)
+        items = max(1, nitems)
+
+    def gather_view(sub: tx.Any, columns: slice) -> tx.Any:
+        # Gather from rows of the view. A take into the buffer needs a
+        # contiguous source, or it copies the source first, so that a
+        # block of the inner axis, which is not contiguous, is gathered
+        # by indexing instead.
+        if columns == slice(None):
+
+            def gather(index: tx.Any, values: tx.Any) -> tx.Any:
+                return xp.take(sub, index, axis=1, out=values, **take_options)
+
+        else:
+
+            def gather(index: tx.Any, values: tx.Any) -> tx.Any:
+                return sub[:, index, columns]
+
+        return gather
+
+    def gather_flat(offset: tx.Any, shape: tx.Tuple[int, ...]) -> tx.Any:
+        flat_index = pool.get("flat index", shape, np.intp)
+
+        def gather(index: tx.Any, values: tx.Any) -> tx.Any:
             xp.add(offset, index, out=flat_index)
-            xp.take(flat, flat_index, out=values, **take_options)
+            return xp.take(flat, flat_index, out=values, **take_options)
 
-        def spread(weight: tx.Any) -> tx.Any:
-            return weight
+        return gather
 
-        shape = batch + (npoints,)
+    for start in range(0, npoints, points):
+        span = slice(start, min(start + points, npoints))
+        previous: tx.Optional[tx.Tuple[slice, ...]] = None
+        taps: tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]] = []
+        for select in _batch_blocks(block_batch, items):
+            # The indices and the weights depend on the batch items only
+            # along the batch axes of the grid, and are reused otherwise.
+            grid_select = _broadcast_select(select, grid_batch)
+            if grid_select != previous:
+                previous = grid_select
+                coords = grid[grid_select + (span,)]
+                taps = _block_taps(
+                    xp,
+                    coords,
+                    spatial_in,
+                    orders,
+                    bounds,
+                    dtype,
+                    strides,
+                    margin,
+                    pool,
+                )
+                if not blocked:
+                    # The single block of the batched strategy does not
+                    # need the scratch arrays of the taps again, and they
+                    # are as large as the grid.
+                    pool.release(*_TAP_SCRATCH)
+                if shared:
+                    # The weights multiply arrays `(outer, points, inner)`.
+                    taps = [
+                        [(i.reshape(-1), w.reshape((1, -1, 1))) for i, w in t]
+                        for t in taps
+                    ]
+            if shared:
+                target = out[select[0], span, select[1]]
+                gather = gather_view(view[select[0]], select[1])
+            else:
+                target = out[select + (span,)]
+                offset_select = _broadcast_select(select, offset.shape)
+                gather = gather_flat(offset[offset_select], target.shape)
+            _accumulate(xp, taps, target, gather, pool)
 
-    taps = []
-    for d in range(ndim):
-        pairs = _axis_taps(
-            xp,
-            grid[..., d],
-            spatial_in[d],
-            orders[d],
-            bounds[d],
-            dtype,
-            strides[d],
-        )
-        if margin is not None and d == 0:
-            inside = _inside(grid, spatial_in, margin)
-            for _, weight in pairs:
-                xp.multiply(weight, inside, out=weight, casting="unsafe")
-        taps.append(pairs)
-    out = xp.zeros(shape, dtype=dtype)
-    _accumulate(xp, taps, out, gather, spread)
-
-    if int(math.prod(batch_grid)) == 1:
+    if shared:
         # The batch axes of the view are those of the input, in the
         # order of the memory, and are put back in their order.
         axes = outer + inner
@@ -208,6 +330,168 @@ def pull(
         order_back += list(range(len(batch_input), out.ndim))
         out = xp.transpose(out, order_back)
     return out.reshape(batch + spatial_out)
+
+
+def _select_strategy(xp: ModuleType, strategy: str) -> str:
+    """Return the strategy that [`pull`][] uses for arrays of a package.
+
+    The choice is made here only. NumPy arrays use the blocked strategy,
+    whose blocks stay in the cache of the processor. CuPy arrays use the
+    batched strategy, because on a GPU each operation is a kernel that
+    processes a whole array, and the memory is fast enough that smaller
+    blocks would only add kernel launches.
+
+    Parameters
+    ----------
+    xp : module
+        The module `numpy` or `cupy` of the arrays.
+    strategy : str
+        The argument `strategy` of [`pull`][], one of `_STRATEGIES`.
+
+    Returns
+    -------
+    str
+        The strategy, "blocked" or "batched".
+
+    Raises
+    ------
+    ValueError
+    """
+    if strategy not in _STRATEGIES:
+        raise ValueError(
+            f"Unknown strategy: {strategy!r}. Use one of {_STRATEGIES}."
+        )
+    if strategy == "auto":
+        return "blocked" if xp is np else "batched"
+    return strategy
+
+
+def _batch_blocks(
+    shape: tx.Tuple[int, ...], size: int
+) -> tx.Iterator[tx.Tuple[slice, ...]]:
+    """Split batch axes into blocks of at most a given number of items.
+
+    The blocks are made of whole trailing axes as far as they fit, so
+    that a block is as contiguous as possible in a C-ordered array. The
+    first axis that does not fit is split into ranges, and the axes
+    before it are taken one index at a time.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        The shape of the batch axes.
+    size : int
+        The largest number of items in a block, at least 1.
+
+    Yields
+    ------
+    tuple of slice
+        One slice per axis, which selects the items of a block.
+    """
+    split = len(shape)
+    inner = 1
+    while split > 0 and inner * shape[split - 1] <= size:
+        split -= 1
+        inner *= shape[split]
+    if split == 0:
+        yield (slice(None),) * len(shape)
+        return
+    split -= 1
+    chunk = size // inner
+    rest = (slice(None),) * (len(shape) - split - 1)
+    for lead in itertools.product(*[range(n) for n in shape[:split]]):
+        head = tuple(slice(k, k + 1) for k in lead)
+        for start in range(0, shape[split], chunk):
+            stop = min(start + chunk, shape[split])
+            yield head + (slice(start, stop),) + rest
+
+
+def _broadcast_select(
+    select: tx.Tuple[slice, ...], shape: tx.Sequence[int]
+) -> tx.Tuple[slice, ...]:
+    """Return the selection of a block in an array that broadcasts.
+
+    An array that broadcasts against the batch has length 1 along some
+    batch axes, and its single item belongs to every block along them.
+
+    Parameters
+    ----------
+    select : tuple of slice
+        The slices that select a block of the batch axes.
+    shape : sequence of int
+        The shape of the array, whose first axes broadcast against the
+        batch axes.
+
+    Returns
+    -------
+    tuple of slice
+        The slices that select the block in the array.
+    """
+    return tuple(s if n > 1 else slice(None) for s, n in zip(select, shape))
+
+
+def _block_taps(
+    xp: ModuleType,
+    coords: tx.Any,
+    spatial: tx.Tuple[int, ...],
+    orders: tx.List[int],
+    bounds: tx.List[str],
+    dtype: tx.Any,
+    strides: tx.List[int],
+    margin: tx.Optional[float],
+    pool: _BufferPool,
+) -> tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]]:
+    """Return the indices and the weights of the taps of a block.
+
+    Parameters
+    ----------
+    xp : module
+        The module `numpy` or `cupy` of the coordinates.
+    coords : array
+        The coordinates of the points of the block, with the
+        coordinates of each point along the last axis.
+    spatial : tuple of int
+        The spatial shape of the input.
+    orders : list of int
+        The spline order of each axis.
+    bounds : list of str
+        The boundary condition of each axis.
+    dtype : data type
+        The data type of the interpolated values.
+    strides : list of int
+        The strides of the spatial axes in the flattened spatial axes.
+    margin : float or None
+        The margin of [`_inside`][], or None to keep every point.
+    pool : _BufferPool
+        The pool that provides the arrays.
+
+    Returns
+    -------
+    list of list of tuple
+        For each axis, one pair `(flat index, weight)` per tap, with
+        the shape of `coords` without its last axis. The flat index is
+        the index along the axis times its stride.
+    """
+    taps = []
+    for d in range(len(spatial)):
+        taps.append(
+            _axis_taps(
+                xp,
+                coords[..., d],
+                spatial[d],
+                orders[d],
+                bounds[d],
+                dtype,
+                strides[d],
+                pool,
+                d,
+            )
+        )
+    if margin is not None:
+        inside = _inside(xp, coords, spatial, margin, pool)
+        for _, weight in taps[0]:
+            xp.multiply(weight, inside, out=weight)
+    return taps
 
 
 def _normalize_extrapolate(extrapolate: tx.Any) -> tx.Optional[float]:
@@ -234,12 +518,51 @@ def _normalize_extrapolate(extrapolate: tx.Any) -> tx.Optional[float]:
     return None if extrapolate else _TOLERANCE
 
 
-def _inside(coords: tx.Any, shape: tx.Sequence[int], margin: float) -> tx.Any:
-    inside = None
+def _inside(
+    xp: ModuleType,
+    coords: tx.Any,
+    shape: tx.Sequence[int],
+    margin: float,
+    pool: _BufferPool,
+) -> tx.Any:
+    """Return where coordinates lie inside an array, up to a margin.
+
+    A coordinate along an axis of length `n` is inside when it lies
+    between `-margin` and `n - 1 + margin`, that is, when its distance
+    to the centre `(n - 1) / 2` of the axis is less than
+    `(n - 1) / 2 + margin`.
+
+    Parameters
+    ----------
+    xp : module
+        The module `numpy` or `cupy` of the coordinates.
+    coords : array
+        The coordinates, with the coordinates of each point along the
+        last axis.
+    shape : sequence of int
+        The spatial shape of the array.
+    margin : float
+        The margin, in voxels.
+    pool : _BufferPool
+        The pool that provides the arrays.
+
+    Returns
+    -------
+    array
+        A boolean array with the shape of `coords` without its last
+        axis, which belongs to the pool.
+    """
+    points = coords.shape[:-1]
+    inside = pool.get("inside", points, bool)
+    mask = pool.get("mask", points, bool)
+    distance = pool.get("distance", points, coords.dtype)
     for d, n in enumerate(shape):
-        c = coords[..., d]
-        mask = (c > -margin) & (c < n - 1 + margin)
-        inside = mask if inside is None else inside & mask
+        half = (n - 1) / 2
+        xp.subtract(coords[..., d], half, out=distance)
+        xp.abs(distance, out=distance)
+        xp.less(distance, half + margin, out=mask if d else inside)
+        if d:
+            xp.logical_and(inside, mask, out=inside)
     return inside
 
 
@@ -353,18 +676,20 @@ def _accumulate(
     xp: ModuleType,
     taps: tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]],
     out: tx.Any,
-    gather: tx.Callable[[tx.Any, tx.Any], None],
-    spread: tx.Callable[[tx.Any], tx.Any],
+    gather: tx.Callable[[tx.Any, tx.Any], tx.Any],
+    pool: _BufferPool,
 ) -> None:
-    """Add the weighted samples of every combination of taps into `out`.
+    """Write the sum of the weighted samples of every tap into `out`.
 
-    The flat indices and the weights of the combinations are built axis
-    by axis, so that only one partial index and one partial weight per
-    axis are held in memory at a time. The samples of the taps of the
-    last axis are summed before they are multiplied by the weight of the
-    other axes, which saves one multiplication per combination. Every
-    step writes into arrays that are allocated once, because allocating
-    a large array for each tap is slow.
+    The flat indices and the weights of the combinations of taps are
+    built axis by axis, so that only one partial index and one partial
+    weight per axis are held in memory at a time. The samples of the
+    taps of the last axis are summed before they are multiplied by the
+    weight of the other axes, which saves one multiplication per
+    combination. The first combination is summed in `out` itself, which
+    therefore does not need to be filled with zeros first. Every step
+    writes into arrays of the pool, because allocating an array for
+    each tap is slow.
 
     Parameters
     ----------
@@ -372,31 +697,29 @@ def _accumulate(
         The module `numpy` or `cupy` of the arrays.
     taps : list of list of tuple
         For each axis, one pair `(flat index, weight)` per tap, computed
-        for all the points.
-    out : array
-        The output, which the samples are added to.
-    gather : callable
-        The function that writes the samples at flat indices, for all
-        the points and all the batch items, into an array of the shape
-        of `out`.
-    spread : callable
-        The function that gives the weights of the points the shape that
+        for the points of the block. The weights have a shape that
         multiplies the gathered samples.
+    out : array
+        The block of the output, which is overwritten. It may be a view
+        that is not contiguous.
+    gather : callable
+        The function that returns the samples at flat indices, for the
+        points and the batch items of the block, with the shape of
+        `out`. It writes them into the array that it receives when it
+        can, and returns that array.
+    pool : _BufferPool
+        The pool that provides the arrays.
     """
-    # The buffers of each axis are allocated once. The recursion is a
-    # loop over the combinations of the taps of all but the last axis,
-    # so that no closure refers to itself and the buffers are freed as
-    # soon as the function returns.
+    # The recursion over the axes is a loop over the combinations of
+    # the taps of all but the last axis, which reuses the partial
+    # products of the axes whose tap did not change.
     ndim = len(taps)
-    indices = [xp.empty_like(taps[d][0][0]) for d in range(ndim)]
-    weights = [xp.empty_like(taps[d][0][1]) for d in range(ndim)]
-    values = xp.empty_like(out)
-    total = xp.empty_like(out)
+    values = pool.get("values", out.shape, out.dtype)
+    total = pool.get("total", out.shape, out.dtype) if ndim > 1 else out
     partial: tx.List[tx.Tuple[tx.Any, tx.Any]] = [(None, None)] * ndim
     previous: tx.Tuple[int, ...] = ()
+    first = True
     for combination in itertools.product(*[range(len(t)) for t in taps[:-1]]):
-        # Combine the taps of the leading axes, reusing the partial
-        # products of the axes whose tap did not change.
         changed = 0
         while changed < len(previous) and (
             previous[changed] == combination[changed]
@@ -404,24 +727,39 @@ def _accumulate(
             changed += 1
         previous = combination
         for d in range(changed, len(combination)):
-            k = combination[d]
-            tap_index, tap_weight = taps[d][k]
-            index, weight = partial[d - 1] if d else (None, None)
-            if index is not None:
-                tap_index = xp.add(index, tap_index, out=indices[d])
-                tap_weight = xp.multiply(weight, tap_weight, out=weights[d])
+            tap_index, tap_weight = taps[d][combination[d]]
+            if d:
+                index, weight = partial[d - 1]
+                tap_index = xp.add(
+                    index,
+                    tap_index,
+                    out=pool.get(("index", d), index.shape, index.dtype),
+                )
+                tap_weight = xp.multiply(
+                    weight,
+                    tap_weight,
+                    out=pool.get(("weight", d), weight.shape, weight.dtype),
+                )
             partial[d] = (tap_index, tap_weight)
         index, weight = partial[ndim - 2] if ndim > 1 else (None, None)
         # The taps of the last axis are summed first, and the sum is
         # then multiplied by the weight of the taps of the other axes.
+        acc = out if first else total
         for k, (tap_index, tap_weight) in enumerate(taps[-1]):
             if index is not None:
-                tap_index = xp.add(index, tap_index, out=indices[-1])
-            target = total if k == 0 else values
-            gather(tap_index, target)
-            xp.multiply(target, spread(tap_weight), out=target)
-            if k:
-                xp.add(total, values, out=total)
+                tap_index = xp.add(
+                    index,
+                    tap_index,
+                    out=pool.get("last index", index.shape, index.dtype),
+                )
+            samples = gather(tap_index, values)
+            if k == 0:
+                xp.multiply(samples, tap_weight, out=acc)
+            else:
+                xp.multiply(samples, tap_weight, out=samples)
+                xp.add(acc, samples, out=acc)
         if weight is not None:
-            xp.multiply(total, spread(weight), out=total)
-        xp.add(out, total, out=out)
+            xp.multiply(acc, weight, out=acc)
+        if not first:
+            xp.add(out, acc, out=out)
+        first = False

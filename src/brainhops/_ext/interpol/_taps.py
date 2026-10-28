@@ -11,6 +11,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
+from ._backend import _BufferPool
 from ._bounds import _bound_index
 from ._splines import _first_tap, _tap_weight
 
@@ -23,6 +24,8 @@ def _axis_taps(
     bound: str,
     dtype: tx.Any,
     stride: int = 1,
+    pool: tx.Optional[_BufferPool] = None,
+    axis: int = 0,
 ) -> tx.List[tx.Tuple[tx.Any, tx.Any]]:
     """Return the samples and the weights that coordinates read.
 
@@ -30,14 +33,17 @@ def _axis_taps(
     `order + 1` samples, each multiplied by a weight. For each of these
     taps, this function returns the indices of the samples, which the
     boundary condition has brought inside the axis, and the weights, in
-    which the signs of the boundary condition are included.
+    which the signs of the boundary condition are included. Every array
+    comes from the pool, so that a call for the next block of points
+    reuses the arrays of the previous one.
 
     Parameters
     ----------
     xp : module
         The module `numpy` or `cupy` of the coordinates.
     coords : array
-        The coordinates along the axis, in voxels.
+        The coordinates along the axis, in voxels, of a floating data
+        type.
     n : int
         The length of the axis.
     order : int
@@ -45,29 +51,55 @@ def _axis_taps(
     bound : str
         The boundary condition, one of the names in `_BOUNDS`.
     dtype : data type
-        The floating data type of the weights.
+        The data type of the interpolated values. The weights have the
+        real floating type of the same precision.
     stride : int, default=1
         The factor by which the indices are multiplied, which turns
         them into offsets in the flattened spatial axes.
+    pool : _BufferPool, optional
+        The pool that provides the arrays. By default, a new pool is
+        created, and the arrays are new.
+    axis : int, default=0
+        The spatial axis of the coordinates, which names the arrays of
+        the taps in the pool, so that the taps of every axis can be held
+        at the same time.
 
     Returns
     -------
     list of tuple
         One pair `(index, weight)` of arrays for each tap, with the
-        shape of `coords`.
+        shape of `coords`. The arrays belong to the pool, and are
+        overwritten by the next call with the same axis.
     """
+    if pool is None:
+        pool = _BufferPool(xp)
+    shape = coords.shape
+    real = np.finfo(dtype).dtype
     offset = _first_tap(order)
-    first = xp.floor(coords - offset if offset else coords)
-    t = (coords - first).astype(dtype, copy=False)
-    first = first.astype(np.intp)
+    # The first sample is floor(x - offset), and t is the distance from
+    # it to x, computed in the precision of the coordinates and then
+    # rounded to the precision of the weights.
+    first = pool.get("first", shape, coords.dtype)
+    if offset:
+        xp.subtract(coords, offset, out=first)
+        xp.floor(first, out=first)
+    else:
+        xp.floor(coords, out=first)
+    t = pool.get("fraction", shape, real)
+    xp.subtract(coords, first, out=t)
+    base = pool.get("base", shape, np.intp)
+    xp.copyto(base, first, casting="unsafe")
+    scratch = pool.get("scratch", shape, real)
+    integer_scratch = pool.get("integer scratch", shape, np.intp)
     taps = []
     for tap in range(order + 1):
-        index, sign = _bound_index(xp, first + tap, n, bound)
+        index = pool.get(("index", axis, tap), shape, np.intp)
+        weight = pool.get(("weight", axis, tap), shape, real)
+        _tap_weight(xp, order, tap, t, out=weight, scratch=scratch)
+        xp.add(base, tap, out=index)
+        _bound_index(xp, index, n, bound, weight, integer_scratch, scratch)
         if stride != 1:
             xp.multiply(index, stride, out=index)
-        weight = _tap_weight(order, tap, t)
-        if sign is not None:
-            xp.multiply(weight, sign, out=weight, casting="unsafe")
         taps.append((index, weight))
     return taps
 

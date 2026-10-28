@@ -12,8 +12,8 @@ array on a GPU is processed on the GPU, and CuPy is only imported when
 it is installed. The package does not depend on brainhops.
 
 Compared with `scipy.ndimage.map_coordinates`, [`pull`][] takes one
-order and one boundary condition per axis, and takes batch axes, which
-it processes in a single pass without a loop in Python. Coordinates are
+order and one boundary condition per axis, and takes batch axes, whose
+items it processes together rather than one at a time. Coordinates are
 in voxels, the last axis of the grid holds them, and the sample `i` of
 an axis lies at the coordinate `i`. As in torch-interpol, the grid has
 as many output spatial axes as coordinates, and its leading axes are

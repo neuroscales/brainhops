@@ -10,6 +10,7 @@ the package works without it.
 """
 
 # stdlib
+import math
 from types import ModuleType
 
 # dependencies
@@ -78,3 +79,67 @@ def _asarray(xp: ModuleType, array: tx.Any, dtype: tx.Any = None) -> tx.Any:
     if xp is not np and isinstance(array, np.ndarray):
         return xp.asarray(array if dtype is None else array.astype(dtype))
     return xp.asarray(array, dtype=dtype)
+
+
+class _BufferPool:
+    """Arrays that one computation allocates once and reuses.
+
+    The interpolation repeats the same steps for every tap and every
+    block of points, and each step writes into an array of the same
+    shape as in the previous block. Allocating these arrays again each
+    time is slow, in particular for large arrays, whose memory the
+    system has to provide afresh. A pool keeps one flat array per name,
+    and gives a view of its first values with the requested shape. A
+    request for more values than the array holds, or for another data
+    type, replaces the array.
+
+    Parameters
+    ----------
+    xp : module
+        The module `numpy` or `cupy` that allocates the arrays.
+    """
+
+    def __init__(self, xp: ModuleType) -> None:
+        self._xp = xp
+        self._arrays: tx.Dict[tx.Hashable, tx.Any] = {}
+
+    def get(
+        self, name: tx.Hashable, shape: tx.Sequence[int], dtype: tx.Any
+    ) -> tx.Any:
+        """Return a contiguous array of the pool, with undefined values.
+
+        Parameters
+        ----------
+        name : hashable
+            The name of the array in the pool. Two arrays that are used
+            at the same time must have different names.
+        shape : sequence of int
+            The shape of the array.
+        dtype : data type
+            The data type of the array.
+
+        Returns
+        -------
+        array
+            A view of the first values of the flat array of the pool.
+        """
+        shape = tuple(shape)
+        size = int(math.prod(shape))
+        dtype = np.dtype(dtype)
+        array = self._arrays.get(name)
+        if array is None or array.size < size or array.dtype != dtype:
+            array = self._xp.empty(size, dtype=dtype)
+            self._arrays[name] = array
+        return array[:size].reshape(shape)
+
+    def release(self, *names: tx.Hashable) -> None:
+        """Drop arrays from the pool, so that their memory can be freed.
+
+        Parameters
+        ----------
+        *names : hashable
+            The names of the arrays. Names that the pool does not hold
+            are ignored.
+        """
+        for name in names:
+            self._arrays.pop(name, None)

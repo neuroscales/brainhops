@@ -14,6 +14,7 @@ multiplies the sample read there.
 from types import ModuleType
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 
 _BOUNDS = ("zero", "replicate", "dct1", "dct2", "dst1", "dst2", "dft")
@@ -81,71 +82,115 @@ def _normalize_bound(bound: tx.Any) -> str:
 
 
 def _bound_index(
-    xp: ModuleType, i: tx.Any, n: int, bound: str
-) -> tx.Tuple[tx.Any, tx.Optional[tx.Any]]:
+    xp: ModuleType,
+    i: tx.Any,
+    n: int,
+    bound: str,
+    weight: tx.Any,
+    scratch: tx.Optional[tx.Any] = None,
+    factor: tx.Optional[tx.Any] = None,
+) -> tx.Any:
     """Map indices that may lie outside an axis to indices inside it.
 
-    The sign is the factor by which the sample at the returned index is
-    multiplied. It is -1 where an antisymmetric boundary flips the
-    sample, and 0 where the boundary reads zeros. It is None when every
-    factor is 1. The indices are mapped in place where possible, so as
-    to allocate few temporary arrays, which matters for large grids.
+    Interpolation near an edge reads samples outside the axis, and the
+    boundary condition says which sample inside the axis each of them
+    copies. An antisymmetric boundary also flips the sign of the copy,
+    and the zero boundary replaces it with zero. This function brings
+    the indices inside the axis and multiplies the weights of the
+    samples by these factors, -1 or 0, where they apply. Both arrays
+    are modified in place, so that no array of their size is allocated
+    when the scratch arrays are given, which matters for large grids.
 
     Parameters
     ----------
     xp : module
         The module `numpy` or `cupy` of the indices.
     i : array
-        The indices, of an integer data type. The array is overwritten.
+        The indices, as a contiguous array of the data type `intp`. The
+        array is overwritten with the indices inside the axis.
     n : int
         The length of the axis.
     bound : str
         One of the names in `_BOUNDS`.
+    weight : array
+        The weights of the samples, with the shape of `i` and a floating
+        data type. They are multiplied in place by the factors of the
+        boundary.
+    scratch : array, optional
+        An integer array of the shape of `i`, which is overwritten. By
+        default, a new array is allocated when the boundary needs one.
+    factor : array, optional
+        An array of the shape of `i` and the data type of `weight`,
+        which is overwritten. By default, a new array is allocated when
+        the boundary needs one.
 
     Returns
     -------
-    index : array
-        The indices inside `[0, n - 1]`.
-    sign : array or None
-        The factors, as integers in {-1, 0, 1}, or None.
+    array
+        The array `i`, which holds the indices inside `[0, n - 1]`.
+
+    Raises
+    ------
+    ValueError
     """
     if bound == "replicate":
-        return xp.clip(i, 0, n - 1, out=i), None
-    if bound == "zero":
-        inside = (i >= 0) & (i < n)
-        return xp.clip(i, 0, n - 1, out=i), inside
+        return xp.clip(i, 0, n - 1, out=i)
     if bound == "dft":
-        return xp.remainder(i, n, out=i), None
+        return xp.remainder(i, n, out=i)
+    if bound == "dct1" and n == 1:
+        i[...] = 0
+        return i
+    if bound not in ("zero", "dct1", "dct2", "dst1", "dst2"):
+        raise ValueError(f"Unknown boundary condition: {bound!r}.")
+    if scratch is None:
+        scratch = xp.empty_like(i)
+    if factor is None:
+        factor = xp.empty(i.shape, dtype=weight.dtype)
+    if bound == "zero":
+        # A negative index, read as an unsigned integer, is larger than
+        # any length, so that a single comparison finds the indices
+        # inside the axis.
+        xp.less(i.view(np.uintp), n, out=factor)
+        xp.multiply(weight, factor, out=weight)
+        return xp.clip(i, 0, n - 1, out=i)
     if bound == "dct1":
-        if n == 1:
-            i[...] = 0
-            return i, None
         # In one period of length 2 * (n - 1), the index p reads the
         # sample min(p, 2 * (n - 1) - p).
         n2 = 2 * (n - 1)
         xp.abs(i, out=i)
         xp.remainder(i, n2, out=i)
-        return xp.minimum(i, n2 - i, out=i), None
+        xp.subtract(n2, i, out=scratch)
+        return xp.minimum(i, scratch, out=i)
     if bound in ("dct2", "dst2"):
         # In one period of length 2 * n, the index p reads the sample
         # min(p, 2 * n - 1 - p).
         n2 = 2 * n
         xp.remainder(i, n2, out=i)
-        sign = None
+        xp.subtract(n2 - 1, i, out=scratch)
         if bound == "dst2":
             # The sign changes at every edge that the index crosses,
-            # that is, in the second half of every period.
-            sign = 1 - 2 * (i >= n)
-        return xp.minimum(i, n2 - 1 - i, out=i), sign
-    if bound == "dst1":
-        # The extended array has period 2 * (n + 1). Inside one period,
-        # the samples are [x, 0, -x reversed, 0], starting at index 0.
-        n2 = 2 * (n + 1)
-        period = (i + 1) % n2 - 1
-        flipped = period >= n
-        index = xp.where(flipped, n2 - 2 - period, period)
-        zero = (period == -1) | (period == n)
-        sign = xp.where(flipped, -1, 1)
-        sign = xp.where(zero, 0, sign)
-        return xp.clip(index, 0, n - 1), sign
-    raise ValueError(f"Unknown boundary condition: {bound!r}.")
+            # that is, in the second half of every period, where p is
+            # larger than 2 * n - 1 - p. The two are never equal.
+            xp.subtract(scratch, i, out=factor)
+            xp.sign(factor, out=factor)
+            xp.multiply(weight, factor, out=weight)
+        return xp.minimum(i, scratch, out=i)
+    # The extended array of dst1 has period 2 * (n + 1). Inside one
+    # period, the samples are [x, 0, -x reversed, 0], starting at index
+    # 0. With q = (i + 1) mod 2 * (n + 1), the samples 1 <= q <= n are
+    # x[q - 1], the samples q = 0 and q = n + 1 are zero, and the
+    # samples q >= n + 2 are -x[2 * n + 1 - q]. The factor is therefore
+    # sign(n + 1 - q) * sign(q), and the index is
+    # min(q - 1, 2 * n + 1 - q), clipped to the axis.
+    n2 = 2 * (n + 1)
+    xp.add(i, 1, out=i)
+    xp.remainder(i, n2, out=i)
+    xp.subtract(n + 1, i, out=factor)
+    xp.sign(factor, out=factor)
+    xp.multiply(weight, factor, out=weight)
+    xp.sign(i, out=factor)
+    xp.multiply(weight, factor, out=weight)
+    xp.subtract(n2 - 1, i, out=scratch)
+    xp.subtract(i, 1, out=i)
+    xp.minimum(i, scratch, out=i)
+    return xp.clip(i, 0, n - 1, out=i)

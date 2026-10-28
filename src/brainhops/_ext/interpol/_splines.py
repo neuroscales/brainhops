@@ -17,6 +17,7 @@ by sample.
 
 # stdlib
 import math
+from types import ModuleType
 
 # dependencies
 import typing_extensions as tx
@@ -44,164 +45,154 @@ def _first_tap(order: int) -> float:
     return (order - 1) / 2
 
 
-def _tap_weight(order: int, tap: int, t: tx.Any) -> tx.Any:
+# The polynomial pieces of the splines, as functions of the absolute
+# distance x, with piece 0 nearest to the centre. For even orders,
+# piece 0 is even in x and also takes negative distances. The pieces
+# are written with their coefficients, from the highest power of x to
+# the constant term, and evaluated by Horner's rule. The outermost
+# piece of the spline of order p is (c - x)**p / p! with
+# c = (p + 1) / 2, and it is evaluated in that form, which is accurate
+# near x = c, where the expanded polynomial would lose its precision.
+_INNER_PIECES: tx.Dict[int, tx.Tuple[tx.Tuple[float, ...], ...]] = {
+    1: (),
+    2: ((-1.0, 0.0, 3 / 4),),
+    3: ((1 / 2, -1.0, 0.0, 2 / 3),),
+    4: (
+        (1 / 4, 0.0, -5 / 8, 0.0, 115 / 192),
+        (-1 / 6, 5 / 6, -5 / 4, 5 / 24, 55 / 96),
+    ),
+    5: (
+        (-1 / 12, 1 / 4, 0.0, -1 / 2, 0.0, 11 / 20),
+        (1 / 24, -3 / 8, 5 / 4, -7 / 4, 5 / 8, 17 / 40),
+    ),
+    6: (
+        (-1 / 36, 0.0, 7 / 48, 0.0, -77 / 192, 0.0, 5887 / 11520),
+        (
+            1 / 48,
+            -7 / 48,
+            21 / 64,
+            -35 / 288,
+            -91 / 256,
+            -7 / 768,
+            7861 / 15360,
+        ),
+        (
+            -1 / 120,
+            7 / 60,
+            -21 / 32,
+            133 / 72,
+            -329 / 128,
+            1267 / 960,
+            1379 / 7680,
+        ),
+    ),
+    7: (
+        (1 / 144, -1 / 36, 0.0, 1 / 9, 0.0, -1 / 3, 0.0, 151 / 315),
+        (
+            -1 / 240,
+            1 / 20,
+            -7 / 30,
+            1 / 2,
+            -7 / 18,
+            -1 / 10,
+            -7 / 90,
+            103 / 210,
+        ),
+        (
+            1 / 720,
+            -1 / 36,
+            7 / 30,
+            -19 / 18,
+            49 / 18,
+            -23 / 6,
+            217 / 90,
+            -139 / 630,
+        ),
+    ),
+}
+
+
+def _tap_weight(
+    xp: ModuleType,
+    order: int,
+    tap: int,
+    t: tx.Any,
+    out: tx.Optional[tx.Any] = None,
+    scratch: tx.Optional[tx.Any] = None,
+) -> tx.Any:
     """Return the weight of one tap of a spline.
 
     The coordinate `x` reads the samples `i0 + tap`, with `i0` given by
     [`_first_tap`][], and `t = x - i0` lies in the interval
     `[(order - 1) / 2, (order + 1) / 2)`. The weight of the sample
-    `i0 + tap` is the spline evaluated at `t - tap`.
+    `i0 + tap` is the spline evaluated at `t - tap`. The polynomial is
+    evaluated in place in `out`, with `scratch` holding the distance,
+    so that no other array is allocated.
 
     Parameters
     ----------
+    xp : module
+        The module `numpy` or `cupy` of the distances.
     order : int
         The spline order, from 0 to 7.
     tap : int
         The tap, from 0 to `order`.
     t : array
         The distances from the first sample to the coordinates.
+    out : array, optional
+        The array that receives the weights, with the shape of `t` and
+        a floating data type. By default, a new array is allocated.
+    scratch : array, optional
+        An array of the shape and the data type of `out`, which is
+        overwritten. By default, a new array is allocated.
 
     Returns
     -------
     array
-        The weights, with the shape of `t`.
+        The weights, which are the array `out` when it is given.
 
     Raises
     ------
     NotImplementedError
     """
+    if order not in _INNER_PIECES and order != 0:
+        raise NotImplementedError(f"Spline order {order} is not implemented.")
+    if out is None:
+        out = xp.empty_like(t)
     if order == 0:
-        return t * 0 + 1
+        out[...] = 1
+        return out
+    if scratch is None:
+        scratch = xp.empty_like(out)
     # The distances t - tap of a given tap span an interval of length 1
     # centred on order / 2 - tap. Its bounds are bounds of pieces of the
-    # spline, so that the whole interval lies in a single piece.
+    # spline, so that the whole interval lies in a single piece. The
+    # absolute distance is x = t - tap when the centre is not negative,
+    # and x = tap - t otherwise.
     centre = order / 2 - tap
     piece = int(math.floor(abs(centre)))
-    x = t - tap if centre >= 0 else tap - t
-    return _piece(order, piece, x)
-
-
-def _piece(order: int, piece: int, x: tx.Any) -> tx.Any:
-    # The polynomial pieces of the splines, as functions of the absolute
-    # distance x, with piece 0 nearest to the centre. For even orders,
-    # piece 0 is even in x and also takes negative distances.
-    if order == 1:
-        return 1 - x
-    if order == 2:
-        if piece == 0:
-            return 0.75 - x * x
-        return 0.5 * (1.5 - x) ** 2
-    if order == 3:
-        if piece == 0:
-            return (x * x * (x - 2.0) * 3.0 + 4.0) / 6.0
-        return (2.0 - x) ** 3 / 6.0
-    if order == 4:
-        if piece == 0:
-            x2 = x * x
-            return x2 * (x2 * 0.25 - 0.625) + 115.0 / 192.0
-        if piece == 1:
-            return (
-                x * (x * (x * (5.0 - x) / 6.0 - 1.25) + 5.0 / 24.0)
-                + 55.0 / 96.0
-            )
-        return (x - 2.5) ** 4 / 24.0
-    if order == 5:
-        if piece == 0:
-            x2 = x * x
-            return x2 * (x2 * (0.25 - x / 12.0) - 0.5) + 0.55
-        if piece == 1:
-            return (
-                x * (x * (x * (x * (x / 24.0 - 0.375) + 1.25) - 1.75) + 0.625)
-                + 0.425
-            )
-        return (3.0 - x) ** 5 / 120.0
-    if order == 6:
-        if piece == 0:
-            x2 = x * x
-            return (
-                x2 * (x2 * (7.0 / 48.0 - x2 / 36.0) - 77.0 / 192.0)
-                + 5887.0 / 11520.0
-            )
-        if piece == 1:
-            return (
-                x
-                * (
-                    x
-                    * (
-                        x
-                        * (
-                            x * (x * (x / 48.0 - 7.0 / 48.0) + 0.328125)
-                            - 35.0 / 288.0
-                        )
-                        - 91.0 / 256.0
-                    )
-                    - 7.0 / 768.0
-                )
-                + 7861.0 / 15360.0
-            )
-        if piece == 2:
-            return (
-                x
-                * (
-                    x
-                    * (
-                        x
-                        * (
-                            x * (x * (7.0 / 60.0 - x / 120.0) - 0.65625)
-                            + 133.0 / 72.0
-                        )
-                        - 2.5703125
-                    )
-                    + 1267.0 / 960.0
-                )
-                + 1379.0 / 7680.0
-            )
-        return (x - 3.5) ** 6 / 720.0
-    if order == 7:
-        if piece == 0:
-            x2 = x * x
-            return (
-                x2 * (x2 * (x2 * (x / 144.0 - 1.0 / 36.0) + 1.0 / 9.0) - 1 / 3)
-                + 151.0 / 315.0
-            )
-        if piece == 1:
-            return (
-                x
-                * (
-                    x
-                    * (
-                        x
-                        * (
-                            x
-                            * (x * (x * (0.05 - x / 240.0) - 7.0 / 30.0) + 0.5)
-                            - 7.0 / 18.0
-                        )
-                        - 0.1
-                    )
-                    - 7.0 / 90.0
-                )
-                + 103.0 / 210.0
-            )
-        if piece == 2:
-            return (
-                x
-                * (
-                    x
-                    * (
-                        x
-                        * (
-                            x
-                            * (
-                                x * (x * (x / 720.0 - 1.0 / 36.0) + 7.0 / 30.0)
-                                - 19.0 / 18.0
-                            )
-                            + 49.0 / 18.0
-                        )
-                        - 23.0 / 6.0
-                    )
-                    + 217.0 / 90.0
-                )
-                - 139.0 / 630.0
-            )
-        return (4.0 - x) ** 7 / 5040.0
-    raise NotImplementedError(f"Spline order {order} is not implemented.")
+    sign = 1 if centre >= 0 else -1
+    pieces = _INNER_PIECES[order]
+    if piece == len(pieces):
+        # Outermost piece: (c - x)**order / order!, where
+        # c - x = c + sign * tap - sign * t.
+        c = (order + 1) / 2
+        if sign > 0:
+            xp.subtract(c + tap, t, out=scratch)
+        else:
+            xp.add(t, c - tap, out=scratch)
+        xp.multiply(scratch, 1 / math.factorial(order), out=out)
+        for _ in range(order - 1):
+            xp.multiply(out, scratch, out=out)
+        return out
+    if sign > 0:
+        x = xp.subtract(t, tap, out=scratch) if tap else t
+    else:
+        x = xp.subtract(tap, t, out=scratch)
+    coefficients = pieces[piece]
+    xp.multiply(x, coefficients[0], out=out)
+    for c in coefficients[1:-1]:
+        if c:
+            xp.add(out, c, out=out)
+        xp.multiply(out, x, out=out)
+    return xp.add(out, coefficients[-1], out=out)
