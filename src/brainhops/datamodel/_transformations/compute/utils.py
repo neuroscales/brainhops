@@ -127,6 +127,7 @@ def axis_counts(
     * the length of `scale`, `translation` or `permutation`;
     * a field: the last dimension of a displacement field, the spatial rank and
       last dimension of a coordinate field, the rank of a grid;
+    * a batch: the batch axes and the axes of its elements;
     * a lazy inverse: the counts of its forward transformation, swapped;
     * a projection: its systems, the count on one side giving the other;
     * a lazy square root, exponential or logarithm: the counts of its
@@ -140,6 +141,7 @@ def axis_counts(
     sequence.
     """
     from ..base import Transformation
+    from ..batched import BatchedTransformation
     from ..concrete import (
         Affine,
         CartesianField,
@@ -172,6 +174,8 @@ def axis_counts(
             ni, no = axis_counts(t.forward)
     elif isinstance(t, Sequence):
         ni, no = _sequence_ends(list(t.transformations or []))
+    elif isinstance(t, BatchedTransformation):
+        ni, no = t.counts
     elif isinstance(t, (Affine, Linear)):
         dims = _matrix_dims(t)
         if dims is not None:

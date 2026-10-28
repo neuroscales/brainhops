@@ -66,7 +66,10 @@ from .modes import ModeLike
 
 if tx.TYPE_CHECKING:
     # Imported here so that mkdocstrings resolved cross references.
+    from brainhops.datamodel.systems import CoordinateSystem
+
     from ..base import DataModelBase  # noqa: F401
+    from .batched import BatchedTransformation
     from .derived import DerivedTransformation  # noqa: F401
     from .meta import MetaTransformation  # noqa: F401
 
@@ -686,6 +689,84 @@ class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation):
         # The data given to the constructor is stored without going
         # through the setter of `data`, so it is checked here.
         _require_element(self, getattr(self, "_data", None))
+
+    @classmethod
+    def batch(
+        cls,
+        data: tx.Optional[ArrayProtocol] = None,
+        *,
+        input_axes: tx.Optional[tx.Sequence[int]] = None,
+        output_axes: tx.Optional[tx.Sequence[int]] = None,
+        positions: tx.Optional[tx.Sequence[tx.Any]] = None,
+        input: tx.Optional["CoordinateSystem"] = None,
+        output: tx.Optional["CoordinateSystem"] = None,
+        **kwargs,
+    ) -> "BatchedTransformation":
+        """Build a batch of transformations of this type from a stack.
+
+        A batch holds one transformation per element of its batch axes,
+        such as one affine per volume of a time series, and stores their
+        data in one array whose leading dimensions index the elements.
+        This method builds that batch from an array that already holds
+        the stack, without creating any element. The encoding of the
+        elements, such as `log`, is given as a keyword, as for the
+        constructor of this class, and a view of the data, such as
+        `matrix=` or `homogeneous_matrix=`, may be given in place of
+        `data`. The class of a file format builds a batch of its data
+        model. See
+        [`BatchedTransformation`][brainhops.datamodel.transformations.BatchedTransformation]
+        for the meaning of the axes and of the positions.
+
+        Parameters
+        ----------
+        data : ArrayLike, optional
+            Data of the elements, of shape `(*batch, ...)`, where `...` is
+            the shape of the data of one element.
+
+        Other Parameters
+        ----------------
+        input_axes : sequence of int, optional
+            Positions of the input axes of the elements in the input space.
+            Every other axis is a batch axis.
+        output_axes : sequence of int, optional
+            Positions of the output axes of the elements in the output
+            space. It defaults to `input_axes`.
+        positions : sequence of array_like, optional
+            Coordinates of the elements along each batch axis.
+        input : CoordinateSystem, optional
+            Coordinate system of the whole input space.
+        output : CoordinateSystem, optional
+            Coordinate system of the whole output space.
+        **kwargs : Any
+            Encoding of the elements, such as `log`, or a view of the data,
+            such as `matrix`.
+
+        Returns
+        -------
+        BatchedTransformation
+            The batch, of the subclass that matches this type.
+        """
+        from .batched import BatchedTransformation
+
+        encoding = {
+            name: kwargs.pop(name)
+            for name in cls.encoding_fields
+            if name in kwargs
+        }
+        # An element without data selects the class that the encoding
+        # asks for, such as `AffineExponential` for `log=True`.
+        element_type = type(cls._data_model()(**encoding))
+        if data is not None:
+            kwargs["data"] = data
+        return BatchedTransformation(
+            element_type,
+            input_axes=input_axes,
+            output_axes=output_axes,
+            positions=positions,
+            input=input,
+            output=output,
+            **kwargs,
+        )
 
 
 @kinds.Affine
