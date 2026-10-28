@@ -11,7 +11,6 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 # core
 from brainhops._core import path
 from brainhops._core.backends import array_backend
-from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
@@ -571,7 +570,7 @@ class AfniBrikWarp(
             )
         record = xform.metadata.raw
         write_brik(record, xform.rawdata, brik)
-        atomic_write_bytes(head, record.to_bytes())
+        head.write_bytes(record.to_bytes(), atomic=head.is_local())
         for sibling in stale:
             sibling.unlink()
         if reading:

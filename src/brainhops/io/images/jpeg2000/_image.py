@@ -7,7 +7,6 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -582,10 +581,12 @@ class Jpeg2000Image(
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
         if not _reads_file(self.rawdata, filename):
-            atomic_write_bytes(filename, self.to_bytes(**kwargs))
+            filename.write_bytes(
+                self.to_bytes(**kwargs), atomic=filename.is_local()
+            )
             return
         self.consolidate(inplace=True, **kwargs)
-        atomic_write_bytes(filename, _written(self))
+        filename.write_bytes(_written(self), atomic=filename.is_local())
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file may be another
         # level, or decode another coded image.

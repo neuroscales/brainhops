@@ -19,7 +19,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import WriterError
@@ -511,10 +511,10 @@ def write_mrtrix(
         header = written_header(record, raw, files[1].name)
         content = header.to_bytes()
         data = payload(header, raw)
-        atomic_write_bytes(files[1], data)
-        atomic_write_bytes(files[0], content)
+        files[1].write_bytes(data, atomic=files[1].is_local())
+        files[0].write_bytes(content, atomic=files[0].is_local())
         return
     content = mrtrix_bytes(record, raw)
     if str(files[0]).lower().endswith(".gz"):
         content = gzip.compress(content)
-    atomic_write_bytes(files[0], content)
+    files[0].write_bytes(content, atomic=files[0].is_local())

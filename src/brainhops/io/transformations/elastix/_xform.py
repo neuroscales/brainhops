@@ -12,7 +12,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
@@ -272,7 +272,7 @@ class ElastixTransform(
         record = _record(self.consolidate(**kwargs))
         content = record.to_bytes()
         _place_initial(record, filename, filename)
-        atomic_write_bytes(filename, content)
+        filename.write_bytes(content, atomic=filename.is_local())
 
     def to_text(self, **kwargs) -> str:
         """Return the text of the parameter file that encodes the chain.
@@ -915,5 +915,5 @@ def _place_initial(
                 f"remove that file."
             )
     else:
-        atomic_write_bytes(target, content)
+        target.write_bytes(content, atomic=target.is_local())
     _place_initial(initial, target, written)

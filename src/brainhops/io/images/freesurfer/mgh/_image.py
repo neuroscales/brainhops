@@ -13,7 +13,6 @@ from nibabel.volumeutils import array_from_file, array_to_file
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
@@ -628,14 +627,16 @@ class MghImage(
         filename = path.Path(filename)
         compress = kwargs.pop("compress", _compressed_name(filename))
         if not _reads_file(self.rawdata, filename):
-            atomic_write_bytes(
-                filename, self.to_bytes(compress=compress, **kwargs)
+            filename.write_bytes(
+                self.to_bytes(compress=compress, **kwargs),
+                atomic=filename.is_local(),
             )
             return
         self.consolidate(inplace=True, **kwargs)
         content = encode_mgh(*_mgh_written(self))
-        atomic_write_bytes(
-            filename, gzip.compress(content) if compress else content
+        filename.write_bytes(
+            gzip.compress(content) if compress else content,
+            atomic=filename.is_local(),
         )
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file describes how that

@@ -12,7 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -788,7 +788,7 @@ class XfmTransform(
         record = _named(_record(copy), copy.rawdata, filename)
         content = record.to_bytes(**kwargs)
         _place_volumes(record, copy.rawdata, filename)
-        atomic_write_bytes(filename, content)
+        filename.write_bytes(content, atomic=filename.is_local())
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the transform file to an open file, without its volumes.
@@ -1102,4 +1102,4 @@ def _place_volumes(
         content = source.read_bytes()
         if target.exists() and target.read_bytes() == content:
             continue
-        atomic_write_bytes(target, content)
+        target.write_bytes(content, atomic=target.is_local())

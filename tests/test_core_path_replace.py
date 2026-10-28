@@ -1,6 +1,7 @@
 """Checking and replacing files, as the readers and writers do."""
 
 import io
+import os
 
 import pytest
 import typing_extensions as tx
@@ -8,7 +9,6 @@ import typing_extensions as tx
 from brainhops._core.path import (
     Path,
     as_path_or_stream,
-    atomic_write_bytes,
     is_local_file,
     is_same_file,
     replace_directory,
@@ -86,13 +86,19 @@ def test_is_same_file_resolves_links(tmp_path) -> None:  # noqa: ANN001
     real.write_bytes(b"1")
     link = tmp_path / "link.bin"
     link.symlink_to(real)
+    (tmp_path / "sub").mkdir()
     assert is_same_file(Path(real), Path(link))
     assert is_same_file(Path(str(real)), Path(tmp_path / "." / "real.bin"))
     assert is_same_file(Path(tmp_path / "new.bin"), Path(tmp_path / "new.bin"))
+    # A file that does not exist yet is compared by its resolved name.
+    assert is_same_file(
+        Path(tmp_path / "new.bin"), Path(tmp_path / "sub" / ".." / "new.bin")
+    )
     assert not is_same_file(Path(real), Path(tmp_path / "other.bin"))
     assert not is_same_file(
         Path("memory://bucket/real.bin"), Path("memory://bucket/real.bin")
     )
+    assert not is_same_file(Path(real), Path("memory://bucket/real.bin"))
 
 
 # ----------------------------------------------------------------------
@@ -106,14 +112,25 @@ def test_a_file_is_replaced_whole(tmp_path) -> None:  # noqa: ANN001
     names = []
 
     def write(name: Path) -> None:
-        names.append(name.name)
+        names.append(name)
         assert target.read_bytes() == b"old"
         name.write_bytes(b"new")
 
     replace_file(target, write)
     assert target.read_bytes() == b"new"
-    assert names[0].endswith(".image.nii.gz")
+    # The new file has the name of the target, in another directory.
+    assert names[0].name == "image.nii.gz"
+    assert names[0].parent != Path(tmp_path)
     assert _names(tmp_path) == ["image.nii.gz"]
+
+
+def test_a_replaced_file_keeps_its_permissions(tmp_path) -> None:  # noqa: ANN001
+    target = tmp_path / "kept.bin"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o600)
+    replace_file(target, lambda name: name.write_bytes(b"new"))
+    assert target.read_bytes() == b"new"
+    assert os.stat(target).st_mode & 0o777 == 0o600
 
 
 def test_a_failed_file_write_leaves_the_file_as_it_was(tmp_path) -> None:  # noqa: ANN001
@@ -141,14 +158,51 @@ def test_an_error_names_the_target_rather_than_the_new_file(tmp_path) -> None:  
         replace_file(target, write)
     assert info.value.filename == str(target)
 
-
-def test_write_file_writes_local_and_remote_files(tmp_path) -> None:  # noqa: ANN001
+    # An error of the writer that names the new file names the target.
     target = tmp_path / "file.bin"
+
+    def fail(name: Path) -> None:
+        (name.parent / "missing" / name.name).write_bytes(b"1")
+
+    with pytest.raises(FileNotFoundError) as info:
+        replace_file(target, fail)
+    assert info.value.filename == str(target)
+    assert _names(tmp_path) == []
+
+
+def test_a_writer_that_writes_nothing_fails(tmp_path) -> None:  # noqa: ANN001
+    target = tmp_path / "kept.bin"
+    target.write_bytes(b"kept")
+    with pytest.raises(FileNotFoundError) as info:
+        replace_file(target, lambda name: None)
+    assert info.value.filename == str(target)
+    assert target.read_bytes() == b"kept"
+    assert _names(tmp_path) == ["kept.bin"]
+
+
+def test_a_file_never_replaces_a_directory(tmp_path) -> None:  # noqa: ANN001
+    target = tmp_path / "kept.store"
+    target.mkdir()
+    (target / "a").write_bytes(b"kept")
+    with pytest.raises(IsADirectoryError) as info:
+        replace_file(target, lambda name: name.write_bytes(b"new"))
+    assert info.value.filename == str(target)
+    assert _tree(target) == {"a": b"kept"}
+    assert _names(tmp_path) == ["kept.store"]
+
+
+def test_an_atomic_write_replaces_a_local_file(tmp_path) -> None:  # noqa: ANN001
+    # The writers that hold the whole content rely on this method.
+    target = Path(tmp_path / "file.bin")
     target.write_bytes(b"old")
-    atomic_write_bytes(target, b"new")
+    target.write_bytes(b"new", atomic=True)
     assert target.read_bytes() == b"new"
-    atomic_write_bytes(str(target), b"newer")
-    assert target.read_bytes() == b"newer"
+    assert _names(tmp_path) == ["file.bin"]
+    with pytest.raises(IsADirectoryError):
+        Path(tmp_path).write_bytes(b"new", atomic=True)
+    with pytest.raises(FileNotFoundError) as info:
+        Path(tmp_path / "missing" / "file.bin").write_bytes(b"1", atomic=True)
+    assert info.value.filename == str(tmp_path / "missing" / "file.bin")
     assert _names(tmp_path) == ["file.bin"]
 
 
@@ -213,3 +267,42 @@ def test_a_remote_path_is_refused() -> None:
 
     with pytest.raises(ValueError, match="local"):
         replace_directory("memory://bucket/remote.store", write)
+
+
+def test_a_directory_never_replaces_a_file(tmp_path) -> None:  # noqa: ANN001
+    target = tmp_path / "kept.store"
+    target.write_bytes(b"kept")
+
+    def write(directory: Path) -> None:
+        raise AssertionError("nothing is written")
+
+    with pytest.raises(NotADirectoryError):
+        replace_directory(target, write)
+    assert target.read_bytes() == b"kept"
+    assert _names(tmp_path) == ["kept.store"]
+
+
+def test_the_old_directory_is_kept_if_it_cannot_be_moved_back(
+    tmp_path,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    target = tmp_path / "kept.store"
+    target.mkdir()
+    (target / "a").write_bytes(b"kept")
+    replace = Path.replace
+    calls = []
+
+    def fail_after_the_first_move(self: Path, other: tx.Any) -> Path:
+        calls.append(self)
+        if len(calls) > 1:
+            raise OSError("the move failed")
+        return replace(self, other)
+
+    monkeypatch.setattr(Path, "replace", fail_after_the_first_move)
+    with pytest.raises(OSError, match="the move failed"):
+        replace_directory(target, _fill({"a": b"new"}))
+    # The old directory was moved aside and is still there, and the new
+    # directory is removed.
+    (kept,) = [name for name in _names(tmp_path) if ".old." in name]
+    assert _names(tmp_path) == [kept]
+    assert _tree(tmp_path / kept) == {"a": b"kept"}
