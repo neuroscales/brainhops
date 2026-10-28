@@ -242,7 +242,7 @@ class FnirtWarpField(
         return _image_to_model(self.rawdata)
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         if _nifti_intent(header) in _FNIRT_INTENTS:
             return Confidence.CERTAIN
         return Confidence.NO

@@ -54,6 +54,7 @@ from ..meta import (
 from ..multiscale import MultiscaleField
 from ..sequence import Sequence, _unnest
 from .check import is_kind
+from .prune import may_prune, prune_chain
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
 from .utils import axis_list
@@ -245,21 +246,47 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
     new opportunities for the other, so both run in rounds until a round
     changes nothing. The collapse runs first in each round, so that a
     transformation cancels with its lazy inverse before a downcast can
-    rebuild either side and break the link between them. Nothing is composed
-    or bridged, so the sequence can only get shorter.
+    rebuild either side and break the link between them.
+
+    The axes that the chain does not need are then removed by the
+    pruning of the `prune` module, which cuts elements down and
+    moves, merges or cancels projections. It runs after the rounds, so
+    that no lazy inverse is cut before it has had the chance to cancel,
+    and the rounds run again on its result. Nothing is composed or
+    bridged, so the sequence can only get shorter.
     """
     if policy.is_noop():
         return t
-    leaves = _unnest(t.transformations)
+    leaves = _settle(_unnest(t.transformations), policy)
+    for _ in range(_PRUNING_ROUNDS):
+        if len(leaves) < 2 or not may_prune(leaves, policy):
+            break
+        pruned = prune_chain(leaves, policy)
+        if pruned is None:
+            break
+        leaves = _settle(pruned, policy)
+    return _rebuild(t, leaves)
+
+
+# The pruning finds everything in one run, and a second run only takes
+# what the collapse of the projections that the first run moved makes
+# visible. The bound is a safety net against two runs that undo each
+# other.
+_PRUNING_ROUNDS = 4
+
+
+def _settle(
+    leaves: tx.List[Transformation], policy: SimplifyTable
+) -> tx.List[Transformation]:
+    # Collapse and downcast in rounds until a round changes nothing.
     while True:
         collapsed = _collapse_pass(leaves, policy)
         simplified = _downcast_pass(collapsed, policy)
         if len(simplified) == len(leaves) and all(
             a is b for a, b in zip(simplified, leaves)
         ):
-            break
+            return leaves
         leaves = simplified
-    return _rebuild(t, leaves)
 
 
 # ======================================================================
@@ -344,11 +371,13 @@ def _merge_projections(
     either projection names pass through both unchanged, so the merge is
     computed in a space just wide enough to hold every position, and
     holds in any wider space. `None` is returned when a position is
-    negative.
+    negative or named twice.
     """
     d1, c1 = axis_list(first.dropped), axis_list(first.created)
     d2, c2 = axis_list(second.dropped), axis_list(second.created)
     if any(i < 0 for i in d1 + c1 + d2 + c2):
+        return None
+    if any(len(set(axes)) != len(axes) for axes in (d1, c1, d2, c2)):
         return None
     width = 1 + max(d1 + c1 + d2 + c2, default=-1) + len(d1) + len(d2)
 

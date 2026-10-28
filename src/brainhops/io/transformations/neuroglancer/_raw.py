@@ -255,19 +255,6 @@ class NeuroglancerTransformRaw(Raw, TextFileReader, TextFileWriter, eq=False):
         """
         yield from self.to_text().splitlines()
 
-    def to_fileobj(self, file: tx.IO) -> None:
-        """Write the JSON text to a file object open for writing text.
-
-        The text is written as it is, so that a file without a final
-        newline keeps its bytes.
-
-        Parameters
-        ----------
-        file : file object
-            The file, open in text mode.
-        """
-        file.write(self.to_text())
-
 
 # ----------------------------------------------------------------------
 #   HELPERS

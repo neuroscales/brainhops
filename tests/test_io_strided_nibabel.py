@@ -23,9 +23,15 @@ from brainhops.io.common.nifti._data import (  # noqa: E402
     _NiftiProxy,
     whole_file,
 )
-from brainhops.io.common.nifti._raw import read_nifti  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import MghImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
+
+
+def read_nifti(file, **kwargs):  # noqa: ANN001, ANN003, ANN201
+    """Return the record and the lazy array that a NIfTI file is read as."""
+    image = NiftiImage.load(file, **kwargs)
+    return image.metadata.raw, image.rawdata
+
 
 SHAPE = (5, 4, 3, 2)
 """The shape of the test arrays, with a fourth axis of volumes."""

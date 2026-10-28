@@ -11,6 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -20,8 +21,6 @@ from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -371,32 +370,6 @@ class PillowImage(
         return PillowRaw.sniff_fileobj(file, error=error)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an image that Pillow reads.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when Pillow does not recognise the
-            content.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
-
-    @classmethod
     def from_filename(
         cls,
         filename: path.FilenameLike,
@@ -723,7 +696,7 @@ class PillowImage(
             The options of [`to_bytes`][].
         """
         if kwargs.get("format") is None:
-            kwargs["format"] = format_for_name(_to_filename(file))
+            kwargs["format"] = format_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -766,7 +739,7 @@ class PillowImage(
             kwargs["format"] = fmt
         reading = reads_from(self.rawdata, filename)
         image = self.consolidate(inplace=reading, **kwargs)
-        write_file(filename, image.rawdata.read_stored())
+        atomic_write_bytes(filename, image.rawdata.read_stored())
         if reading:
             # The image holds what the file holds, and its lazy array reads
             # the new file, since the old lazy array may read other bytes.

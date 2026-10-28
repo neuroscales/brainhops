@@ -11,11 +11,11 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 from brainhops._core import path
+from brainhops._core.path import is_same_file
 
 # internals
 from brainhops._core.proxy import ArrayProxy, StoredProxy
 from brainhops._core.streams import preserve_position
-from brainhops.io.base._utils_files import open_path, same_file
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
 # this format
@@ -132,7 +132,7 @@ def read_pillow_image(
             file = path.Path(file)
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
-        with open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             record = PillowRaw.from_fileobj(f, frame=frame)
     else:
         record = PillowRaw.from_fileobj(file, frame=frame)
@@ -157,7 +157,7 @@ def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _PillowProxy) or not _is_path(raw.source):
         return False
-    return same_file(raw.source, filename)
+    return is_same_file(raw.source, filename)
 
 
 @contextlib.contextmanager
@@ -166,7 +166,7 @@ def _opened(source: tx.Any) -> tx.Iterator[tx.BinaryIO]:
     if _is_path(source):
         if isinstance(source, str):
             source = path.Path(source)
-        with open_path(source) as f:
+        with path.Path(source).open("rb") as f:
             yield f
     else:
         with preserve_position(source):
