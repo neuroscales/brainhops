@@ -11,11 +11,10 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import open_compressed, preserve_position
-from brainhops.io.base._utils_files import local_path as _local_path
-from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
 # this format
@@ -109,7 +108,7 @@ class _MincProxy(StoredProxy):
         return _read_minc(_opened(self.source), self.record.version, read)
 
 
-def _opened(source: tx.Any) -> tx.Union[str, bytes]:
+def _opened(source: tx.Any) -> tx.Union[path.Path, bytes]:
     """Return what nibabel reads the voxels from: a name or the bytes.
 
     A local file that is not compressed is read by name, and any other
@@ -117,12 +116,12 @@ def _opened(source: tx.Any) -> tx.Union[str, bytes]:
     """
     if isinstance(source, (bytes, bytearray)):
         return bytes(source)
-    local = _local_path(source)
-    if local is not None:
-        with open(local, "rb") as f:
+    source = path.Path(source)
+    if is_local_file(source):
+        with source.open("rb") as f:
             if f.read(2) != b"\x1f\x8b":
-                return local
-    with _open_path(source) as f:
+                return source
+    with source.open("rb") as f:
         return bytes(open_compressed(f).read())
 
 
@@ -159,7 +158,7 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
     if isinstance(file, os.PathLike):
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             record = MincRaw.from_fileobj(f)
         return record, _MincProxy(file, record)
     with preserve_position(file):

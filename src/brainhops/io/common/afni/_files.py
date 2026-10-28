@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops._core.path import is_local_file
 
 # this format
 from ._constants import _BRIK_SUFFIXES
@@ -38,8 +38,7 @@ def afni_dataset_files(
     stem : str
         The dataset name, without directory or extension.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
+    filename = path.Path(filename)
     name = filename.name
     stem, head_ext, brik_ext = name, ".HEAD", ".BRIK"
     match = re.search(r"\.(HEAD|head|BRIK|brik)(\.[A-Za-z0-9]+)?$", name)
@@ -62,7 +61,7 @@ def afni_dataset_files(
 
 def afni_written_files(
     filename: path.FilenameLike,
-) -> tx.Tuple[tx.Any, tx.Any, tx.List[tx.Tuple[tx.Any, str]]]:
+) -> tx.Tuple[path.Path, path.Path, tx.List[path.Path]]:
     """
     Find the files that writing a dataset to a path writes or removes.
 
@@ -82,11 +81,10 @@ def afni_written_files(
         The `.HEAD` file to write.
     brik : Path
         The `.BRIK` file to write.
-    stale : list of tuple of Path and str
-        The sibling BRIK files to remove, with their local paths.
+    stale : list of Path
+        The local sibling BRIK files to remove.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
+    filename = path.Path(filename)
     head, _, stem = afni_dataset_files(filename)
     brik_ext = ".brik" if head.name.endswith(".head") else ".BRIK"
     suffix = ""
@@ -96,10 +94,8 @@ def afni_written_files(
     stale = []
     for other in _BRIK_SUFFIXES:
         sibling = filename.parent / (stem + brik_ext + other)
-        if other != suffix and path.exists(sibling):
-            local = _local_path(sibling)
-            if local is not None:
-                stale.append((sibling, local))
+        if other != suffix and is_local_file(sibling):
+            stale.append(sibling)
     return head, brik, stale
 
 

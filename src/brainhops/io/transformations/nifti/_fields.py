@@ -95,7 +95,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
     """
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as a field of RAS coordinates.
 
@@ -421,7 +421,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         return _with_encoding(obj, encoding)
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as a field of RAS displacements.
 

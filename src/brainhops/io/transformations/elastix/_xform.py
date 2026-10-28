@@ -13,6 +13,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes, is_same_file
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
@@ -22,12 +23,6 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import (
-    open_path,
-    same_file,
-    sibling,
-    write_file,
-)
 from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     TextFileReader,
@@ -280,27 +275,7 @@ class ElastixTransform(
         record = _record(self.consolidate(**kwargs))
         content = record.to_bytes()
         _place_initial(record, filename, filename)
-        write_file(filename, content)
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the parameter file to an open text file, without its chain.
-
-        The text of [`to_text`][] is written as it is, so that it keeps the
-        line endings of the file that was read.
-
-        Parameters
-        ----------
-        file : IO
-            The open text file.
-        **kwargs : Any
-            The fields of the metadata, given to [`consolidate`][].
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain cannot be written as a single elastix transform.
-        """
-        file.write(self.to_text(**kwargs))
+        atomic_write_bytes(filename, content)
 
     def to_text(self, **kwargs) -> str:
         """Return the text of the parameter file that encodes the chain.
@@ -918,15 +893,17 @@ def _place_initial(
     initial = record.initial
     if initial is None or name is None or is_absolute(name):
         return
-    target = sibling(filename, name)
-    if same_file(target, written) or (os.fspath(target) == os.fspath(written)):
+    target = path.Path(filename).parent / name
+    if is_same_file(target, written) or (
+        os.fspath(target) == os.fspath(written)
+    ):
         raise WriterError(
             f"The elastix initial transform {name!r} would be written over "
             f"{written}, which names it."
         )
     content = initial.to_bytes()
     if path.exists(target):
-        with open_path(target) as file:
+        with path.Path(target).open("rb") as file:
             if file.read() != content:
                 raise WriterError(
                     f"The elastix initial transform {name!r} must be "
@@ -935,5 +912,5 @@ def _place_initial(
                     f"remove that file."
                 )
     else:
-        write_file(target, content)
+        atomic_write_bytes(target, content)
     _place_initial(initial, target, written)

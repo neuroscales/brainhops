@@ -82,7 +82,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as an SPM field.
 
@@ -92,7 +92,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         tie instead, through
         [`PREFIXES`][brainhops.io.transformations.spm.SpmCoordinateField.PREFIXES].
         """
-        return NiftiRASCoordinateField._score_nibabel(header)
+        return NiftiRASCoordinateField.score_header(header)
 
     # --- data -----------------------------------------------------------
 

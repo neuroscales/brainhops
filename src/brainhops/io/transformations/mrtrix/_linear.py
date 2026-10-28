@@ -16,7 +16,6 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
 from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
@@ -29,7 +28,6 @@ from brainhops.errors import (
     IncompatibleSystemError,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
@@ -386,34 +384,6 @@ class MrtrixLinearTransform(
             The lines of the file, without their line breaks.
         """
         return self.to_text(**kwargs).splitlines()
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the transformation to a text stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in text mode.
-        **kwargs : Any
-            Refused, since the writer has no option.
-        """
-        file.write(self.to_text(**kwargs))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the transformation to a path.
-
-        The content is encoded before the file is written, so a
-        transformation that cannot be encoded leaves the file untouched,
-        and a local file is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Refused, since the writer has no option.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

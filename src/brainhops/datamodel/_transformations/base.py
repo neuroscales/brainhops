@@ -243,31 +243,34 @@ class Transformation(
 
     def factor(
         self,
+        policy: SimplifyLike = "analytic",
         *,
         compute: tx.Union[ModeLike, bool, None] = False,
-        simplify: SimplifyLike = False,
     ) -> "Transformation":
         """Rewrite the transformation as one factor per group of axes.
 
         The axes of a transformation often fall into groups that never
-        interact, as with a diagonal matrix, whose axes each scale on their
-        own. Factoring finds those groups and gives each one a factor that
-        acts on its axes alone, which lets a resampler work group by group
-        rather than over the whole grid. The transformation is factored as
-        a chain of one element, so a diagonal affine splits into one factor
-        per axis. See [`Sequence.factor`][] for the normal form that the
-        pass produces and for what is left unfactored.
+        interact, as with a diagonal matrix, whose axes each scale on
+        their own. Factoring finds those groups and gives each one a
+        factor that acts on its axes alone, which lets a resampler work
+        group by group rather than over the whole grid. The
+        transformation is factored as a chain of one element, so that,
+        under the numeric policy, a diagonal affine splits into one
+        factor per axis. See [`Sequence.factor`][] for the normal form
+        that the pass produces and for what is left unfactored.
 
         Parameters
         ----------
+        policy : SimplifyLike, default="analytic"
+            How closely the transformation may be read, with the values
+            and the meaning of the policy of [`simplify`][]. Under the
+            analytic policy, a matrix couples all its axes, so a
+            diagonal affine splits only under the numeric policy.
         compute : ModeLike or bool or None, default=False
             Kinds of transformation that may be composed inside a group,
             with the values accepted by the `mode` argument of
             [`compute`][]. It decides nothing about what is factored, and
             the default composes nothing.
-        simplify : SimplifyLike, default=False
-            How hard to simplify the pieces of each group, with the values
-            accepted by the `simplify` argument of [`compute`][].
 
         Returns
         -------
@@ -276,9 +279,7 @@ class Transformation(
         """
         # The sequence owns the pass, and it never asks its elements to
         # factor themselves, so this call does not recurse.
-        factored = nocycles.SEQUENCE([self]).factor(
-            compute=compute, simplify=simplify
-        )
+        factored = nocycles.SEQUENCE([self]).factor(policy, compute=compute)
         leaves = getattr(factored, "transformations", None) or ()
         if len(leaves) == 1 and leaves[0] is self:
             # The chain of one did not factor, so the wrapper is dropped

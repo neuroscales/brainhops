@@ -554,7 +554,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
     INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_DISPLACEMENT
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as an ITK displacement field.
 
@@ -726,7 +726,7 @@ class ItkNiftiCoordinateField(ItkNiftiField):
     """
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Claim only the files that brainhops writes as such fields.
 

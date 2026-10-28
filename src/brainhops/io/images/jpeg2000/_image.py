@@ -2,7 +2,6 @@
 
 # stdlib
 import os
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -11,6 +10,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -22,8 +22,6 @@ from brainhops.datamodel.metadata._report import (
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -242,32 +240,6 @@ class Jpeg2000Image(
             The confidence, between 0 and 1.
         """
         return Jpeg2000Raw.sniff_fileobj(file, error=error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a JPEG 2000 image.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no JPEG 2000
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(data)), error=error, **kwargs)
 
     @classmethod
     def from_filename(
@@ -586,7 +558,7 @@ class Jpeg2000Image(
             The options of [`consolidate`][].
         """
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(_to_filename(file))
+            kwargs["container"] = _container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -611,10 +583,10 @@ class Jpeg2000Image(
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
         if not _reads_file(self.rawdata, filename):
-            write_file(filename, self.to_bytes(**kwargs))
+            atomic_write_bytes(filename, self.to_bytes(**kwargs))
             return
         self.consolidate(inplace=True, **kwargs)
-        write_file(filename, _written(self))
+        atomic_write_bytes(filename, _written(self))
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file may be another
         # level, or decode another coded image.

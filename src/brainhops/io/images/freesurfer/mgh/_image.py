@@ -13,6 +13,7 @@ from nibabel.volumeutils import array_from_file, array_to_file
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
@@ -26,7 +27,6 @@ from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -141,7 +141,7 @@ class MghImage(
         geometry is encoded from the image sets the flag.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
@@ -280,31 +280,6 @@ class MghImage(
             The confidence, between 0 and 1.
         """
         return MghRaw.sniff_fileobj(file, error=error, **kwargs)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an MGH image.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no MGH header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
     @classmethod
     def from_filename(
@@ -650,11 +625,15 @@ class MghImage(
         """
         compress = kwargs.pop("compress", _compressed_name(filename))
         if not _reads_file(self.rawdata, filename):
-            write_file(filename, self.to_bytes(compress=compress, **kwargs))
+            atomic_write_bytes(
+                filename, self.to_bytes(compress=compress, **kwargs)
+            )
             return
         self.consolidate(inplace=True, **kwargs)
         content = encode_mgh(*_mgh_written(self))
-        write_file(filename, gzip.compress(content) if compress else content)
+        atomic_write_bytes(
+            filename, gzip.compress(content) if compress else content
+        )
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file describes how that
         # file stored the voxels.

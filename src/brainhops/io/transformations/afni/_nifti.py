@@ -210,7 +210,7 @@ class AfniNiftiWarp(
 
         A stream that starts with a NIfTI header in the layout of AFNI is
         read again with its extensions, which the labels of the
-        sub-bricks are in, and scored with `_score_nibabel`. Any other
+        sub-bricks are in, and scored with `score_header`. Any other
         NIfTI header scores `Confidence.NO`, and a stream that holds no
         NIfTI header is declined by
         [`NiftiRaw.sniff_fileobj`][brainhops.io.common.nifti.NiftiRaw.sniff_fileobj].
@@ -243,7 +243,7 @@ class AfniNiftiWarp(
                 record = NiftiRaw.from_fileobj(file, check=False)
         except Exception:  # noqa: BLE001
             return Confidence.NO
-        return cls._score_nibabel(record.header)
+        return cls.score_header(record.header)
 
     @classmethod
     def from_filename(cls, filename: tx.Any, **kwargs) -> "AfniNiftiWarp":
@@ -317,7 +317,7 @@ class AfniNiftiWarp(
         return _checked(super().from_nibabel(nifti, **kwargs))
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """Score a header as an AFNI warp.
 
         The layout of AFNI, with an AFNI extension that labels the

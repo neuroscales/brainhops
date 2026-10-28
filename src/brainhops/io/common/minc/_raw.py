@@ -1,7 +1,6 @@
 """The record of a MINC image: its header."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -175,38 +174,6 @@ class MincRaw(Raw, BinaryFileReader):
             If the stream is not a MINC file and `error` is `True`.
         """
         return _score(sniff_minc(file, (1, 2)), error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a MINC file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test, which may be gzipped.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not a MINC file.
-            With `True`, the error is a `SnifferContentError`, and an
-            exception class is raised instead when one is given.
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            The confidence that the bytes hold a MINC file.
-
-        Raises
-        ------
-        SnifferContentError
-            If the bytes are not a MINC file and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
 
 def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:

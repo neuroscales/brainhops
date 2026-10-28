@@ -20,9 +20,9 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local, replace_file
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.images.base import _utils_raster as raster
 
@@ -407,8 +407,8 @@ def write_plan(
     ----------
     plan : Plan
         The plan of the file.
-    target : str or IO
-        The local name of the file, or a stream open for writing.
+    target : PathLike or IO
+        The local path of the file, or a stream open for writing.
     encoding : Mapping[str, Any]
         The options of tifffile that encode the pixels.
 
@@ -467,10 +467,11 @@ def copy_source(source: backend.TiffSource, target: tx.Any) -> None:
     ----------
     source : TiffSource
         The source, a local file or the bytes of a file.
-    target : str or IO
-        The local name of the file, or a stream open for writing.
+    target : PathLike or IO
+        The local path of the file, or a stream open for writing.
     """
-    if isinstance(target, str) and source.filename is not None:
+    stream = hasattr(target, "write")
+    if not stream and source.filename is not None:
         shutil.copyfile(source.filename, target)
         return
     if source.content is not None:
@@ -478,11 +479,11 @@ def copy_source(source: backend.TiffSource, target: tx.Any) -> None:
     else:
         with open(source.filename, "rb") as file:
             content = file.read()
-    if isinstance(target, str):
+    if stream:
+        target.write(content)
+    else:
         with open(target, "xb") as file:
             file.write(content)
-    else:
-        target.write(content)
 
 
 # ----------------------------------------------------------------------

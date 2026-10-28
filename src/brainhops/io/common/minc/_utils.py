@@ -11,6 +11,7 @@ from nibabel import minc2 as _minc2
 from nibabel.externals.netcdf import netcdf_file as _netcdf_file
 
 # internals
+from brainhops._core import path
 from brainhops.datamodel.axes import Axis
 from brainhops.io.base.parsers import (
     Confidence,
@@ -27,7 +28,7 @@ from ._constants import (
     SPATIAL_DIMENSIONS,
 )
 
-_Source = tx.Union[str, bytes]
+_Source = tx.Union[path.PathLike, bytes]
 """The source of the voxels: a local path, or the file bytes."""
 
 
@@ -99,14 +100,14 @@ def _read_minc(
     """
     try:
         if version == 1:
-            if isinstance(source, str):
-                container = _netcdf_file(source, "r", mmap=True)
-            else:
+            if isinstance(source, bytes):
                 container = _netcdf_file(BytesIO(source), "r", mmap=False)
+            else:
+                container = _netcdf_file(source, "r", mmap=True)
         else:
             import h5py
 
-            fileish = source if isinstance(source, str) else BytesIO(source)
+            fileish = BytesIO(source) if isinstance(source, bytes) else source
             container = h5py.File(fileish, "r")
     except Exception as e:
         raise ParserContentError(f"Not a MINC{version} file: {e}") from e

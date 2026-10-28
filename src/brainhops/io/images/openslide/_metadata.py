@@ -8,7 +8,6 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -219,7 +218,7 @@ class OpenSlideMetadata(BinaryFileReader, MetadataFormat):
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open("rb") as f:
             content = f.read()
-        return cls.from_raw(_read_content(content, _to_filename(filename)))
+        return cls.from_raw(_read_content(content, path.base_name(filename)))
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "OpenSlideMetadata":
@@ -253,7 +252,7 @@ class OpenSlideMetadata(BinaryFileReader, MetadataFormat):
             return cls.from_raw(_read_local(local))
         with preserve_position(file):
             content = file.read()
-        return cls.from_raw(_read_content(content, _to_filename(file)))
+        return cls.from_raw(_read_content(content, path.base_name(file)))
 
     @classmethod
     def from_bytes(

@@ -59,7 +59,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     MGH has no free-form store, so `extra` is not supported.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz")
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("mgh", "mgz")
     RAW: tx.ClassVar[type] = MghRaw
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (

@@ -12,6 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes, is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -20,12 +21,6 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import (
-    open_path,
-    same_file,
-    sibling,
-    write_file,
-)
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -755,30 +750,6 @@ class XfmTransform(
         self.output = None
         return self
 
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write the transform to a path or a file object.
-
-        A path is written by [`to_filename`][], with the displacement
-        volumes, and a file object by [`to_fileobj`][], alone.
-
-        Parameters
-        ----------
-        file : path or file object
-            The path or the open file.
-        **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][].
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the transform cannot be encoded.
-        WriterError
-            If a displacement volume cannot be placed beside the file.
-        """
-        if isinstance(file, (str, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return self.to_fileobj(file, **kwargs)
-
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transform to a file, with its displacement volumes.
 
@@ -814,7 +785,7 @@ class XfmTransform(
         record = _named(_record(copy), copy.rawdata, filename)
         content = record.to_bytes(**kwargs)
         _place_volumes(record, copy.rawdata, filename)
-        write_file(filename, content)
+        atomic_write_bytes(filename, content)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the transform file to an open file, without its volumes.
@@ -1111,7 +1082,7 @@ def _place_volumes(
     for number, block in enumerate(grids):
         if os.path.isabs(block.volume):
             continue
-        target = sibling(filename, block.volume)
+        target = path.Path(filename).parent / block.volume
         volume = None if volumes is None else volumes[number]
         if isinstance(volume, PendingVolume):
             write_volume(target, volume)
@@ -1125,12 +1096,12 @@ def _place_volumes(
                 f"the grid transform to an XfmGridTransform of its "
                 f"displacements to write it as a new volume."
             )
-        if same_file(source, target):
+        if is_same_file(source, target):
             continue
-        with open_path(source) as file:
+        with path.Path(source).open("rb") as file:
             content = file.read()
         if path.exists(target):
-            with open_path(target) as file:
+            with path.Path(target).open("rb") as file:
                 if file.read() == content:
                     continue
-        write_file(target, content)
+        atomic_write_bytes(target, content)

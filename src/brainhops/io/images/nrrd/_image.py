@@ -12,6 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes, is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -31,9 +32,6 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import same_file as _same_file
-from brainhops.io.base._utils_files import sibling as _sibling
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -553,32 +551,6 @@ class NrrdImage(
         return _declined(error, None)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this kind of NRRD file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes do not hold this
-            kind of NRRD file.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
-    @classmethod
     def from_filename(
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> "NrrdImage":
@@ -837,23 +809,6 @@ class NrrdImage(
         record = _nrrd_written(image, ())
         return record.to_bytes() + _payload(image, record)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a NRRD file with attached samples to a stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-
-        Raises
-        ------
-        TypeError
-            If an unknown option is given.
-        """
-        file.write(self.to_bytes(**kwargs))
-
     def to_filename(
         self,
         filename: path.FilenameLike,
@@ -901,7 +856,7 @@ class NrrdImage(
         if attached:
             written = [filename]
         else:
-            written = [filename, _sibling(filename, data_file)]
+            written = [filename, path.Path(filename).parent / data_file]
         reading = _reads_from(self.rawdata, written)
         if reading:
             mmap = self.rawdata.root.mmap
@@ -910,12 +865,14 @@ class NrrdImage(
             image = self.consolidate(**options)
         if attached:
             record = _nrrd_written(image, ())
-            write_file(filename, record.to_bytes() + _payload(image, record))
+            atomic_write_bytes(
+                filename, record.to_bytes() + _payload(image, record)
+            )
         else:
             record = _nrrd_written(image, (data_file,))
             header, data = record.to_bytes(), _payload(image, record)
-            write_file(written[1], data)
-            write_file(filename, header)
+            atomic_write_bytes(written[1], data)
+            atomic_write_bytes(filename, header)
         if reading:
             # The image holds what the files hold, and its lazy array reads
             # the new files, since the lazy array of the old files describes
@@ -1421,7 +1378,7 @@ def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     if not isinstance(raw, _NrrdProxy):
         return False
     return any(
-        _same_file(read, file)
+        is_same_file(read, file)
         for read in (raw.source, *raw.files)
         for file in written
     )

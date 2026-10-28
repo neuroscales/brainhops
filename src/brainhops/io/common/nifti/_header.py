@@ -30,7 +30,7 @@ from ._constants import (
     _NIFTI_SPECIFIC_AXES,
 )
 from ._data import _NiftiProxy, stored_dtype, whole_file
-from ._raw import NiftiRaw, read_nifti
+from ._raw import NiftiRaw
 from ._vocabulary import encode
 
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
@@ -400,7 +400,9 @@ def _stored_parts(image: _NiftiObject) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
     """
     if _stores_array(image.header, image.dataobj):
         return image.dataobj, NiftiRaw(header=image.header)
-    record, proxy = read_nifti(BytesIO(image.to_bytes()))
+    content = image.to_bytes()
+    record = NiftiRaw.from_bytes(content)
+    proxy = _NiftiProxy.from_header(BytesIO(content), record.header, 0)
     return proxy, record
 
 

@@ -248,14 +248,14 @@ def test_a_format_with_a_record_class_writes_every_output_through_it(
 ) -> None:
     meta = TextDictMetadata.from_text("desc=short\nKey=v")
     assert list(meta.to_lines()) == ["desc=short", "Key=v"]
-    assert meta.to_text() == "desc=short\nKey=v"
-    assert meta.to_bytes() == b"desc=short\nKey=v"
+    assert meta.to_text() == "desc=short\nKey=v\n"
+    assert meta.to_bytes() == b"desc=short\nKey=v\n"
     stream = _io.StringIO()
     meta.to_fileobj(stream)
     assert stream.getvalue() == "desc=short\nKey=v\n"
     path = tmp_path / "meta.txt"
     meta.save(path)
-    assert path.read_text() == "desc=short\nKey=v"
+    assert path.read_text() == "desc=short\nKey=v\n"
     # The options go to the record, which refuses them.
     with pytest.raises(TypeError, match="bogus"):
         meta.to_text(bogus=True)

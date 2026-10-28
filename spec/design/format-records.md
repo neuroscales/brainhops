@@ -544,7 +544,7 @@ every other file keeps its bytes. A record keeps the bytes of each
 document as read, and the writer writes them again when the encoded
 document equals the parsed bytes, under a comparison that tells `1` from
 `1.0`. A local directory is written with `replace_directory`
-(`io/base/_utils_files.py`), which fills a new directory beside the
+(`_core/path.py`), which fills a new directory beside the
 target and then moves it into place, so a failed write leaves the old
 directory as it was. A save over the directory that the proxies of the
 object read (#426) consolidates the object in place, copies the files of
@@ -1071,9 +1071,9 @@ its status.
     and compared at consolidation with the list that the record decodes
     to, so a transformation appended in place is written, for every
     image format.
-32. `read_nifti` parses the header twice when it reads a local path,
-    once for the record and once for the nibabel image. Status:
-    accepted.
+32. `NiftiReaderWriter.from_filename` parses the header twice when it
+    reads a local path, once for the record and once for the nibabel
+    image. Status: accepted.
 33. `_reset_structural_fields` also resets `xyzt_units`, so a field
     written from a new chain of transformations declares unknown units,
     as it did before pass 1c when the header was built from scratch.
@@ -1854,7 +1854,7 @@ its status.
      are not migrated. Status: open.
 161. Precomputed volumes are read and not written, as MINC (item 101).
      A volume is a directory of files, local or remote, while the atomic
-     save of `io/base/_utils_files.py`, the save over the file that a
+     save of `_core/path.py`, the save over the file that a
      proxy reads (#426) and the untouched copy that is identical byte
      for byte are defined for files. A writer would also encode a pyramid,
      whose rules wait for the Zarr pass (item 160), and TensorStore,
@@ -2226,7 +2226,7 @@ registrations of its views back into the XML file.
      listed among the formats that are not migrated. Status: open.
 251. N5 datasets are read and not written, as MINC (item 101). A dataset
      is a directory of files, while the atomic save of
-     `io/base/_utils_files.py`, the save over the file that a proxy reads
+     `_core/path.py`, the save over the file that a proxy reads
      (#426) and the untouched copy that is identical byte for byte are
      defined for files. TensorStore, which brainhops would write with,
      writes every block at its full size, while the Java tools truncate
@@ -2385,7 +2385,7 @@ pyramid of the conformance test and the checks P1 to P12.
      loses that change, while a write of the pyramid itself, including
      `io.save`, writes it. Assigning the list of levels keeps the change
      everywhere. Status: open, together with item 191.
-296. `replace_directory` (`io/base/_utils_files.py`) cannot exchange two
+296. `replace_directory` (`_core/path.py`) cannot exchange two
      directories in one step. It moves the old directory aside and then
      the new one into place, so a reader that opens the target between
      the two moves finds no directory, but never a half-written one. The

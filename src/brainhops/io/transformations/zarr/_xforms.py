@@ -18,6 +18,7 @@ from bagof.magic import Forget, KwOnly
 # core
 from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.backends import array_backend, to_backend, to_numpy
+from brainhops._core.path import is_local, replace_directory
 
 # datamodel
 from brainhops.datamodel._sugar import vector_axis
@@ -39,7 +40,6 @@ from brainhops.errors import ParserTypeError, WriterError
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike
 from brainhops.io.common.zarr._data import (

@@ -5,7 +5,6 @@ import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
 # internals
-from brainhops._core import path
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
@@ -41,7 +40,7 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     has no free-form store, so `extra` is not supported.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii",)
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
     RAW: tx.ClassVar[type] = NiftiRaw
     SUPPORTED_FIELDS: tx.ClassVar[tx.Tuple[str, ...]] = (
@@ -181,22 +180,21 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         raw = self.consolidate(**fields).raw
         return (NiftiRaw() if raw is None else raw).to_bytes()
 
-    def to_filename(
+    def to_fileobj(
         self,
-        filename: path.FilenameLike,
+        file: tx.BinaryIO,
         **fields: tx.Any,
     ) -> None:
-        """Write the header to a path, compressed if its name ends with `.gz`.
+        """Write the header of the consolidated record to a stream.
 
-        The metadata is consolidated first, as in [`to_bytes`][], and the
-        header is written with [`NiftiRaw.to_filename`][].
+        The metadata is consolidated first, as in [`to_bytes`][], so that
+        a file written from the metadata holds what [`to_bytes`][] returns.
 
         Parameters
         ----------
-        filename : str or PathLike
-            The path.
+        file : BinaryIO
+            The stream, open in binary mode.
         **fields : Any
             Fields to override, as in [`consolidate`][].
         """
-        raw = self.consolidate(**fields).raw
-        (NiftiRaw() if raw is None else raw).to_filename(filename)
+        file.write(self.to_bytes(**fields))

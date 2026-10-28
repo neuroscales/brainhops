@@ -1,10 +1,8 @@
-"""The record of a NIfTI file, and reading and writing whole files."""
+"""The record of a NIfTI file, which is its header."""
 
 # stdlib
-import gzip
 import warnings
 from io import BytesIO
-from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
@@ -12,12 +10,9 @@ import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
-from brainhops._core import path
 from brainhops._core.magic import replace
-from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import is_local, same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -26,14 +21,11 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._data import _NiftiProxy
 from ._files import (
     _NIFTI_HEADER_SIZES,
     _NIFTI_HEADERS,
     _has_nifti_magic,
-    _image_to_stream,
     _nifti_version,
-    _save_nifti,
 )
 
 _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
@@ -129,19 +121,6 @@ class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
         return Confidence.NO
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes start with a NIfTI header.
-
-        The bytes are read as a stream with [`sniff_fileobj`][].
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
     def from_fileobj(
         cls, file: tx.BinaryIO, check: bool = True, **kwargs
     ) -> "NiftiRaw":
@@ -181,21 +160,6 @@ class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
         self.header.copy().write_to(buffer)
         return buffer.getvalue()
 
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the header to a path, compressed if its name ends with `.gz`.
-
-        The name is read from the path of the URL, so that a query does not
-        hide the suffix, as when a whole NIfTI file is written.
-        """
-        content = self.to_bytes(**kwargs)
-        compress = urlsplit(str(filename)).path.lower().endswith(".gz")
-        with path.Path(filename).open("wb") as file:
-            if compress:
-                with gzip.GzipFile(fileobj=file, mode="wb") as gz:
-                    gz.write(content)
-            else:
-                file.write(content)
-
 
 def _sniffed_header(
     file: tx.IO, version: tx.Optional[int] = None
@@ -227,117 +191,3 @@ def _sniffed_header(
 # ----------------------------------------------------------------------
 #   WHOLE FILES
 # ----------------------------------------------------------------------
-
-
-def read_nifti(
-    file: path.FileLike, **kwargs
-) -> tx.Tuple[NiftiRaw, ArrayProxy]:
-    """Read the record and a lazy array of the voxels of a NIfTI file.
-
-    The record is read from the header as the file stores it. The voxels
-    are not read: the lazy array reads them when they are accessed, and
-    applies the scaling of the header as nibabel applies it. A local file
-    is kept by its name, so that the lazy array opens it for each read
-    and can memory-map the voxels. A remote file is read into memory. An
-    open stream is kept by the lazy array, so the caller must keep it
-    open while the voxels may be read, and a stream that cannot seek is
-    read into memory first.
-
-    Parameters
-    ----------
-    file : path or file object
-        The NIfTI file, possibly compressed with gzip.
-    **kwargs : Any
-        Options that nibabel's readers also take. `mmap` tells whether
-        the voxels of a local file that is not compressed are
-        memory-mapped, and it is true by default. The lazy array never
-        keeps a file open, so `keep_file_open` and any other option are
-        ignored.
-
-    Returns
-    -------
-    raw : NiftiRaw
-        The record of the file.
-    proxy : ArrayProxy
-        The lazy array of the voxels, with the scaling of the header
-        applied when it is read.
-
-    Raises
-    ------
-    ValueError
-        If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
-    """
-    mmap = kwargs.get("mmap", True)
-    if mmap not in (True, False, "c", "r"):
-        raise ValueError("mmap should be one of {True, False, 'c', 'r'}")
-    mmap = bool(mmap)
-    if isinstance(file, str):
-        file = path.Path(file)
-    if not isinstance(file, path.PathLike):
-        return _read_nifti_stream(file, mmap)
-    if not is_local(file):
-        with file.open("rb") as stream:
-            return _read_nifti_stream(BytesIO(stream.read()), mmap)
-    filename = str(file)
-    with open(filename, "rb") as stream:
-        raw = NiftiRaw.from_fileobj(stream)
-    return raw, _NiftiProxy.from_header(filename, raw.header, mmap=mmap)
-
-
-def _read_nifti_stream(
-    fileobj: tx.BinaryIO, mmap: bool
-) -> tx.Tuple[NiftiRaw, ArrayProxy]:
-    """Read the record and the lazy array of a NIfTI stream.
-
-    The record is read first, and the position of the stream is restored
-    so that the lazy array reads the voxels from the same start.
-    """
-    if not _seekable(fileobj):
-        fileobj = BytesIO(fileobj.read())
-    start = fileobj.tell()
-    with preserve_position(fileobj):
-        raw = NiftiRaw.from_fileobj(fileobj)
-    proxy = _NiftiProxy.from_header(fileobj, raw.header, start, mmap=mmap)
-    return raw, proxy
-
-
-def _seekable(fileobj: tx.IO) -> bool:
-    """Tell whether a stream can seek."""
-    try:
-        return bool(fileobj.seekable())
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def reads_file(raw: tx.Any, file: tx.Any) -> bool:
-    """Tell whether a lazy array of voxels reads a file by its name.
-
-    The array reads the file when the proxy below its index, permutation
-    or scaling is the proxy of that file. An image written over that
-    file must then read the new file, since the lazy array opens the
-    file by its name each time it reads the voxels.
-    """
-    root = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(root, _NiftiProxy) and same_file(root.source, file)
-
-
-def write_nifti(image: _NibabelImage, file: path.FileLike) -> None:
-    """Write a nibabel image to a path or a stream.
-
-    nibabel writes the header first and the voxels after it. A path is
-    compressed when its name ends with `.gz`, and a stream receives an
-    uncompressed file. A local file is written beside the target and
-    moved over it, so that the voxels of a lazy image are read from the
-    old file even when the image is written over the file that it reads.
-
-    Parameters
-    ----------
-    image : nibabel.Nifti1Image or nibabel.Nifti2Image
-        The image to write.
-    file : path or file object
-        Where to write the image.
-    """
-    if isinstance(file, (str, path.PathLike)):
-        _save_nifti(image, file)
-    else:
-        _image_to_stream(image, file)

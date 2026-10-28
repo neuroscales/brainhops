@@ -8,7 +8,6 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
-from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
@@ -16,7 +15,6 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -494,32 +492,6 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             If `byteorder` is invalid.
         """
         return _record(self.consolidate(**kwargs)).to_bytes()
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the transformation to a file.
-
-        The content is built before the file is opened, so that an
-        unrepresentable transformation does not create or truncate the
-        file, and the transformation itself is not changed. A local file
-        is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The writer options `byteorder` and `precision`, as
-            [`consolidate`][] takes them.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain does not hold a single ITK block or affine
-            between ITK spaces.
-        WriterError
-            If `byteorder` is invalid.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ---------------------------------------------------------------------

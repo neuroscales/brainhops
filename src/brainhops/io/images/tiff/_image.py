@@ -9,6 +9,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
@@ -22,8 +23,6 @@ from brainhops.datamodel.metadata._report import (
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -86,31 +85,6 @@ class _TiffReader:
                 error = SnifferContentError
             raise error("This content is not a TIFF file.")
         return False
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a TIFF file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no TIFF file.
-        **kwargs : Any
-            The options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
@@ -596,7 +570,7 @@ class TiffImage(
         **kwargs : Any
             The options of [`to_bytes`][].
         """
-        kwargs.setdefault("name", _to_filename(file))
+        kwargs.setdefault("name", path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -634,11 +608,11 @@ class TiffImage(
         apply_loss_policy(report, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
-        kwargs.setdefault("name", _to_filename(filename))
+        kwargs.setdefault("name", path.base_name(filename))
         options, encoding = split_options(kwargs)
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(stored, _TiffProxy) and same_file(
+        reading = isinstance(stored, _TiffProxy) and is_same_file(
             stored.source.filename, filename
         )
         if not encoding and self._copies_source(**options):
@@ -671,20 +645,6 @@ class TiffImage(
             self.level = 0
             self.data = None
             self.transformations = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write the image to a path or a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path or the stream.
-        **kwargs : Any
-            The options of [`to_bytes`][].
-        """
-        if isinstance(file, (str, path.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return super().to_file(file, **kwargs)
 
     # --- helpers ------------------------------------------------------
 
