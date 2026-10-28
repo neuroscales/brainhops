@@ -211,6 +211,10 @@ def pull(
     batch_grid = tuple(grid.shape[: -ndim - 1])
     batch = tuple(np.broadcast_shapes(batch_input, batch_grid))
     npoints = int(math.prod(spatial_out))
+    if npoints == 0 or int(math.prod(batch)) == 0:
+        # An empty output has nothing to interpolate, and the views below
+        # cannot be built when an axis has a length of zero.
+        return xp.zeros(batch + spatial_out, dtype=dtype)
     # The flat index of a voxel is the sum of its indices times these.
     strides = [int(math.prod(spatial_in[d + 1 :])) for d in range(ndim)]
     pool = _BufferPool(xp)

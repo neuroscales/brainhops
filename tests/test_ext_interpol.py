@@ -292,6 +292,30 @@ def test_grid_batch_axes(batch_input, batch_grid, options) -> None:  # noqa: ANN
         np.testing.assert_allclose(out[index], expected, atol=1e-12)
 
 
+@pytest.mark.parametrize(
+    "input_shape, grid_shape, out_shape",
+    [
+        ((0, 5, 5), (3, 4, 2), (0, 3, 4)),
+        ((1, 5, 5), (0, 3, 4, 2), (0, 3, 4)),
+        ((2, 5, 5), (0, 4, 2), (2, 0, 4)),
+    ],
+)
+@pytest.mark.parametrize("prefilter", [False, True])
+def test_empty_output(
+    input_shape: tuple,
+    grid_shape: tuple,
+    out_shape: tuple,
+    prefilter: bool,
+    options: dict,
+) -> None:
+    # An empty batch or an empty grid gives an empty output instead of
+    # an error.
+    x = np.ones(input_shape)
+    grid = np.zeros(grid_shape)
+    out = pull(x, grid, 3, prefilter=prefilter, **options)
+    assert out.shape == out_shape
+
+
 def test_grid_needs_spatial_axes() -> None:
     # The grid has as many spatial axes as coordinates, as in
     # torch-interpol, so scattered points need singleton axes.
