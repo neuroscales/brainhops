@@ -5,9 +5,10 @@ and #115. Part A, on the public operations `compute`, `simplify`,
 `factor` and `restrict`, is agreed. Its first part, which lets `compute`
 read, compose and cancel projections, is implemented in #570, and the
 values of created axes, the free axes of `restrict`, the pruning of
-projections in `simplify` and the two ends of the normal form of
-`factor` are implemented for #582. The single pass of `compute` is
-implemented for #602. The rest is not implemented yet.
+projections in `simplify`, the two ends of the normal form of `factor`
+and the method `Transformation.restrict` are implemented for #582. The
+single pass of `compute` is implemented for #602. The rest is not
+implemented yet.
 
 Part A defines a small set of public operations on transformations. Part B
 lets a coordinate system state that some of its axes are unknown, which
@@ -292,6 +293,27 @@ at their values, that it raises when an output in `O` reads an input
 outside `I` that `at` does not name, and that
 `restrict(SubspaceTransformation(t, a, b), a, b)` reduces to `t`.
 
+`restrict` resolves its references when it is called, against the
+input and output systems of `t`, because the projections that it builds
+hold positions. A reference is resolved as `AxisSequence.restrict`
+resolves it (B.2), so a query matches only the explicit axes of an open
+system. A position after the `...` of an open system counts from the
+end, and it is made non-negative with the number of axes that `t`
+states, for example through the shape of its matrix. A name must
+designate exactly one axis and any other query at least one, so that a
+query that matches nothing never removes axes silently. The kept axes
+keep the order that they have in `t`, because the composition holds
+only projections, and references that designate them in another order
+are refused rather than reordered. Each key of `at` is resolved as one
+reference to input axes, every axis that it designates takes its value,
+and a key that designates a kept input is refused. When both blocks
+hold every axis, `restrict` returns `t` itself. A side whose number of
+axes `t` does not state cannot be restricted, because the axes to
+create or to drop are then unknown, and `restrict` raises
+`RestrictionError`. The exception is a `SubspaceTransformation`
+restricted to the axes that it acts on, which gives the transformation
+that it wraps, whatever the number of axes is.
+
 ### A.5 No separate `embed`
 
 The transformation-level `embed` of #104, with its `ni` and `no`
@@ -360,7 +382,11 @@ and `createdOutputs` are the outputs it adds, with value zero. The
 default of `Projection.at` is therefore `0`. The OME-NGFF writer of
 brainhops writes a projection through its affine matrix, whose
 translation holds the values of `at`, and it refuses a free axis, which
-has no value to write and never survives `compute` (A.4).
+has no value to write and never survives `compute` (A.4). It also
+refuses an element that does not map the axes of the image onto as many
+axes, such as the projections of a restriction that is not computed,
+because reordering the matrix of such an element would lose rows or
+columns. A computed restriction with values is written as its affine.
 
 The specification also exposes a correctness issue. Swapping `dropped`
 and `created` does not invert a projection that drops an axis, which has
@@ -443,9 +469,11 @@ between systems that list every axis. In brainhops, systems may be missing
 or open, so a position in a space of unknown width is a guess, notably
 when a pass-through has to decide which input to drop. Every axis
 reference (block axes, `Permutation`, `Projection`, and the axes of
-`restrict`) will therefore accept a position or a name.
-References are stored as given and resolved lazily against the system on
-the relevant side. A name resolves when the system has exactly one axis
+`restrict`) will therefore accept a position or a name. The axes of
+`restrict` already do, and they are resolved when `restrict` is called
+(A.4), because the projections that it builds store positions. The
+other references will be stored as given and resolved lazily against
+the system on the relevant side. A name resolves when the system has exactly one axis
 with that name, and never matches the axes that `...` stands for. Names
 survive reordering and bridging, whereas positions do not. Writers resolve
 every reference to a position after closing the systems.
@@ -677,7 +705,7 @@ The next pull requests, in order (#582):
    groups with the restrictors of closed blocks. `factor` takes the
    policy of `simplify`, and reslice asks for the numeric policy;
 3. add `Transformation.restrict`, which accepts the axis queries of #574,
-   and remove the transformation-level `embed`.
+   and remove the transformation-level `embed`, which is implemented.
 
 The remaining work adds the multi-block `SubspaceTransformation` and
 axis references by name. It will be checked by the parity sweep, the
@@ -691,8 +719,9 @@ together with the readers and writers of the formats that store them
 
 ## Decisions
 
-Part A, agreed. Decisions 4 and 7 are implemented in #570, and the
-others are not implemented yet:
+Part A, agreed. Decisions 4 and 7 are implemented in #570, decisions
+1, 3, 5 and 6 are implemented for #582, and the others are not
+implemented yet:
 
 1. Restriction takes no `policy`; the policy belongs to `compute` and
    `simplify`.
@@ -807,6 +836,21 @@ implemented (#602):
     transformation that moves its axes is not a factor, so it composes
     as any other transformation does.
 
+Part A, the arguments of `restrict`. Decisions 40 to 43 are implemented
+(#582):
+
+40. `restrict` resolves its references when it is called, as
+    `AxisSequence.restrict` resolves them, against the systems of the
+    transformation. A name designates exactly one axis, any other query
+    designates at least one, and the keys of `at` are resolved in the
+    same way and designate removed inputs only.
+41. The kept axes keep the order that they have in the transformation,
+    and references that designate them in another order are refused.
+42. A restriction to every axis returns the transformation itself.
+43. A side whose number of axes is unknown cannot be restricted and
+    raises `RestrictionError`, except that a subspace restricted to the
+    axes that it acts on gives the transformation that it wraps.
+
 ## Open questions
 
 1. `Axis.merge_with` has no consumer. Part A will either use it, for
@@ -817,3 +861,8 @@ implemented (#602):
    stage of `compute` would no longer need to simplify and factor them
    again (decision 39). This would relax decision 35 for these two
    types.
+3. `restrict` could accept references in another order than that of
+   the transformation, by adding a permutation to the composition, and
+   a query that matches no axis could designate an empty block. Both are
+   refused for now (decisions 40 and 41), so that either reading can
+   still be chosen.

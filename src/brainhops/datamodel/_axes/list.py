@@ -405,6 +405,17 @@ class AxisSequence(tx.Sequence[AXIS]):
         TypeError
             If a reference is neither an integer nor a query.
         """
+        return type(self)([self.at(p) for p in self._positions(refs)])
+
+    def _positions(
+        self,
+        refs: tx.Union[AxisQuery, tx.Iterable[tx.Union[int, AxisQuery]]],
+    ) -> tx.List[int]:
+        # Return the position of each axis that `refs` designates, in
+        # the order of `refs`, as `restrict` reads them. A position in a
+        # finite sequence is made non-negative, and a position in a
+        # variadic sequence is returned as it is given. Every axis is
+        # designated at most once.
         if _is_query(refs) or isinstance(refs, str):
             refs = [refs]
         positions = []
@@ -417,7 +428,7 @@ class AxisSequence(tx.Sequence[AXIS]):
             else:
                 positions.append(self._position(ref))
         _check_unique(positions, "refs")
-        return type(self)([self.at(p) for p in positions])
+        return positions
 
     def embed(
         self,
