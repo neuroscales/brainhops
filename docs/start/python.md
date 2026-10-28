@@ -333,7 +333,11 @@ A removed input takes the value that `at` gives it, so that a
 restriction can select one volume of a time series that has one affine
 per volume. A removed input that `at` does not name is free, which
 means that the kept outputs must not read it, and `compute` raises
-`RestrictionError` when one of them does.
+`RestrictionError` when one of them does. The order of the axes in
+each block does not matter, and the kept axes stay in the order that
+they have in the transformation. Restricting the geometry of an image
+with the index of a sample in `at`, such as the index of a volume or of
+a slice, gives the geometry of that part of the image.
 
 ```python
 from brainhops.datamodel.axes import SpaceAxis

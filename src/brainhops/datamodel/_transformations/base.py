@@ -342,9 +342,10 @@ class Transformation(
         resolves it, so a query never matches the unknown axes that the
         `...` of an open system stands for. A name must designate
         exactly one axis, and any other query must designate at least
-        one. The kept axes stay in the order that they have in the
-        transformation, and the references must designate them in that
-        order. Positions also work on a transformation without systems,
+        one. Each side is a set of axes, so the order of the references
+        does not matter: the kept axes stay in the order that they have
+        in the transformation, and an axis must not be designated twice.
+        Positions also work on a transformation without systems,
         or with open systems, provided that its numbers of axes are
         known, for example from the shape of its matrix. The systems of
         the result are the systems of the transformation restricted to
@@ -355,7 +356,13 @@ class Transformation(
         often does not know how many axes it passes through, which a
         restriction needs. When it is restricted to the axes that it
         acts on, however, the result is the transformation that it
-        wraps, whatever that number is, and this result is returned.
+        wraps, whatever that number is, and this result is returned. A
+        subspace that lists its axes in another order than the full
+        space gives the wrapped transformation between two permutations,
+        which put its axes in the order of the full space. A geometry,
+        an instance of
+        [`Geometry`][brainhops.datamodel.geometry.Geometry], restricts
+        its grid as well when it can, as its own method describes.
 
         !!! example
             ```pycon
@@ -398,9 +405,8 @@ class Transformation(
             If a position lies outside the axes of the transformation.
         ValueError
             If a query matches no axis, a name is shared by several
-            axes, an axis is designated twice, the axes are not
-            designated in their order, or `at` gives a value to an input
-            that is kept.
+            axes, an axis is designated twice, or `at` gives a value to
+            an input that is kept.
         TypeError
             If a reference is neither a position nor a query, or if `at`
             is not a mapping of real numbers.

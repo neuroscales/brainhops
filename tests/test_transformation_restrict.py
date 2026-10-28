@@ -12,9 +12,11 @@ import numpy as np
 import pytest
 
 from brainhops.datamodel.axes import Axis, SpaceAxis, TimeAxis
+from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    CartesianField,
     Identity,
     Projection,
     Scaling,
@@ -240,9 +242,16 @@ def test_an_axis_designated_twice_raises() -> None:
         _affine(_A1).restrict(["x", 0], ["x"])
 
 
-def test_axes_designated_out_of_order_raise() -> None:
-    with pytest.raises(ValueError, match="order"):
-        _affine(_A1).restrict(["y", "x"], ["x", "y"])
+def test_the_order_of_the_references_is_ignored() -> None:
+    # A block is a set of axes, which keep the order of the
+    # transformation.
+    t = _affine(_A2)
+    forward = t.restrict(["x", "y"], ["x", "y"], at={"t": 4})
+    backward = t.restrict(["y", "x"], ["y", "x"], at={"t": 4})
+    assert np.allclose(backward.compute().matrix, _SECTION)
+    assert _names(backward.input) == _names(forward.input) == ["x", "y"]
+    mixed = t.restrict([TimeAxis, "x"], ["t", 0])
+    assert np.allclose(mixed.compute().matrix, [[2.0, 0.5, 1], [0, 1, 5]])
 
 
 def test_a_position_out_of_range_raises() -> None:
@@ -352,6 +361,24 @@ def test_a_named_block_of_an_open_subspace_is_its_inner() -> None:
     assert subspace.restrict(["x", "z"], ["x", "z"]) is inner
 
 
+def test_a_subspace_that_reorders_its_axes_keeps_the_full_order() -> None:
+    # The subspace reads the full axes 2 and 0 in that order, and the
+    # restriction keeps them in the order 0 and 2, so the result is the
+    # wrapped affine with its two axes swapped on each side. The same
+    # map comes out of compute when the subspace states its axes.
+    inner = Affine(matrix=np.array([[2.0, 1, 1], [0, 3, 2]]))
+    expected = [[3.0, 0, 2], [1, 2, 1]]
+    subspace = SubspaceTransformation(inner, [2, 0], [2, 0])
+    restricted = subspace.restrict([2, 0], [0, 2])
+    assert np.allclose(restricted.compute().matrix, expected)
+    system = CoordinateSystem().expand(3)
+    closed = SubspaceTransformation(
+        inner, [2, 0], [2, 0], input=system, output=system
+    )
+    computed = closed.restrict([0, 2], [0, 2]).compute()
+    assert np.allclose(computed.to(Affine).matrix, expected)
+
+
 def test_another_block_of_an_open_subspace_raises() -> None:
     subspace = SubspaceTransformation(
         Scaling(scale=[2.0, 3.0]), [0, 2], [0, 2]
@@ -375,6 +402,125 @@ def test_a_lazy_inverse_is_restricted_without_being_replaced() -> None:
     full = np.linalg.inv(np.vstack([np.array(_A2, float), [0, 0, 0, 1]]))
     # The inverse maps (x', y', t') back, and t' = 4 gives t = -1.
     expected = full[:2, [0, 1, 3]] + np.outer(full[:2, 2], [0, 0, 4])
+    assert np.allclose(restricted.compute().matrix, expected)
+
+
+# ----------------------------------------------------------------------
+#   GEOMETRIES
+# ----------------------------------------------------------------------
+
+
+def _series() -> Geometry:
+    # The geometry of a series of 3 volumes of shape (4, 5, 6). The
+    # position of each volume moves along x with time, as after motion
+    # correction, so x reads t.
+    voxels = CoordinateSystem(
+        axes=[SpaceAxis(name=n, unit="voxel") for n in "ijk"]
+        + [TimeAxis(name="v", unit="index")]
+    )
+    world = CoordinateSystem(
+        axes=[SpaceAxis(name=n, unit="mm") for n in "xyz"]
+        + [TimeAxis(name="t", unit="s")]
+    )
+    matrix = np.zeros((4, 5))
+    matrix[:3, :3] = [[2, 0.1, 0], [0, 3, 0], [0, 0, 4]]
+    matrix[:, 3] = [0.5, 0, 0, 2]
+    matrix[:, 4] = [1, 2, 3, 0]
+    grid = CartesianField(shape=(4, 5, 6, 3), input=voxels, output=voxels)
+    return Geometry((grid, Affine(matrix=matrix, input=voxels, output=world)))
+
+
+def _world(geometry: Geometry, index: np.ndarray) -> np.ndarray:
+    # Map indices of the grid through the computed transformation.
+    matrix = np.asarray(geometry.compute().transformation.matrix)
+    return index @ matrix[:, :-1].T + matrix[:, -1]
+
+
+def _samples(shape: tuple, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return np.stack([rng.integers(0, n, size=8) for n in shape], -1)
+
+
+def test_one_volume_of_a_series_is_a_geometry() -> None:
+    series = _series()
+    volume = series.restrict(["i", "j", "k"], ["x", "y", "z"], at={"v": 2})
+    assert isinstance(volume, Geometry)
+    assert volume.shape == (4, 5, 6)
+    assert _names(volume.grid.input) == ["i", "j", "k"]
+    assert _names(volume.output) == ["x", "y", "z"]
+    computed = volume.compute()
+    assert isinstance(computed, Geometry) and computed.shape == (4, 5, 6)
+    index = _samples((4, 5, 6))
+    full = np.hstack([index, np.full((len(index), 1), 2)])
+    expected = _world(series, full)[:, :3]
+    assert np.allclose(_world(volume, index), expected)
+
+
+def test_a_slice_of_a_volume_is_a_geometry() -> None:
+    series = _series()
+    plane = series.restrict(["i", "j"], Axis, at={"k": 1, "v": 0})
+    assert isinstance(plane, Geometry) and plane.shape == (4, 5)
+    index = _samples((4, 5))
+    full = np.hstack([index, np.ones((len(index), 1)), np.zeros((8, 1))])
+    assert np.allclose(_world(plane, index), _world(series, full))
+
+
+def test_a_slice_matches_the_indexing_of_the_geometry() -> None:
+    series = _series()
+    plane = series.restrict(["i", "k", "v"], Axis, at={"j": 3})
+    indexed = series[:, 3]
+    assert plane.shape == indexed.shape
+    index = _samples(plane.shape)
+    assert np.allclose(_world(plane, index), _world(indexed, index))
+
+
+def test_removing_outputs_only_keeps_the_grid() -> None:
+    series = _series()
+    spatial = series.restrict(Axis, SpaceAxis)
+    assert isinstance(spatial, Geometry)
+    assert spatial.grid is series.grid
+    assert spatial.compute().transformation.matrix.shape == (3, 5)
+
+
+def test_the_full_block_of_a_geometry_is_the_geometry() -> None:
+    series = _series()
+    assert series.restrict(Axis, Axis) is series
+
+
+@pytest.mark.parametrize(
+    "at",
+    [None, {"v": 1.5}, {"v": 3}, {"v": -1}],
+    ids=["free", "between", "beyond", "negative"],
+)
+def test_a_removed_axis_without_a_sample_is_not_a_geometry(at: object) -> None:
+    # The kept outputs read v, so the plain restriction raises at
+    # compute when v is free, and is the section at v otherwise.
+    series = _series()
+    restricted = series.restrict(["i", "j", "k"], ["x", "y", "z"], at=at)
+    assert not isinstance(restricted, Geometry)
+    if at is None:
+        with pytest.raises(RestrictionError, match="free"):
+            restricted.compute()
+        return
+    v = at["v"]
+    index = _samples((4, 5, 6)).astype(float)
+    full = np.hstack([index, np.full((len(index), 1), v)])
+    expected = _world(series, full)[:, :3]
+    matrix = np.asarray(restricted.compute().matrix)
+    assert np.allclose(index @ matrix[:, :-1].T + matrix[:, -1], expected)
+
+
+def test_a_free_axis_that_no_output_reads_gives_a_map() -> None:
+    # The spatial outputs of the series do not read v once x does not,
+    # so the restriction without a volume is a valid map, but it has no
+    # grid to sample.
+    series = _series()
+    matrix = np.array(series.transformation.matrix)
+    matrix[0, 3] = 0.0
+    still = Geometry((series.grid, series.transformation.to(matrix=matrix)))
+    restricted = still.restrict(SpaceAxis, ["x", "y", "z"])
+    assert not isinstance(restricted, Geometry)
+    expected = [[2.0, 0.1, 0, 1], [0, 3, 0, 2], [0, 0, 4, 3]]
     assert np.allclose(restricted.compute().matrix, expected)
 
 

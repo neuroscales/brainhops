@@ -24,6 +24,7 @@ from brainhops.errors import RestrictionError
 
 from .base import Transformation
 from .compute.utils import axis_counts, axis_list
+from .concrete import Permutation
 from .meta import Projection, SubspaceTransformation
 from .sequence import Sequence
 
@@ -36,6 +37,39 @@ The value is a list whose items are positions, names or any other query
 of [`AxisQuery`][brainhops.datamodel.axes.AxisQuery], or a single query
 or name instead of a list.
 """
+
+
+class Block(tx.NamedTuple):
+    """The axes that a restriction keeps, as positions.
+
+    The positions are non-negative and sorted when the numbers of axes
+    are known, and they are given as designated otherwise.
+    """
+
+    n_in: tx.Optional[int]
+    """Number of input axes of the transformation, or None."""
+
+    n_out: tx.Optional[int]
+    """Number of output axes of the transformation, or None."""
+
+    kept_in: tx.List[int]
+    """Positions of the kept inputs."""
+
+    kept_out: tx.List[int]
+    """Positions of the kept outputs."""
+
+    values: tx.Dict[int, float]
+    """Value of each removed input that `at` names, by position."""
+
+    @property
+    def removed_in(self) -> tx.List[int]:
+        """Positions of the removed inputs, which needs `n_in`."""
+        return [p for p in range(self.n_in or 0) if p not in self.kept_in]
+
+    @property
+    def removed_out(self) -> tx.List[int]:
+        """Positions of the removed outputs, which needs `n_out`."""
+        return [p for p in range(self.n_out or 0) if p not in self.kept_out]
 
 
 def restrict(
@@ -65,32 +99,50 @@ def restrict(
         If a position lies outside the axes of `t`.
     ValueError
         If a reference matches nothing, if a name is shared, if an axis
-        is designated twice, if the axes are not designated in their
-        order, or if `at` gives a value to an input that is kept.
+        is designated twice, or if `at` gives a value to an input that
+        is kept.
     TypeError
         If a reference is neither a position nor a query, or if `at` is
         not a mapping of real values.
+    """
+    block = resolve_block(t, input_axes, output_axes, at)
+    if block.n_in is None or block.n_out is None:
+        inner = _subspace_block(t, block)
+        if inner is not None:
+            return inner
+    require_counts(t, block)
+    return restricted_chain(t, block, t.input, t.output)
+
+
+def resolve_block(
+    t: Transformation,
+    input_axes: AxisRefs,
+    output_axes: AxisRefs,
+    at: tx.Optional[tx.Mapping[tx.Any, float]] = None,
+) -> Block:
+    """Resolve the arguments of a restriction of `t` into positions.
+
+    The references are resolved against the systems of `t` and the
+    numbers of axes that `t` states. The function raises as
+    [`restrict`][] does, except for an unknown number of axes, which
+    [`require_counts`][] refuses.
     """
     n_in, n_out = axis_counts(t)
     kept_in = _resolve(t, "input", n_in, input_axes)
     kept_out = _resolve(t, "output", n_out, output_axes)
     values = _resolve_at(t, n_in, kept_in, at)
+    return Block(n_in, n_out, kept_in, kept_out, values)
 
-    inner = getattr(t, "transformation", None)
-    if (
-        (n_in is None or n_out is None)
-        and isinstance(t, SubspaceTransformation)
-        and inner is not None
-        and kept_in == axis_list(t.input_axes)
-        and kept_out == axis_list(t.output_axes)
-    ):
-        # A subspace often states no number of axes, so the projections
-        # cannot be built. The subspace passes its other axes through,
-        # however, and the restriction removes them on both sides, so
-        # the result is the transformation that the subspace wraps,
-        # whatever the number of axes is.
-        return inner
-    for side, ndim in (("input", n_in), ("output", n_out)):
+
+def require_counts(t: Transformation, block: Block) -> None:
+    """Raise when the number of axes of `t` on a side is unknown.
+
+    Raises
+    ------
+    RestrictionError
+        If `block` does not know a number of axes.
+    """
+    for side, ndim in (("input", block.n_in), ("output", block.n_out)):
         if ndim is None:
             raise RestrictionError(
                 f"Cannot restrict this {type(t).__name__}, because the "
@@ -98,18 +150,31 @@ def restrict(
                 f"{side} system, so that the axes that the restriction "
                 f"removes are known."
             )
-    assert n_in is not None and n_out is not None
 
-    removed_in = [p for p in range(n_in) if p not in kept_in]
-    removed_out = [p for p in range(n_out) if p not in kept_out]
+
+def restricted_chain(
+    t: Transformation,
+    block: Block,
+    input: tx.Optional[CoordinateSystem],
+    output: tx.Optional[CoordinateSystem],
+) -> Transformation:
+    """Return the lazy composition that restricts `t` to a block.
+
+    `input` and `output` are the systems of the full space on each side
+    of `t`, which the projections take on the side that faces `t` and
+    restrict on the other side. The numbers of axes of `block` must be
+    known. `t` itself is returned when the block holds every axis.
+    """
+    assert block.n_in is not None and block.n_out is not None
+    removed_in, removed_out = block.removed_in, block.removed_out
     chain: tx.List[Transformation] = []
     if removed_in:
         chain.append(
             Projection(
                 created=removed_in,
-                at=[values.get(p, math.nan) for p in removed_in],
-                input=_restricted_system(t.input, n_in, kept_in),
-                output=t.input,
+                at=[block.values.get(p, math.nan) for p in removed_in],
+                input=_restricted_system(input, block.n_in, block.kept_in),
+                output=input,
             )
         )
     chain.append(t)
@@ -117,13 +182,53 @@ def restrict(
         chain.append(
             Projection(
                 dropped=removed_out,
-                input=t.output,
-                output=_restricted_system(t.output, n_out, kept_out),
+                input=output,
+                output=_restricted_system(output, block.n_out, block.kept_out),
             )
         )
     if len(chain) == 1:
         return t
     return Sequence(chain)
+
+
+def _subspace_block(
+    t: Transformation, block: Block
+) -> tx.Optional[Transformation]:
+    """Return the restriction of a subspace to the axes that it acts on.
+
+    A subspace often states no number of axes, so the projections cannot
+    be built. The subspace passes its other axes through, however, and
+    the restriction removes them on both sides, so the result is the
+    transformation that the subspace wraps, whatever the number of axes
+    is. The kept axes stay in the order of the full space, so when the
+    subspace lists its axes in another order, a permutation before the
+    wrapped transformation and another after it reorder them. None is
+    returned when `t` is not such a subspace or when the block is not
+    the set of the axes that it acts on.
+    """
+    inner = getattr(t, "transformation", None)
+    if not isinstance(t, SubspaceTransformation) or inner is None:
+        return None
+    acted_in = axis_list(t.input_axes)
+    acted_out = axis_list(t.output_axes)
+    if block.kept_in != sorted(acted_in) or block.kept_out != sorted(
+        acted_out
+    ):
+        return None
+    # Input `j` of the wrapped transformation reads the full axis
+    # `acted_in[j]`, which is kept at the rank of that axis among the
+    # kept inputs. Output `r` of the result is the full axis
+    # `kept_out[r]`, which output `acted_out.index(kept_out[r])` of the
+    # wrapped transformation writes.
+    before = [block.kept_in.index(a) for a in acted_in]
+    after = [acted_out.index(a) for a in block.kept_out]
+    chain: tx.List[Transformation] = []
+    if before != sorted(before):
+        chain.append(Permutation(permutation=before))
+    chain.append(inner)
+    if after != sorted(after):
+        chain.append(Permutation(permutation=after))
+    return inner if len(chain) == 1 else Sequence(chain)
 
 
 def _resolve(
@@ -132,7 +237,7 @@ def _resolve(
     ndim: tx.Optional[int],
     refs: tx.Any,
 ) -> tx.List[int]:
-    """Return the positions that the references designate, in order.
+    """Return the sorted positions that the references designate.
 
     The references are resolved against the system of `t` on `side`, as
     [`AxisSequence.restrict`][brainhops.datamodel.axes.AxisSequence.restrict]
@@ -140,7 +245,9 @@ def _resolve(
     open system. A position after the `...` of an open system counts
     from the end. When `t` states its number of axes `ndim`, every
     position is made non-negative, and otherwise the positions are
-    returned as they are designated.
+    returned as they are designated. A block is a set of axes, so the
+    order of the references does not matter and the positions are
+    sorted, but an axis must not be designated twice.
     """
     kind = type(t).__name__
     system = getattr(t, side)
@@ -163,17 +270,7 @@ def _resolve(
             f"The {side} axes of a restriction designate the same axis "
             f"more than once: {positions}."
         )
-    # Without a number of axes, a negative position cannot be compared
-    # with a non-negative one, and such a restriction raises later.
-    comparable = ndim is not None or all(p >= 0 for p in positions)
-    if comparable and positions != sorted(positions):
-        raise ValueError(
-            f"A restriction keeps the {side} axes in the order that they "
-            f"have in the transformation, but the references designate "
-            f"them in another order, at the positions {positions}. "
-            f"Compose the result with a Permutation to reorder the axes."
-        )
-    return positions
+    return sorted(positions)
 
 
 def _designate(

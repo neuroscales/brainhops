@@ -301,18 +301,40 @@ system. A position after the `...` of an open system counts from the
 end, and it is made non-negative with the number of axes that `t`
 states, for example through the shape of its matrix. A name must
 designate exactly one axis and any other query at least one, so that a
-query that matches nothing never removes axes silently. The kept axes
+query that matches nothing never removes axes silently. The blocks
+are sets: the order of the references is ignored, and the kept axes
 keep the order that they have in `t`, because the composition holds
-only projections, and references that designate them in another order
-are refused rather than reordered. Each key of `at` is resolved as one
-reference to input axes, every axis that it designates takes its value,
-and a key that designates a kept input is refused. When both blocks
+only projections. An axis that is designated twice is refused. Each
+key of `at` is resolved as one reference to input axes, every axis that
+it designates takes its value, and a key that designates a kept input
+is refused. When both blocks
 hold every axis, `restrict` returns `t` itself. A side whose number of
 axes `t` does not state cannot be restricted, because the axes to
 create or to drop are then unknown, and `restrict` raises
 `RestrictionError`. The exception is a `SubspaceTransformation`
 restricted to the axes that it acts on, which gives the transformation
-that it wraps, whatever the number of axes is.
+that it wraps, whatever the number of axes is. When the subspace lists
+its axes in another order than the full space, the wrapped
+transformation is placed between two permutations, so that its axes
+follow the order of the full space as the blocks require.
+
+A `Geometry` overrides `restrict`, so that the restriction of the
+geometry of an image is the geometry of a part of the image when that
+part has a grid. The input axes of a geometry are the axes of its grid,
+and each sample of the restricted grid must be a sample of the original
+grid. When `at` gives every removed input the index of a sample, which
+is an integer from zero to the size of the axis, the result is a
+geometry whose grid has the kept axes and whose transformation is the
+restriction of the voxel-to-world transformation, as for indexing with
+an integer. Removing outputs only keeps the grid, and `compute` keeps
+the grid as it does for any geometry. A removed input that is free, or
+whose value lies between two samples or outside the grid, has no grid
+to sample, and the result is then the plain restriction of the
+geometry as a transformation, which is a map and not a geometry. This
+fallback is preferred to an error because it keeps the contract of
+`Transformation.restrict`, under which a free input that no kept output
+reads still gives a valid map, such as the spatial map of a series in
+which the position does not depend on time.
 
 ### A.5 No separate `embed`
 
@@ -836,20 +858,26 @@ implemented (#602):
     transformation that moves its axes is not a factor, so it composes
     as any other transformation does.
 
-Part A, the arguments of `restrict`. Decisions 40 to 43 are implemented
-(#582):
+Part A, the arguments of `restrict`, decided. Decisions 40 to 44 are
+implemented (#582):
 
 40. `restrict` resolves its references when it is called, as
     `AxisSequence.restrict` resolves them, against the systems of the
     transformation. A name designates exactly one axis, any other query
     designates at least one, and the keys of `at` are resolved in the
     same way and designate removed inputs only.
-41. The kept axes keep the order that they have in the transformation,
-    and references that designate them in another order are refused.
+41. The blocks are sets. The order of the references is ignored, the
+    kept axes keep the order that they have in the transformation, and
+    an axis that is designated twice is refused.
 42. A restriction to every axis returns the transformation itself.
 43. A side whose number of axes is unknown cannot be restricted and
     raises `RestrictionError`, except that a subspace restricted to the
-    axes that it acts on gives the transformation that it wraps.
+    axes that it acts on gives the transformation that it wraps, between
+    two permutations when the subspace lists its axes in another order
+    than the full space.
+44. The restriction of a geometry is a geometry when `at` places every
+    removed input at the index of a sample, and the plain restriction of
+    the geometry as a transformation otherwise.
 
 ## Open questions
 
@@ -861,8 +889,3 @@ Part A, the arguments of `restrict`. Decisions 40 to 43 are implemented
    stage of `compute` would no longer need to simplify and factor them
    again (decision 39). This would relax decision 35 for these two
    types.
-3. `restrict` could accept references in another order than that of
-   the transformation, by adding a permutation to the composition, and
-   a query that matches no axis could designate an empty block. Both are
-   refused for now (decisions 40 and 41), so that either reading can
-   still be chosen.
