@@ -9,6 +9,7 @@ from bagof.magic import Alias, Inherit, KwOnly, NoRepr, fields_dict, replace
 
 # core
 from brainhops._core.backends import array_backend
+from brainhops._core.errors import UNSET
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
@@ -21,11 +22,7 @@ from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     call_under_policy,
 )
-from brainhops.errors import (
-    UNSET,
-    ConversionError,
-    LossyConversionError,
-)
+from brainhops.errors import ConversionError, LossyConversionError
 
 # io
 from brainhops.io.base._base import register_format

@@ -9,6 +9,7 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops._core.errors import (
+    UNSET,
     apply_error_policy,
     error_policy,
     policy_action,
@@ -26,7 +27,6 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.transformations import Linear, Rotation
 from brainhops.errors import (
-    UNSET,
     ConversionError,
     ConversionWarning,
     IncompatibleSystemError,

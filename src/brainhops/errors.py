@@ -21,13 +21,10 @@ __all__ = [
     "SnifferExistsError",
     "SnifferNotImplementedError",
     "SnifferTypeError",
-    "UNSET",
     "UnrepresentableTransformationError",
     "WriterError",
     "WriterNotImplementedError",
 ]
-
-import enum
 
 import typing_extensions as tx
 
@@ -264,31 +261,6 @@ class ConversionWarning(UserWarning):
     which also carries the report of what was lost.
     """
 
-
-class _Unset(enum.Enum):
-    """The type of [`UNSET`][], which has one member.
-
-    | Member  | Value     |
-    | ------- | --------- |
-    | `UNSET` | `"UNSET"` |
-    """
-
-    UNSET = "UNSET"
-
-    def __repr__(self) -> str:
-        return self.value
-
-
-UNSET: tx.Final = _Unset.UNSET
-"""
-The default of `on_error=`, which means that no policy was given.
-
-A conversion called without a policy raises every error. A loss of
-metadata then follows the policy in effect, which
-[`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]
-sets. This value differs from `None`, which is a policy that returns
-`None` in place of the result.
-"""
 
 ErrorAction: tx.TypeAlias = tx.Any
 """

@@ -30,14 +30,10 @@ import typing_extensions as tx
 from bagof.magic import Forget, NotKwOnly, fields
 
 from brainhops._core.compat import PLACEHOLDER, partial
+from brainhops._core.errors import UNSET
 from brainhops._core.properties import alias, smartproperty
 from brainhops.datamodel.metadata._report import call_under_policy
-from brainhops.errors import (
-    UNSET,
-    ConversionError,
-    ErrorAction,
-    ErrorPolicy,
-)
+from brainhops.errors import ConversionError, ErrorAction, ErrorPolicy
 
 from . import nocycles
 from .base import (

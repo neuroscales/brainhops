@@ -15,6 +15,7 @@ from bagof.magic import fields
 
 from brainhops._core import path
 from brainhops._core.errors import (
+    UNSET,
     apply_error_policy,
     error_policy,
     policy_action,
@@ -30,7 +31,6 @@ from brainhops.datamodel.metadata._report import (
 )
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import (
-    UNSET,
     ConversionError,
     ErrorAction,
     ErrorPolicy,

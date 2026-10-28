@@ -27,6 +27,7 @@ from bagof.magic import Field, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.errors import UNSET
 from brainhops.datamodel.metadata import (
     ConversionReport,
     DiffusionVocabulary,
@@ -39,7 +40,7 @@ from brainhops.datamodel.metadata._report import (
     takes_error_policy,
 )
 from brainhops.datamodel.metadata._vocabulary import GROUPS, VOCABULARY
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
+from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,

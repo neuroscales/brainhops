@@ -17,6 +17,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
 from brainhops._core.compare import differs
+from brainhops._core.errors import UNSET
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import (
@@ -25,7 +26,7 @@ from brainhops.datamodel.metadata._report import (
     short,
 )
 from brainhops.datamodel.metadata._vocabulary import FIELDS
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
+from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._base import (
     FileFormat,
     _FileBasedModelMixin,

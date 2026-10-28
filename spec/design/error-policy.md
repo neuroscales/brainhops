@@ -86,7 +86,7 @@ policy that a call applies is
 ```
 
 after a single value of `on_error` has been read as a mapping (E3).
-Its default is `UNSET`, which adds no entry, so that a loss falls under
+By default, `on_loss=` adds no entry, so that a loss falls under
 `on_error=`. The value `None` is an action, which returns `None` in
 place of a lossy result. Because the entry of `on_loss=` names a more
 specific class than the scope of a single value of `on_error=`,
@@ -166,8 +166,8 @@ The policy is applied in three ways.
   `Metadata.to()`, `Metadata.from_instance()`,
   `MetadataFormat.from_instance()`, `io.save()` and `to_bids()`.
 - The common base of the formats, `_FileBasedModelMixin`, defines the
-  one public `consolidate(*, inplace=False, on_error=UNSET,
-  on_loss=UNSET, **fields)`, which calls the protected hook
+  one public `consolidate(*, inplace=False, on_error, on_loss,
+  **fields)`, in which both keywords are optional, and which calls the protected hook
   `_consolidate(inplace=inplace, **fields)` under the policy. A format
   overrides only the hook, which takes no policy. The hook of the base
   class, which knows no record, has nothing to consolidate, so it
@@ -203,17 +203,20 @@ the default `"warn"`.
 
 ## 7. Implementation
 
-The types of the policy, `ErrorPolicy` and `ErrorAction`, the sentinel
-`UNSET` and the classes of errors and warnings live in
-`brainhops.errors`, which lists them in its `__all__`. The functions that read a policy are internal, in
-`brainhops._core.errors`: `error_policy()` reads `on_error=` and
+The types of the policy, `ErrorPolicy` and `ErrorAction`, and the
+classes of errors and warnings live in `brainhops.errors`, which lists
+them in its `__all__`. The functions that read a policy are internal,
+in `brainhops._core.errors`: `error_policy()` reads `on_error=` and
 `on_loss=` into one mapping (E3, E5), `policy_action()` walks the
 method resolution order, and `apply_error_policy()` acts on one error
 (E1, E2). `error_policy()` and `apply_error_policy()` take the scope of
 the call as `scope=`, whose default is `(ConversionError,)`, and
 `call_under_policy()` takes the same argument. The default of
-`on_error=` is the sentinel `UNSET` rather than `None`, because `None`
-is a policy that returns `None` (E1). Without a policy, every error is
+`on_error=` and of `on_loss=` is the sentinel `UNSET` rather than
+`None`, because `None` is a policy that returns `None` (E1). `UNSET`
+is an internal name of `brainhops._core.errors`, so that the public
+docstrings describe both keywords as optional and never name the
+sentinel. Without a policy, every error is
 raised and a loss of metadata follows the policy in effect, which
 `metadata_loss_policy()` sets, so that a call that names no policy
 behaves as it did before. `ConversionWarning` is the warning of the

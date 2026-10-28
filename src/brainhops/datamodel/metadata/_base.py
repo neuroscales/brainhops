@@ -10,7 +10,8 @@ import typing_extensions as tx
 from bagof.magic import Factory, HideIf, HideIfNone, replace
 
 # internals
-from brainhops.errors import UNSET, ErrorAction, ErrorPolicy
+from brainhops._core.errors import UNSET
+from brainhops.errors import ErrorAction, ErrorPolicy
 
 from ._derive import (
     Indexed,

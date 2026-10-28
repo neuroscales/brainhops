@@ -8,6 +8,7 @@ from bagof.magic import NotKwOnly, replace
 
 # core
 from brainhops._core.backends import BackendLike, DeviceLike
+from brainhops._core.errors import UNSET
 from brainhops._core.properties import smartproperty
 
 # datamodel
@@ -15,11 +16,7 @@ from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
 from brainhops.datamodel.metadata._report import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.errors import (
-    UNSET,
-    CompositionError,
-    ConversionError,
-)
+from brainhops.errors import CompositionError, ConversionError
 
 # transformations
 from . import nocycles

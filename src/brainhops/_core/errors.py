@@ -12,8 +12,9 @@ functions are internal: a conversion applies a policy by calling
 which uses them.
 """
 
-__all__ = ["apply_error_policy", "error_policy", "policy_action"]
+__all__ = ["UNSET", "apply_error_policy", "error_policy", "policy_action"]
 
+import enum
 import warnings
 from collections.abc import Mapping
 
@@ -21,13 +22,41 @@ import typing_extensions as tx
 
 from brainhops._core.deprecation import external_stacklevel
 from brainhops.errors import (
-    UNSET,
     ConversionError,
     ConversionWarning,
     ErrorAction,
     ErrorPolicy,
     LossyConversionError,
 )
+
+
+class _Unset(enum.Enum):
+    """The type of [`UNSET`][], which has one member.
+
+    | Member  | Value     |
+    | ------- | --------- |
+    | `UNSET` | `"UNSET"` |
+    """
+
+    UNSET = "UNSET"
+
+    def __repr__(self) -> str:
+        return self.value
+
+
+UNSET: tx.Final = _Unset.UNSET
+"""
+The default of `on_error=` and `on_loss=`, which means that no policy
+was given.
+
+A call that takes a policy uses this value as the default of both
+keywords, and its docstring describes them as optional. A conversion
+called without a policy raises every error. A loss of metadata then
+follows the policy in effect, which
+[`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]
+sets. This value differs from `None`, which is a policy that returns
+`None` in place of the result.
+"""
 
 
 def error_policy(
