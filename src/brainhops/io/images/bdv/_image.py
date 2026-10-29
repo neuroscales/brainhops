@@ -45,7 +45,7 @@ from brainhops.io.metadata._internal_api import (
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 
 @register_format
@@ -176,7 +176,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -273,7 +273,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -327,7 +327,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        score = _sniff_path(filename, error)
+        score = sniff_path(filename, error)
         if not score or level is not None:
             return score
         if level_count(filename, setup) == 1:
@@ -366,7 +366,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        score = _sniff_stream(file, error)
+        score = sniff_stream(file, error)
         if not score or level is not None:
             return score
         return Confidence.LIKELY
@@ -416,7 +416,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the dataset is not stored in HDF5, or if it has no such
             view or level.
         """
-        _no_options(cls, kwargs)
+        no_options(cls, kwargs)
         raw, setup, timepoint, levels = read_dataset(
             filename, setup=setup, timepoint=timepoint
         )
@@ -447,7 +447,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
 # ----------------------------------------------------------------------
 
 
-def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
+def no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
     """Refuse unknown reader options.
 
     Raises
@@ -490,7 +490,7 @@ def _score(found: bool, error: tx.Union[bool, tx.Type[Exception]]) -> float:
     return Confidence.NO
 
 
-def _sniff_path(
+def sniff_path(
     filename: path.FilenameLike, error: tx.Union[bool, tx.Type[Exception]]
 ) -> float:
     """Score the XML file at a path as a dataset stored in HDF5."""
@@ -499,10 +499,10 @@ def _sniff_path(
     if not path.exists(filename):
         return _score(False, error)
     with filename.open("rb") as file:
-        return _sniff_stream(file, error)
+        return sniff_stream(file, error)
 
 
-def _sniff_stream(
+def sniff_stream(
     file: tx.IO, error: tx.Union[bool, tx.Type[Exception]]
 ) -> float:
     """Score a binary stream as the XML file of a dataset stored in HDF5.

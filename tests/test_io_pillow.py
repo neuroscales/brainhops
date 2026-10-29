@@ -42,7 +42,7 @@ from brainhops.io.images.pillow import (  # noqa: E402
     PillowRaw,
 )
 from brainhops.io.images.pillow import _data as pillow_data  # noqa: E402
-from brainhops.io.images.pillow._data import _PillowProxy  # noqa: E402
+from brainhops.io.images.pillow._data import PillowProxy  # noqa: E402
 from brainhops.io.images.pillow._utils import (  # noqa: E402
     array_to_pillow,
     format_for_name,
@@ -782,7 +782,7 @@ def test_an_untouched_image_is_written_as_its_file(
     source = _FILES[kind](tmp_path)
     content = source.read_bytes()
     image = PillowImage.load(source)
-    assert isinstance(image.rawdata, _PillowProxy)
+    assert isinstance(image.rawdata, PillowProxy)
     assert image.to_bytes() == content
     (tmp_path / "copy").mkdir()
     target = tmp_path / "copy" / source.name
@@ -846,10 +846,10 @@ def test_the_record_describes_the_frame_that_is_read(tmp_path: Path) -> None:
 
 
 def test_unpicklable_info_is_left_out() -> None:
-    from brainhops.io.images.pillow._raw import _picklable
+    from brainhops.io.images.pillow._raw import picklable
 
     info = {"dpi": (72.0, 72.0), "lock": threading.Lock()}
-    assert _picklable(info) == {"dpi": (72.0, 72.0)}
+    assert picklable(info) == {"dpi": (72.0, 72.0)}
 
 
 @pytest.mark.parametrize(
@@ -993,7 +993,7 @@ def test_saving_over_its_own_file_reads_the_new_file(tmp_path: Path) -> None:
     image.save(path)
     # The image holds what the file holds, and its lazy array reads it.
     assert image._data is None
-    assert isinstance(image.rawdata, _PillowProxy)
+    assert isinstance(image.rawdata, PillowProxy)
     assert image.rawdata.source == path or str(image.rawdata.source) == str(
         path
     )

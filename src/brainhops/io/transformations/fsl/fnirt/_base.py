@@ -45,9 +45,9 @@ from brainhops.io.common.nifti._internal_api import (
     split_options,
     stored_parts,
 )
-from brainhops.io.images.nifti._views import (
-    _image_to_disk,
-    _image_to_model,
+from brainhops.io.images.nifti._internal_api import (
+    image_to_disk,
+    image_to_model,
 )
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,
@@ -245,7 +245,7 @@ class FnirtWarpField(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @classmethod
     def score_header(cls, header: NiftiObject) -> float:
@@ -818,7 +818,7 @@ def _fnirt_encoded(
             "Assign the field data instead."
         )
     if field._data is not None:
-        stored = _image_to_disk(field._data)
+        stored = image_to_disk(field._data)
     else:
         stored = field.rawdata
     if stored is None:

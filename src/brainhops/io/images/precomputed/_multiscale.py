@@ -20,9 +20,9 @@ from brainhops.io.images.base import ImageFormat
 
 # this format
 from ._data import read_precomputed, stream_location
-from ._image import PrecomputedImage, _read_scale
+from ._image import PrecomputedImage, read_scale
 from ._metadata import PrecomputedMetadata
-from ._raw import PrecomputedRaw, _no_options, _score
+from ._raw import PrecomputedRaw, checked_score, no_options
 
 
 class PrecomputedMultiScaleImage(
@@ -129,7 +129,7 @@ class PrecomputedMultiScaleImage(
         try:
             _, record = read_precomputed(filename)
         except Exception:  # noqa: BLE001
-            return _score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error)
         return _score_record(record)
 
     @classmethod
@@ -164,7 +164,7 @@ class PrecomputedMultiScaleImage(
         try:
             record = PrecomputedRaw.from_fileobj(file)
         except Exception:  # noqa: BLE001
-            return _score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error)
         return _score_record(record)
 
     @classmethod
@@ -230,7 +230,7 @@ class PrecomputedMultiScaleImage(
             If the `info` file breaks the specification, or the encoding
             of a scale cannot be read.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         location, record = read_precomputed(filename)
         return _read_pyramid(cls, location, record)
 
@@ -262,7 +262,7 @@ class PrecomputedMultiScaleImage(
         ParserTypeError
             If the stream has no file name.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         location, record = read_precomputed(stream_location(file))
         return _read_pyramid(cls, location, record)
 
@@ -300,7 +300,7 @@ def _read_pyramid(
     """
     metadata = PrecomputedMetadata.from_raw(record)
     images: tx.List[SingleScaleImage] = [
-        _read_scale(PrecomputedImage, location, metadata, index)
+        read_scale(PrecomputedImage, location, metadata, index)
         for index in range(len(record.scales))
     ]
     return cls(images=images, transformations=[], metadata=metadata)

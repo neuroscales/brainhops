@@ -14,7 +14,7 @@ from . import _utils as backend
 from ._raw import TiffRaw
 
 
-class _TiffProxy(StoredProxy):
+class TiffProxy(StoredProxy):
     """A lazy array of the pixels of one level of a series of a TIFF file.
 
     The proxy holds the source of the file, which is a local file name or

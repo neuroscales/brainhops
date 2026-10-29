@@ -47,7 +47,7 @@ from brainhops.io.metadata._internal_api import (
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _PHYSICAL = "physical"
 """Name of the scaled voxel space."""
@@ -163,7 +163,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -265,9 +265,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             metadata = self.metadata
         if self._data is None and not requested:
             return self if inplace else replace(self)
-        raw = (
-            self.rawdata if self._data is None else _image_to_disk(self._data)
-        )
+        raw = self.rawdata if self._data is None else image_to_disk(self._data)
         if not inplace:
             return replace(self, data=None, rawdata=raw, metadata=metadata)
         self.rawdata = raw

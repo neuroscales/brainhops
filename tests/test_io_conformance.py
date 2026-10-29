@@ -109,19 +109,19 @@ from brainhops.io.common.mrtrix._data import MrtrixProxy
 from brainhops.io.common.nrrd._data import NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.afni._views import (
-    _image_to_disk as _afni_to_disk,
+    image_to_disk as _afni_to_disk,
 )
 from brainhops.io.images.afni._views import (
-    _image_to_model as _afni_to_model,
+    image_to_model as _afni_to_model,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.mrtrix._views import (
-    _image_to_disk as _mrtrix_to_disk,
+    image_to_disk as _mrtrix_to_disk,
 )
 from brainhops.io.images.mrtrix._views import (
-    _image_to_model as _mrtrix_to_model,
+    image_to_model as _mrtrix_to_model,
 )
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,
@@ -129,10 +129,10 @@ from brainhops.io.images.nrrd import (
     NrrdMetadata,
 )
 from brainhops.io.images.nrrd._views import (
-    _image_to_disk as _nrrd_to_disk,
+    image_to_disk as _nrrd_to_disk,
 )
 from brainhops.io.images.nrrd._views import (
-    _image_to_model as _nrrd_to_model,
+    image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.metadata._base import metadata_to_write, requested_fields
@@ -271,15 +271,15 @@ try:
     from brainhops.io.common.nifti._data import NiftiProxy
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
-        _image_to_disk as _mgh_to_disk,
+        image_to_disk as _mgh_to_disk,
     )
     from brainhops.io.images.freesurfer.mgh._views import (
-        _image_to_model as _mgh_to_model,
+        image_to_model as _mgh_to_model,
     )
     from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
     from brainhops.io.images.nifti._views import (
-        _image_to_disk,
-        _image_to_model,
+        image_to_disk,
+        image_to_model,
     )
     from brainhops.io.transformations.afni import AfniNiftiWarp
     from brainhops.io.transformations.fsl.flirt import (
@@ -326,10 +326,10 @@ try:
     from brainhops.io.common.minc._netcdf import read_netcdf_header
     from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
     from brainhops.io.images.minc._views import (
-        _image_to_disk as _minc_to_disk,
+        image_to_disk as _minc_to_disk,
     )
     from brainhops.io.images.minc._views import (
-        _image_to_model as _minc_to_model,
+        image_to_model as _minc_to_model,
     )
 
     minc_needs = netcdf_file
@@ -340,10 +340,10 @@ try:
     from brainhops.io.common.zarr._data import ZarrProxy
     from brainhops.io.images.zarr import ZarrImage, ZarrMetadata
     from brainhops.io.images.zarr._views import (
-        _image_to_disk as _zarr_to_disk,
+        image_to_disk as _zarr_to_disk,
     )
     from brainhops.io.images.zarr._views import (
-        _image_to_model as _zarr_to_model,
+        image_to_model as _zarr_to_model,
     )
 except ImportError:
     ZarrImage = None
@@ -353,12 +353,12 @@ try:
 
     from brainhops.io.images.base import _utils_raster as raster
     from brainhops.io.images.pillow import PillowImage, PillowMetadata
-    from brainhops.io.images.pillow._data import _PillowProxy
+    from brainhops.io.images.pillow._data import PillowProxy
     from brainhops.io.images.pillow._views import (
-        _image_to_disk as _pillow_to_disk,
+        image_to_disk as _pillow_to_disk,
     )
     from brainhops.io.images.pillow._views import (
-        _image_to_model as _pillow_to_model,
+        image_to_model as _pillow_to_model,
     )
 except ImportError:
     PILImage = None
@@ -367,24 +367,24 @@ try:
     import tifffile
 
     from brainhops.io.images.stack import StackImage, StackMetadata
-    from brainhops.io.images.stack._data import _StackProxy
+    from brainhops.io.images.stack._data import StackProxy
     from brainhops.io.images.stack._views import (
-        _image_to_disk as _stack_to_disk,
+        image_to_disk as _stack_to_disk,
     )
     from brainhops.io.images.stack._views import (
-        _image_to_model as _stack_to_model,
+        image_to_model as _stack_to_model,
     )
     from brainhops.io.images.tiff import (
         TiffImage,
         TiffMetadata,
         TiffMultiScaleImage,
     )
-    from brainhops.io.images.tiff._data import _TiffProxy
+    from brainhops.io.images.tiff._data import TiffProxy
     from brainhops.io.images.tiff._views import (
-        _image_to_disk as _tiff_to_disk,
+        image_to_disk as _tiff_to_disk,
     )
     from brainhops.io.images.tiff._views import (
-        _image_to_model as _tiff_to_model,
+        image_to_model as _tiff_to_model,
     )
 except ImportError:
     tifffile = None
@@ -400,12 +400,12 @@ try:
         GenericTiffMultiScaleImage,
         OpenSlideMetadata,
     )
-    from brainhops.io.images.openslide._data import _SlideArray
+    from brainhops.io.images.openslide._data import SlideArray
     from brainhops.io.images.openslide._views import (
-        _image_to_disk as _slide_to_disk,
+        image_to_disk as _slide_to_disk,
     )
     from brainhops.io.images.openslide._views import (
-        _image_to_model as _slide_to_model,
+        image_to_model as _slide_to_model,
     )
 except (ImportError, OSError):
     openslide = None
@@ -414,23 +414,23 @@ try:
     import tensorstore as ts
 
     from brainhops.io.images.n5 import N5Image, N5Metadata
-    from brainhops.io.images.n5._data import _N5Proxy
+    from brainhops.io.images.n5._data import N5Proxy
     from brainhops.io.images.n5._views import (
-        _image_to_disk as _n5_to_disk,
+        image_to_disk as _n5_to_disk,
     )
     from brainhops.io.images.n5._views import (
-        _image_to_model as _n5_to_model,
+        image_to_model as _n5_to_model,
     )
     from brainhops.io.images.precomputed import (
         PrecomputedImage,
         PrecomputedMetadata,
     )
-    from brainhops.io.images.precomputed._data import _PrecomputedProxy
+    from brainhops.io.images.precomputed._data import PrecomputedProxy
     from brainhops.io.images.precomputed._views import (
-        _image_to_disk as _precomputed_to_disk,
+        image_to_disk as _precomputed_to_disk,
     )
     from brainhops.io.images.precomputed._views import (
-        _image_to_model as _precomputed_to_model,
+        image_to_model as _precomputed_to_model,
     )
 
     n5_needs = ts
@@ -445,18 +445,18 @@ try:
     from brainhops.io.common.hdf5 import H5ArrayProxy
     from brainhops.io.images.bdv import BdvImage
     from brainhops.io.images.bdv._views import (
-        _image_to_disk as _bdv_to_disk,
+        image_to_disk as _bdv_to_disk,
     )
     from brainhops.io.images.bdv._views import (
-        _image_to_model as _bdv_to_model,
+        image_to_model as _bdv_to_model,
     )
     from brainhops.io.images.imaris import ImarisImage, ImarisMetadata
-    from brainhops.io.images.imaris._data import _ImarisProxy
+    from brainhops.io.images.imaris._data import ImarisProxy
     from brainhops.io.images.imaris._views import (
-        _image_to_disk as _imaris_to_disk,
+        image_to_disk as _imaris_to_disk,
     )
     from brainhops.io.images.imaris._views import (
-        _image_to_model as _imaris_to_model,
+        image_to_model as _imaris_to_model,
     )
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
@@ -482,12 +482,12 @@ except ImportError:
 try:
     from brainhops.io.images.base import _utils_raster as raster
     from brainhops.io.images.jpeg2000 import Jpeg2000Image, Jpeg2000Metadata
-    from brainhops.io.images.jpeg2000._data import _Jpeg2000Proxy
+    from brainhops.io.images.jpeg2000._data import Jpeg2000Proxy
     from brainhops.io.images.jpeg2000._views import (
-        _image_to_disk as _jpeg2000_to_disk,
+        image_to_disk as _jpeg2000_to_disk,
     )
     from brainhops.io.images.jpeg2000._views import (
-        _image_to_model as _jpeg2000_to_model,
+        image_to_model as _jpeg2000_to_model,
     )
 except ImportError:
     Jpeg2000Image = None
@@ -2136,8 +2136,8 @@ if nb is not None:
         metadata=NiftiMetadata,
         suffix=".nii",
         proxies=(NiftiProxy, ScaledProxy),
-        to_model=_image_to_model,
-        to_disk=_image_to_disk,
+        to_model=image_to_model,
+        to_disk=image_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
         edit_record=_nifti_edit_record,
         record_edited=lambda raw: raw.header["descrip"].item() == b"edited",
@@ -3516,7 +3516,7 @@ if tifffile is not None:
     _TIFF = Exemplar(
         metadata=TiffMetadata,
         suffix=".tif",
-        proxies=(_TiffProxy,),
+        proxies=(TiffProxy,),
         to_model=_tiff_to_model,
         to_disk=_tiff_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3623,7 +3623,7 @@ if openslide is not None:
     EXEMPLARS[GenericTiffImage] = Exemplar(
         metadata=OpenSlideMetadata,
         suffix=".slide",
-        proxies=(_SlideArray,),
+        proxies=(SlideArray,),
         to_model=_slide_to_model,
         to_disk=_slide_to_disk,
         sample=_slide_sample,
@@ -3702,7 +3702,7 @@ if PILImage is not None:
     _PILLOW = Exemplar(
         metadata=PillowMetadata,
         suffix=".png",
-        proxies=(_PillowProxy,),
+        proxies=(PillowProxy,),
         to_model=_pillow_to_model,
         to_disk=_pillow_to_disk,
         sample=lambda: np.arange(24, dtype="uint8").reshape(4, 6),
@@ -4030,7 +4030,7 @@ if tifffile is not None:
     EXEMPLARS[StackImage] = Exemplar(
         metadata=StackMetadata,
         suffix="",
-        proxies=(_StackProxy,),
+        proxies=(StackProxy,),
         to_model=_stack_to_model,
         to_disk=_stack_to_disk,
         sample=lambda: np.arange(24, dtype="uint16").reshape(2, 3, 4),
@@ -4219,7 +4219,7 @@ if Jpeg2000Image is not None:
     EXEMPLARS[Jpeg2000Image] = Exemplar(
         metadata=Jpeg2000Metadata,
         suffix=".jp2",
-        proxies=(_Jpeg2000Proxy,),
+        proxies=(Jpeg2000Proxy,),
         to_model=_jpeg2000_to_model,
         to_disk=_jpeg2000_to_disk,
         sample=lambda: np.arange(24, dtype=np.uint8).reshape(4, 6),
@@ -4302,7 +4302,7 @@ if n5_needs is not None:
     _N5 = Exemplar(
         metadata=N5Metadata,
         suffix=os.sep + "attributes.json",
-        proxies=(_N5Proxy,),
+        proxies=(N5Proxy,),
         to_model=_n5_to_model,
         to_disk=_n5_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -4373,7 +4373,7 @@ if h5py is not None:
     EXEMPLARS[ImarisImage] = Exemplar(
         metadata=ImarisMetadata,
         suffix=".ims",
-        proxies=(_ImarisProxy,),
+        proxies=(ImarisProxy,),
         to_model=_imaris_to_model,
         to_disk=_imaris_to_disk,
         sample=lambda: np.arange(48, dtype="float32").reshape(4, 3, 2, 2, 1),
@@ -4461,7 +4461,7 @@ if ts is not None:
     EXEMPLARS[PrecomputedImage] = Exemplar(
         metadata=PrecomputedMetadata,
         suffix=os.sep + "info",
-        proxies=(_PrecomputedProxy,),
+        proxies=(PrecomputedProxy,),
         to_model=_precomputed_to_model,
         to_disk=_precomputed_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),

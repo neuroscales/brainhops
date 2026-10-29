@@ -5,7 +5,7 @@ The lazy array of a dataset presents the samples in the order of the
 `dimensions` of the dataset, whose first dimension varies fastest in a
 block. That order is already the brainhops order, `[x, y, z, ...]`, so
 the two functions below are the identity. They invert each other, so that
-`_image_to_model(_image_to_disk(data))` gives `data` back.
+`image_to_model(image_to_disk(data))` gives `data` back.
 """
 
 # internals
@@ -14,7 +14,7 @@ from brainhops._core._internal_api import ArrayProtocol
 # this format
 
 
-def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the dataset stores.
 
     The array is returned as it is, so that the lazy array of a file
@@ -25,7 +25,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return raw
 
 
-def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the dataset stores from the data of an image.
 
     The array is the data itself.

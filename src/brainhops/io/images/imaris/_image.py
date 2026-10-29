@@ -38,7 +38,7 @@ from brainhops.io.metadata._internal_api import (
 from ._data import read_imaris_level
 from ._metadata import ImarisMetadata
 from ._raw import ImarisRaw, no_options
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _AXES = "XYZTC"
 """The axes of the data of an Imaris image, fastest first."""
@@ -167,7 +167,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -266,7 +266,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -311,7 +311,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
             The confidence, between 0 and 1.
         """
         score = ImarisRaw.sniff_h5(h5file, error=error)
-        if score and _level_count(h5file) > 1:
+        if score and level_count(h5file) > 1:
             return Confidence.LIKELY
         return score
 
@@ -439,7 +439,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
             If the file is not an Imaris file that brainhops reads.
         """
         no_options(kwargs)
-        return _read_level(cls, h5file, _source(h5file), level)
+        return _read_level(cls, h5file, array_source(h5file), level)
 
     @classmethod
     def from_fileobj(
@@ -486,7 +486,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
 # ----------------------------------------------------------------------
 
 
-def _source(h5file: h5py.File) -> tx.Union[str, h5py.File]:
+def array_source(h5file: h5py.File) -> tx.Union[str, h5py.File]:
     """Return what the lazy array of an open file reads from.
 
     A file opened by name is read again by its absolute name, and a file
@@ -497,7 +497,7 @@ def _source(h5file: h5py.File) -> tx.Union[str, h5py.File]:
     return op.abspath(h5file.filename)
 
 
-def _level_count(h5file: h5py.File) -> int:
+def level_count(h5file: h5py.File) -> int:
     """Return the number of resolution levels of an open Imaris file."""
     group = h5file["DataSet"]
     count = 0

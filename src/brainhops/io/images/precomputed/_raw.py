@@ -255,7 +255,7 @@ class PrecomputedRaw(Raw, BinaryFileReader):
             If the stream is not the `info` file of a precomputed volume,
             or breaks the specification.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         with preserve_position(file):
             content = file.read()
         return _parse_info(_json(content))
@@ -295,7 +295,7 @@ class PrecomputedRaw(Raw, BinaryFileReader):
             If the content is not the `info` file of a volume and `error`
             is `True`.
         """
-        return _score(sniff_info(file), error)
+        return checked_score(sniff_info(file), error)
 
 
 def sniff_info(file: tx.IO) -> float:
@@ -327,7 +327,7 @@ def sniff_info(file: tx.IO) -> float:
     return Confidence.CERTAIN
 
 
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
     """Refuse the options of a reader that takes none.
 
     Raises
@@ -342,7 +342,9 @@ def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
         )
 
 
-def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
+def checked_score(
+    score: float, error: tx.Union[bool, tx.Type[Exception]]
+) -> float:
     """Return a score, or raise if it is zero and the caller asks to."""
     if score or not error:
         return score

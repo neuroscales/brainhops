@@ -6,7 +6,7 @@ order, `[x, y, z]` with a channel axis last when the volume has several
 channels, because the chunks are Fortran-ordered `[x, y, z, channel]`
 arrays. Whether the channel axis is kept depends on the record, so the
 lazy array drops it, and the two functions below are the identity. They
-invert each other, so that `_image_to_model(_image_to_disk(data))` gives
+invert each other, so that `image_to_model(image_to_disk(data))` gives
 `data` back.
 """
 
@@ -16,7 +16,7 @@ from brainhops._core._internal_api import ArrayProtocol
 # this format
 
 
-def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the volume stores.
 
     The array is returned as it is, so that the lazy array of a file
@@ -27,7 +27,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return raw
 
 
-def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the volume stores from the data of an image.
 
     The array is the data itself.

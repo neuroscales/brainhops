@@ -41,9 +41,9 @@ from brainhops.io.images.precomputed import (  # noqa: E402
     PrecomputedSharding,
 )
 from brainhops.io.images.precomputed._data import (  # noqa: E402
-    _kvstore_spec,
-    _PrecomputedProxy,
+    PrecomputedProxy,
     dataset_location,
+    kvstore_spec,
     read_info,
 )
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
@@ -385,8 +385,8 @@ def test_remote_names_are_given_to_tensorstore() -> None:
     assert dataset_location("gs://bucket/volume/") == "gs://bucket/volume"
     assert dataset_location("gs://bucket/volume/info") == "gs://bucket/volume"
     assert dataset_location("https://host/a/volume") == "https://host/a/volume"
-    assert _kvstore_spec("gs://bucket/volume") == "gs://bucket/volume/"
-    spec = ts.KvStore.Spec(_kvstore_spec("https://host/a/volume")).to_json()
+    assert kvstore_spec("gs://bucket/volume") == "gs://bucket/volume/"
+    spec = ts.KvStore.Spec(kvstore_spec("https://host/a/volume")).to_json()
     assert spec == {
         "driver": "http",
         "base_url": "https://host",
@@ -406,7 +406,7 @@ def test_a_remote_volume_is_read_through_tensorstore(  # noqa: ANN201
     location = "file://" + str(directory)
     record = PrecomputedRaw.from_bytes(read_info(location))
     assert record == expected
-    proxy = _PrecomputedProxy(location, record, record.scales[0])
+    proxy = PrecomputedProxy(location, record, record.scales[0])
     assert np.array_equal(np.asarray(proxy), fine)
     with pytest.raises(ParserExistsError):
         read_info("file://" + str(directory / "fine"))
@@ -507,7 +507,7 @@ def test_loading_reads_no_chunk(pyramid) -> None:  # noqa: ANN001
     directory, fine, _ = pyramid
     image = io.images.load(directory)
     level = image.images[0]
-    assert isinstance(level.rawdata, _PrecomputedProxy)
+    assert isinstance(level.rawdata, PrecomputedProxy)
     assert level.rawdata._store is None
     assert "_cache_data" not in vars(level)
     # An empty selection, which Dask reads to learn the type of an array,

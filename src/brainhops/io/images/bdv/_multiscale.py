@@ -22,7 +22,7 @@ from brainhops.io.common.bdv._internal_api import level_count, read_dataset
 from brainhops.io.images.base import ImageFormat
 
 # this format
-from ._image import BdvImage, _no_options, _sniff_path, _sniff_stream
+from ._image import BdvImage, no_options, sniff_path, sniff_stream
 
 
 @register_format
@@ -100,7 +100,7 @@ class BdvMultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         """
         if level is not None:
             return Confidence.NO
-        score = _sniff_path(filename, error)
+        score = sniff_path(filename, error)
         if score and level_count(filename, setup) == 1:
             return Confidence.NO
         return score
@@ -136,7 +136,7 @@ class BdvMultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         """
         if level is not None:
             return Confidence.NO
-        return _sniff_stream(file, error)
+        return sniff_stream(file, error)
 
     @classmethod
     def from_filename(
@@ -178,7 +178,7 @@ class BdvMultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
             If the dataset is not stored in HDF5, or if it has no such
             view.
         """
-        _no_options(cls, kwargs)
+        no_options(cls, kwargs)
         raw, setup, timepoint, levels = read_dataset(
             filename, setup=setup, timepoint=timepoint
         )

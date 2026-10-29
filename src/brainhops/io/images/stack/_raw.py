@@ -513,11 +513,11 @@ def _extensions() -> tx.List[tx.Tuple[str, tx.Tuple[str, ...]]]:
         # The TIFF package registers its formats when it is imported, so
         # it is imported only when tifffile is installed, as
         # `brainhops.io.images` does.
-        from brainhops.io.images.tiff._utils import EXTENSIONS
+        from brainhops.io.images.tiff._internal_api import EXTENSIONS
 
         out.append(("tiff", EXTENSIONS))
     if HAS_PILLOW:
-        from brainhops.io.images.pillow._utils import EXTENSIONS
+        from brainhops.io.images.pillow._internal_api import EXTENSIONS
 
         out.append(("pillow", EXTENSIONS))
     return out
@@ -693,7 +693,7 @@ def _read_tiff_member(filename: str, name: str, number: int) -> StackMember:
 
 def _read_pillow_member(filename: str, name: str, number: int) -> StackMember:
     """Read the header of a raster file of a stack with Pillow."""
-    from brainhops.io.images.pillow._utils import read_pillow_header
+    from brainhops.io.images.pillow._internal_api import read_pillow_header
 
     header = read_pillow_header(filename)
     if header.n_frames != 1:

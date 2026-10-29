@@ -144,7 +144,7 @@ def stream_location(file: tx.Any) -> str:
     return node_location(name)
 
 
-class _N5Proxy(StoredProxy):
+class N5Proxy(StoredProxy):
     """A lazy array of the samples of an N5 dataset.
 
     The proxy holds the directory of the dataset and its record, whose

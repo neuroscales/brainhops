@@ -20,7 +20,7 @@ from brainhops.io.images.base import ImageFormat
 
 # this format
 from ._data import read_node, stream_location
-from ._image import N5Image, _read_dataset
+from ._image import N5Image, read_dataset
 from ._metadata import N5Metadata
 from ._raw import N5Raw, no_options, score
 
@@ -298,7 +298,7 @@ def _read_pyramid(
         )
     metadata = N5Metadata.from_raw(record)
     images: tx.List[SingleScaleImage] = [
-        _read_dataset(N5Image, location, metadata, index)
+        read_dataset(N5Image, location, metadata, index)
         for index in range(len(record.levels))
     ]
     return cls(images=images, transformations=[], metadata=metadata)

@@ -18,7 +18,7 @@ from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format
-from ._data import _StackProxy
+from ._data import StackProxy
 from ._geometry import stored_geometry
 from ._raw import (
     StackMember,
@@ -185,7 +185,7 @@ def reads_from(raw: tx.Any, target: Target, record: StackRaw) -> bool:
         Whether `raw` is a lazy array that reads one of those files.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _StackProxy):
+    if not isinstance(raw, StackProxy):
         return False
     read = {os.path.realpath(name) for name in raw.filenames()}
     if target.template is None:
@@ -248,7 +248,7 @@ def write_stack(
             "This stack has no slice, so there is nothing to write."
         )
     names = target.names(record)
-    copied = isinstance(raw, _StackProxy) and raw.record is record
+    copied = isinstance(raw, StackProxy) and raw.record is record
     sources = raw.filenames() if copied else [None] * len(names)
 
     def fill(folder: str) -> None:
@@ -329,7 +329,7 @@ def _encoded(
         return TiffImage(data=data, transformations=xforms).to_bytes()
     if fmt == "pillow":
         from brainhops.io.images.pillow import PillowImage
-        from brainhops.io.images.pillow._utils import format_for_name
+        from brainhops.io.images.pillow._internal_api import format_for_name
 
         image = PillowImage(data=data, transformations=xforms)
         return image.to_bytes(format=format_for_name(name), dpi=False)

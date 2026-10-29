@@ -29,7 +29,7 @@ from brainhops.io.common._internal_api import (
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.base._utils_raster import (
+from brainhops.io.images.base._internal_api import (
     default_axes,
     physical_system,
     pixel_system,
@@ -42,13 +42,13 @@ from brainhops.io.metadata._internal_api import (
 # this format
 from ._data import (
     READABLE_ENCODINGS,
-    _PrecomputedProxy,
+    PrecomputedProxy,
     read_precomputed,
     stream_location,
 )
 from ._metadata import PrecomputedMetadata
-from ._raw import PrecomputedRaw, _no_options
-from ._views import _image_to_disk, _image_to_model
+from ._raw import PrecomputedRaw, no_options
+from ._views import image_to_disk, image_to_model
 
 _UNIT = "nm"
 """The unit of the resolution of a scale, and of the physical space."""
@@ -155,7 +155,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -253,7 +253,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -410,10 +410,10 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the `info` file breaks the specification, if there is no
             such scale, or if the encoding of the scale cannot be read.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         location, record = read_precomputed(filename)
         metadata = PrecomputedMetadata.from_raw(record)
-        return _read_scale(cls, location, metadata, level)
+        return read_scale(cls, location, metadata, level)
 
     @classmethod
     def from_fileobj(
@@ -448,10 +448,10 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         ParserTypeError
             If the stream has no file name.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         location, record = read_precomputed(stream_location(file))
         metadata = PrecomputedMetadata.from_raw(record)
-        return _read_scale(cls, location, metadata, level)
+        return read_scale(cls, location, metadata, level)
 
     from_bytes = disabled(
         ParserContentError,
@@ -473,7 +473,7 @@ if HAS_TENSORSTORE:
 # ----------------------------------------------------------------------
 
 
-def _read_scale(
+def read_scale(
     cls: type,
     location: str,
     metadata: PrecomputedMetadata,
@@ -496,7 +496,7 @@ def _read_scale(
             f"cannot decode. The encodings that it reads are "
             f"{', '.join(READABLE_ENCODINGS)}."
         )
-    proxy = _PrecomputedProxy(location, record, scale)
+    proxy = PrecomputedProxy(location, record, scale)
     return cls(rawdata=proxy, metadata=metadata, level=index)
 
 

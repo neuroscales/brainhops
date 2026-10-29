@@ -152,7 +152,7 @@ def stream_location(file: tx.Any) -> str:
     return dataset_location(name)
 
 
-class _PrecomputedProxy(StoredProxy):
+class PrecomputedProxy(StoredProxy):
     """A lazy array of the voxels of one scale of a precomputed volume.
 
     The proxy holds the location of the volume and the record of the
@@ -253,7 +253,7 @@ class _PrecomputedProxy(StoredProxy):
             )
         spec = {
             "driver": "neuroglancer_precomputed",
-            "kvstore": _kvstore_spec(self.location),
+            "kvstore": kvstore_spec(self.location),
             "scale_metadata": {"key": self.scale.key},
         }
         try:
@@ -284,7 +284,7 @@ def _is_local_location(location: str) -> bool:
     return is_local(path.Path(location))
 
 
-def _kvstore_spec(location: str) -> tx.Any:
+def kvstore_spec(location: str) -> tx.Any:
     """Return the TensorStore key-value store of a volume's directory.
 
     A local directory gives a `file` store, and a URL is given to
@@ -309,7 +309,7 @@ def _open_kvstore(location: str) -> tx.Any:
             "install brainhops[precomputed])."
         )
     try:
-        return ts.KvStore.open(_kvstore_spec(location)).result()
+        return ts.KvStore.open(kvstore_spec(location)).result()
     except Exception as e:  # noqa: BLE001
         raise ParserTypeError(
             f"TensorStore cannot read the precomputed volume at {location}: "

@@ -3,7 +3,7 @@ file stores, and encoded back.
 
 The two functions convert between `rawdata`, the array as the file stores it,
 and `data`, the array that the data model exposes. They are pure and
-invert each other, so that `_image_to_model(_image_to_disk(data))` gives
+invert each other, so that `image_to_model(image_to_disk(data))` gives
 `data` back.
 """
 
@@ -11,7 +11,7 @@ invert each other, so that `_image_to_model(_image_to_disk(data))` gives
 from brainhops._core._internal_api import ArrayProtocol
 
 
-def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the array that the file stores.
 
     An image stores its data as it is, so the array is returned as it
@@ -22,7 +22,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return raw
 
 
-def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the file of an image stores from its data.
 
     An image stores its data as it is, so the array is returned unchanged.

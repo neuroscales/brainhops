@@ -28,7 +28,7 @@ from brainhops.io.common._internal_api import (
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.base._utils_raster import (
+from brainhops.io.images.base._internal_api import (
     axis_group,
     default_axes,
     level_transformation,
@@ -41,7 +41,7 @@ from brainhops.io.metadata._internal_api import (
 # this format
 from ._data import (
     READABLE_COMPRESSIONS,
-    _N5Proxy,
+    N5Proxy,
     dataset_location,
     read_node,
     stream_location,
@@ -49,7 +49,7 @@ from ._data import (
 from ._metadata import N5Metadata
 from ._raw import N5Raw, no_options, score
 from ._spatial import placement
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 
 class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
@@ -153,7 +153,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -247,7 +247,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -406,7 +406,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         no_options(kwargs)
         location, record = read_node(filename)
-        return _read_dataset(cls, location, N5Metadata.from_raw(record), level)
+        return read_dataset(cls, location, N5Metadata.from_raw(record), level)
 
     @classmethod
     def from_fileobj(
@@ -443,7 +443,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         no_options(kwargs)
         location, record = read_node(stream_location(file))
-        return _read_dataset(cls, location, N5Metadata.from_raw(record), level)
+        return read_dataset(cls, location, N5Metadata.from_raw(record), level)
 
     from_bytes = disabled(
         ParserContentError,
@@ -465,7 +465,7 @@ if HAS_TENSORSTORE:
 # ----------------------------------------------------------------------
 
 
-def _read_dataset(
+def read_dataset(
     cls: type,
     location: str,
     metadata: N5Metadata,
@@ -498,7 +498,7 @@ def _read_dataset(
             f"{', '.join(READABLE_COMPRESSIONS)}, given as a compression "
             f"object."
         )
-    proxy = _N5Proxy(where, dataset)
+    proxy = N5Proxy(where, dataset)
     return cls(
         rawdata=proxy,
         metadata=metadata,

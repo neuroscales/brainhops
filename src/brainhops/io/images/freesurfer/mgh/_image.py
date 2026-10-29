@@ -71,7 +71,7 @@ from brainhops.io.metadata._internal_api import (
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _SCANNER = "scanner"
 """Name of the scanner RAS space, the preferred world space."""
@@ -209,7 +209,7 @@ class MghImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -814,7 +814,7 @@ def _encoded(
     them, with `_stored_voxels`.
     """
     if image._data is not None:
-        source = _image_to_disk(image._data)
+        source = image_to_disk(image._data)
     else:
         source = image.rawdata
     if source is None:

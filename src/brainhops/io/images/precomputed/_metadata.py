@@ -12,7 +12,7 @@ from brainhops.io.metadata import MetadataFormat, MetadataReader
 
 # this format
 from ._data import read_precomputed
-from ._raw import PrecomputedRaw, _no_options, _score
+from ._raw import PrecomputedRaw, checked_score, no_options
 
 
 @register_format
@@ -62,7 +62,7 @@ class PrecomputedMetadata(MetadataReader, MetadataFormat):
         try:
             read_precomputed(filename)
         except Exception:  # noqa: BLE001
-            return _score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error)
         return Confidence.CERTAIN
 
     @classmethod
@@ -96,6 +96,6 @@ class PrecomputedMetadata(MetadataReader, MetadataFormat):
         ParserContentError
             If the `info` file breaks the specification.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         _, record = read_precomputed(filename)
         return cls.from_raw(record)

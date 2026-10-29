@@ -84,7 +84,7 @@ from brainhops.io.metadata._internal_api import (
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -298,7 +298,7 @@ class AfniImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -912,7 +912,7 @@ def _stored_data(
         If the data have no dimension or more than four.
     """
     if image._data is not None:
-        raw = _image_to_disk(image._data)
+        raw = image_to_disk(image._data)
     else:
         raw = image.rawdata
     whole = whole_brik(raw)

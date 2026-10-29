@@ -75,7 +75,7 @@ from brainhops.io.metadata._internal_api import (
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _INDEX = "index"
 
@@ -450,7 +450,7 @@ class NrrdImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -964,7 +964,7 @@ def _encoded(
         held = _record_transformations(image.metadata)
     image = replace(image, transformations=held)
     if image._data is not None:
-        raw = _image_to_disk(image._data)
+        raw = image_to_disk(image._data)
     else:
         raw = image.rawdata
     if raw is None:

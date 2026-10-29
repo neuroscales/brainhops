@@ -43,7 +43,7 @@ from brainhops.io.metadata._internal_api import (
 )
 
 # this format
-from ._data import _PillowProxy, read_pillow_image, reads_from
+from ._data import PillowProxy, read_pillow_image, reads_from
 from ._metadata import PillowMetadata
 from ._raw import PillowRaw
 from ._utils import (
@@ -53,7 +53,7 @@ from ._utils import (
     encode_pillow,
     format_for_name,
 )
-from ._views import _image_to_model
+from ._views import image_to_model
 
 _DpiLike = tx.Union[None, bool, float, tx.Sequence[float]]
 
@@ -305,7 +305,7 @@ class PillowImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -615,7 +615,7 @@ class PillowImage(
             and not options
             and (dpi is None or dpi is True)
             and held is not None
-            and isinstance(self.rawdata, _PillowProxy)
+            and isinstance(self.rawdata, PillowProxy)
             and self.rawdata.record is held
             and _same_format(format, held)
         ):
@@ -751,7 +751,7 @@ class PillowImage(
         if reading:
             # The image holds what the file holds, and its lazy array reads
             # the new file, since the old lazy array may read other bytes.
-            self.rawdata = _PillowProxy(
+            self.rawdata = PillowProxy(
                 filename, self.metadata.raw, self.palette
             )
             self.data = None
@@ -774,7 +774,7 @@ def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
 def _read_image(
     cls: type,
     record: PillowRaw,
-    proxy: _PillowProxy,
+    proxy: PillowProxy,
     dpi: _DpiLike,
     pixel_size: tx.Any,
     unit: tx.Any,
@@ -918,7 +918,7 @@ def _check_reading(image: PillowImage) -> None:
     """
     raw = image.rawdata
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _PillowProxy):
+    if not isinstance(raw, PillowProxy):
         return
     if image.frame != raw.record.frame or image.palette != raw.palette:
         raise WriterError(
@@ -947,7 +947,7 @@ def _encoded(
     if image._data is not None:
         data = image._data
     elif image.rawdata is not None:
-        data = _image_to_model(image.rawdata)
+        data = image_to_model(image.rawdata)
     else:
         raise WriterError(
             "This image has no data, so there is nothing to write."

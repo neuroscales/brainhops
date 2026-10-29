@@ -26,7 +26,7 @@ from ._raw import PillowRaw
 from ._utils import read_pillow
 
 
-class _PillowProxy(StoredProxy):
+class PillowProxy(StoredProxy):
     """A lazy array of the pixels of a frame of a raster file.
 
     The proxy holds where the file lies, which is a path or the stream
@@ -99,7 +99,7 @@ class _PillowProxy(StoredProxy):
 
 def read_pillow_image(
     file: tx.Any, frame: int = 0, palette: bool = True
-) -> tx.Tuple[PillowRaw, _PillowProxy]:
+) -> tx.Tuple[PillowRaw, PillowProxy]:
     """Read the record and a lazy array of a frame of a raster file.
 
     The record is read from the header, and the pixels are not decoded.
@@ -118,7 +118,7 @@ def read_pillow_image(
     -------
     raw : PillowRaw
         The record.
-    proxy : _PillowProxy
+    proxy : PillowProxy
         A lazy array of the pixels of the frame.
 
     Raises
@@ -139,7 +139,7 @@ def read_pillow_image(
             record = PillowRaw.from_fileobj(f, frame=frame)
     else:
         record = PillowRaw.from_fileobj(file, frame=frame)
-    return record, _PillowProxy(file, record, palette)
+    return record, PillowProxy(file, record, palette)
 
 
 def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
@@ -158,7 +158,7 @@ def reads_from(raw: tx.Any, filename: tx.Any) -> bool:
         Whether `raw` is a lazy array of that file, or an index of one.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _PillowProxy) or not _is_path(raw.source):
+    if not isinstance(raw, PillowProxy) or not _is_path(raw.source):
         return False
     return is_same_file(raw.source, filename)
 

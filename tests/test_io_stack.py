@@ -44,7 +44,7 @@ from brainhops.io.images.stack import (  # noqa: E402
     StackRaw,
 )
 from brainhops.io.images.stack import _data as stack_data  # noqa: E402
-from brainhops.io.images.stack._data import _StackProxy  # noqa: E402
+from brainhops.io.images.stack._data import StackProxy  # noqa: E402
 from brainhops.io.images.tiff import TiffImage  # noqa: E402
 from brainhops.io.images.tiff import _utils as tiff_backend  # noqa: E402
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
@@ -111,7 +111,7 @@ def test_a_folder_of_tiff_files_is_one_volume(tmp_path: Path) -> None:
     folder = _tiffs(tmp_path / "slices")
     image = io.load(folder, hint="stack")
     assert isinstance(image, StackImage)
-    assert isinstance(image.rawdata, _StackProxy)
+    assert isinstance(image.rawdata, StackProxy)
     assert isinstance(image.metadata, StackMetadata)
     assert image.shape == (2, 3, 12)
     assert image.rawdata.shape == (12, 3, 2)
@@ -865,7 +865,7 @@ def test_saving_over_its_own_folder_reads_the_new_files(
     image = StackImage.load(folder)
     image.data = np.asarray(image.data) + 1
     image.save(folder)
-    assert isinstance(image.rawdata, _StackProxy)
+    assert isinstance(image.rawdata, StackProxy)
     assert image._data is None
     assert image.metadata.raw == StackMetadata.load(folder).raw
     assert np.array_equal(np.asarray(image.rawdata), VOLUME + 1)

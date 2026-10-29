@@ -44,7 +44,7 @@ from brainhops.io.metadata._internal_api import (
 # this format
 from ._boxes import rewrite
 from ._codec import default_resolutions, encode_jpeg2000, encoder_options
-from ._data import _Jpeg2000Proxy, _Jpeg2000Source, read_jpeg2000
+from ._data import Jpeg2000Proxy, Jpeg2000Source, read_jpeg2000
 from ._metadata import Jpeg2000Metadata
 from ._raw import (
     Jpeg2000Raw,
@@ -52,15 +52,15 @@ from ._raw import (
     read_record,
     with_container,
 )
-from ._views import _image_to_model
+from ._views import image_to_model
 
-_EXTENSIONS = (".jp2", ".jpx", ".jpf", ".j2k", ".j2c", ".jpc")
+JPEG2000_EXTENSIONS = (".jp2", ".jpx", ".jpf", ".j2k", ".j2c", ".jpc")
 """The extensions of JP2 files, then of raw codestreams."""
 
 _CODESTREAM_EXTENSIONS = (".j2k", ".j2c", ".jpc")
 """The extensions of raw codestreams."""
 
-_HINTS = ("jpeg2000", "jp2", "j2k", "j2c")
+JPEG2000_HINTS = ("jpeg2000", "jp2", "j2k", "j2c")
 """The format hints of JPEG 2000 images."""
 
 
@@ -98,8 +98,8 @@ class Jpeg2000Image(
     encoding its image again.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = _EXTENSIONS
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = _HINTS
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = JPEG2000_EXTENSIONS
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = JPEG2000_HINTS
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The samples as Pillow decodes them, or `None` without data.
@@ -160,7 +160,7 @@ class Jpeg2000Image(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -182,7 +182,7 @@ class Jpeg2000Image(
         image has no pixel size, which is then not written. Assigning
         `None` decodes the record again.
         """
-        return _record_transformations(self.metadata, self.level)
+        return record_transformations(self.metadata, self.level)
 
     @property
     def level(self) -> int:
@@ -193,7 +193,7 @@ class Jpeg2000Image(
         """
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
-        if isinstance(stored, _Jpeg2000Proxy):
+        if isinstance(stored, Jpeg2000Proxy):
             return stored.level
         return 0
 
@@ -296,7 +296,7 @@ class Jpeg2000Image(
         IndexError
             If the file has no such level.
         """
-        _no_options(cls, kwargs)
+        no_options(cls, kwargs)
         raw, source = read_jpeg2000(filename)
         return _read_image(cls, raw, source, level, pixel_size, unit)
 
@@ -342,7 +342,7 @@ class Jpeg2000Image(
         IndexError
             If the file has no such level.
         """
-        _no_options(cls, kwargs)
+        no_options(cls, kwargs)
         raw, source = read_jpeg2000(file)
         return _read_image(cls, raw, source, level, pixel_size, unit)
 
@@ -469,12 +469,12 @@ class Jpeg2000Image(
             transformations is None
             or same_transformations(
                 transformations,
-                _record_transformations(self.metadata, self.level),
+                record_transformations(self.metadata, self.level),
             )
         )
         copied = (
             self._data is None
-            and isinstance(self.rawdata, _Jpeg2000Proxy)
+            and isinstance(self.rawdata, Jpeg2000Proxy)
             and self.rawdata.level == 0
             and num_resolutions is None
             and not options
@@ -506,7 +506,7 @@ class Jpeg2000Image(
                 options,
             )
         record = read_record(content)
-        raw = _Jpeg2000Proxy(_Jpeg2000Source(content=content), record, 0)
+        raw = Jpeg2000Proxy(Jpeg2000Source(content=content), record, 0)
         if metadata is None:
             metadata = Jpeg2000Metadata.from_raw(record)
         else:
@@ -549,7 +549,7 @@ class Jpeg2000Image(
         WriterError
             If the image cannot be encoded, as in [`consolidate`][].
         """
-        return _written(self.consolidate(**kwargs))
+        return written(self.consolidate(**kwargs))
 
     @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -566,7 +566,7 @@ class Jpeg2000Image(
             The options of [`consolidate`][].
         """
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(path.base_name(file))
+            kwargs["container"] = container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     @takes_error_policy
@@ -590,17 +590,17 @@ class Jpeg2000Image(
             The options of [`consolidate`][].
         """
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(filename)
-        if not _reads_file(self.rawdata, filename):
+            kwargs["container"] = container_for_name(filename)
+        if not reads_file(self.rawdata, filename):
             atomic_write_bytes(filename, self.to_bytes(**kwargs))
             return
         self.consolidate(inplace=True, **kwargs)
-        atomic_write_bytes(filename, _written(self))
+        atomic_write_bytes(filename, written(self))
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file may be another
         # level, or decode another coded image.
-        self.rawdata = _Jpeg2000Proxy(
-            _Jpeg2000Source(filename=os.fspath(filename)),
+        self.rawdata = Jpeg2000Proxy(
+            Jpeg2000Source(filename=os.fspath(filename)),
             self.metadata.raw,
             0,
         )
@@ -612,7 +612,7 @@ class Jpeg2000Image(
 # ----------------------------------------------------------------------
 
 
-def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
+def no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
     """Refuse the options that a reader does not take.
 
     Raises
@@ -630,7 +630,7 @@ def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
 def _read_image(
     cls: type,
     record: Jpeg2000Raw,
-    source: _Jpeg2000Source,
+    source: Jpeg2000Source,
     level: tx.Optional[int],
     pixel_size: tx.Any,
     unit: tx.Any,
@@ -650,7 +650,7 @@ def _read_image(
             f"{level}."
         )
     index %= n
-    raw = _Jpeg2000Proxy(source, record, index)
+    raw = Jpeg2000Proxy(source, record, index)
     metadata = Jpeg2000Metadata.from_raw(record)
     if pixel_size is None and unit is None:
         return cls(rawdata=raw, metadata=metadata)
@@ -658,7 +658,7 @@ def _read_image(
     return cls(rawdata=raw, metadata=metadata, transformations=[xform])
 
 
-def _record_transformations(
+def record_transformations(
     metadata: tx.Optional[Jpeg2000Metadata], level: int
 ) -> tx.List[Transformation]:
     """Decode the transformations of one level from some metadata.
@@ -792,7 +792,7 @@ def _pixel_size(
     """
     transformations = held_transformations(image)
     if transformations is None:
-        transformations = _record_transformations(image.metadata, image.level)
+        transformations = record_transformations(image.metadata, image.level)
     xform = transformations[-1] if transformations else None
     axes = raster.image_axes(ndim, getattr(xform, "input", None))
     if axes is None:
@@ -857,7 +857,7 @@ def _encoded(
     """
     transformations = held_transformations(image)
     if transformations is None:
-        transformations = _record_transformations(image.metadata, image.level)
+        transformations = record_transformations(image.metadata, image.level)
     xform = transformations[-1] if transformations else None
     data = image._data if image._data is not None else image.data
     storage, sizes = raster.planar_storage(data, xform)
@@ -887,7 +887,7 @@ def _encoded(
     return rewrite(content, target)
 
 
-def _written(image: Jpeg2000Image) -> bytes:
+def written(image: Jpeg2000Image) -> bytes:
     """Return the file that a consolidated image holds.
 
     Raises
@@ -895,26 +895,26 @@ def _written(image: Jpeg2000Image) -> bytes:
     WriterError
         If the image has no data.
     """
-    if not isinstance(image.rawdata, _Jpeg2000Proxy):
+    if not isinstance(image.rawdata, Jpeg2000Proxy):
         raise WriterError(
             "This image has no data, so there is nothing to write."
         )
     return image.rawdata.source.read()
 
 
-def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
+def reads_file(raw: tx.Any, file: tx.Any) -> bool:
     """Tell whether a lazy array of samples reads a local file by name."""
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(raw, _Jpeg2000Proxy) and raw.source.is_file(file)
+    return isinstance(raw, Jpeg2000Proxy) and raw.source.is_file(file)
 
 
-def _container_for_name(name: tx.Any) -> tx.Optional[str]:
+def container_for_name(name: tx.Any) -> tx.Optional[str]:
     """Return the container that the extension of a file name asks for."""
     if name is None:
         return None
     lower = str(name).lower()
     if lower.endswith(_CODESTREAM_EXTENSIONS):
         return "j2k"
-    if lower.endswith(_EXTENSIONS):
+    if lower.endswith(JPEG2000_EXTENSIONS):
         return "jp2"
     return None

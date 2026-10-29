@@ -47,12 +47,12 @@ from brainhops.io.metadata._internal_api import (
 
 # this format
 from . import _utils as backend
-from ._data import _TiffProxy
+from ._data import TiffProxy
 from ._geometry import level_geometry, record_transformations
-from ._image import TiffImage, _TiffReader
+from ._image import TiffImage, TiffReader
 from ._metadata import TiffMetadata
 from ._raw import TiffRaw, read_record
-from ._views import _image_to_disk
+from ._views import image_to_disk
 from ._writer import (
     Plan,
     copy_source,
@@ -75,7 +75,7 @@ _WHOLE_SLIDE = 0.9
 
 @register_format
 class TiffMultiScaleImage(
-    _TiffReader,
+    TiffReader,
     BinaryFileReader,
     BinaryFileWriter,
     ImageFormat,
@@ -320,7 +320,7 @@ class TiffMultiScaleImage(
             record = read_record(tif, series)
         metadata = TiffMetadata.from_raw(record)
         raw = tuple(
-            _TiffProxy(source, record, index, mmap=mmap, lazy=lazy)
+            TiffProxy(source, record, index, mmap=mmap, lazy=lazy)
             for index in range(len(record.levels))
         )
         pyramid = cls(rawdata=raw, metadata=metadata, series=record.series)
@@ -554,7 +554,7 @@ class TiffMultiScaleImage(
             raw
             for raw in raws
             if isinstance(raw, ArrayProxy)
-            and isinstance(raw.root, _TiffProxy)
+            and isinstance(raw.root, TiffProxy)
             and is_same_file(raw.root.source.filename, filename)
         ]
         if not encoding and self._copies_source(**options):
@@ -583,7 +583,7 @@ class TiffMultiScaleImage(
                 record = read_record(tif, 0)
             mmap, lazy = reading[0].mmap, reading[0].lazy
             self.rawdata = tuple(
-                _TiffProxy(source, record, index, mmap=mmap, lazy=lazy)
+                TiffProxy(source, record, index, mmap=mmap, lazy=lazy)
                 for index in range(len(record.levels))
             )
             self.metadata = TiffMetadata.from_raw(record)
@@ -634,7 +634,7 @@ class TiffMultiScaleImage(
         record = self.metadata.raw
         raws = self.rawdata
         return len(raws) == len(record.levels) and all(
-            isinstance(raw, _TiffProxy)
+            isinstance(raw, TiffProxy)
             and raw.record is record
             and raw.level == index
             and raw.source is raws[0].source
@@ -725,12 +725,12 @@ def _level_array(
         return pyramid.rawdata[index]
     if type(image) is TiffImage:
         if image._data is not None:
-            array = _image_to_disk(image._data)
+            array = image_to_disk(image._data)
         else:
             array = image.rawdata
     else:
         data = image.data
-        array = None if data is None else _image_to_disk(data)
+        array = None if data is None else image_to_disk(data)
     if array is None:
         raise WriterError(
             f"Level {index} of this pyramid has no data, so it cannot be "

@@ -18,7 +18,7 @@ from brainhops.io.images.base import ImageFormat
 
 # this format
 from ._data import read_imaris_level
-from ._image import ImarisImage, _level_count, _source
+from ._image import ImarisImage, array_source, level_count
 from ._metadata import ImarisMetadata
 from ._raw import ImarisRaw, no_options
 
@@ -71,10 +71,7 @@ class ImarisMultiScaleImage(Hdf5Reader, ImageFormat, MultiScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        if (
-            ImarisRaw.sniff_h5(h5file, error=error)
-            and _level_count(h5file) > 1
-        ):
+        if ImarisRaw.sniff_h5(h5file, error=error) and level_count(h5file) > 1:
             return Confidence.CERTAIN
         return _declined(error, "The Imaris file has a single level.")
 
@@ -203,7 +200,7 @@ class ImarisMultiScaleImage(Hdf5Reader, ImageFormat, MultiScaleImage):
             If the file is not an Imaris file that brainhops reads.
         """
         no_options(kwargs)
-        return _read_pyramid(cls, h5file, _source(h5file))
+        return _read_pyramid(cls, h5file, array_source(h5file))
 
     @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
