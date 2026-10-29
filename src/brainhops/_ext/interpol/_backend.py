@@ -27,12 +27,12 @@ The tests replace this attribute with a fake CuPy that runs on the CPU.
 """
 
 
-def _get_namespace(*arrays: tx.Any) -> ModuleType:
+def get_namespace(*arrays: tx.Any) -> ModuleType:
     """Return the array package of a group of arrays.
 
     The package is CuPy when CuPy is installed and at least one of the
     arrays is a CuPy array, and NumPy otherwise. Arrays of the other
-    package must then be converted with [`_asarray`][], which uploads
+    package must then be converted with [`to_namespace`][], which uploads
     them to the GPU explicitly.
 
     Parameters
@@ -52,7 +52,7 @@ def _get_namespace(*arrays: tx.Any) -> ModuleType:
     return np
 
 
-def _is_dask(array: tx.Any) -> bool:
+def is_dask(array: tx.Any) -> bool:
     """Return whether an array is a dask array, without importing dask.
 
     The functions of the package hand dask arrays to the module
@@ -72,7 +72,9 @@ def _is_dask(array: tx.Any) -> bool:
     return hasattr(array, "__dask_graph__") and hasattr(array, "chunks")
 
 
-def _asarray(xp: ModuleType, array: tx.Any, dtype: tx.Any = None) -> tx.Any:
+def to_namespace(
+    xp: ModuleType, array: tx.Any, dtype: tx.Any = None
+) -> tx.Any:
     """Convert an array to the package `xp`, without leaving the device.
 
     A NumPy array is uploaded to the GPU when `xp` is CuPy. An array
@@ -101,7 +103,7 @@ def _asarray(xp: ModuleType, array: tx.Any, dtype: tx.Any = None) -> tx.Any:
     return xp.asarray(array, dtype=dtype)
 
 
-class _BufferPool:
+class BufferPool:
     """Arrays that one computation allocates once and reuses.
 
     The interpolation repeats the same steps for every tap and every

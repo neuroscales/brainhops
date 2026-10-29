@@ -186,7 +186,7 @@ def test_weights_match_bspline(order) -> None:  # noqa: ANN001
     for tap in range(order + 1):
         first = np.floor(coords - (order - 1) / 2)
         t = coords - first
-        weight = interpol._splines._tap_weight(np, order, tap, t)
+        weight = interpol._splines.tap_weight(np, order, tap, t)
         distance = t - tap
         expected = np.nan_to_num(spline(distance))
         np.testing.assert_allclose(weight, expected, atol=1e-12)
@@ -394,11 +394,11 @@ def test_strategy_errors() -> None:
 
 
 def test_names_and_errors() -> None:
-    assert interpol._bounds._normalize_bound("grid-mirror") == "dct2"
-    assert interpol._bounds._normalize_bound("antireflect") == "dst2"
+    assert interpol._bounds.normalize_bound("grid-mirror") == "dct2"
+    assert interpol._bounds.normalize_bound("antireflect") == "dst2"
     for name in ("wrap", "constant", "unknown"):
         with pytest.raises(ValueError):
-            interpol._bounds._normalize_bound(name)
+            interpol._bounds.normalize_bound(name)
     x = np.zeros((4, 4))
     grid = np.zeros((3, 1, 2))
     with pytest.raises(ValueError):
@@ -442,7 +442,7 @@ def test_poles_are_roots(order) -> None:  # noqa: ANN001
     np.testing.assert_allclose(
         [float(b) for b in values], spline(np.arange(-h, h + 1)), atol=1e-15
     )
-    poles = interpol._coeff._poles(order)
+    poles = interpol._coeff.prefilter_poles(order)
     assert len(poles) == h
     assert list(poles) == sorted(poles)
     gain = 1.0

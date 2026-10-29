@@ -52,9 +52,9 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._backend import _asarray, _get_namespace, _is_dask
-from ._bounds import _bound_index, _normalize_bound
-from ._splines import _MAX_ORDER
+from ._backend import get_namespace, is_dask, to_namespace
+from ._bounds import bound_index, normalize_bound
+from ._splines import MAX_ORDER
 
 _POLES: tx.Dict[int, tx.Tuple[float, ...]] = {
     0: (),
@@ -99,7 +99,7 @@ _LOG_EPS = math.log(1e-17)
 """Logarithm of the size below which a power of a pole is neglected."""
 
 
-def _poles(order: int) -> tx.Tuple[float, ...]:
+def prefilter_poles(order: int) -> tx.Tuple[float, ...]:
     """Return the poles of the prefilter of a spline.
 
     Parameters
@@ -164,7 +164,7 @@ def _gain(order: int) -> float:
     return float(1 / _stencil(order)[-1])
 
 
-def _horizon(z: float) -> int:
+def pole_horizon(z: float) -> int:
     # The smallest exponent K for which the power z**K of the pole is
     # below 1e-17 in magnitude, so that it is negligible next to 1 in
     # float64.
@@ -198,7 +198,7 @@ _Terms = tx.Tuple[tx.Tuple[int, int, np.ndarray], ...]
 
 @functools.lru_cache(maxsize=256)
 def _causal_init(n: int, z: float, bound: str) -> _Terms:
-    horizon = _horizon(z)
+    horizon = pole_horizon(z)
     if n - 1 >= horizon:
         powers = z ** np.arange(horizon, dtype=np.float64)
         if bound == "dct1":
@@ -261,7 +261,7 @@ def _anticausal_init(n: int, z: float, bound: str) -> _Terms:
         raise ValueError(f"No recursive filter for the boundary {bound!r}.")
     # The causal pass keeps the input periodic, and the samples after
     # the last one are y[0], y[1], ...
-    horizon = _horizon(z)
+    horizon = pole_horizon(z)
     if n - 1 >= horizon:
         weights = -(z ** np.arange(2, horizon + 1, dtype=np.float64))
         return ((0, horizon - 1, weights), (n - 1, n, np.asarray([-z])))
@@ -276,7 +276,7 @@ def _apply_init(xp: ModuleType, x: tx.Any, terms: _Terms) -> tx.Any:
         if stop - start == 1:
             term = x[start] * float(weights[0])
         else:
-            weights = _asarray(xp, weights, x.dtype)
+            weights = to_namespace(xp, weights, x.dtype)
             term = xp.tensordot(weights, x[start:stop], axes=1)
         value = term if value is None else value + term
     return value
@@ -306,7 +306,7 @@ def _recursive_filter(
     n = x.shape[0]
     x *= _gain(order)
     tmp = xp.empty_like(x[0])
-    for z in _poles(order):
+    for z in prefilter_poles(order):
         x[0] = _apply_init(xp, x, _causal_init(n, z, bound))
         for i in range(1, n):
             xp.multiply(x[i - 1], z, out=tmp)
@@ -353,7 +353,7 @@ def _sampling_rows(
     index = np.ascontiguousarray(rows[:, None] - offsets)
     weight = np.empty(index.shape)
     weight[...] = [float(b) for b in _stencil(order)]
-    _bound_index(np, index, n, bound, weight)
+    bound_index(np, index, n, bound, weight)
     out = np.zeros((len(rows), n))
     np.add.at(out, (np.arange(len(rows))[:, None], index), weight)
     return out
@@ -403,7 +403,7 @@ def _edge_correction(
         negligible.
     """
     h = order // 2
-    poles = np.asarray(_poles(order))
+    poles = np.asarray(prefilter_poles(order))
     rows = list(range(h)) + list(range(n - h, n))
     exact = _sampling_rows(n, order, bound, rows)
     diff = _sampling_rows(n, order, _BASE[bound], rows) - exact
@@ -417,7 +417,7 @@ def _edge_correction(
     width = 1 + int(np.minimum(read, n - 1 - read).max())
     left = np.linalg.solve(system, diff[:, :width])
     right = np.linalg.solve(system, diff[:, n - width :])
-    length = min(n, max(_horizon(z) for z in poles))
+    length = min(n, max(pole_horizon(z) for z in poles))
     powers = poles ** np.arange(length, dtype=np.float64)[:, None]
     return width, left, right, powers
 
@@ -440,12 +440,12 @@ def _filter_axis0(xp: ModuleType, x: tx.Any, order: int, bound: str) -> None:
         _recursive_filter(xp, x, order, _BASE.get(bound, bound))
         return
     if n < 2 * h:
-        inverse = _asarray(xp, _small_inverse(n, order, bound), x.dtype)
+        inverse = to_namespace(xp, _small_inverse(n, order, bound), x.dtype)
         x[...] = xp.matmul(inverse, x)
         return
     width, left, right, powers = _edge_correction(n, order, bound)
     left, right, powers = (
-        _asarray(xp, a, x.dtype) for a in (left, right, powers)
+        to_namespace(xp, a, x.dtype) for a in (left, right, powers)
     )
     _recursive_filter(xp, x, order, _BASE[bound])
     weights = xp.matmul(left, x[:width])
@@ -526,15 +526,15 @@ def spline_coeff1d(
     ------
     ValueError
     """
-    if _is_dask(input):
-        from ._dask import _spline_coeff1d_dask
+    if is_dask(input):
+        from ._dask import spline_coeff1d_dask
 
-        return _spline_coeff1d_dask(input, order, bound, axis)
-    xp = _get_namespace(input)
-    order = _normalize_order(order)
-    bound = _normalize_bound(bound)
-    input = _asarray(xp, input)
-    dtype = _normalize_dtype(input.dtype)
+        return spline_coeff1d_dask(input, order, bound, axis)
+    xp = get_namespace(input)
+    order = normalize_order(order)
+    bound = normalize_bound(bound)
+    input = to_namespace(xp, input)
+    dtype = normalize_dtype(input.dtype)
     if order < 2:
         return input.astype(dtype, copy=True)
     axis = axis % input.ndim
@@ -591,25 +591,25 @@ def spline_coeff(
     ------
     ValueError
     """
-    if not _is_dask(input):
-        input = _asarray(_get_namespace(input), input)
+    if not is_dask(input):
+        input = to_namespace(get_namespace(input), input)
     if ndim is None:
         ndim = _sequence_length(order, bound) or input.ndim
-    orders = _normalize_per_axis(order, ndim, "order")
-    bounds = _normalize_per_axis(bound, ndim, "bound")
+    orders = normalize_per_axis(order, ndim, "order")
+    bounds = normalize_per_axis(bound, ndim, "bound")
     out = None
     # The first spatial axis is filtered last, so that the result is
     # contiguous when the input has no batch axes and that axis is
     # filtered.
     for d in reversed(range(ndim)):
         axis = input.ndim - ndim + d
-        if _normalize_order(orders[d]) < 2:
+        if normalize_order(orders[d]) < 2:
             continue
         out = spline_coeff1d(
             input if out is None else out, orders[d], bounds[d], axis
         )
     if out is None:
-        return input.astype(_normalize_dtype(input.dtype), copy=True)
+        return input.astype(normalize_dtype(input.dtype), copy=True)
     return out
 
 
@@ -627,7 +627,7 @@ _ORDER_NAMES = {
 }
 
 
-def _normalize_order(order: tx.Any) -> int:
+def normalize_order(order: tx.Any) -> int:
     """Return a spline order given as an integer or by its name.
 
     Parameters
@@ -649,15 +649,15 @@ def _normalize_order(order: tx.Any) -> int:
             raise ValueError(f"Unknown spline order: {order!r}.")
         return _ORDER_NAMES[order.lower()]
     value = int(order)
-    if value != order or not 0 <= value <= _MAX_ORDER:
+    if value != order or not 0 <= value <= MAX_ORDER:
         raise ValueError(
-            f"The spline order must be an integer from 0 to {_MAX_ORDER}, "
+            f"The spline order must be an integer from 0 to {MAX_ORDER}, "
             f"not {order!r}."
         )
     return value
 
 
-def _normalize_dtype(dtype: tx.Any) -> np.dtype:
+def normalize_dtype(dtype: tx.Any) -> np.dtype:
     """Return the data type in which an array is interpolated.
 
     Parameters
@@ -686,9 +686,7 @@ def _sequence_length(*values: tx.Any) -> int:
     return 0
 
 
-def _normalize_per_axis(
-    value: tx.Any, ndim: int, name: str
-) -> tx.List[tx.Any]:
+def normalize_per_axis(value: tx.Any, ndim: int, name: str) -> tx.List[tx.Any]:
     """Return one value per axis from a scalar or a sequence.
 
     Parameters

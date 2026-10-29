@@ -10,7 +10,7 @@ weighted by the spline evaluated at its distance to `x`. In this
 package, each of these samples is called a tap.
 
 Whatever the coordinate, the distance of a given tap falls in the same
-polynomial piece of the spline. [`_tap_weight`][] therefore evaluates a
+polynomial piece of the spline. [`tap_weight`][] therefore evaluates a
 single polynomial for each tap, instead of selecting the piece sample
 by sample.
 """
@@ -22,11 +22,11 @@ from types import ModuleType
 # dependencies
 import typing_extensions as tx
 
-_MAX_ORDER = 7
+MAX_ORDER = 7
 """The highest spline order that the package implements."""
 
 
-def _first_tap(order: int) -> float:
+def first_tap(order: int) -> float:
     """Return the offset that gives the first sample a coordinate reads.
 
     The first sample read at a coordinate `x` is `floor(x - offset)`,
@@ -112,7 +112,7 @@ _INNER_PIECES: tx.Dict[int, tx.Tuple[tx.Tuple[float, ...], ...]] = {
 }
 
 
-def _tap_weight(
+def tap_weight(
     xp: ModuleType,
     order: int,
     tap: int,
@@ -123,7 +123,7 @@ def _tap_weight(
     """Return the weight of one tap of a spline.
 
     The coordinate `x` reads the samples `i0 + tap`, with `i0` given by
-    [`_first_tap`][], and `t = x - i0` lies in the interval
+    [`first_tap`][], and `t = x - i0` lies in the interval
     `[(order - 1) / 2, (order + 1) / 2)`. The weight of the sample
     `i0 + tap` is the spline evaluated at `t - tap`. The polynomial is
     evaluated in place in `out`, with `scratch` holding the distance,
