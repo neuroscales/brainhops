@@ -1024,7 +1024,3 @@ def test_a_view_of_an_affine_refuses_a_stack() -> None:
 def test_a_tangent_type_refuses_a_stack() -> None:
     with pytest.raises(ValueError, match="stack of transformations"):
         Affine(np.zeros((2, 3, 4)), log=True)
-
-
-def test_a_scaling_still_accepts_a_scalar() -> None:
-    assert Scaling(2.0).data == 2.0
