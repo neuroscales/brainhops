@@ -40,9 +40,9 @@ rounding error. This holds for every boundary condition and every order,
 including the zero and replicate boundaries, whose correction near an
 edge reaches up to `K` samples into the axis. The coefficients of the
 whole array are the exact solution for its boundary condition, and the
-interpolation extends them with the same condition, so that no padding
-of the array is needed, unlike in `brainhops._core.dask_ndimage`, which
-reproduces the padding that SciPy applies before its prefilter.
+interpolation extends them with the same condition. No padding of the
+array is therefore needed, whereas SciPy pads the array before its
+prefilter for some boundary conditions.
 """
 
 # stdlib
