@@ -491,8 +491,10 @@ class BatchedTransformation(
     def varies_along(self, dim: int) -> bool:
         """Return whether the elements differ along a batch dimension.
 
-        Two elements of the general form are the same when they are the
-        same object, so this test reads no value.
+        The simplifier removes a batch axis along which the elements do
+        not differ. Two elements of the general form are the same when
+        they are the same object, so that the test reads no value. A
+        stacked batch compares the parameters of its elements.
 
         Parameters
         ----------
@@ -512,7 +514,7 @@ class BatchedTransformation(
     def element_pattern(
         self, policy: SimplifyTable
     ) -> tx.Tuple[np.ndarray, np.ndarray]:
-        """Return which inputs and which batch axes each element output reads.
+        """Return the dependency pattern of the elements and of the batch axes.
 
         The pattern reader of a batch places this pattern in the pattern
         of the whole space. The pattern of the elements is the union of
@@ -602,7 +604,7 @@ class BatchedTransformation(
     def compose_with(
         self, inner: "BatchedTransformation", **fields
     ) -> "BatchedTransformation":
-        """Return the batch of the compositions of the elements of two batches.
+        """Return the batch of the compositions with the elements of a batch.
 
         Each element of this batch is applied after the element of `inner`
         at the same index, and a batch dimension of length 1 is broadcast
@@ -1040,9 +1042,11 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
 
     # --- kernels of the compute rules ---------------------------------
     # Each typed subclass supplies `_stack_as`, which gives its stack in
-    # the encoding of a wider family, and the small kernels `_product`,
-    # `_apply_gathered` and `restrict_elements`. Every other kernel reads
-    # the stack in the encoding of an affine, so that it is written once.
+    # the encoding of its own family or of a wider one, and the small
+    # kernels `_product`, `_apply_gathered` and `restrict_elements`. The
+    # kernels below are written once for every subclass in terms of
+    # these, and the pattern reads the stack in the encoding of an
+    # affine.
 
     def _representatives(self) -> tx.List[Transformation]:
         return [self._element((0,) * self.batch_ndim)]
@@ -1050,6 +1054,8 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
     def varies_along(self, dim: int) -> bool:
         data = np.asarray(self.data)
         return bool(np.any(data != np.take(data, [0], axis=dim)))
+
+    varies_along.__doc__ = BatchedTransformation.varies_along.__doc__
 
     def element_pattern(
         self, policy: SimplifyTable
@@ -1076,6 +1082,8 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
             axis=-1,
         )
         return block, reads_batch
+
+    element_pattern.__doc__ = BatchedTransformation.element_pattern.__doc__
 
     def _structure(self, policy: SimplifyTable) -> np.ndarray:
         # The pattern of the type, read from one element.
@@ -1215,6 +1223,8 @@ class BatchedAffine(
         data = matrix[..., outputs, :][..., columns]
         return self._rebuild(data, element_type=Affine, **fields)
 
+    restrict_elements.__doc__ = BatchedTransformation.restrict_elements.__doc__
+
     def _product(self, inner: _StackedBatch) -> ArrayProtocol:
         # A NaN in the translation of `inner` is a free axis, which only
         # the outputs that read it inherit, as for two affines.
@@ -1290,6 +1300,8 @@ class BatchedLinear(
         data = self.matrix[..., outputs, :][..., inputs]
         return self._rebuild(data, element_type=Linear, **fields)
 
+    restrict_elements.__doc__ = BatchedTransformation.restrict_elements.__doc__
+
     def _product(self, inner: _StackedBatch) -> ArrayProtocol:
         return self.data @ inner.data
 
@@ -1361,6 +1373,8 @@ class BatchedScaling(
         data = self._stack_as(Linear)[..., outputs, :][..., inputs]
         return self._rebuild(data, element_type=Linear, **fields)
 
+    restrict_elements.__doc__ = BatchedTransformation.restrict_elements.__doc__
+
     def _product(self, inner: _StackedBatch) -> ArrayProtocol:
         return self.data * inner.data
 
@@ -1422,6 +1436,8 @@ class BatchedTranslation(
             return super().restrict_elements(inputs, outputs, policy, **fields)
         data = self.translation[..., outputs]
         return self._rebuild(data, element_type=Translation, **fields)
+
+    restrict_elements.__doc__ = BatchedTransformation.restrict_elements.__doc__
 
     def _product(self, inner: _StackedBatch) -> ArrayProtocol:
         return self.data + inner.data
@@ -1497,6 +1513,8 @@ class BatchedPermutation(
         local[inputs] = np.arange(len(inputs))
         data = local[sources]
         return self._rebuild(data, element_type=Permutation, **fields)
+
+    restrict_elements.__doc__ = BatchedTransformation.restrict_elements.__doc__
 
     def _product(self, inner: _StackedBatch) -> ArrayProtocol:
         # Output i of the composition reads input inner[outer[i]].
