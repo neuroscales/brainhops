@@ -648,16 +648,6 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
 class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation):
     """Base class of the transformations that a matrix or a vector stores."""
 
-    element_ndim: tx.ClassVar[tx.Optional[int]] = None
-    """Number of dimensions of the data of one transformation.
-
-    It is 2 for a matrix type and 1 for a vector type, as the annotation
-    of the data says, and None for a type that holds no data. The
-    converter of the annotation refuses data with more dimensions, such
-    as a stack of transformations, and a batch reads this number to
-    count its batch dimensions.
-    """
-
     @classmethod
     def batch(
         cls,
@@ -774,8 +764,6 @@ class Affine(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    element_ndim: tx.ClassVar[tx.Optional[int]] = 2
-
     map_field: _FieldName = "matrix"
     data_fields: _FieldNames = ("data",)
     encoding_fields: _FieldNames = ("log",)
@@ -874,8 +862,6 @@ class Linear(_CompactTransformation, polymorphic=True):
     """
 
     # --- class attributes ---------------------------------------------
-
-    element_ndim: tx.ClassVar[tx.Optional[int]] = 2
 
     map_field: _FieldName = "matrix"
     data_fields: _FieldNames = ("data",)
@@ -1003,8 +989,6 @@ class Permutation(_CompactTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    element_ndim: tx.ClassVar[tx.Optional[int]] = 1
-
     map_field: _FieldNames = "permutation"
     data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "permutation", "_inverse"
@@ -1084,12 +1068,12 @@ class Scaling(_CompactTransformation, polymorphic=True):
     # --- class attributes ---------------------------------------------
 
     # The scaling factors are a vector with one factor per axis, so a
-    # scalar is refused. A scalar could stand for an isotropic scaling of
-    # a space whose number of axes is unknown, but nothing supports it:
-    # the number of axes is read from the length of the vector, and the
-    # vector would have to be expanded to the number of axes of the
-    # systems or of a neighbour before it is converted or composed.
-    element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+    # scalar becomes a vector of one factor, which scales a single axis.
+    # A scalar could stand for an isotropic scaling of a space whose
+    # number of axes is unknown, but nothing supports it: the number of
+    # axes is read from the length of the vector, and the vector would
+    # have to be expanded to the number of axes of the systems or of a
+    # neighbour before it is converted or composed.
 
     map_field: _FieldNames = "scale"
     data_fields: _FieldNames = ("data",)
@@ -1164,8 +1148,6 @@ class Translation(_CompactTransformation):
     """
 
     # --- class attributes ---------------------------------------------
-
-    element_ndim: tx.ClassVar[tx.Optional[int]] = 1
 
     map_field: _FieldNames = "translation"
     data_fields: _FieldNames = ("data",)

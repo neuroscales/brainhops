@@ -27,11 +27,13 @@ __all__ = [
     "BatchedPermutation",
 ]
 
+import functools
 from numbers import Integral
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Forget, InitVar, NotKwOnly
+from bagof.hints.numpy import ndarray
+from bagof.magic import Forget, InitVar, NotKwOnly, fields
 
 from brainhops._core.affines import expm as affine_expm
 from brainhops._core.affines import inv as affine_inv
@@ -621,7 +623,7 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
                 f"A batch of {self.element_type.__name__} needs the data "
                 f"of its elements."
             )
-        ndim = self.element_type.element_ndim
+        ndim = _element_ndim(self.element_type)
         if np.ndim(self._data) <= ndim:
             raise ValueError(
                 f"The data of a batch of {self.element_type.__name__} must "
@@ -633,7 +635,7 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
     @property
     def batch_shape(self) -> tx.Tuple[int, ...]:
         """Number of elements along each batch axis."""
-        ndim = int(np.ndim(self.data)) - self.element_type.element_ndim
+        ndim = int(np.ndim(self.data)) - _element_ndim(self.element_type)
         return tuple(int(n) for n in np.shape(self.data)[:ndim])
 
     @property
@@ -956,11 +958,11 @@ def _object_array(elements: tx.Any) -> np.ndarray:
 def _element_type(element_type: tx.Any) -> tx.Type[Transformation]:
     """Return the data-model class of the elements of a stacked batch.
 
-    The elements of a stacked batch are matrix or vector types, which
-    state the number of dimensions of the data of one element. The class of
-    a file format is replaced by its data model, because the metadata of a
-    format describes a record of a file and not an element of a batch. A
-    lazy wrapper, such as an inverse, is refused, since it holds no data of
+    The elements of a stacked batch are matrix or vector types, whose
+    data has a known number of dimensions. The class of a file format is
+    replaced by its data model, because the metadata of a format
+    describes a record of a file and not an element of a batch. A lazy
+    wrapper, such as an inverse, is refused, since it holds no data of
     its own.
     """
     if not isinstance(element_type, type):
@@ -969,16 +971,43 @@ def _element_type(element_type: tx.Any) -> tx.Type[Transformation]:
             f"{element_type!r}."
         )
     model = element_type._data_model()
-    # Only the matrix and vector types state the number of dimensions of
-    # the data of one element.
-    ndim = getattr(model, "element_ndim", None)
     wrapper = getattr(model, "_operator", None) is not None
-    if not issubclass(model, Transformation) or ndim is None or wrapper:
+    if (
+        not issubclass(model, Transformation)
+        or wrapper
+        or _element_ndim(model) is None
+    ):
         raise TypeError(
             f"A stacked batch holds matrix or vector transformations, such "
             f"as Affine or Scaling, not {element_type.__name__}."
         )
     return model
+
+
+@functools.lru_cache(maxsize=None)
+def _element_ndim(model: type) -> tx.Optional[int]:
+    """Return the number of dimensions of the data of one element.
+
+    The data of a matrix or vector type is annotated with the shape of
+    the data of one transformation, such as `npmatrix` for `Affine` and
+    `npvector` for `Scaling`. The number of dimensions is the length of
+    that shape: 2 for a matrix type and 1 for a vector type. A batch
+    reads it to tell its batch dimensions, which come first, from the
+    dimensions of one element. The result is None for a type that has
+    no data, such as `Identity`, and for a type whose data may have any
+    number of dimensions, such as a field.
+    """
+    hint = next((f.type for f in fields(model) if f.name == "_data"), None)
+    hints = tx.get_args(hint) if tx.get_origin(hint) is tx.Union else (hint,)
+    for hint in hints:
+        # On Python 3.8, the `ndarray` of bagof is a generic class of its
+        # own rather than the class of NumPy, so it is the one compared.
+        if tx.get_origin(hint) is not ndarray:
+            continue
+        shape = tx.get_args(tx.get_args(hint)[0])
+        if Ellipsis not in shape:
+            return len(shape)
+    return None
 
 
 def _normalize_key(
