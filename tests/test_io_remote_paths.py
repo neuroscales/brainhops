@@ -178,10 +178,18 @@ def test_from_other_reads_a_remote_path_rather_than_building() -> None:
     assert RemotePath.fspath_calls == 0
 
 
+# Only the zarr-python driver of abczarr writes to `memory://`. The
+# TensorStore driver refuses such locations, because the memory store of
+# TensorStore is not the memory file system of fsspec, so the tests that
+# write to `memory://` ask for the zarr-python driver by name.
+ZARR_PYTHON = "zarr-python"
+
+
 @pytest.mark.skipif(not has_abczarr_driver(), reason="needs a zarr driver")
 def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
     # fsspec memory storage stands in for the cloud.
     pytest.importorskip("upath")
+    pytest.importorskip("zarr")
     from bagof.paths import Path
 
     from brainhops.datamodel.images import SingleScaleImage
@@ -189,7 +197,7 @@ def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
 
     data = np.arange(8, dtype="float32").reshape(2, 2, 2)
     store = Path("memory://brainhops-tests/remote.zarr")
-    io.save(SingleScaleImage(data=data), store)
-    back = io.images.ImageFormat.from_any(store)
+    io.save(SingleScaleImage(data=data), store, driver=ZARR_PYTHON)
+    back = io.images.ImageFormat.from_any(store, driver=ZARR_PYTHON)
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), data)
