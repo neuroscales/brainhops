@@ -17,10 +17,7 @@ from brainhops.io.common.nifti import (
     NiftiRaw,
     NiftiReaderWriter,
 )
-from brainhops.io.common.nifti._data import _NiftiProxy
-from brainhops.io.common.nifti._header import (
-    _NiftiObject,
-)
+from brainhops.io.common.nifti._internal_api import NiftiObject, NiftiProxy
 from brainhops.io.transformations.base import TransformationFormat
 
 _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
@@ -121,7 +118,7 @@ class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
 
 
 def _nibabel_parts(
-    nifti: _NiftiObject,
+    nifti: NiftiObject,
 ) -> tx.Tuple[tx.Optional[ArrayProtocol], _NiftiHeader]:
     """Return the array and the header of a nibabel image or header.
 
@@ -135,7 +132,7 @@ def _nibabel_parts(
         If `nifti` is neither a NIfTI image nor a NIfTI header.
     """
     if isinstance(nifti, nb.Nifti1Image):
-        return _NiftiProxy.from_nibabel(nifti.dataobj), nifti.header
+        return NiftiProxy.from_nibabel(nifti.dataobj), nifti.header
     if isinstance(nifti, nb.Nifti1Header):
         return None, nifti
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")

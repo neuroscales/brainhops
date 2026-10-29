@@ -34,7 +34,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )

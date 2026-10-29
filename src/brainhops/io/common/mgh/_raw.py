@@ -29,7 +29,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
-from brainhops.io.common.freesurfer._geometry import (
+from brainhops.io.common.freesurfer._internal_api import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
     FS_DEFAULT_ZRAS,
@@ -39,15 +39,15 @@ from brainhops.io.common.freesurfer._geometry import (
 
 # this format
 from ._constants import (
-    _GEOMETRY_FIELDS,
-    _MGH_TYPES,
-    _MRI_PARAMS,
+    GEOMETRY_FIELDS,
     MGH_FIELDS_SIZE,
     MGH_FOOTER_SIZE,
     MGH_HEADER_SIZE,
+    MGH_TYPES,
+    MRI_PARAMS,
 )
-from ._data import _MghProxy
-from ._utils import _read_prefix, _seekable, _valid_prefix
+from ._data import MghProxy
+from ._utils import read_prefix, seekable, valid_prefix
 
 _3Floats = tx.Tuple[float, float, float]
 _Geometry = tx.Tuple[_3Floats, _3Floats, _3Floats, _3Floats, _3Floats]
@@ -147,7 +147,7 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
         flip angle in radians, and the field of view in millimetres. A zero
         means that the parameter was not recorded.
         """
-        return {name: float(self.header[name]) for name in _MRI_PARAMS}
+        return {name: float(self.header[name]) for name in MRI_PARAMS}
 
     # --- reading ------------------------------------------------------
 
@@ -188,10 +188,10 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
         """
         try:
             with preserve_position(file):
-                prefix = _read_prefix(open_compressed(file))
+                prefix = read_prefix(open_compressed(file))
         except Exception:
             prefix = None
-        if _valid_prefix(prefix):
+        if valid_prefix(prefix):
             return Confidence.LIKELY
         if error:
             if error is True:
@@ -232,16 +232,16 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
             raise TypeError(
                 f"Unknown MGH header option(s): {', '.join(kwargs)}"
             )
-        if not _seekable(file):
+        if not seekable(file):
             file = BytesIO(file.read())
         stream = open_compressed(file)
         start = stream.tell()
         head = stream.read(MGH_FIELDS_SIZE)
-        prefix = _read_prefix(BytesIO(head))
-        if not _valid_prefix(prefix) or len(head) < MGH_FIELDS_SIZE:
+        prefix = read_prefix(BytesIO(head))
+        if not valid_prefix(prefix) or len(head) < MGH_FIELDS_SIZE:
             raise ParserContentError("Content is not a valid MGH/MGZ file")
         _version, *dims, code, _dof, _flag = prefix
-        voxels = _MGH_TYPES[code] * int(np.prod(dims))
+        voxels = MGH_TYPES[code] * int(np.prod(dims))
         stream.seek(start + MGH_HEADER_SIZE + voxels)
         footer = stream.read(MGH_FOOTER_SIZE)
         tags = stream.read() or b""
@@ -287,7 +287,7 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
             Options of the writer, which are ignored.
         """
         content = self.to_bytes(**kwargs)
-        if _compressed_name(filename):
+        if compressed_name(filename):
             content = gzip.compress(content)
         with path.Path(filename).open("wb") as file:
             file.write(content)
@@ -313,10 +313,10 @@ def _keep_stored_geometry(
 ) -> _mgh.MGHHeader:
     """Set the geometry fields of a header to the values of another one.
 
-    The fields are listed in [`_GEOMETRY_FIELDS`][], and `stored` is a
+    The fields are listed in [`GEOMETRY_FIELDS`][], and `stored` is a
     header or a structured value that has them. The header is returned.
     """
-    for name in _GEOMETRY_FIELDS:
+    for name in GEOMETRY_FIELDS:
         header[name] = stored[name]
     return header
 
@@ -345,7 +345,7 @@ def _geometry(header: _mgh.MGHHeader) -> _Geometry:
     )
 
 
-def _compressed_name(filename: path.FilenameLike) -> bool:
+def compressed_name(filename: path.FilenameLike) -> bool:
     """Tell whether a file name asks for gzip, by its `.mgz` or `.gz` suffix.
 
     The name is read from the path of the URL, so that a query does not
@@ -363,7 +363,7 @@ _PROXY_OPTIONS = ("mmap", "keep_file_open")
 """The reader options, which nibabel's readers also take."""
 
 
-def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, _MghProxy]:
+def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, MghProxy]:
     """Read the record and a lazy array of the voxels of an MGH file.
 
     The record is read from the file as it is stored. The voxels are not
@@ -391,7 +391,7 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, _MghProxy]:
     -------
     raw : MghRaw
         The record of the file.
-    proxy : _MghProxy
+    proxy : MghProxy
         The lazy array of the voxels, in Fortran order.
 
     Raises
@@ -415,23 +415,23 @@ def read_mgh(file: path.FileLike, **kwargs) -> tx.Tuple[MghRaw, _MghProxy]:
     filename = str(file)
     with open(filename, "rb") as stream:
         raw = MghRaw.from_fileobj(stream)
-    return raw, _MghProxy.from_header(filename, raw.header, mmap=mmap)
+    return raw, MghProxy.from_header(filename, raw.header, mmap=mmap)
 
 
 def _read_mgh_stream(
     fileobj: tx.BinaryIO, mmap: bool
-) -> tx.Tuple[MghRaw, _MghProxy]:
+) -> tx.Tuple[MghRaw, MghProxy]:
     """Read the record and the lazy array of an MGH stream.
 
     The record is read first, and the position of the stream is restored
     so that the lazy array reads the voxels from the same start.
     """
-    if not _seekable(fileobj):
+    if not seekable(fileobj):
         fileobj = BytesIO(fileobj.read())
     start = fileobj.tell()
     with preserve_position(fileobj):
         raw = MghRaw.from_fileobj(fileobj)
-    proxy = _MghProxy.from_header(fileobj, raw.header, start, mmap=mmap)
+    proxy = MghProxy.from_header(fileobj, raw.header, start, mmap=mmap)
     return raw, proxy
 
 

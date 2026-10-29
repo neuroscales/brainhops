@@ -31,7 +31,7 @@ from brainhops.io.common.minc import (  # noqa: E402
     MincMetadata,
     MincRaw,
 )
-from brainhops.io.common.minc._data import _MincProxy  # noqa: E402
+from brainhops.io.common.minc._data import MincProxy  # noqa: E402
 from brainhops.io.common.minc._netcdf import read_netcdf_header  # noqa: E402
 from brainhops.io.common.minc._utils import minc_version  # noqa: E402
 from brainhops.io.images.minc import (  # noqa: E402
@@ -388,7 +388,7 @@ def test_header_only_until_data(anyminc) -> None:  # noqa: ANN001
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         image = io.images.load(filename)
-        assert isinstance(image.rawdata, _MincProxy)
+        assert isinstance(image.rawdata, MincProxy)
         assert "_cache_data" not in vars(image)
         assert image.shape == (6, 5, 4)
         image.data  # noqa: B018
@@ -598,13 +598,13 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        read = _MincProxy._read
+        read = MincProxy._read
 
         def counted(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
             return read(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_MincProxy, "_read", counted)
+        monkeypatch.setattr(MincProxy, "_read", counted)
 
 
 @pytest.mark.parametrize("gzipped", [False, True])

@@ -6,7 +6,7 @@ from brainhops.datamodel.axes import Axis
 # The array axes are axes of voxel space, so they count samples. A reader that
 # builds a physical space gives the axes its own unit.
 _INDEX = "index"
-_NIFTI_AXES = [
+NIFTI_AXES = [
     Axis("x", "space", unit=_INDEX),
     Axis("y", "space", unit=_INDEX),
     Axis("z", "space", unit=_INDEX),
@@ -25,7 +25,7 @@ _FLAT_AXES = {
 _FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel", unit=_INDEX)}
 _FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time", unit=_INDEX)}
 _AXES_DISP = {4: Axis("c", "displacement", unit=_INDEX)}
-_NIFTI_SPECIFIC_AXES = {
+NIFTI_SPECIFIC_AXES = {
     1004: {5: Axis("k", "channel", unit=_INDEX)},  # GENMATRIX
     1006: _AXES_DISP,  # DISPVECT
     1008: _FLAT_AXES_CHANNEL,  # POINTSET
@@ -44,7 +44,7 @@ _NIFTI_SPECIFIC_AXES = {
 }
 
 
-_NIFTI_FIELD_INTENTS = frozenset(
+NIFTI_FIELD_INTENTS = frozenset(
     {
         1006,  # DISPVECT
         1007,  # VECTOR
@@ -66,10 +66,10 @@ _NIFTI_FSL_INTENTS = frozenset({2006, 2007, 2008, 2009})
 reader does not decode FSL storage conventions.
 """
 
-_NIFTI_INTENT_NONE = 0
+NIFTI_INTENT_NONE = 0
 """Intent code of a plain image."""
 
-_NIFTI_INTENT_DISPVECT = 1006
+NIFTI_INTENT_DISPVECT = 1006
 """Intent code of a displacement field.
 
 ITK 5.4 and later read a three-component `DISPVECT` image as RAS displacements
@@ -77,16 +77,16 @@ in millimetres. brainhops reads it in the same way and writes it only for
 displacement fields.
 """
 
-_NIFTI_INTENT_VECTOR = 1007
+NIFTI_INTENT_VECTOR = 1007
 """Intent code of a generic vector image.
 
 brainhops writes coordinate fields in RAS with this code, as SPM does for its
 `y_` deformations. ITK writes it for every vector image, including its LPS
 displacement fields, so the code says nothing about the frame; the intent name
-[`_NIFTI_INTENT_NAME_MAPPING`][] marks RAS coordinate maps.
+[`NIFTI_INTENT_NAME_MAPPING`][] marks RAS coordinate maps.
 """
 
-_NIFTI_INTENT_NAME_NIFTYREG = "NREG_TRANS"
+NIFTI_INTENT_NAME_NIFTYREG = "NREG_TRANS"
 """Intent name of every NiftyReg transformation.
 
 NiftyReg stores its transformations as `VECTOR` images with this name and tells
@@ -94,7 +94,7 @@ them apart by `intent_p1`. Only the NiftyReg readers decode such files, so the
 generic vector readers decline them.
 """
 
-_NIFTI_INTENT_NAME_ITK_DISPLACEMENT = "ITKDisplacement"
+NIFTI_INTENT_NAME_ITK_DISPLACEMENT = "ITKDisplacement"
 """Intent name of the ITK displacement fields that brainhops writes.
 
 A `VECTOR` image in the ITK layout may hold LPS displacements, as ITK and
@@ -104,7 +104,7 @@ on the ITK displacement fields it writes, so that it reads them back
 without a hint. ITK ignores the name.
 """
 
-_NIFTI_INTENT_NAME_ITK_COORDINATES = "ITKCoordinates"
+NIFTI_INTENT_NAME_ITK_COORDINATES = "ITKCoordinates"
 """Intent name of the ITK fields of coordinates that brainhops writes.
 
 ITK and ANTs never write a field of coordinates, so a file is read as
@@ -112,7 +112,7 @@ one only with a hint, or when it carries this name, which brainhops
 writes on such fields.
 """
 
-_NIFTI_INTENT_NAME_MAPPING = "Mapping"
+NIFTI_INTENT_NAME_MAPPING = "Mapping"
 """Intent name of SPM coordinate fields (`y_` files).
 
 brainhops writes it with `VECTOR` on RAS coordinate fields. ITK never writes an
@@ -121,7 +121,7 @@ field in LPS.
 """
 
 
-_NIFTI_XCODES = {
+NIFTI_XCODES = {
     0: "unknown",
     1: "scanner",
     2: "aligned",
@@ -135,18 +135,16 @@ The reader names each affine map after its code, and the writer reads that name
 back to choose the stored code.
 """
 
-_NIFTI_XFORM_CODE_BY_NAME = {
-    name: code for code, name in _NIFTI_XCODES.items()
-}
+NIFTI_XFORM_CODE_BY_NAME = {name: code for code, name in NIFTI_XCODES.items()}
 """Xform code of each world-space name."""
 
-_QFORM_NAME = "qform"
+QFORM_NAME = "qform"
 """Name that the reader gives to the world space of the qform."""
 
-_NIFTI_DEFAULT_XFORM_CODE = 2
+NIFTI_DEFAULT_XFORM_CODE = 2
 """Xform code (`aligned`) stored for a world space without a known reference,
 because NIfTI ignores forms with a zero code.
 """
 
-_NIFTI1_MAX_DIM = 2**15 - 1
+NIFTI1_MAX_DIM = 2**15 - 1
 """Largest extent that NIfTI-1 stores; larger images are written as NIfTI-2."""

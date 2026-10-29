@@ -21,8 +21,8 @@ import typing_extensions as tx
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.common.afni import AfniRaw
-from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.afni._geometry import (
+from brainhops.io.common.afni._internal_api import (
+    DICOM_TO_RAS,
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
     afni_voxel_to_dicom,

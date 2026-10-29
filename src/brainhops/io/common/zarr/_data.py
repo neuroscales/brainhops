@@ -24,14 +24,14 @@ from brainhops._core._internal_api import (
 )
 
 # this format
-from ._raw import ZarrRaw, _document_keys, same_storage
+from ._raw import ZarrRaw, document_keys, same_storage
 
 # ----------------------------------------------------------------------
 #   LAZY ARRAY
 # ----------------------------------------------------------------------
 
 
-class _ZarrProxy(StoredProxy):
+class ZarrProxy(StoredProxy):
     """A lazy array that reads an opened Zarr array when it is converted.
 
     The proxy holds the abczarr node of the array, the location of its
@@ -132,7 +132,7 @@ def reads_store(raw: tx.Any, location: tx.Any) -> bool:
     and a remote location is compared by its URL.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _ZarrProxy) or raw.location is None:
+    if not isinstance(raw, ZarrProxy) or raw.location is None:
         return False
     source = raw.location
     if _local(source) and _local(location):
@@ -153,7 +153,7 @@ def reads_inside(raw: tx.Any, location: tx.Any) -> bool:
     compared by its URL.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _ZarrProxy) or raw.location is None:
+    if not isinstance(raw, ZarrProxy) or raw.location is None:
         return False
     source = raw.location
     if _local(source) and _local(location):
@@ -267,7 +267,7 @@ def store_chunks(raw: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
 
 def _copies_chunks(raw: tx.Any, record: ZarrRaw) -> bool:
     """Tell whether the chunk files of the store of `raw` can be copied."""
-    if not isinstance(raw, _ZarrProxy):
+    if not isinstance(raw, ZarrProxy):
         return False
     if raw.perm is not None:
         return False
@@ -296,7 +296,7 @@ def _copy_chunks(source: str, target: str) -> None:
 
 def _all_document_keys() -> tx.Tuple[str, ...]:
     """Return the names of the document files of an array in any version."""
-    return _document_keys(3) + _document_keys(2)
+    return document_keys(3) + document_keys(2)
 
 
 def _local(location: tx.Any) -> bool:

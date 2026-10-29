@@ -36,7 +36,7 @@ from brainhops.io.base.parsers import (
 )
 
 # io
-from brainhops.io.common.freesurfer._geometry import (
+from brainhops.io.common.freesurfer._internal_api import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
     FS_DEFAULT_ZRAS,

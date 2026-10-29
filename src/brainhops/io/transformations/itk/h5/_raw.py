@@ -19,7 +19,7 @@ from brainhops.io.base.parsers import (
 
 # io
 from brainhops.io.common.hdf5 import H5ArrayProxy, Hdf5ReaderWriter
-from brainhops.io.common.hdf5._parsers import read_string
+from brainhops.io.common.hdf5._internal_api import read_string
 
 from .._chains import _check_composite, _is_composite, _read_only, _type_name
 from .._common import (

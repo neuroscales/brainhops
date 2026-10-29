@@ -23,7 +23,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
+from brainhops.io.common._internal_api import TxtArrayReader, is_numeric_array
 from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,

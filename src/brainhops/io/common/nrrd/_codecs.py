@@ -16,9 +16,9 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._constants import (
-    _NONE,
-    _TYPE_NAMES,
-    _TYPES,
+    NONE,
+    TYPE_NAMES,
+    TYPES,
 )
 
 # ----------------------------------------------------------------------
@@ -35,9 +35,9 @@ def nrrd_dtype(name: str, endian: tx.Optional[str] = None) -> np.dtype:
         If the type is unknown.
     """
     key = " ".join(str(name).split()).lower()
-    if key not in _TYPES:
+    if key not in TYPES:
         raise ParserContentError(f"Unsupported NRRD type: {name!r}")
-    dtype = np.dtype(_TYPES[key])
+    dtype = np.dtype(TYPES[key])
     if endian is not None and dtype.itemsize > 1:
         dtype = dtype.newbyteorder("<" if endian == "little" else ">")
     return dtype
@@ -51,8 +51,8 @@ def dtype_to_nrrd(dtype: tx.Any) -> str:
     WriterError
         If NRRD has no matching type.
     """
-    if isinstance(dtype, str) and " ".join(dtype.split()).lower() in _TYPES:
-        return _TYPE_NAMES[_TYPES[" ".join(dtype.split()).lower()]]
+    if isinstance(dtype, str) and " ".join(dtype.split()).lower() in TYPES:
+        return TYPE_NAMES[TYPES[" ".join(dtype.split()).lower()]]
     try:
         dtype = np.dtype(dtype)
     except TypeError as error:
@@ -62,9 +62,9 @@ def dtype_to_nrrd(dtype: tx.Any) -> str:
     if dtype.kind == "f" and dtype.itemsize < 4:
         return "float"
     code = f"{dtype.kind}{dtype.itemsize}"
-    if code not in _TYPE_NAMES:
+    if code not in TYPE_NAMES:
         raise WriterError(f"NRRD has no type for {dtype}.")
-    return _TYPE_NAMES[code]
+    return TYPE_NAMES[code]
 
 
 # ----------------------------------------------------------------------
@@ -72,24 +72,24 @@ def dtype_to_nrrd(dtype: tx.Any) -> str:
 # ----------------------------------------------------------------------
 
 
-def _unescape(text: str) -> str:
+def unescape(text: str) -> str:
     return re.sub(
         r"\\(.)", lambda m: "\n" if m.group(1) == "n" else m.group(1), text
     )
 
 
-def _escape(text: str) -> str:
+def escape(text: str) -> str:
     return str(text).replace("\\", "\\\\").replace("\n", "\\n")
 
 
-def _float(token: str) -> float:
+def parse_float(token: str) -> float:
     try:
         return float(token)
     except ValueError:
         raise ParserContentError(f"Not a NRRD number: {token!r}") from None
 
 
-def _format_float(value: float) -> str:
+def format_float(value: float) -> str:
     value = float(value)
     if math.isnan(value):
         return "nan"
@@ -98,37 +98,37 @@ def _format_float(value: float) -> str:
     return repr(value)
 
 
-def _parse_vectors(value: str) -> tx.List[tx.Optional[tx.List[float]]]:
+def parse_vectors(value: str) -> tx.List[tx.Optional[tx.List[float]]]:
     """Parse a list of vectors.
 
     `"none (1,0,0) (0,1,0)"` gives `[None, [1, 0, 0], [0, 1, 0]]`.
     """
     out: tx.List[tx.Optional[tx.List[float]]] = []
     for token in re.findall(r"\([^)]*\)|[^\s()]+", value):
-        if token.lower() in _NONE:
+        if token.lower() in NONE:
             out.append(None)
         elif token.startswith("("):
-            out.append([_float(t) for t in token[1:-1].split(",")])
+            out.append([parse_float(t) for t in token[1:-1].split(",")])
         else:
             raise ParserContentError(f"Not a NRRD vector: {token!r}")
     return out
 
 
-def _format_vectors(vectors: tx.Iterable[tx.Any]) -> str:
+def format_vectors(vectors: tx.Iterable[tx.Any]) -> str:
     return " ".join(
         "none"
         if v is None
-        else "(" + ",".join(_format_float(x) for x in v) + ")"
+        else "(" + ",".join(format_float(x) for x in v) + ")"
         for v in vectors
     )
 
 
-def _parse_strings(value: str) -> tx.List[str]:
+def parse_strings(value: str) -> tx.List[str]:
     """Parse quoted strings: `'"mm" "" "s"'` gives `["mm", "", "s"]`."""
-    return [_unescape(s) for s in re.findall(r'"((?:[^"\\]|\\.)*)"', value)]
+    return [unescape(s) for s in re.findall(r'"((?:[^"\\]|\\.)*)"', value)]
 
 
-def _format_strings(values: tx.Iterable[str]) -> str:
+def format_strings(values: tx.Iterable[str]) -> str:
     return " ".join(
         '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
         for v in values

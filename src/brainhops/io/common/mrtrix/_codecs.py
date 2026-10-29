@@ -15,9 +15,9 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._constants import (
-    _BIT,
-    _DTYPES,
-    _NAMES,
+    BIT,
+    DTYPES,
+    NAMES,
 )
 
 
@@ -34,17 +34,17 @@ def mrtrix_dtype(spec: str) -> tx.Optional[np.dtype]:
         If the name is not an MRtrix data type.
     """
     key = spec.strip().lower()
-    if key == _BIT:
+    if key == BIT:
         return None
     order = "="
-    if key.endswith(("le", "be")) and key[:-2] in _DTYPES:
+    if key.endswith(("le", "be")) and key[:-2] in DTYPES:
         order = "<" if key.endswith("le") else ">"
         key = key[:-2]
-    if key not in _DTYPES:
+    if key not in DTYPES:
         raise ParserContentError(f"Unknown MRtrix data type: {spec!r}")
     if key in ("int8", "uint8"):
         order = "|"
-    return np.dtype(order + _DTYPES[key])
+    return np.dtype(order + DTYPES[key])
 
 
 def dtype_to_mrtrix(dtype: tx.Any) -> str:
@@ -59,7 +59,7 @@ def dtype_to_mrtrix(dtype: tx.Any) -> str:
     WriterError
         If MRtrix cannot store the dtype, such as float16 or strings.
     """
-    if isinstance(dtype, str) and dtype.strip().lower() == _BIT:
+    if isinstance(dtype, str) and dtype.strip().lower() == BIT:
         return "Bit"
     if isinstance(dtype, str) and _is_mrtrix_spec(dtype):
         # normalise the spelling of an MRtrix data type
@@ -68,9 +68,9 @@ def dtype_to_mrtrix(dtype: tx.Any) -> str:
     dtype = np.dtype(dtype)
     if dtype.kind == "b":
         return "Bit"
-    for key, code in _DTYPES.items():
+    for key, code in DTYPES.items():
         if np.dtype(code) == dtype.newbyteorder("="):
-            name = _NAMES[key]
+            name = NAMES[key]
             if dtype.itemsize == 1:
                 return name
             order = dtype.byteorder
@@ -140,7 +140,7 @@ def default_layout(ndim: int) -> tx.Tuple[int, ...]:
     return tuple(range(1, ndim + 1))
 
 
-def _storage_shape(
+def storage_shape(
     dim: tx.Sequence[int], strides: tx.Sequence[int]
 ) -> tx.Tuple[tx.Tuple[int, ...], tx.List[int]]:
     """
@@ -164,7 +164,7 @@ def storage_to_image(
 
     The result is a view, so that a memory map stays one.
     """
-    shape, position = _storage_shape(dim, strides)
+    shape, position = storage_shape(dim, strides)
     stored = stored.reshape(shape)
     image = stored.transpose(position)
     flips = tuple(
@@ -185,7 +185,7 @@ def image_to_storage(image: tx.Any, strides: tx.Sequence[int]) -> np.ndarray:
         slice(None, None, -1) if s < 0 else slice(None) for s in strides
     )
     image = image[flips]
-    _, position = _storage_shape(image.shape, strides)
+    _, position = storage_shape(image.shape, strides)
     order = [0] * ndim
     for axis, pos in enumerate(position):
         order[pos] = axis

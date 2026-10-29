@@ -42,7 +42,7 @@ from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
     fs_vox2tkr,
     mat2orient,
 )
-from brainhops.io.common.mgh._data import _MghProxy  # noqa: E402
+from brainhops.io.common.mgh._data import MghProxy  # noqa: E402
 from brainhops.io.common.nifti import NiftiMetadata  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghImage,
@@ -171,7 +171,7 @@ def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
         warnings.simplefilter("always", ResourceWarning)
         image = io.load(source)
         assert isinstance(image, MghImage)
-        assert isinstance(image.rawdata, _MghProxy)
+        assert isinstance(image.rawdata, MghProxy)
         assert np.array_equal(np.asarray(image.data), data)
         del image
         gc.collect()
@@ -710,7 +710,7 @@ def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: A
     back = MghImage.from_instance(nii)
     assert isinstance(back.metadata, MghMetadata)
     assert back.metadata.raw is None
-    assert not isinstance(back.rawdata, _MghProxy)
+    assert not isinstance(back.rawdata, MghProxy)
     # Within one format, the record and the proxy are still shared.
     copy = MghImage.from_instance(mgh)
     assert copy.metadata is mgh.metadata

@@ -40,41 +40,35 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     Arrangement,
     declared_axes,
     held_transformations,
     same_transformations,
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
-from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
-from brainhops.io.common.mrtrix._data import (
-    _MrtrixProxy,
-    read_mrtrix,
-    whole_file,
-)
-from brainhops.io.common.mrtrix._files import (
+from brainhops.io.common.mrtrix._internal_api import (
+    MrtrixProxy,
+    declined,
+    dtype_to_mrtrix,
     file_entry,
     keeps_storage,
     merged_keyval,
     mrtrix_bytes,
+    no_options,
     placed_record,
+    read_mrtrix,
     reads_from,
+    sniffed_raw,
+    split_voxel_to_scanner,
     stored_voxels,
     stores_as_recorded,
+    voxel_to_ras,
+    whole_file,
     write_mrtrix,
     writer_options,
     writer_strides,
     written_files,
-)
-from brainhops.io.common.mrtrix._geometry import (
-    split_voxel_to_scanner,
-    voxel_to_ras,
-)
-from brainhops.io.common.mrtrix._raw import (
-    _declined,
-    _no_options,
-    _sniffed_raw,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
@@ -305,9 +299,9 @@ class MrtrixImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -345,7 +339,7 @@ class MrtrixImage(
         ParserContentError
             If the file is not an MRtrix image, or its data is too short.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -390,7 +384,7 @@ class MrtrixImage(
             If the stream is not an MRtrix image, or its header names a
             separate data file and the stream has no name.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         raw, proxy = read_mrtrix(file, mmap=False)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -692,7 +686,7 @@ def _encoded(
         # A lazy array is read here rather than through `data`, so that no
         # cached view of the old file outlives a write over that file.
         reads = isinstance(raw, ArrayProxy) and isinstance(
-            raw.root, _MrtrixProxy
+            raw.root, MrtrixProxy
         )
         source = np.asarray(raw) if reads else raw
         if moved:

@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
 from brainhops.io.base.specs import format_hints
 from brainhops.io.common.mrtrix import MrtrixRaw
 from brainhops.io.common.mrtrix._codecs import parse_layout
-from brainhops.io.common.mrtrix._data import _MrtrixProxy, encode_data
+from brainhops.io.common.mrtrix._data import MrtrixProxy, encode_data
 from brainhops.io.common.mrtrix._geometry import split_voxel_to_scanner
 from brainhops.io.images.mrtrix import MrtrixImage
 from brainhops.io.transformations import TransformationFormat
@@ -877,7 +877,7 @@ def test_a_linear_transform_is_pending_until_consolidated(tmp_path) -> None:  # 
 def test_a_warp_is_pending_until_consolidated(deformation, tmp_path) -> None:  # noqa: ANN001
     warp = io.load(deformation)
     raw, metadata = warp.rawdata, warp.metadata
-    assert isinstance(raw, _MrtrixProxy)
+    assert isinstance(raw, MrtrixProxy)
     if isinstance(warp.data, np.ndarray):
         assert not warp.data.flags.writeable
     # Assigned coordinates are pending, and drop the decoded chain.
@@ -898,7 +898,7 @@ def test_a_warp_is_pending_until_consolidated(deformation, tmp_path) -> None:  #
     assert record.keyval["command_history"].startswith("brainhops  (version=")
     # Saving over its own file re-points the warp at the new file.
     warp.save(deformation)
-    assert isinstance(warp.rawdata, _MrtrixProxy) and warp._data is None
+    assert isinstance(warp.rawdata, MrtrixProxy) and warp._data is None
     np.testing.assert_allclose(warp.data, io.load(deformation).data)
 
 

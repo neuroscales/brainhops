@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     WriterError,
 )
-from brainhops.io.common._geometry import held_transformations
+from brainhops.io.common._internal_api import held_transformations
 from brainhops.io.images.base import ImageFormat
 
 # this format

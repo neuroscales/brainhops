@@ -35,17 +35,15 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
-from brainhops.io.common.zarr._data import (
-    _ZarrProxy,
+from brainhops.io.common.zarr._internal_api import (
+    ZarrNodeReaderWriter,
+    ZarrProxy,
+    absolute_location,
+    as_node,
+    opened_node,
     reads_inside,
     store_chunks,
     store_location,
-)
-from brainhops.io.common.zarr._parsers import (
-    _as_node,
-    _ZarrNodeReaderWriter,
-    absolute_location,
-    opened_node,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
@@ -92,12 +90,12 @@ class OmeZarrLevel(ZarrImage):
 
 # `kw_only=True` is repeated here because bagof takes each class option
 # from the first base in the method resolution order, whether that base
-# sets the option or keeps the default. That base is `_ZarrNodeReaderWriter`,
+# sets the option or keeps the default. That base is `ZarrNodeReaderWriter`,
 # which keeps the default, so the fields declared by this class would
 # otherwise be positional.
 @register_format
 class OmeZarrImage(
-    _ZarrNodeReaderWriter,
+    ZarrNodeReaderWriter,
     ImageFormat,
     MultiScaleImage,
 ):
@@ -416,7 +414,7 @@ class OmeZarrImage(
             a translation. The geometry of a single level becomes the
             placement of a pyramid that has none.
         """
-        node = _as_node(node)
+        node = as_node(node)
         if not isinstance(node, ZarrGroup):
             raise WriterError(
                 "A multiscale image is written into a group, not a plain "
@@ -584,7 +582,7 @@ class OmeZarrImage(
             cannot be replaced without the level reading a store half
             written.
         """
-        node = _as_node(location)
+        node = as_node(location)
         if node is not None:
             self.to_node(node, chunks=chunks, version=version, **kwargs)
             return
@@ -675,7 +673,7 @@ def _level(
     """Return the level of a dataset, which reads its array lazily."""
     return OmeZarrLevel(
         transformations=[geometry],
-        rawdata=_ZarrProxy(array, store_location(array), perm),
+        rawdata=ZarrProxy(array, store_location(array), perm),
         metadata=ZarrMetadata.from_raw(ZarrRaw.from_node(array)),
     )
 

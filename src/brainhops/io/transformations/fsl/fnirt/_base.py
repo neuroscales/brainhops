@@ -34,16 +34,16 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common.nifti import NiftiMetadata
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _nifti_intent,
-    _NiftiObject,
-    _record_image,
-    _split_options,
-    _stored_parts,
+from brainhops.io.common.nifti._internal_api import (
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    header_of,
+    keep_given_fields,
+    nifti_intent,
+    record_image,
+    split_options,
+    stored_parts,
 )
 from brainhops.io.images.nifti._views import (
     _image_to_disk,
@@ -103,7 +103,7 @@ _SPLINE_DEGREE = {
 }
 
 # A nibabel image or header, or a brainhops image.
-_ImageLike = tx.Union[_NiftiObject, Image]
+_ImageLike = tx.Union[NiftiObject, Image]
 
 
 # Developer notes on the coefficient files (see also items 220 to 223 of
@@ -248,8 +248,8 @@ class FnirtWarpField(
         return _image_to_model(self.rawdata)
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
-        if _nifti_intent(header) in _FNIRT_INTENTS:
+    def score_header(cls, header: NiftiObject) -> float:
+        if nifti_intent(header) in _FNIRT_INTENTS:
             return Confidence.CERTAIN
         return Confidence.NO
 
@@ -385,7 +385,7 @@ class FnirtWarpField(
         UnrepresentableTransformationError
             If a chain was assigned to the field.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -407,7 +407,7 @@ class FnirtWarpField(
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _fnirt_encoded(self, like, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
@@ -479,28 +479,28 @@ class FnirtWarpField(
     @property
     def degree(self) -> tx.Optional[int]:
         """The B-spline degree, or `None` for DCT fields."""
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return None
-        return _SPLINE_DEGREE.get(_nifti_intent(header))
+        return _SPLINE_DEGREE.get(nifti_intent(header))
 
     @property
     def store(self) -> tx.Optional[StoreEnum]:
         """Whether the field stores spline coefficients or values."""
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return None
         return [StoreEnum.values, StoreEnum.coefficients][
-            _nifti_intent(header) in _COEFFICIENT_INTENTS
+            nifti_intent(header) in _COEFFICIENT_INTENTS
         ]
 
     # --- intent-driven behaviour --------------------------------------
 
     def _intent(self) -> tx.Optional[int]:
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return None
-        return _nifti_intent(header)
+        return nifti_intent(header)
 
     def _is_coeff(self) -> bool:
         return self._intent() in _COEFFICIENT_INTENTS
@@ -535,12 +535,12 @@ class FnirtWarpField(
         """
         # `FnirtFileReader::read_coef_file` in
         # `src/warpfns/fnirt_file_reader.cpp` of FSL 5.0.9.
-        zooms = np.abs(np.asarray(_header(self).get_zooms()[:3], float))
+        zooms = np.abs(np.asarray(header_of(self).get_zooms()[:3], float))
         return np.floor(zooms + 0.5)
 
     def _reference_pixdim(self) -> np.ndarray:
         """Reference voxel sizes, stored in the intent parameters."""
-        header = _header(self)
+        header = header_of(self)
         return np.array(
             [
                 float(header["intent_p1"]),
@@ -596,7 +596,7 @@ class FnirtWarpField(
         # from the stored voxels instead, which differs from FSL when the
         # reference has a positive determinant (item 220 of the memo).
         if not self._is_coeff():
-            grid = _ImageGeometry(_header(self))
+            grid = _ImageGeometry(header_of(self))
             return grid.ras2vox @ ref.vox2ras
         knot_mm = self._reference_pixdim() * self._stored_knot_spacing()
         grid = np.diag(np.concatenate([1.0 / knot_mm, [1.0]])) @ ref.vox2fsl
@@ -618,7 +618,7 @@ class FnirtWarpField(
         # `fsl/transform/nonlinear.py` of fslpy 3.29.1.
         if not self._is_coeff():
             return np.eye(4, dtype=np.float64)
-        sform = np.asarray(_header(self).get_sform(), dtype=np.float64)
+        sform = np.asarray(header_of(self).get_sform(), dtype=np.float64)
         if not np.all(np.isfinite(sform)):
             return np.eye(4, dtype=np.float64)
         return np.linalg.inv(sform)
@@ -634,7 +634,7 @@ class FnirtWarpField(
                     "reference=... when loading, or set it on the "
                     "transformation."
                 )
-            reference = _header(self)
+            reference = header_of(self)
         return _ImageGeometry(reference)
 
     def _raw_field(self) -> tx.Any:
@@ -674,7 +674,7 @@ class FnirtWarpField(
     # --- the chain ----------------------------------------------------
 
     def _resolvable(self) -> bool:
-        if _header(self) is None or self.moving is None:
+        if header_of(self) is None or self.moving is None:
             return False
         if self._intent() == FSL_DCT_COEFFICIENTS:
             return False
@@ -732,7 +732,7 @@ class FnirtWarpField(
         explicit = self._transformations
         if explicit is not None:
             return explicit
-        if _header(self) is None:
+        if header_of(self) is None:
             return ()
         key = self._chain_key()
         cached = getattr(self, "_chain_cache", None)
@@ -825,12 +825,12 @@ def _fnirt_encoded(
         raise WriterError("A FNIRT file needs its field data to be written.")
     _check_single_field(stored, WriterError)
     record = None if base is None else base.copy()
-    image = _record_image(stored, record, overrides=overrides)
-    if _header(field) is None:
+    image = record_image(stored, record, overrides=overrides)
+    if header_of(field) is None:
         image.header.set_intent(FSL_FNIRT_DISPLACEMENT_FIELD)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     return image
 
 
@@ -954,7 +954,7 @@ def _check_resolvable(warp: FnirtWarpField) -> None:
         If the warp was read from a file and the images that place it in
         the world are not known.
     """
-    if warp._transformations is not None or _header(warp) is None:
+    if warp._transformations is not None or header_of(warp) is None:
         return
     missing = [
         name
@@ -985,7 +985,7 @@ def _densified(warp: FnirtWarpField, target: tx.Any) -> bool:
         return False
     if not issubclass(target, TransformationFormat):
         return False
-    if _header(warp) is None or not warp._is_coeff():
+    if header_of(warp) is None or not warp._is_coeff():
         return False
     if warp._transformations is not None or not warp._resolvable():
         return False

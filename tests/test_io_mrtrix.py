@@ -33,7 +33,7 @@ from brainhops.io.common.mrtrix._codecs import (
     mrtrix_dtype,
     parse_layout,
 )
-from brainhops.io.common.mrtrix._data import _MrtrixProxy
+from brainhops.io.common.mrtrix._data import MrtrixProxy
 from brainhops.io.images import ImageFormat
 from brainhops.io.images.mrtrix import MrtrixImage
 
@@ -840,13 +840,13 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        read = _MrtrixProxy._read
+        read = MrtrixProxy._read
 
         def counted(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
             return read(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_MrtrixProxy, "_read", counted)
+        monkeypatch.setattr(MrtrixProxy, "_read", counted)
 
 
 @pytest.mark.parametrize("name", ["source.mif", "source.mif.gz"])

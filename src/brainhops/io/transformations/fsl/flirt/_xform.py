@@ -38,7 +38,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common.nifti._header import _NiftiObject
+from brainhops.io.common.nifti._internal_api import NiftiObject
 from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
@@ -53,7 +53,7 @@ from ._metadata import FlirtMetadata
 from ._raw import FlirtRaw
 
 # A nibabel image or header, or a brainhops image.
-_ImageLike = tx.Union[_NiftiObject, Image]
+_ImageLike = tx.Union[NiftiObject, Image]
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""

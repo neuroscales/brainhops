@@ -36,7 +36,7 @@ from brainhops.io.base.parsers import (
 from brainhops.io.base.specs import format_hints
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
 from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.afni._data import _BrikProxy, brick_dtype
+from brainhops.io.common.afni._data import BrikProxy, brick_dtype
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import (
     afni_cardinal_matrix,
@@ -1077,8 +1077,8 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        read = _BrikProxy._read
-        copy_to = _BrikProxy.copy_to
+        read = BrikProxy._read
+        copy_to = BrikProxy.copy_to
 
         def counted_read(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
@@ -1088,8 +1088,8 @@ class _CountedReads:
             self.count += 1
             return copy_to(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_BrikProxy, "_read", counted_read)
-        monkeypatch.setattr(_BrikProxy, "copy_to", counted_copy)
+        monkeypatch.setattr(BrikProxy, "_read", counted_read)
+        monkeypatch.setattr(BrikProxy, "copy_to", counted_copy)
 
 
 @pytest.mark.parametrize("nvals", [1, 2])

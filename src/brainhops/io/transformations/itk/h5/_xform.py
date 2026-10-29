@@ -14,7 +14,7 @@ from brainhops.datamodel.metadata._internal_api import (
     takes_error_policy,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.common._geometry import held_transformations
+from brainhops.io.common._internal_api import held_transformations
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
 from brainhops.io.metadata._internal_api import (
     metadata_options,

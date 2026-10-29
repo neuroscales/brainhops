@@ -31,7 +31,7 @@ from brainhops.io.base.parsers import (
 
 # io
 from brainhops.io.common.hdf5 import H5ArrayProxy, Hdf5ReaderWriter
-from brainhops.io.common.hdf5._parsers import read_string
+from brainhops.io.common.hdf5._internal_api import read_string
 
 X5_FORMAT = "X5"
 """The value of the root `Format` attribute."""

@@ -30,7 +30,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
@@ -40,17 +40,15 @@ from brainhops.io.common.zarr import (
     ZarrRaw,
     ZarrReaderWriter,
 )
-from brainhops.io.common.zarr._data import (
-    _ZarrProxy,
+from brainhops.io.common.zarr._internal_api import (
+    ZarrProxy,
+    absolute_location,
+    as_node,
+    opened_node,
     reads_store,
     store_location,
     write_array,
     write_into,
-)
-from brainhops.io.common.zarr._parsers import (
-    _as_node,
-    absolute_location,
-    opened_node,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
@@ -250,7 +248,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             )
         record = ZarrRaw.from_node(node)
         image = cls(
-            rawdata=_ZarrProxy(node, store_location(node)),
+            rawdata=ZarrProxy(node, store_location(node)),
             metadata=ZarrMetadata.from_raw(record),
         )
         if transformation is not None:
@@ -287,7 +285,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         """
         location = absolute_location(location)
         image = super().from_store(location, **kwargs)
-        image.rawdata = _ZarrProxy(image.rawdata.node, location)
+        image.rawdata = ZarrProxy(image.rawdata.node, location)
         return image
 
     # --- consolidate --------------------------------------------------
@@ -468,7 +466,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             If a transformation of the image is not the identity.
         """
         _no_options(kwargs)
-        wrapped = _as_node(node)
+        wrapped = as_node(node)
         if not isinstance(wrapped, ZarrArray):
             raise WriterError(
                 "A plain Zarr image is written into an array node, not a "
@@ -521,7 +519,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         UnrepresentableTransformationError
             If a transformation of the image is not the identity.
         """
-        node = _as_node(location)
+        node = as_node(location)
         if node is not None:
             if driver is not None:
                 kwargs["driver"] = driver

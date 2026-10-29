@@ -32,12 +32,12 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._constants import (
-    _BRICK_CODES,
-    _BRICK_DTYPES,
-    _BRICK_NAMES,
-    _READABLE_SUFFIXES,
+    BRICK_CODES,
+    BRICK_DTYPES,
+    BRICK_NAMES,
+    READABLE_SUFFIXES,
 )
-from ._files import _brik_suffix, afni_dataset_files
+from ._files import afni_dataset_files, brik_suffix
 from ._raw import AfniRaw
 
 # ----------------------------------------------------------------------
@@ -59,10 +59,10 @@ def brick_dtype(dtype: tx.Any) -> np.dtype:
     WriterError
         If AFNI cannot store the dtype.
     """
-    if isinstance(dtype, str) and dtype.lower() in _BRICK_NAMES:
-        return _BRICK_DTYPES[_BRICK_NAMES[dtype.lower()]]
+    if isinstance(dtype, str) and dtype.lower() in BRICK_NAMES:
+        return BRICK_DTYPES[BRICK_NAMES[dtype.lower()]]
     dtype = np.dtype(dtype).newbyteorder("=")
-    if dtype in _BRICK_CODES:
+    if dtype in BRICK_CODES:
         return dtype
     if dtype.kind == "b":
         return np.dtype(np.uint8)
@@ -81,7 +81,7 @@ def brick_dtype(dtype: tx.Any) -> np.dtype:
 
 def brick_code(dtype: tx.Any) -> int:
     """Return the `BRICK_TYPES` code of an AFNI dtype."""
-    return _BRICK_CODES[np.dtype(dtype).newbyteorder("=")]
+    return BRICK_CODES[np.dtype(dtype).newbyteorder("=")]
 
 
 def decode_bricks(header: AfniRaw, buffer: tx.Any) -> np.ndarray:
@@ -215,7 +215,7 @@ _CHUNK = 1 << 20
 """The number of bytes copied at a time from one BRIK to another."""
 
 
-class _BrikProxy(StridedProxy):
+class BrikProxy(StridedProxy):
     """A lazy array of the voxels that a BRIK file stores.
 
     The proxy holds the path of the BRIK and the record of the dataset,
@@ -240,7 +240,7 @@ class _BrikProxy(StridedProxy):
 
     A reader builds the lazy array of the dataset, scaled or not, from
     its record with
-    [`from_record`][brainhops.io.common.afni._data._BrikProxy.from_record].
+    [`from_record`][brainhops.io.common.afni._data.BrikProxy.from_record].
     """
 
     source: path.Path
@@ -274,7 +274,7 @@ class _BrikProxy(StridedProxy):
 
         Returns
         -------
-        _BrikProxy or ScaledProxy
+        BrikProxy or ScaledProxy
             The lazy array of the voxels.
         """
         nvals = record.nvals
@@ -415,7 +415,7 @@ def read_afni(
     return record, brik_proxy(record, brik, mmap)
 
 
-def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
+def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> BrikProxy:
     """Return the lazy array of a BRIK, after checking that it can be read.
 
     The checks need no voxel: the BRIK must exist, be compressed with
@@ -436,8 +436,8 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
             f"dataset without a BRIK (a 'warp-on-demand' dataset) cannot "
             f"be read."
         )
-    suffix = _brik_suffix(brik)
-    if suffix not in _READABLE_SUFFIXES:
+    suffix = brik_suffix(brik)
+    if suffix not in READABLE_SUFFIXES:
         raise ParserContentError(
             f"The AFNI BRIK {brik} is compressed with {suffix!r}, which "
             f"cannot be read here. Decompress it, or recompress it with "
@@ -450,7 +450,7 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> _BrikProxy:
                 f"The AFNI BRIK {brik} holds {size} bytes, but the header "
                 f"asks for {record.nbytes}."
             )
-    return _BrikProxy.from_record(brik, record, mmap)
+    return BrikProxy.from_record(brik, record, mmap)
 
 
 def _read_bricks(header: AfniRaw, brik: path.Path, mmap: bool) -> np.ndarray:
@@ -494,7 +494,7 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: path.Path) -> None:
     WriterError
         If the suffix asks for a compression that cannot be written.
     """
-    suffix = _brik_suffix(brik)
+    suffix = brik_suffix(brik)
     if suffix not in ("", ".gz", ".bz2"):
         raise WriterError(
             f"Cannot write an AFNI BRIK compressed with {suffix!r}: "
@@ -556,7 +556,7 @@ def stores_brik(raw: tx.Any) -> bool:
     return whole_brik(raw) is not None
 
 
-def whole_brik(raw: tx.Any) -> tx.Optional[_BrikProxy]:
+def whole_brik(raw: tx.Any) -> tx.Optional[BrikProxy]:
     """Return the lazy array of a whole BRIK that an array reads, or `None`.
 
     A writer copies the stored bytes of such a lazy array as they are.
@@ -573,12 +573,12 @@ def whole_brik(raw: tx.Any) -> tx.Optional[_BrikProxy]:
 
     Returns
     -------
-    _BrikProxy or None
+    BrikProxy or None
         The proxy of the stored voxels, or `None`.
     """
     scaled = isinstance(raw, ScaledProxy)
     proxy = raw.base if scaled else raw
-    if not isinstance(proxy, _BrikProxy):
+    if not isinstance(proxy, BrikProxy):
         return None
     if not scaled:
         return None if _is_scaled(proxy.record) else proxy
@@ -609,4 +609,4 @@ def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
         Whether `raw` is a lazy array that reads `brik`.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(raw, _BrikProxy) and is_same_file(raw.brik, brik)
+    return isinstance(raw, BrikProxy) and is_same_file(raw.brik, brik)

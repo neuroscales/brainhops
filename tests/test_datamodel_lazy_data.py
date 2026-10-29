@@ -13,7 +13,7 @@ from brainhops.datamodel.transformations import DisplacementField
 da = pytest.importorskip("dask.array")
 nb = pytest.importorskip("nibabel")
 
-from brainhops.io.common.nifti._data import _NiftiProxy  # noqa: E402
+from brainhops.io.common.nifti._data import NiftiProxy  # noqa: E402
 
 VOLUME = np.arange(4 * 5 * 6, dtype=np.float32).reshape(4, 5, 6)
 
@@ -22,13 +22,13 @@ VOLUME = np.arange(4 * 5 * 6, dtype=np.float32).reshape(4, 5, 6)
 def reads(monkeypatch: pytest.MonkeyPatch) -> list:
     # Count the reads of NIfTI proxies through the lazy arrays.
     log = []
-    original = _NiftiProxy._read
+    original = NiftiProxy._read
 
     def _read(self, index):  # noqa: ANN001, ANN202
         log.append(index)
         return original(self, index)
 
-    monkeypatch.setattr(_NiftiProxy, "_read", _read)
+    monkeypatch.setattr(NiftiProxy, "_read", _read)
     return log
 
 
@@ -49,7 +49,7 @@ def test_a_file_is_described_without_reading(tmp_path, reads) -> None:  # noqa: 
     # data, shape, dtype and geometry read nothing, and indexing data
     # reads only the selected box when it is converted.
     image = _nifti(tmp_path)
-    assert isinstance(image.data, _NiftiProxy)
+    assert isinstance(image.data, NiftiProxy)
     assert image.shape == VOLUME.shape
     assert image.dtype == VOLUME.dtype
     assert image.geometry is not None
@@ -63,7 +63,7 @@ def test_data_is_the_lazy_array_of_the_file(tmp_path, reads) -> None:  # noqa: A
     # data returns the lazy array of the file, which reads only what an
     # index selects, and reads again at each computation.
     image = _nifti(tmp_path)
-    assert isinstance(image.data, _NiftiProxy)
+    assert isinstance(image.data, NiftiProxy)
     assert image.data.shape == VOLUME.shape
     part = image.data[1:3, :, 0]
     assert reads == []
@@ -89,7 +89,7 @@ def test_a_computation_under_dask_reads_nothing(tmp_path, reads) -> None:  # noq
     # a computation on it gives a Dask array without reading the file.
     image = _nifti(tmp_path)
     with backend("dask"):
-        assert isinstance(image.data, _NiftiProxy)
+        assert isinstance(image.data, NiftiProxy)
         lazy = image.data + 1
     assert isinstance(lazy, da.Array)
     assert reads == []
@@ -114,7 +114,7 @@ def test_assigned_data_replaces_the_lazy_array(tmp_path) -> None:  # noqa: ANN00
     image.data = values
     assert image.data is values
     image.data = None
-    assert isinstance(image.data, _NiftiProxy)
+    assert isinstance(image.data, NiftiProxy)
 
 
 def test_a_swapped_layout_is_kept_lazy(tmp_path) -> None:  # noqa: ANN001
@@ -140,7 +140,7 @@ def test_an_itk_field_drops_its_singleton_axis_lazily(tmp_path) -> None:  # noqa
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         field = io.transformations.load(tmp_path / "field.nii.gz", hint="itk")
-    assert isinstance(field.data.root, _NiftiProxy)
+    assert isinstance(field.data.root, NiftiProxy)
     assert field.data.shape == (4, 5, 6, 3)
     np.testing.assert_array_equal(
         np.asarray(field.data), values[:, :, :, 0, :]

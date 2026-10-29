@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common._arrays import (
+from brainhops.io.common._internal_api import (
     ArrayReader,
     CsvArrayReader,
     Mat73ArrayReader,

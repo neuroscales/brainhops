@@ -16,15 +16,15 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._constants import _MINC2_ROOT, _SNIFF_SIZE
+from ._constants import MINC2_ROOT, SNIFF_SIZE
 from ._dimensions import (
     MincDimension,
-    _string,
     minc1_dimensions,
     minc2_dimensions,
+    string,
 )
 from ._netcdf import NetcdfHeader, read_netcdf_header
-from ._utils import _score, _sniff_minc1, _sniff_minc2, minc_version
+from ._utils import checked_score, minc_version, sniff_minc1, sniff_minc2
 
 _UNSUPPORTED = (
     "Irregularly spaced dimensions, dimensions without a variable (such "
@@ -127,7 +127,7 @@ class MincRaw(Raw, BinaryFileReader):
             If the stream is not a MINC file, or a file that nibabel
             cannot read the voxels of.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         with preserve_position(file):
             start = file.tell()
             version = minc_version(open_compressed(file).read(8))
@@ -173,7 +173,7 @@ class MincRaw(Raw, BinaryFileReader):
         SnifferContentError
             If the stream is not a MINC file and `error` is `True`.
         """
-        return _score(sniff_minc(file, (1, 2)), error)
+        return checked_score(sniff_minc(file, (1, 2)), error)
 
 
 def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:
@@ -198,19 +198,19 @@ def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:
     try:
         with preserve_position(file):
             start = file.tell()
-            head = open_compressed(file).read(_SNIFF_SIZE)
+            head = open_compressed(file).read(SNIFF_SIZE)
             version = minc_version(head)
             if version not in versions:
                 return Confidence.NO
             if version == 1:
-                return _sniff_minc1(head)
+                return sniff_minc1(head)
             file.seek(start)
-            return _sniff_minc2(file)
+            return sniff_minc2(file)
     except Exception:  # noqa: BLE001
         return Confidence.NO
 
 
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
+def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
     """Refuse the options of a reader that takes none.
 
     Raises
@@ -248,7 +248,7 @@ def _read_minc1(file: tx.BinaryIO) -> MincRaw:
         variable = header.variables.get(name)
         if variable is None:
             raise _unsupported(1, f"the dimension {name} has no variable")
-        spacing = _string(variable.attributes.get("spacing"))
+        spacing = string(variable.attributes.get("spacing"))
         if spacing != "regular__":
             raise _unsupported(1, f"the dimension {name} is not regular")
     for name in ("image-min", "image-max"):
@@ -276,7 +276,7 @@ def _minc1_datatype(header: NetcdfHeader, stored: np.dtype) -> np.dtype:
     if stored.kind != "i":
         return stored
     attributes = header.variables["image"].attributes
-    signtype = _string(attributes.get("signtype"))
+    signtype = string(attributes.get("signtype"))
     if signtype not in _SIGNED:
         raise _unsupported(1, "the integer image has no valid signtype")
     if _SIGNED[signtype]:
@@ -303,20 +303,20 @@ def _read_minc2(file: tx.BinaryIO) -> MincRaw:
         raise ParserContentError(f"Not a MINC2 file: {e}") from e
     with container:
         try:
-            root = container[_MINC2_ROOT]
+            root = container[MINC2_ROOT]
             group = root["image"]["0"]
             image = group["image"]
             dimensions = root["dimensions"]
         except KeyError as e:
             raise _unsupported(2, f"the file has no {e.args[0]}") from None
-        dimorder = _string(image.attrs.get("dimorder")) or ""
+        dimorder = string(image.attrs.get("dimorder")) or ""
         names = dimorder.split(",")[: len(image.shape)] if dimorder else []
         if len(names) != len(image.shape):
             raise _unsupported(2, "the image has no dimorder")
         for name in names:
             if name not in dimensions:
                 raise _unsupported(2, f"the dimension {name} has no variable")
-            spacing = _string(dimensions[name].attrs.get("spacing"))
+            spacing = string(dimensions[name].attrs.get("spacing"))
             if spacing == "irregular":
                 raise _unsupported(2, f"the dimension {name} is irregular")
         for name in ("image-min", "image-max"):

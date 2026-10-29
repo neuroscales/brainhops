@@ -13,7 +13,7 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
 )
-from brainhops.io.common._arrays import (
+from brainhops.io.common._internal_api import (
     ArrayContainerError,
     TxtArrayReader,
     read_text_array,

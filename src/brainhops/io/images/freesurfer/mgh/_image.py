@@ -37,7 +37,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     Arrangement,
     arrange_voxel_to_ras,
     declared_axes,
@@ -48,17 +48,21 @@ from brainhops.io.common.freesurfer import (
     FreesurferFormat,
     FreesurferTkrSystem,
 )
-from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
+from brainhops.io.common.freesurfer._internal_api import (
+    fs_geometry_from_vox2ras,
+)
 from brainhops.io.common.mgh import MghMetadata, MghRaw
-from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
-from brainhops.io.common.mgh._data import _MghProxy, reads_mgh
-from brainhops.io.common.mgh._metadata import _encode as _encode_vocabulary
-from brainhops.io.common.mgh._raw import (
-    _compressed_name,
+from brainhops.io.common.mgh._internal_api import (
+    MGH_AXES,
+    MRI_PARAMS,
+    MghProxy,
+    compressed_name,
     encode_mgh,
     read_mgh,
+    reads_mgh,
 )
-from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
+from brainhops.io.common.mgh._internal_api import encode as _encode_vocabulary
+from brainhops.io.common.nifti._internal_api import scale_spatial, unit_scale
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,
@@ -388,7 +392,7 @@ class MghImage(
             If `mgh` is neither an MGH image nor an MGH header.
         """
         if isinstance(mgh, _mgh.MGHImage):
-            raw, header = _MghProxy.from_nibabel(mgh.dataobj), mgh.header
+            raw, header = MghProxy.from_nibabel(mgh.dataobj), mgh.header
         elif isinstance(mgh, _mgh.MGHHeader):
             raw, header = None, mgh
         else:
@@ -628,7 +632,7 @@ class MghImage(
             Arguments of [`to_bytes`][], which are `compress` and the
             options of [`consolidate`][].
         """
-        compress = kwargs.pop("compress", _compressed_name(filename))
+        compress = kwargs.pop("compress", compressed_name(filename))
         if not _reads_file(self.rawdata, filename):
             atomic_write_bytes(
                 filename, self.to_bytes(compress=compress, **kwargs)
@@ -665,7 +669,7 @@ def _record_transformations(
 
 def _mgh_system(record: MghRaw) -> CoordinateSystem:
     """Return the voxel coordinate system of a record."""
-    axes = _MGH_AXES[: len(record.shape)]
+    axes = MGH_AXES[: len(record.shape)]
     return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
@@ -850,7 +854,7 @@ def _encoded(
     # overrides.
     template = _like_header(like)
     if template is not None:
-        for name in _MRI_PARAMS:
+        for name in MRI_PARAMS:
             header[name] = template[name]
         # The parameters given by keyword take precedence over the
         # template, so they are encoded again.
@@ -968,7 +972,7 @@ def _scanner_geometry(
         chosen, voxel_axes, "MGH", "scanner", **_MGH_POLICY
     )
     output = getattr(chosen, "output", None)
-    matrix = _scale_spatial(arranged.matrix, _unit_scale(output, "mm"))
+    matrix = scale_spatial(arranged.matrix, unit_scale(output, "mm"))
     return matrix, arranged.layout, _frame_tr(arranged)
 
 

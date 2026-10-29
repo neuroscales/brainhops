@@ -7,7 +7,7 @@ import typing_extensions as tx
 # internals
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.common._geometry import Arrangement, arrange_voxel_to_ras
+from brainhops.io.common._internal_api import Arrangement, arrange_voxel_to_ras
 
 # ----------------------------------------------------------------------
 #   GEOMETRY (writing)

@@ -100,13 +100,13 @@ from brainhops.io.common._geometry import (
     same_transformations,
 )
 from brainhops.io.common._pyramids import held_images, own_level, own_levels
-from brainhops.io.common.afni._data import _BrikProxy
+from brainhops.io.common.afni._data import BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.common.mrtrix._data import _MrtrixProxy
-from brainhops.io.common.nrrd._data import _NrrdProxy
+from brainhops.io.common.mrtrix._data import MrtrixProxy
+from brainhops.io.common.nrrd._data import NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.afni._views import (
     _image_to_disk as _afni_to_disk,
@@ -267,8 +267,8 @@ from brainhops.io.transformations.trakem2._xform import (
 try:
     import nibabel as nb
 
-    from brainhops.io.common.mgh._data import _MghProxy
-    from brainhops.io.common.nifti._data import _NiftiProxy
+    from brainhops.io.common.mgh._data import MghProxy
+    from brainhops.io.common.nifti._data import NiftiProxy
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
         _image_to_disk as _mgh_to_disk,
@@ -322,7 +322,7 @@ except ImportError:
 try:
     from scipy.io import netcdf_file
 
-    from brainhops.io.common.minc._data import _MincProxy
+    from brainhops.io.common.minc._data import MincProxy
     from brainhops.io.common.minc._netcdf import read_netcdf_header
     from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
     from brainhops.io.images.minc._views import (
@@ -337,7 +337,7 @@ except ImportError:
     minc_needs = None
 
 try:
-    from brainhops.io.common.zarr._data import _ZarrProxy
+    from brainhops.io.common.zarr._data import ZarrProxy
     from brainhops.io.images.zarr import ZarrImage, ZarrMetadata
     from brainhops.io.images.zarr._views import (
         _image_to_disk as _zarr_to_disk,
@@ -441,7 +441,7 @@ except ImportError:
 try:
     import h5py
 
-    from brainhops.io.common.bdv._hdf5 import _BdvProxy
+    from brainhops.io.common.bdv._hdf5 import BdvProxy
     from brainhops.io.common.hdf5 import H5ArrayProxy
     from brainhops.io.images.bdv import BdvImage
     from brainhops.io.images.bdv._views import (
@@ -2135,7 +2135,7 @@ if nb is not None:
     _NIFTI = Exemplar(
         metadata=NiftiMetadata,
         suffix=".nii",
-        proxies=(_NiftiProxy, ScaledProxy),
+        proxies=(NiftiProxy, ScaledProxy),
         to_model=_image_to_model,
         to_disk=_image_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -2998,7 +2998,7 @@ if nb is not None:
     EXEMPLARS[MghImage] = _NIFTI._replace(
         metadata=MghMetadata,
         suffix=".mgh",
-        proxies=(_MghProxy,),
+        proxies=(MghProxy,),
         to_model=_mgh_to_model,
         to_disk=_mgh_to_disk,
         edit_record=_mgh_edit_record,
@@ -3032,7 +3032,7 @@ def _afni_geometry(image: tx.Any) -> np.ndarray:
 _AFNI = Exemplar(
     metadata=AfniMetadata,
     suffix=".HEAD",
-    proxies=(_BrikProxy,),
+    proxies=(BrikProxy,),
     to_model=_afni_to_model,
     to_disk=_afni_to_disk,
     sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3136,7 +3136,7 @@ def _mrtrix_edit_record(record: tx.Any) -> tx.Any:
 _MRTRIX = Exemplar(
     metadata=MrtrixMetadata,
     suffix=".mif",
-    proxies=(_MrtrixProxy,),
+    proxies=(MrtrixProxy,),
     to_model=_mrtrix_to_model,
     to_disk=_mrtrix_to_disk,
     sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3251,7 +3251,7 @@ def _nrrd_edit_record(record: tx.Any) -> tx.Any:
 _NRRD = Exemplar(
     metadata=NrrdMetadata,
     suffix=".nrrd",
-    proxies=(_NrrdProxy,),
+    proxies=(NrrdProxy,),
     to_model=_nrrd_to_model,
     to_disk=_nrrd_to_disk,
     sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3335,7 +3335,7 @@ if minc_needs is not None:
     _MINC = Exemplar(
         metadata=MincMetadata,
         suffix=".mnc",
-        proxies=(_MincProxy,),
+        proxies=(MincProxy,),
         to_model=_minc_to_model,
         to_disk=_minc_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3382,7 +3382,7 @@ if ZarrImage is not None:
     EXEMPLARS[ZarrImage] = Exemplar(
         metadata=ZarrMetadata,
         suffix=".zarr",
-        proxies=(_ZarrProxy,),
+        proxies=(ZarrProxy,),
         to_model=_zarr_to_model,
         to_disk=_zarr_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -4179,7 +4179,7 @@ if h5py is not None:
     EXEMPLARS[BdvImage] = Exemplar(
         metadata=BdvMetadata,
         suffix=".xml",
-        proxies=(_BdvProxy,),
+        proxies=(BdvProxy,),
         to_model=_bdv_to_model,
         to_disk=_bdv_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -7111,7 +7111,7 @@ def test_an_untouched_nifti_keeps_its_extensions_and_description(
 def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
     source = _saved(NiftiImage, EXEMPLARS[NiftiImage], tmp_path)
     loaded = NiftiImage.load(source)
-    assert isinstance(loaded.rawdata, _NiftiProxy)
+    assert isinstance(loaded.rawdata, NiftiProxy)
     assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
     assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
     # Other metadata gives other transformations.

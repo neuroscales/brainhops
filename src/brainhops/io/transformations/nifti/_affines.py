@@ -19,16 +19,16 @@ from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserExistsError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
-from brainhops.io.common.nifti._geometry import _voxel_to_ras
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _NiftiObject,
-    _record_image,
-    _split_options,
-    _written_nifti,
+from brainhops.io.common.nifti._internal_api import (
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    header_of,
+    keep_given_fields,
+    record_image,
+    split_options,
+    voxel_to_ras,
+    written_nifti,
 )
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,
@@ -86,7 +86,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         return cls(metadata=NiftiMetadata.from_fileobj(file, **kwargs))
 
     @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
+    def from_nibabel(cls, nifti: NiftiObject, **kwargs) -> tx.Self:
         """Build an affine from the header of a nibabel image or header.
 
         Parameters
@@ -112,7 +112,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         return cls(metadata=metadata, **kwargs)
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as a bare affine, always `Confidence.WEAK`.
 
@@ -186,7 +186,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -248,7 +248,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         """
         consolidated = self.consolidate(like=like, **overrides)
         placeholder = np.zeros((1, 1, 1), dtype="float32")
-        return _written_nifti(placeholder, consolidated.metadata.raw)
+        return written_nifti(placeholder, consolidated.metadata.raw)
 
 
 def _read_only(matrix: np.ndarray) -> np.ndarray:
@@ -303,7 +303,7 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
         """
         if self.rawdata is not None:
             return _affine_to_model(self.rawdata)
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return None
         return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
@@ -346,7 +346,7 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
         # NIfTI stores the voxel-to-RAS map, which is the inverse of this one.
-        return _voxel_to_ras(self.inverse())
+        return voxel_to_ras(self.inverse())
 
 
 @register_format
@@ -374,7 +374,7 @@ class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
         """
         if self.rawdata is not None:
             return _affine_to_model(self.rawdata)
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return None
         return _read_only(header.get_best_affine()[:-1])
@@ -416,7 +416,7 @@ class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
         return super().inverse(compute=compute, **kwargs).to(RASToVoxel)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
-        return _voxel_to_ras(self)
+        return voxel_to_ras(self)
 
 
 def _affine_encoded(
@@ -432,13 +432,13 @@ def _affine_encoded(
     consolidated metadata, as `_NiftiAffine._consolidate` describes.
     """
     matrix = xform._voxel_to_ras_matrix()
-    scode, qcode = _xform_codes(_header(xform))
+    scode, qcode = _xform_codes(header_of(xform))
     data = np.zeros((1, 1, 1), dtype="float32")
     record = None if base is None else base.copy()
-    image = _record_image(data, record, matrix, overrides)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
+    image = record_image(data, record, matrix, overrides)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
     image.header.set_sform(matrix, code=scode)
     image.header.set_qform(matrix, code=qcode)
-    _apply_overrides(image, overrides)
+    apply_overrides(image, overrides)
     return image

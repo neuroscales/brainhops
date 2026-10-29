@@ -31,11 +31,11 @@ from brainhops.io.base.parsers import (
     SnifferExistsError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
+    held_images,
     held_transformations,
     same_transformations,
 )
-from brainhops.io.common._pyramids import held_images
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,

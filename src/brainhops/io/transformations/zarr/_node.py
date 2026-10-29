@@ -19,7 +19,7 @@ from brainhops._core._internal_api import to_backend
 from brainhops.datamodel.axes import Axis
 
 # io
-from brainhops.io.common.zarr._data import _ZarrProxy, store_location
+from brainhops.io.common.zarr._internal_api import ZarrProxy, store_location
 
 # this format
 from ._axes import _to_axis
@@ -96,4 +96,4 @@ def read_array(field_node: tx.Any) -> tx.Any:
     `"dask"`, the result is a Dask array with the chunks of the store,
     which reads nothing until it is computed.
     """
-    return to_backend(_ZarrProxy(field_node, store_location(field_node)))
+    return to_backend(ZarrProxy(field_node, store_location(field_node)))

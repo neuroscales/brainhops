@@ -24,19 +24,20 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     disabled,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
-from brainhops.io.common.bdv._geometry import (
+from brainhops.io.common.bdv._internal_api import (
     global_system,
+    level_count,
     level_matrix,
     physical_system,
+    read_dataset,
     registration_matrix,
     voxel_system,
 )
-from brainhops.io.common.bdv._hdf5 import level_count, read_dataset
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,

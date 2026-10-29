@@ -25,7 +25,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
 )
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
-from brainhops.io.common.bdv._geometry import global_system, voxel_system
+from brainhops.io.common.bdv._internal_api import global_system, voxel_system
 from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,

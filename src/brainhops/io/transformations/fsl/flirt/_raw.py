@@ -18,7 +18,10 @@ from brainhops.io.base.parsers import (
 )
 
 # io
-from brainhops.io.common._arrays import ArrayContainerError, read_text_rows
+from brainhops.io.common._internal_api import (
+    ArrayContainerError,
+    read_text_rows,
+)
 
 _Matrix = tx.Tuple[tx.Tuple[float, ...], ...]
 

@@ -40,7 +40,7 @@ from brainhops.io.transformations.bdv import BdvViewRegistration
 
 h5py = pytest.importorskip("h5py")
 
-from brainhops.io.common.bdv._hdf5 import _BdvProxy  # noqa: E402
+from brainhops.io.common.bdv._hdf5 import BdvProxy  # noqa: E402
 from brainhops.io.images.bdv import (  # noqa: E402
     BdvImage,
     BdvMultiScaleImage,
@@ -456,7 +456,7 @@ def test_a_view_is_read_as_a_lazy_pyramid(dataset) -> None:  # noqa: ANN001
     assert pyramid.transformations == []
     assert [level.level for level in pyramid.images] == [0, 1]
     level = pyramid.images[1]
-    assert isinstance(level.rawdata, _BdvProxy)
+    assert isinstance(level.rawdata, BdvProxy)
     assert level.shape == (4, 3, 4)
     assert "_cache_data" not in vars(level)
     voxels = _voxels()

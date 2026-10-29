@@ -18,7 +18,7 @@ from brainhops.io.base.parsers import (
     disabled,
 )
 from brainhops.io.common.bdv import BdvMetadata
-from brainhops.io.common.bdv._hdf5 import level_count, read_dataset
+from brainhops.io.common.bdv._internal_api import level_count, read_dataset
 from brainhops.io.images.base import ImageFormat
 
 # this format

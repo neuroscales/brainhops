@@ -28,11 +28,11 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._data import _NiftiProxy
-from ._files import _image_to_stream
-from ._header import _NiftiObject, _written_nifti
+from ._data import NiftiProxy
+from ._files import image_to_stream
+from ._header import NiftiObject, written_nifti
 from ._metadata import NiftiMetadata
-from ._raw import NiftiRaw, _sniffed_header
+from ._raw import NiftiRaw, sniffed_header
 
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
@@ -103,13 +103,13 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         SnifferContentError
             If the stream holds no NIfTI header and `error` is `True`.
         """
-        header = _sniffed_header(file, kwargs.get("version"))
+        header = sniffed_header(file, kwargs.get("version"))
         if header is None:
             return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
         return cls.score_header(header)
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """Return how well a valid NIfTI header matches this class.
 
         The header has already passed the check of its size and magic
@@ -177,9 +177,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
             return cls.from_bytes(filename.read_bytes(), **kwargs)
         with filename.open("rb") as stream:
             record = NiftiRaw.from_fileobj(stream)
-        proxy = _NiftiProxy.from_header(
-            str(filename), record.header, mmap=mmap
-        )
+        proxy = NiftiProxy.from_header(str(filename), record.header, mmap=mmap)
         return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(record))
 
     @classmethod
@@ -217,11 +215,11 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         start = file.tell()
         with preserve_position(file):
             record = NiftiRaw.from_fileobj(file)
-        proxy = _NiftiProxy.from_header(file, record.header, start, mmap=mmap)
+        proxy = NiftiProxy.from_header(file, record.header, start, mmap=mmap)
         return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(record))
 
     @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
+    def from_nibabel(cls, nifti: NiftiObject, **kwargs) -> tx.Self:
         """Build an object from a nibabel image or header.
 
         The array of an image becomes `rawdata`, and a copy of its header
@@ -249,7 +247,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
             If `nifti` is neither a NIfTI image nor a NIfTI header.
         """
         if isinstance(nifti, nb.Nifti1Image):
-            raw = _NiftiProxy.from_nibabel(nifti.dataobj)
+            raw = NiftiProxy.from_nibabel(nifti.dataobj)
             header = nifti.header
         elif isinstance(nifti, nb.Nifti1Header):
             raw, header = None, nifti
@@ -291,7 +289,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
                 f"This {type(self).__name__} has no data, so there is "
                 f"nothing to write."
             )
-        return _written_nifti(written.rawdata, written.metadata.raw)
+        return written_nifti(written.rawdata, written.metadata.raw)
 
     @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
@@ -319,7 +317,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         """
         raw = self.rawdata
         root = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(root, _NiftiProxy) and is_same_file(
+        reading = isinstance(root, NiftiProxy) and is_same_file(
             root.source, filename
         )
         if not reading:
@@ -351,7 +349,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         WriterError
             If the object cannot be encoded.
         """
-        _image_to_stream(self.to_nibabel(**kwargs), file)
+        image_to_stream(self.to_nibabel(**kwargs), file)
 
     @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:

@@ -37,22 +37,21 @@ from brainhops.io.base.parsers import (
     WriterError,
     disabled,
 )
-from brainhops.io.common._geometry import ras_conversion
+from brainhops.io.common._internal_api import ras_conversion
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
-from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.afni._data import (
+from brainhops.io.common.afni._internal_api import (
+    DICOM_TO_RAS,
+    afni_view,
+    afni_world,
+    afni_written_files,
     brik_proxy,
+    declined,
+    no_options,
     read_afni,
     reads_brik,
+    sniffed_raw,
+    sniffed_raw_at,
     write_brik,
-)
-from brainhops.io.common.afni._files import afni_written_files
-from brainhops.io.common.afni._geometry import afni_view, afni_world
-from brainhops.io.common.afni._raw import (
-    _declined,
-    _no_options,
-    _sniffed_raw,
-    _sniffed_raw_at,
 )
 from brainhops.io.images.afni import AfniImage
 from brainhops.io.metadata._internal_api import requested_fields
@@ -209,9 +208,9 @@ class AfniBrikWarp(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -240,9 +239,9 @@ class AfniBrikWarp(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw_at(filename)
+        raw, failure = sniffed_raw_at(filename)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -278,7 +277,7 @@ class AfniBrikWarp(
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
-        _no_options(kwargs)
+        no_options(kwargs)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
 

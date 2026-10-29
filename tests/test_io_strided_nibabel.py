@@ -17,10 +17,10 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 from brainhops._core.proxy import ScaledProxy  # noqa: E402
-from brainhops.io.common.mgh._data import _MghProxy  # noqa: E402
+from brainhops.io.common.mgh._data import MghProxy  # noqa: E402
 from brainhops.io.common.mgh._raw import read_mgh  # noqa: E402
 from brainhops.io.common.nifti._data import (  # noqa: E402
-    _NiftiProxy,
+    NiftiProxy,
     whole_file,
 )
 from brainhops.io.images.freesurfer.mgh import MghImage  # noqa: E402
@@ -165,7 +165,7 @@ def test_a_nifti_file_reads_what_nibabel_reads(
         np.testing.assert_array_equal(np.asarray(proxy), expected)
     scaled = (reference.dataobj.slope, reference.dataobj.inter) != (1, 0)
     assert isinstance(proxy, ScaledProxy) == scaled
-    assert isinstance(proxy.root, _NiftiProxy)
+    assert isinstance(proxy.root, NiftiProxy)
     assert whole_file(proxy) is proxy.root
 
 
@@ -223,7 +223,7 @@ def test_the_image_file_of_a_pair_is_read(tmp_path, suffix: str) -> None:  # noq
     with opener(tmp_path / f"pair{suffix}", "rb") as f:
         header = nb.Nifti1Pair.header_class.from_fileobj(f)
     data = tmp_path / ("pair.img.gz" if compressed else "pair.img")
-    proxy = _NiftiProxy.from_header(data, header)
+    proxy = NiftiProxy.from_header(data, header)
     assert isinstance(proxy, ScaledProxy)
     _check(proxy, reference.dataobj)
 
@@ -354,7 +354,7 @@ def test_an_mgh_file_reads_what_nibabel_reads(
     nb.save(nb.MGHImage(_values(dtype, shape), np.eye(4)), str(path))
     reference = nb.load(str(path))
     _, proxy = read_mgh(path)
-    assert isinstance(proxy, _MghProxy)
+    assert isinstance(proxy, MghProxy)
     assert proxy.dtype == reference.header.get_data_dtype()
     _check(proxy, reference.dataobj)
 
@@ -391,7 +391,7 @@ def test_an_mgh_nibabel_proxy_is_replaced(tmp_path) -> None:  # noqa: ANN001
     nb.save(nb.MGHImage(_values("i2"), np.eye(4)), str(path))
     reference = nb.load(str(path))
     image = MghImage.from_nibabel(reference)
-    assert isinstance(image.rawdata, _MghProxy)
+    assert isinstance(image.rawdata, MghProxy)
     _check(image.rawdata, reference.dataobj)
 
 

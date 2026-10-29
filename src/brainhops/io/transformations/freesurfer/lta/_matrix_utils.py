@@ -7,7 +7,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 
 # internals
-from brainhops.io.common.freesurfer._geometry import (
+from brainhops.io.common.freesurfer._internal_api import (
     code2orient,
     fs_geometry_from_vox2ras,
     fs_phys2ras,
@@ -15,8 +15,8 @@ from brainhops.io.common.freesurfer._geometry import (
     fs_vox2tkr,
     mat2code,
     mat2orient,
+    scanner_vox2ras,
 )
-from brainhops.io.common.freesurfer._tkr import scanner_vox2ras
 
 from ._enums import LtaType, LtaValidity
 from ._raw import LtaRaw

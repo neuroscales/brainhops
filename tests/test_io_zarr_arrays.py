@@ -27,7 +27,7 @@ from abczarr.errors import UnsupportedZarrOperation  # noqa: E402
 
 from brainhops.io.common.zarr import ZarrMetadata, ZarrRaw  # noqa: E402
 from brainhops.io.common.zarr import _data as zarr_data  # noqa: E402
-from brainhops.io.common.zarr._data import _ZarrProxy  # noqa: E402
+from brainhops.io.common.zarr._data import ZarrProxy  # noqa: E402
 from brainhops.io.images.zarr import ZarrImage  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
@@ -210,7 +210,7 @@ def test_a_save_over_its_own_store_reads_the_new_store(tmp_path: Path) -> None:
     image = ZarrImage.load(path)
     image.data = DATA * 2
     image.save(path, chunks=(4, 4, 4))
-    assert isinstance(image.rawdata, _ZarrProxy)
+    assert isinstance(image.rawdata, ZarrProxy)
     assert image._data is None
     assert image.metadata.raw.chunks == (4, 4, 4)
     assert image.metadata.raw == ZarrImage.load(path).metadata.raw
@@ -277,7 +277,7 @@ class _Refusing:
 
 
 def test_an_empty_selection_reads_nothing() -> None:
-    proxy = _ZarrProxy(_Refusing(), "nowhere")
+    proxy = ZarrProxy(_Refusing(), "nowhere")
     assert np.asarray(proxy[0:0]).shape == (0, 4, 4)
     assert np.asarray(proxy[..., 2:2]).shape == (4, 4, 0)
     with pytest.raises(AssertionError):
@@ -288,7 +288,7 @@ def test_a_permuted_proxy_reads_the_transposed_array(tmp_path: Path) -> None:
     data = np.arange(2 * 3 * 4).reshape(2, 3, 4)
     node = abczarr.create(str(tmp_path / "p.zarr"), data=data)
     perm = (2, 0, 1)
-    proxy = _ZarrProxy(node, str(tmp_path / "p.zarr"), perm)
+    proxy = ZarrProxy(node, str(tmp_path / "p.zarr"), perm)
     expected = np.transpose(data, perm)
     assert proxy.shape == expected.shape
     assert np.array_equal(np.asarray(proxy), expected)

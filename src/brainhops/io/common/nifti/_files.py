@@ -18,7 +18,7 @@ from brainhops._core._internal_api import open_compressed
 # `s3://bucket/x.nii` for the name of a local file. The voxels are not
 # read through `nibabel` (see `_data.py`).
 
-_NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
+NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
 
 
 def _tell(fileobj: tx.IO) -> tx.Optional[int]:
@@ -31,18 +31,18 @@ def _tell(fileobj: tx.IO) -> tx.Optional[int]:
 
 # The NIfTI-1 magic sits near the end of the header, and the NIfTI-2 magic
 # right after `sizeof_hdr`, followed by a line-ending check.
-_NIFTI_HEADER_SIZES = {1: 348, 2: 540}
+NIFTI_HEADER_SIZES = {1: 348, 2: 540}
 _NIFTI_MAGICS = {
     1: (344, (b"n+1\0", b"ni1\0")),
     2: (4, (b"n+2\0\r\n\032\n", b"ni2\0\r\n\032\n")),
 }
 
 
-def _has_nifti_magic(head: bytes, version: int) -> bool:
+def has_nifti_magic(head: bytes, version: int) -> bool:
     """Return whether a decompressed header starts with the header size and
     magic of a NIfTI version.
     """
-    size = _NIFTI_HEADER_SIZES[version]
+    size = NIFTI_HEADER_SIZES[version]
     if len(head) < size:
         return False
     sizes = {int.from_bytes(head[:4], order) for order in ("little", "big")}
@@ -52,7 +52,7 @@ def _has_nifti_magic(head: bytes, version: int) -> bool:
     return any(head[offset : offset + len(m)] == m for m in magics)
 
 
-def _nifti_version(fileobj: tx.BinaryIO) -> int:
+def nifti_version(fileobj: tx.BinaryIO) -> int:
     """Return the NIfTI version of a possibly compressed stream.
 
     The stream position is preserved. A stream that cannot seek is taken to be
@@ -68,7 +68,7 @@ def _nifti_version(fileobj: tx.BinaryIO) -> int:
     return 2 if 540 in sizes else 1
 
 
-def _image_to_stream(
+def image_to_stream(
     image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
 ) -> None:
     """Write a NIfTI image to an uncompressed stream.

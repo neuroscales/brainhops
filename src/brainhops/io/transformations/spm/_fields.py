@@ -16,15 +16,15 @@ from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _keep_given_fields,
-    _NiftiObject,
-    _record_image,
-    _set_coordinates_intent,
-    _split_options,
-    _stored_parts,
+from brainhops.io.common.nifti._internal_api import (
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    keep_given_fields,
+    record_image,
+    set_coordinates_intent,
+    split_options,
+    stored_parts,
 )
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,
@@ -80,7 +80,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as an SPM field.
 
@@ -258,7 +258,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
             If the field has no coordinates, or if its array holds a
             field for each of several volumes.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -280,7 +280,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _spm_encoded(self, like, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
@@ -328,7 +328,7 @@ def _spm_encoded(
     if stored is not None and field._transformations is None:
         _check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
-        image = _record_image(stored, record, overrides=overrides)
+        image = record_image(stored, record, overrides=overrides)
     else:
         what = "An SPM deformation field"
         # The inverse of a `NiftiRASToVoxel` read from a header is that
@@ -342,9 +342,9 @@ def _spm_encoded(
             )
         coordinates = _field_to_disk(coordinates)
         record = None if base is None else base.copy()
-        image = _record_image(coordinates, record, vox2ras, overrides)
-    _set_coordinates_intent(image.header)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+        image = record_image(coordinates, record, vox2ras, overrides)
+    set_coordinates_intent(image.header)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     return image

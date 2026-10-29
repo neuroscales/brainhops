@@ -32,7 +32,7 @@ import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import converter, smart_replace
-from brainhops.io.common.bdv._geometry import global_system, voxel_system
+from brainhops.io.common.bdv._internal_api import global_system, voxel_system
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,
     affine_between,

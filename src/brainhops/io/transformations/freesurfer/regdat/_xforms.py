@@ -30,7 +30,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
 )
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.common.freesurfer._tkr import (
+from brainhops.io.common.freesurfer._internal_api import (
     scanner_vox2ras,
     tkr_to_scanner,
 )

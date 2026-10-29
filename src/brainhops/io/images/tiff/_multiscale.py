@@ -32,11 +32,13 @@ from brainhops.io.base.parsers import (
     Confidence,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
+    held_images,
     held_transformations,
+    own_level,
+    own_levels,
     same_transformations,
 )
-from brainhops.io.common._pyramids import held_images, own_level, own_levels
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,

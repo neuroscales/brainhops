@@ -19,7 +19,7 @@ from brainhops._core._internal_api import (
 )
 
 
-class _MghProxy(StridedProxy):
+class MghProxy(StridedProxy):
     """A lazy array of the voxels of an MGH or MGZ file.
 
     The proxy reads the voxels as the file stores them. A read gets only
@@ -41,7 +41,7 @@ class _MghProxy(StridedProxy):
         header: _mgh.MGHHeader,
         start: int = 0,
         mmap: bool = True,
-    ) -> "_MghProxy":
+    ) -> "MghProxy":
         """Return the lazy array of the voxels that an MGH header describes.
 
         The shape, the stored type and the offset of the voxels are read
@@ -61,7 +61,7 @@ class _MghProxy(StridedProxy):
 
         Returns
         -------
-        _MghProxy
+        MghProxy
             The lazy array of the voxels.
         """
         return cls.contiguous(
@@ -125,4 +125,4 @@ def reads_mgh(raw: tx.Any, file: tx.Any) -> bool:
         Whether `raw` reads `file`.
     """
     root = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(root, _MghProxy) and is_same_file(root.source, file)
+    return isinstance(root, MghProxy) and is_same_file(root.source, file)

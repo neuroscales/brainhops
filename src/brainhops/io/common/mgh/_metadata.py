@@ -129,7 +129,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         """
         return consolidated(
             self,
-            _encode,
+            encode,
             MghRaw,
             inplace=inplace,
             fields=fields,
@@ -224,7 +224,7 @@ def _decode(raw: tx.Optional[MghRaw]) -> tx.Dict[str, tx.Any]:
     return out
 
 
-def _encode(
+def encode(
     raw: MghRaw, changed: tx.Dict[str, tx.Any], report: ConversionReport
 ) -> MghRaw:
     """Write the changed fields into a record, which is already a copy.

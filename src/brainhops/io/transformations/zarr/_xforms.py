@@ -47,17 +47,15 @@ from brainhops.errors import ParserTypeError, WriterError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike
-from brainhops.io.common.zarr._data import (
-    _ZarrProxy,
+from brainhops.io.common.zarr._internal_api import (
+    ZarrNodeReaderWriter,
+    ZarrProxy,
+    absolute_location,
+    as_node,
     reads_inside,
     store_chunks,
     store_location,
     write_into,
-)
-from brainhops.io.common.zarr._parsers import (
-    _as_node,
-    _ZarrNodeReaderWriter,
-    absolute_location,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -74,7 +72,7 @@ if tx.TYPE_CHECKING:
 
 @register_format
 class OmeZarrField(
-    _ZarrNodeReaderWriter, TransformationFormat, MultiscaleField
+    ZarrNodeReaderWriter, TransformationFormat, MultiscaleField
 ):
     """A coordinate or displacement field stored as OME-Zarr.
 
@@ -192,7 +190,7 @@ class OmeZarrField(
         held as a lazy array of its Zarr array, so that nothing but the
         metadata is read here, and the metadata is kept as read.
         """
-        node = _as_node(node)
+        node = as_node(node)
         if node is None:
             raise ParserTypeError(
                 "from_node expects an opened Zarr array or group; pass a "
@@ -287,7 +285,7 @@ class OmeZarrField(
         """
         # Each level is written at the dataset path named by the metadata, and
         # the metadata is re-emitted unchanged.
-        node = _as_node(node)
+        node = as_node(node)
         if not isinstance(node, abczarr.ZarrGroup):
             raise WriterError(
                 "An OME-Zarr field is written into a group, not a plain array."
@@ -356,7 +354,7 @@ class OmeZarrField(
             cannot be replaced without the level reading a store half
             written.
         """
-        node = _as_node(location)
+        node = as_node(location)
         if node is not None:
             self.to_node(node, **kwargs)
             return
@@ -462,7 +460,7 @@ def _level_proxy(array: tx.Any) -> tx.Any:
     # reads only the chunks that a selection needs. A node that is not a
     # Zarr array, such as an array given in memory, is kept as it is.
     if isinstance(array, abczarr.ZarrArray):
-        return _ZarrProxy(array, store_location(array))
+        return ZarrProxy(array, store_location(array))
     return array
 
 

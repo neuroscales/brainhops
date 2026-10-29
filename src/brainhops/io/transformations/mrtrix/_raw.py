@@ -18,7 +18,10 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
 )
-from brainhops.io.common._arrays import ArrayContainerError, read_text_array
+from brainhops.io.common._internal_api import (
+    ArrayContainerError,
+    read_text_array,
+)
 
 _NDIM = 3
 """The number of spatial dimensions of an MRtrix linear transform."""

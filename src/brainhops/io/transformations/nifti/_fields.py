@@ -26,26 +26,24 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
-from brainhops.io.common.nifti._constants import (
-    _NIFTI_INTENT_DISPVECT,
-    _NIFTI_INTENT_NAME_ITK_COORDINATES,
-    _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
-    _NIFTI_INTENT_NAME_NIFTYREG,
-    _NIFTI_INTENT_VECTOR,
-)
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _nifti_intent,
-    _nifti_intent_name,
-    _nifti_shape,
-    _NiftiObject,
-    _record_image,
-    _set_coordinates_intent,
-    _split_options,
-    _stored_parts,
+from brainhops.io.common.nifti._internal_api import (
+    NIFTI_INTENT_DISPVECT,
+    NIFTI_INTENT_NAME_ITK_COORDINATES,
+    NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
+    NIFTI_INTENT_NAME_NIFTYREG,
+    NIFTI_INTENT_VECTOR,
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    header_of,
+    keep_given_fields,
+    nifti_intent,
+    nifti_intent_name,
+    nifti_shape,
+    record_image,
+    set_coordinates_intent,
+    split_options,
+    stored_parts,
 )
 from brainhops.io.metadata._internal_api import (
     metadata_to_write,
@@ -90,7 +88,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
     """
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as a field of RAS coordinates.
 
@@ -105,23 +103,23 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         [`brainhops.io.transformations.itk.nifti`][]). Any other file whose
         trailing axis has length 3 scores `Confidence.MAYBE`.
         """
-        intent = _nifti_intent(header)
-        if _nifti_intent_name(header) in (
-            _NIFTI_INTENT_NAME_NIFTYREG,
-            _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
-            _NIFTI_INTENT_NAME_ITK_COORDINATES,
+        intent = nifti_intent(header)
+        if nifti_intent_name(header) in (
+            NIFTI_INTENT_NAME_NIFTYREG,
+            NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
+            NIFTI_INTENT_NAME_ITK_COORDINATES,
         ):
             # Only the NiftyReg readers decode what intent_p1 says the file
             # holds, and only the ITK readers read a field that brainhops
             # wrote as one.
             return Confidence.NO
-        if intent == _NIFTI_INTENT_VECTOR:
+        if intent == NIFTI_INTENT_VECTOR:
             return Confidence.CERTAIN
-        if intent == _NIFTI_INTENT_DISPVECT:
+        if intent == NIFTI_INTENT_DISPVECT:
             return Confidence.NO
         # The intent is often unset, so fall back on the shape. A plain image
         # scores zero rather than compete with the affine readers.
-        shape = _nifti_shape(header)
+        shape = nifti_shape(header)
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.MAYBE
         return Confidence.NO
@@ -209,7 +207,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             If the field has no coordinates, or if its array holds a
             field for each of several volumes.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -231,7 +229,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _coordinates_encoded(self, like, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
@@ -416,7 +414,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         return _with_encoding(obj, encoding)
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as a field of RAS displacements.
 
@@ -424,7 +422,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         Other images may hold coordinates and are left to
         [`NiftiRASCoordinateField`][].
         """
-        if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
+        if nifti_intent(header) == NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
         return Confidence.NO
 
@@ -452,7 +450,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         The affine is the best affine of the header, or the identity for a
         field without metadata.
         """
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return np.eye(4)
         return np.asarray(header.get_best_affine(), dtype=np.float64)
@@ -590,7 +588,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
             If the stored array holds a field for each of several
             volumes.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -614,7 +612,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _displacement_encoded(self, like, log, overrides, base, fields)
         )
         metadata = _consolidated_metadata(self, record)
@@ -719,11 +717,11 @@ def _coordinates_encoded(
         )
     _check_single_field(raw, WriterError)
     record = None if base is None else base.copy()
-    image = _record_image(raw, record, overrides=overrides)
-    _set_coordinates_intent(image.header)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+    image = record_image(raw, record, overrides=overrides)
+    set_coordinates_intent(image.header)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     return image
 
 
@@ -755,18 +753,18 @@ def _displacement_encoded(
     ):
         _check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
-        image = _record_image(stored, record, overrides=overrides)
-        if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:
-            image.header.set_intent(_NIFTI_INTENT_DISPVECT)
+        image = record_image(stored, record, overrides=overrides)
+        if nifti_intent(image.header) != NIFTI_INTENT_DISPVECT:
+            image.header.set_intent(NIFTI_INTENT_DISPVECT)
     else:
         vox2ras, vectors = split_ras_displacement_chain(
             field.transformations, what, ndim=_NDIM, log=log
         )
         vectors = _field_to_disk(vectors)
         record = None if base is None else base.copy()
-        image = _record_image(vectors, record, vox2ras, overrides)
-        image.header.set_intent(_NIFTI_INTENT_DISPVECT)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+        image = record_image(vectors, record, vox2ras, overrides)
+        image.header.set_intent(NIFTI_INTENT_DISPVECT)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     return image

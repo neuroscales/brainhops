@@ -4,7 +4,7 @@ from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.common.nifti._header import _header
+from brainhops.io.common.nifti._internal_api import header_of
 
 from ._systems import FslCoordinateSystem
 
@@ -51,7 +51,7 @@ def _best_affine(obj: tx.Any) -> np.ndarray:
     """Return the voxel-to-world (RAS) affine of a nibabel image or header."""
     if hasattr(obj, "get_best_affine"):
         return np.asarray(obj.get_best_affine(), dtype=np.float64)
-    header = _header(obj)
+    header = header_of(obj)
     if header is not None:
         return _best_affine(header)
     if getattr(obj, "affine", None) is not None:
@@ -68,7 +68,7 @@ def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
         return tuple(int(s) for s in obj.get_data_shape())
     if getattr(obj, "shape", None) is not None:
         return tuple(int(s) for s in obj.shape)
-    header = _header(obj)
+    header = header_of(obj)
     if header is not None:
         return _shape(header)
     raise ValueError("Cannot determine the shape of the image.")
@@ -82,7 +82,7 @@ def _pixdim(obj: tx.Any) -> np.ndarray:
     """
     header = obj
     if not hasattr(header, "get_zooms"):
-        header = _header(obj)
+        header = header_of(obj)
     if hasattr(header, "get_zooms"):
         zooms = np.asarray(header.get_zooms(), dtype=np.float64)
     else:

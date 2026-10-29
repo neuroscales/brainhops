@@ -21,10 +21,10 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._constants import (
-    _AXES,
-    _HDF5_SIGNATURE,
-    _MINC2_ROOT,
-    _NETCDF_MAGICS,
+    AXES,
+    HDF5_SIGNATURE,
+    MINC2_ROOT,
+    NETCDF_MAGICS,
     SPATIAL_DIMENSIONS,
 )
 
@@ -40,9 +40,9 @@ def minc_version(head: bytes) -> tx.Optional[int]:
     a MINC2 file also needs the `/minc-2.0` group.
     """
     head = bytes(head[:8])
-    if head[:4] in _NETCDF_MAGICS:
+    if head[:4] in NETCDF_MAGICS:
         return 1
-    if head == _HDF5_SIGNATURE:
+    if head == HDF5_SIGNATURE:
         return 2
     return None
 
@@ -52,13 +52,15 @@ def minc_version(head: bytes) -> tx.Optional[int]:
 # ----------------------------------------------------------------------
 
 
-def _axis(name: str) -> Axis:
+def voxel_axis(name: str) -> Axis:
     """Return the voxel axis that a MINC dimension stands for."""
-    axis_name, axis_type = _AXES.get(name, (name, None))
+    axis_name, axis_type = AXES.get(name, (name, None))
     return Axis(axis_name, axis_type, unit="index")
 
 
-def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
+def checked_score(
+    score: float, error: tx.Union[bool, tx.Type[Exception]]
+) -> float:
     """Return a score, or raise if it is zero and the caller asks to."""
     if score or not error:
         return score
@@ -67,7 +69,7 @@ def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
     raise error("Content is not a MINC file of this version.")
 
 
-def _sniff_minc1(head: bytes) -> float:
+def sniff_minc1(head: bytes) -> float:
     """Score the leading bytes of a NetCDF file as MINC1."""
     named = any(name.encode() in head for name in SPATIAL_DIMENSIONS)
     if named and b"image" in head:
@@ -75,19 +77,19 @@ def _sniff_minc1(head: bytes) -> float:
     return Confidence.WEAK
 
 
-def _sniff_minc2(file: tx.Union[str, tx.IO]) -> float:
+def sniff_minc2(file: tx.Union[str, tx.IO]) -> float:
     """Score an HDF5 file, given by path or stream, as MINC2."""
     import h5py
 
     try:
         with h5py.File(file, "r") as f:
-            found = isinstance(f.get(_MINC2_ROOT), h5py.Group)
+            found = isinstance(f.get(MINC2_ROOT), h5py.Group)
     except Exception:
         return Confidence.NO
     return Confidence.CERTAIN if found else Confidence.NO
 
 
-def _read_minc(
+def apply_to_minc(
     source: _Source,
     version: int,
     read: tx.Callable[[tx.Any, _minc1.Minc1File, int], tx.Any],
@@ -139,7 +141,7 @@ def _read_minc(
         container.close()
 
 
-def _read_voxels(
+def read_minc_voxels(
     container: tx.Any,
     mfile: _minc1.Minc1File,
     version: int,
