@@ -22,6 +22,7 @@ from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
+from brainhops.datamodel.systems import RASmm
 from brainhops.errors import (
     IncompatibleSystemError,
 )
@@ -37,11 +38,8 @@ from brainhops.io.metadata._internal_api import (
     requested_fields,
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
-from brainhops.io.transformations.base.affines import (
-    _RAS,
-    RASToRAS,
-    _check_endpoint,
-)
+from brainhops.io.transformations.base._internal_api import check_endpoint
+from brainhops.io.transformations.base.affines import RASToRAS
 
 # this format
 from ._formats import MrtrixTransformationFormat
@@ -428,7 +426,7 @@ def _check_ras(xform: MrtrixLinearTransform) -> None:
     """
     for side in ("input", "output"):
         try:
-            _check_endpoint(xform, side, _RAS)
+            check_endpoint(xform, side, RASmm())
         except IncompatibleSystemError as error:
             raise UnrepresentableTransformationError(
                 f"An MRtrix linear transform maps scanner RAS to scanner "

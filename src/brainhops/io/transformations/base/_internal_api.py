@@ -14,6 +14,8 @@ __all__ = [
     "apply_affine",
     "cardinal_parts",
     "chain_leaves",
+    "check_endpoint",
+    "compatible",
     "control_grid",
     "coordinate_parts",
     "displacement_parts",
@@ -68,5 +70,6 @@ from ._conversions import (
     world_pieces,
 )
 from ._converters import relabel, relabelling, relabels
+from ._endpoints import check_endpoint, compatible
 from ._records import matrix_to_disk, matrix_to_model, read_only, record_of
 from ._splines import control_grid, orthonormal_placement, source_grid

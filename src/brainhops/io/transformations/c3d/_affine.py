@@ -17,6 +17,7 @@ from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
+from brainhops.datamodel.systems import RASmm
 from brainhops.errors import (
     IncompatibleSystemError,
 )
@@ -35,11 +36,8 @@ from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
-from brainhops.io.transformations.base.affines import (
-    _RAS,
-    RASToRAS,
-    _check_endpoint,
-)
+from brainhops.io.transformations.base._internal_api import check_endpoint
+from brainhops.io.transformations.base.affines import RASToRAS
 
 from ._metadata import C3dAffineMetadata
 from ._raw import C3dAffineRaw
@@ -506,7 +504,7 @@ def _check_systems(xform: C3dAffine) -> None:
     """
     for name in ("input", "output"):
         try:
-            _check_endpoint(xform, name, _RAS)
+            check_endpoint(xform, name, RASmm())
         except IncompatibleSystemError as e:
             raise UnrepresentableTransformationError(
                 f"A Convert3D matrix maps RAS to RAS, but the {name} of the "

@@ -13,6 +13,7 @@ from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
+from brainhops.datamodel.systems import RASmm
 from brainhops.errors import (
     IncompatibleSystemError,
 )
@@ -32,17 +33,14 @@ from brainhops.io.metadata._internal_api import (
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base._internal_api import (
     affine_between,
+    check_endpoint,
     format_options,
     matrix_to_disk,
     matrix_to_model,
     read_only,
     record_of,
 )
-from brainhops.io.transformations.base.affines import (
-    _RAS,
-    RASToRAS,
-    _check_endpoint,
-)
+from brainhops.io.transformations.base.affines import RASToRAS
 
 from ._formats import NiftyRegAffineFormat
 from ._metadata import NiftyRegAffineMetadata
@@ -401,7 +399,7 @@ def _(
     # endpoints of a NiftyReg affine accept unknown systems.
     cls = NiftyRegAffine
     format_options(t, cls, kwargs)
-    matrix = affine_between(t, _RAS, _RAS, cls)
+    matrix = affine_between(t, RASmm(), RASmm(), cls)
     return cls(matrix=matrix[:-1])
 
 
@@ -433,7 +431,7 @@ def _check_systems(xform: NiftyRegAffine) -> None:
     """
     for name in ("input", "output"):
         try:
-            _check_endpoint(xform, name, _RAS)
+            check_endpoint(xform, name, RASmm())
         except IncompatibleSystemError as e:
             raise UnrepresentableTransformationError(
                 f"A NiftyReg affine maps RAS to RAS, but the {name} of the "

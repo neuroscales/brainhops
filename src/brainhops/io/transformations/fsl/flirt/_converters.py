@@ -33,6 +33,7 @@ import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import convert_withlog, converter
+from brainhops.datamodel.systems import RASmm
 from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
@@ -40,7 +41,6 @@ from brainhops.io.transformations.base._internal_api import (
     register_converter,
     unrepresentable,
 )
-from brainhops.io.transformations.base.affines import _RAS
 from brainhops.io.transformations.fsl._internal_api import ImageGeometry
 
 from ._xform import FlirtTransform
@@ -70,7 +70,7 @@ def _(
             f"moving=mov), or conversion={{'reference': ref, 'moving': "
             f"mov}} to io.save.",
         )
-    world = affine_between(t, _RAS, _RAS, cls)
+    world = affine_between(t, RASmm(), RASmm(), cls)
     if world.shape != (4, 4):
         raise unrepresentable(
             t,

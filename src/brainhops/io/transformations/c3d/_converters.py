@@ -14,11 +14,11 @@ import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import convert_withlog, converter
+from brainhops.datamodel.systems import RASmm
 from brainhops.io.transformations.base._internal_api import (
     affine_between,
     format_options,
 )
-from brainhops.io.transformations.base.affines import _RAS
 
 from ._affine import C3dAffine
 
@@ -36,7 +36,7 @@ def _(t: _xforms.Affine, cls: tx.Type[C3dAffine], **kwargs) -> C3dAffine:
     # `affine_between` either converts `t` exactly or raises.
     cls = C3dAffine
     format_options(t, cls, kwargs)
-    matrix = affine_between(t, _RAS, _RAS, cls)
+    matrix = affine_between(t, RASmm(), RASmm(), cls)
     return cls(matrix=matrix[:-1])
 
 

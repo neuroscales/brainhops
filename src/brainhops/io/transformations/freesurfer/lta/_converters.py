@@ -65,11 +65,11 @@ from brainhops.io.common.freesurfer import FreesurferTkrSystem
 from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
+    compatible,
     format_options,
     register_converter,
     unrepresentable,
 )
-from brainhops.io.transformations.base.affines import _compatible
 
 from ._matrix_utils import volume_info
 from ._metadata import LtaMetadata
@@ -251,7 +251,7 @@ def _check_view(
     view = cls()
     for side, system in (("input", src), ("output", dst)):
         own = getattr(view, side)
-        if own is not None and not _compatible(system, own):
+        if own is not None and not compatible(system, own):
             raise unrepresentable(
                 t,
                 cls,

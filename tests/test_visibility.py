@@ -40,11 +40,6 @@ PENDING_PRIVATE = frozenset(
         # removing the underscore would not make them internal. They
         # wait for a decision on whether to move them into a private
         # module or to make them public.
-        "brainhops.io.transformations.base.affines._LPS",
-        "brainhops.io.transformations.base.affines._RAS",
-        "brainhops.io.transformations.base.affines._VOXEL",
-        "brainhops.io.transformations.base.affines._check_endpoint",
-        "brainhops.io.transformations.base.affines._compatible",
     }
 )
 """The private names that other modules still import, as dotted paths."""

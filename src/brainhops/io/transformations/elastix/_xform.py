@@ -38,7 +38,7 @@ from brainhops.io.metadata._internal_api import (
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import _compatible
+from brainhops.io.transformations.base._internal_api import compatible
 from brainhops.io.transformations.itk._common import ItkStruct
 from brainhops.io.transformations.itk._internal_api import make_system
 
@@ -864,7 +864,7 @@ def _check_lps(xform: ElastixTransform, ndim: int) -> None:
     lps = make_system(ndim)
     for side in ("input", "output"):
         system = getattr(xform, "_" + side)
-        if system is None or _compatible(system, lps):
+        if system is None or compatible(system, lps):
             continue
         raise UnrepresentableTransformationError(
             f"An elastix transform maps LPS millimetres to LPS "

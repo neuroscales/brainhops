@@ -144,8 +144,6 @@ that holds one of them all reach the converter of the format, which
 turns the field into what the format stores.
 """
 
-_VOXEL = VoxelCoordinateSystem()
-
 
 def register_converter(
     sources: tx.Iterable[type], cls: type
@@ -686,7 +684,11 @@ def displacement_parts(
     ):
         # The field is already what the format stores, and is kept as it
         # is, with its data still unread.
-        field = replace(field, input=_VOXEL, output=_VOXEL)
+        field = replace(
+            field,
+            input=VoxelCoordinateSystem(),
+            output=VoxelCoordinateSystem(),
+        )
         return FieldParts(world2grid, field, grid2world)
     data, store, bound, loss = _node_data(field, degree, keep_log=velocity)
     if data is None and not undoes(before, after):
@@ -699,7 +701,9 @@ def displacement_parts(
             "node of a grid.",
         )
     if data is None:
-        result = _xforms.DisplacementField(input=_VOXEL, output=_VOXEL)
+        result = _xforms.DisplacementField(
+            input=VoxelCoordinateSystem(), output=VoxelCoordinateSystem()
+        )
         return FieldParts(world2grid, result, grid2world, loss)
     if sandwich:
         displacements = data
@@ -719,8 +723,8 @@ def displacement_parts(
         degree=degree,
         store=store,
         bound=bound,
-        input=_VOXEL,
-        output=_VOXEL,
+        input=VoxelCoordinateSystem(),
+        output=VoxelCoordinateSystem(),
     )
     return FieldParts(world2grid, result, grid2world, loss)
 
@@ -804,10 +808,18 @@ def split_affine(
         world, place = output, np.linalg.inv(after)
     chain = _xforms.Sequence(
         transformations=[
-            _xforms.Affine(matrix=place[:-1], input=world, output=_VOXEL),
-            replace(field, input=_VOXEL, output=_VOXEL),
             _xforms.Affine(
-                matrix=np.linalg.inv(place)[:-1], input=_VOXEL, output=world
+                matrix=place[:-1], input=world, output=VoxelCoordinateSystem()
+            ),
+            replace(
+                field,
+                input=VoxelCoordinateSystem(),
+                output=VoxelCoordinateSystem(),
+            ),
+            _xforms.Affine(
+                matrix=np.linalg.inv(place)[:-1],
+                input=VoxelCoordinateSystem(),
+                output=world,
             ),
         ]
     )
@@ -891,7 +903,7 @@ def coordinate_parts(
         degree=degree,
         store=store,
         bound=bound,
-        input=_VOXEL,
+        input=VoxelCoordinateSystem(),
         output=output,
     )
     return FieldParts(before, result, np.linalg.inv(before), loss)
@@ -965,7 +977,9 @@ def sample_on_grid(
     nodes = _xforms.CartesianField(shape=shape).field
     points = apply_affine(grid2world, nodes)
     chain = [
-        _xforms.CoordinateField(field=points, input=_VOXEL, output=input),
+        _xforms.CoordinateField(
+            field=points, input=VoxelCoordinateSystem(), output=input
+        ),
         bridge_systems(input, t.input, t, cls),
         t,
         bridge_systems(t.output, output, t, cls),
@@ -985,7 +999,10 @@ def sample_on_grid(
             "same dimension.",
         )
     result = _xforms.CoordinateField(
-        field=mapped.values, degree=degree, input=_VOXEL, output=output
+        field=mapped.values,
+        degree=degree,
+        input=VoxelCoordinateSystem(),
+        output=output,
     )
     loss = (
         f"it is evaluated on the grid of the format, and is read back with "
@@ -1480,8 +1497,8 @@ def displacements_of(parts: FieldParts) -> FieldParts:
     result = _xforms.DisplacementField(
         field=displacements,
         degree=int(field.degree),
-        input=_VOXEL,
-        output=_VOXEL,
+        input=VoxelCoordinateSystem(),
+        output=VoxelCoordinateSystem(),
     )
     return parts._replace(field=result)
 

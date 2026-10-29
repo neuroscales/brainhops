@@ -38,8 +38,6 @@ from ._raw import COMMENT, AfniAffineRaw
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
 
-_LPS = _systems.LPSmm()
-"""The DICOM world of AFNI, which is LPS in millimetres."""
 
 _BASE = ("base", "reference", "ref")
 """The names of the option that gives the base image."""
@@ -527,7 +525,9 @@ def _encoded_matrices(
         matrix=matrix, input=xform._input, output=xform._output
     )
     try:
-        lps = affine_between(plain, _LPS, _LPS, AfniAffine)
+        lps = affine_between(
+            plain, _systems.LPSmm(), _systems.LPSmm(), AfniAffine
+        )
     except ConversionError as error:
         raise UnrepresentableTransformationError(str(error)) from error
     if xform.base is not None:

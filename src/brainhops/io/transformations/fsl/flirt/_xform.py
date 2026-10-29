@@ -45,7 +45,7 @@ from brainhops.io.metadata._internal_api import (
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
+from brainhops.io.transformations.base._internal_api import check_endpoint
 from brainhops.io.transformations.fsl._internal_api import (
     FslAffineFormat,
     ImageGeometry,
@@ -209,8 +209,8 @@ class FlirtTransform(
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        _check_endpoint(self, "input", _RAS)
-        _check_endpoint(self, "output", _RAS)
+        check_endpoint(self, "input", _systems.RASmm())
+        check_endpoint(self, "output", _systems.RASmm())
 
     @property
     def data(self) -> tx.Optional[np.ndarray]:
@@ -458,7 +458,7 @@ class FlirtTransform(
             metadata = self.metadata
         for end in ("input", "output"):
             try:
-                _check_endpoint(self, end, _RAS)
+                check_endpoint(self, end, _systems.RASmm())
             except IncompatibleSystemError as e:
                 raise UnrepresentableTransformationError(str(e)) from None
         if self._flirt_matrix is None:

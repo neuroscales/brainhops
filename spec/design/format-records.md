@@ -1920,7 +1920,8 @@ its status.
 173. `RASToRAS` checks its systems only when it is built
      (`io/transformations/base/affines.py`), so an `input` or an `output`
      that is assigned later is not refused there. `C3dAffine.consolidate`
-     checks both systems again with the private `_check_endpoint` and
+     checks both systems again with `check_endpoint`
+     (`io/transformations/base/_endpoints.py`) and
      refuses a system that is not RAS with
      `UnrepresentableTransformationError`. `NiftyRegAffine` has no such
      check. Status: open.
@@ -2680,7 +2681,10 @@ pyramid of the conformance test and the checks P1 to P12.
      block classes and `make_system` from `io/transformations/itk`, and
      `_compatible` from `io/transformations/base/affines.py`, which checks
      an assigned system against LPS. ITK is moved to records at the same
-     time, so these imports may need to follow it. Status: open.
+     time, so these imports may need to follow it. Status: resolved by
+     #591, where the elastix formats import `make_system` and
+     `compatible` (now in `io/transformations/base/_endpoints.py`) from
+     the `_internal_api` modules of their packages.
 329. An elastix transformation without a record and without a chain
      raises `UnrepresentableTransformationError` when it is consolidated,
      as it did when it was written, and `ElastixMetadata` without a record
