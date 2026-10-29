@@ -1,7 +1,6 @@
 """The NIfTI image format."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import nibabel as nb
@@ -10,14 +9,15 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # core
-from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -31,26 +31,27 @@ from brainhops.datamodel.transformations import (
 )
 
 # errors
-from brainhops.errors import ParserExistsError, WriterError
+from brainhops.errors import WriterError
 
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    BinaryFileReader,
-    BinaryFileWriter,
     Confidence,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
     same_transformations,
 )
-from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
+from brainhops.io.common.nifti import (
+    NiftiMetadata,
+    NiftiRaw,
+    NiftiReaderWriter,
+)
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
     _NIFTI_XCODES,
 )
-from brainhops.io.common.nifti._data import _NiftiProxy
 from brainhops.io.common.nifti._geometry import _image_with_geometry
 from brainhops.io.common.nifti._header import (
     _keep_given_fields,
@@ -61,13 +62,6 @@ from brainhops.io.common.nifti._header import (
     _split_options,
     _storage_override,
     _stored_parts,
-    _written_nifti,
-)
-from brainhops.io.common.nifti._raw import (
-    _sniffed_header,
-    read_nifti,
-    reads_file,
-    write_nifti,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import ImageFormat
@@ -87,9 +81,7 @@ if tx.TYPE_CHECKING:
 
 
 @register_format
-class NiftiImage(
-    BinaryFileReader, BinaryFileWriter, ImageFormat, SingleScaleImage
-):
+class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in a NIfTI file.
 
     A NIfTI image holds the header of its file as [`NiftiMetadata`][] and
@@ -117,9 +109,6 @@ class NiftiImage(
     its lazy array and its header as they are, so the file is copied
     byte for byte.
     """
-
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The voxels as the file stores them, or `None` without data.
@@ -244,87 +233,22 @@ class NiftiImage(
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that a stream holds a NIfTI image.
-
-        A stream that starts with a NIfTI header is scored with
-        `_score_nibabel`. Any other stream is declined by
-        [`NiftiRaw.sniff_fileobj`][], which raises the requested error.
-
-        Parameters
-        ----------
-        file : file object
-            The stream to test, open in binary mode. Its position is
-            restored.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the stream holds no NIfTI
-            header. With `True`, the error is a `SnifferContentError`, and
-            an exception class is raised instead when one is given.
-        **kwargs : Any
-            The NIfTI `version` to look for, 1 or 2. Other options are
-            ignored.
-
-        Returns
-        -------
-        float
-            The confidence that the stream holds an image.
-
-        Raises
-        ------
-        SnifferContentError
-            If the stream holds no NIfTI header and `error` is `True`.
-        """
-        header = _sniffed_header(file, kwargs.get("version"))
-        if header is None:
-            return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
-        return cls._score_nibabel(header)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a NIfTI image.
-
-        The bytes are scored as [`sniff_fileobj`][] scores a stream.
-
-        Parameters
-        ----------
-        data : bytes
-            The content to test, which may be compressed with gzip.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no NIfTI header,
-            as in [`sniff_fileobj`][].
-        **kwargs : Any
-            The NIfTI `version` to look for, 1 or 2. Other options are
-            ignored.
-
-        Returns
-        -------
-        float
-            The confidence that the bytes hold an image.
-
-        Raises
-        ------
-        SnifferContentError
-            If the bytes hold no NIfTI header and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """Score a NIfTI header as a plain image.
+    def score_header(cls, header: _NiftiObject) -> float:
+        """Return how well a valid NIfTI header matches a plain image.
 
         Any NIfTI file can be read as an image, but a displacement-field
         intent suggests that the file is meant as a transformation, so it
         is only a weak match.
+
+        Parameters
+        ----------
+        header : nibabel.Nifti1Header or nibabel.Nifti2Header
+            The header of the file.
+
+        Returns
+        -------
+        float
+            The confidence, between 0 and 1.
         """
         intent = _nifti_intent(header)
         if intent is None:
@@ -340,129 +264,13 @@ class NiftiImage(
             return Confidence.LIKELY
         return Confidence.MAYBE
 
-    @classmethod
-    def from_filename(
-        cls, filename: path.FilenameLike, **kwargs
-    ) -> "NiftiImage":
-        """Read an image from the path of a NIfTI file.
-
-        A local file is kept by its name, so that the lazy array of the
-        voxels opens it whenever they are read, and memory-maps them when
-        the file is not compressed. A remote file is read into memory
-        instead.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The reader options, which nibabel's readers also take.
-            `mmap` tells whether the voxels of a local file that is not
-            compressed are memory-mapped. `keep_file_open` is accepted
-            and ignored, because the lazy array never keeps a file open.
-            Other options are refused.
-
-        Returns
-        -------
-        NiftiImage
-            The image, whose voxels are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        ParserExistsError
-            If the path does not exist.
-        """
-        _nibabel_options(kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.exists(filename):
-            raise ParserExistsError(f"No such file: {filename}")
-        raw, proxy = read_nifti(filename, **kwargs)
-        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "NiftiImage":
-        """Read an image from an open NIfTI stream.
-
-        The lazy array reads the voxels from the stream when they are
-        needed, so the stream must stay open while the data may be read.
-        A stream is never memory-mapped.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, which may be compressed with gzip.
-        **kwargs : Any
-            The reader options, which nibabel's readers also take.
-            `mmap` tells whether the voxels of a local file that is not
-            compressed are memory-mapped. `keep_file_open` is accepted
-            and ignored, because the lazy array never keeps a file open.
-            Other options are refused.
-
-        Returns
-        -------
-        NiftiImage
-            The image, whose voxels are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        """
-        _nibabel_options(kwargs)
-        raw, proxy = read_nifti(file, **kwargs)
-        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
-
-    @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> "NiftiImage":
-        """Build an image from a nibabel image or header.
-
-        The voxels of an image become `rawdata`, and a copy of its header
-        becomes the record of the metadata. A header alone gives an image
-        without data. The array proxy of an image that nibabel read from
-        a file is replaced by the lazy array that [`from_filename`][]
-        builds for that file, and any other array is kept as it is.
-
-        Parameters
-        ----------
-        nifti : nibabel.Nifti1Image or nibabel.Nifti1Header
-            The nibabel image or header. NIfTI-2 images and headers are
-            accepted too.
-        **kwargs : Any
-            Other fields of the image.
-
-        Returns
-        -------
-        NiftiImage
-            The image.
-
-        Raises
-        ------
-        TypeError
-            If `nifti` is neither a NIfTI image nor a NIfTI header.
-        """
-        if isinstance(nifti, nb.Nifti1Image):
-            raw = _NiftiProxy.from_nibabel(nifti.dataobj)
-            header = nifti.header
-        elif isinstance(nifti, nb.Nifti1Header):
-            raw, header = None, nifti
-        else:
-            raise TypeError(
-                f"Expected a NIfTI image or header, got {type(nifti)}"
-            )
-        metadata = NiftiMetadata.from_raw(NiftiRaw(header=header.copy()))
-        return cls(rawdata=raw, metadata=metadata, **kwargs)
-
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -496,14 +304,15 @@ class NiftiImage(
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the options that name its fields, so any field of
-        the metadata can be overridden here, and its record is the base of
-        the new header. The image owns its geometry, so a field that the
-        geometry encodes over, such as the repetition time, which is the
-        time step of the image, is reported as approximated when it
+        the metadata can be overridden here, and its record is the base
+        of the new header. The image owns its geometry, so a field that
+        the geometry encodes over, such as the repetition time, which is
+        the time step of the image, is reported as approximated when it
         disagrees. The data are stored with the type given as `dtype=`,
-        or else with `metadata.dtype`, or else with the type of the data,
-        and nibabel scales them into an integer type. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        or else with `metadata.dtype`, or else with the type of the
+        data, and nibabel scales them into an integer type. What the
+        write loses or approximates is acted on once, under the error
+        policy of the call.
 
         Parameters
         ----------
@@ -512,9 +321,6 @@ class NiftiImage(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect (see [`metadata_loss_policy`][]).
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set
@@ -560,7 +366,7 @@ class NiftiImage(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
@@ -570,7 +376,7 @@ class NiftiImage(
         )
         metadata = type(metadata or NiftiMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -584,123 +390,6 @@ class NiftiImage(
         self.data = None
         self.transformations = None
         return self
-
-    def to_nibabel(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """Build the nibabel image that a file written from the image holds.
-
-        The image is consolidated with the options, as by
-        [`consolidate`][], into a copy, and the nibabel image holds the
-        `rawdata` and the header of that copy. The image itself is not
-        changed.
-
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose description and intent are copied, as in
-            [`consolidate`][].
-        **overrides : Any
-            `on_loss`, and the fields of the metadata and of the header,
-            as in [`consolidate`][].
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
-
-        Raises
-        ------
-        WriterError
-            If the image has no data.
-        UnrepresentableTransformationError
-            If the preferred transformation is not affine, as for a
-            displacement field.
-        """
-        return _nifti_written(self.consolidate(like=like, **overrides))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the image to a path, compressed if its name ends with `.gz`.
-
-        The image is consolidated into a copy, which is written, and the
-        image itself is not changed. A local file is replaced at once, so
-        an image can be written over the file that it was read from. The
-        image is then consolidated in place, so that it holds what the
-        file holds (#426): its lazy array reads the new file, and its
-        record is the header of that file.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The template `like`, `on_loss` and the options of
-            [`consolidate`][].
-
-        Raises
-        ------
-        WriterError
-            If the image cannot be encoded, as in [`consolidate`][].
-        """
-        if not reads_file(self.rawdata, filename):
-            write_nifti(self.to_nibabel(**kwargs), filename)
-            return
-        self.consolidate(inplace=True, **kwargs)
-        write_nifti(_nifti_written(self), filename)
-        # The image holds what the file holds: its lazy array reads the new
-        # file, since the lazy array of the old file describes how that
-        # file stored the voxels, and its record is the header of the new
-        # file.
-        record, proxy = read_nifti(filename)
-        self.rawdata = proxy
-        self.metadata = type(self.metadata).from_raw(record)
-        self.data = None
-        self.transformations = None
-
-    def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
-        """Write the image to a stream as an uncompressed NIfTI file.
-
-        The image is consolidated into a copy, which is written, and the
-        image itself is not changed.
-
-        Parameters
-        ----------
-        file : file object
-            The stream to write to, open in binary mode.
-        **kwargs : Any
-            The template `like`, `on_loss` and the options of
-            [`consolidate`][].
-
-        Raises
-        ------
-        WriterError
-            If the image cannot be encoded, as in [`consolidate`][].
-        """
-        write_nifti(self.to_nibabel(**kwargs), file)
-
-    def to_bytes(self, **kwargs) -> bytes:
-        """Return the uncompressed NIfTI encoding of the image.
-
-        The image is consolidated into a copy, which is encoded, and the
-        image itself is not changed.
-
-        Parameters
-        ----------
-        **kwargs : Any
-            The template `like`, `on_loss` and the options of
-            [`consolidate`][].
-
-        Returns
-        -------
-        bytes
-            The content of an uncompressed NIfTI file.
-
-        Raises
-        ------
-        WriterError
-            If the image cannot be encoded, as in [`consolidate`][].
-        """
-        return self.to_nibabel(**kwargs).to_bytes()
 
 
 def _nifti_to_transformations(
@@ -991,42 +680,6 @@ def _nifti_encoded(
     if kept and header is not None and stored is not None:
         _keep_geometry(nifti.header, stored.header, overrides)
     return _stored_parts(nifti)
-
-
-def _nifti_written(
-    image: NiftiImage,
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Return the nibabel image that writes a consolidated image.
-
-    Raises
-    ------
-    WriterError
-        If the image has no data.
-    """
-    if image.rawdata is None:
-        raise WriterError(
-            "This image has no data, so there is nothing to write."
-        )
-    return _written_nifti(image.rawdata, image.metadata.raw)
-
-
-_NIBABEL_OPTIONS = ("mmap", "keep_file_open")
-"""The options of the nibabel readers that a NIfTI image accepts."""
-
-
-def _nibabel_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the reader options that nibabel does not take.
-
-    Raises
-    ------
-    TypeError
-        If another option is given.
-    """
-    unknown = [name for name in kwargs if name not in _NIBABEL_OPTIONS]
-    if unknown:
-        raise TypeError(
-            f"Unknown NIfTI reader option(s): {', '.join(unknown)}"
-        )
 
 
 def _header_transformations(

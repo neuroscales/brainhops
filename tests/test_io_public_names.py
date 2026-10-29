@@ -46,6 +46,7 @@ PACKAGES: tx.Dict[str, Package] = {
             {
                 "NiftiMetadata",
                 "NiftiRaw",
+                "NiftiReaderWriter",
                 "NiftiUnitWarning",
             }
         ),

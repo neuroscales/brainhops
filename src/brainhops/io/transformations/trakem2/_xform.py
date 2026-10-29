@@ -8,16 +8,17 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -406,11 +407,10 @@ class TrakEM2PatchAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -431,15 +431,13 @@ class TrakEM2PatchAffine(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a
         TrakEM2 project holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -469,7 +467,7 @@ class TrakEM2PatchAffine(
         metadata = metadata_to_write(
             self.metadata, TrakEM2Metadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -511,6 +509,7 @@ class TrakEM2PatchAffine(
         self.patch = patch.oid
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the XML file that encodes the transformation.
 
@@ -520,8 +519,8 @@ class TrakEM2PatchAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer, which are refused. `on_loss` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer, which are refused. The fields of the
+            metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -538,30 +537,6 @@ class TrakEM2PatchAffine(
         """
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_bytes(**kwargs)
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the transformation to the file at a path, replacing it.
-
-        The transformation is consolidated into a copy before the file is
-        written, so a transformation that cannot be encoded leaves the
-        file untouched. A local file is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of the writer, which are refused.
-
-        Raises
-        ------
-        TypeError
-            If an option is given.
-        UnrepresentableTransformationError
-            If the matrix or the systems cannot be encoded, or if the
-            transformation has no record.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

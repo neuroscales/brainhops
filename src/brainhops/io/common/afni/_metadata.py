@@ -1,7 +1,6 @@
 """The metadata of an AFNI dataset."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import typing_extensions as tx
@@ -9,6 +8,7 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat
@@ -108,32 +108,6 @@ class AfniMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
         return AfniRaw.sniff_filename(filename, error=error, **kwargs)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an AFNI header.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a `.HEAD` file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no AFNI
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "AfniMetadata":
         """Read the metadata from an open `.HEAD` or `.BRIK` file.
 
@@ -190,6 +164,7 @@ class AfniMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
         record = AfniRaw.from_filename(filename, **kwargs)
         return cls.from_raw(record.validate())
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the `.HEAD` file.
 
@@ -209,6 +184,7 @@ class AfniMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
             return b""
         return self.raw.to_bytes(**kwargs)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the `.HEAD` file of the dataset that a path names.
 

@@ -9,6 +9,7 @@ from bagof.magic import Alias, Inherit, KwOnly, NoRepr, fields_dict, replace
 
 # core
 from brainhops._core.backends import array_backend
+from brainhops._core.errors import UNSET
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
@@ -17,7 +18,10 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    call_under_policy,
+)
 from brainhops.errors import ConversionError, LossyConversionError
 
 # io
@@ -51,7 +55,10 @@ from brainhops.io.metadata._base import (
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import _field_to_model
+from brainhops.io.transformations.nifti._views import (
+    _check_single_field,
+    _field_to_model,
+)
 
 # this format
 from .._affines import _ImageGeometry
@@ -239,7 +246,7 @@ class FnirtWarpField(
         return _image_to_model(self.rawdata)
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         if _nifti_intent(header) in _FNIRT_INTENTS:
             return Confidence.CERTAIN
         return Confidence.NO
@@ -317,12 +324,11 @@ class FnirtWarpField(
             obj.deformation_type = deformation_type
         return cls._with_images(obj, moving, reference)
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> tx.Self:
         """Encode the pending array into `rawdata` and a new header.
@@ -343,7 +349,8 @@ class FnirtWarpField(
         the base of the new header. The fields given by keyword take
         precedence over `like`, and a `dtype` that is given, or changed
         in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        loses or approximates is acted on once, under the error policy
+        of the call.
 
         Parameters
         ----------
@@ -352,9 +359,6 @@ class FnirtWarpField(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -374,7 +378,8 @@ class FnirtWarpField(
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
-            If the field has no array.
+            If the field has no array, or if its array holds a field for
+            each of several volumes.
         UnrepresentableTransformationError
             If a chain was assigned to the field.
         """
@@ -394,7 +399,8 @@ class FnirtWarpField(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            _check_single_field(self.rawdata, WriterError)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -404,7 +410,7 @@ class FnirtWarpField(
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -440,9 +446,9 @@ class FnirtWarpField(
         deformation field on the grid of the reference. The cubic spline
         is then sampled at every voxel of the reference rather than at
         its knots only, which is a loss, so the conversion needs
-        `lossy=True`. A format that stores B-splines, such as a NiftyReg
-        grid of control points or an elastix B-spline, receives the
-        spline itself.
+        `on_loss="ignore"`. A format that stores B-splines, such as a
+        NiftyReg grid of control points or an elastix B-spline, receives
+        the spline itself.
 
         Parameters
         ----------
@@ -450,7 +456,7 @@ class FnirtWarpField(
             The type to convert to. By default, the type is kept.
         **kwargs : Any
             The options that `to` takes for any transformation, such as
-            `lossy=`, and the geometry of the warp.
+            `on_loss=` and `on_error=`, and the geometry of the warp.
 
         Returns
         -------
@@ -631,7 +637,9 @@ class FnirtWarpField(
 
     def _raw_field(self) -> tx.Any:
         # A 5-D vector field in the layout of the NIfTI standard is
-        # collapsed to `(*grid, 3)`.
+        # collapsed to `(*grid, 3)`. A field per volume, whose fourth
+        # axis is longer than one, is refused with `ParserContentError`
+        # because batched transformations are not supported yet (#576).
         return _field_to_model(self.data)
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
@@ -796,7 +804,8 @@ def _fnirt_encoded(
     Raises
     ------
     WriterError
-        If the field has no array.
+        If the field has no array, or if its array holds a field for
+        each of several volumes.
     UnrepresentableTransformationError
         If a chain was assigned to the field.
     """
@@ -812,6 +821,7 @@ def _fnirt_encoded(
         stored = field.rawdata
     if stored is None:
         raise WriterError("A FNIRT file needs its field data to be written.")
+    _check_single_field(stored, WriterError)
     record = None if base is None else base.copy()
     image = _record_image(stored, record, overrides=overrides)
     if _header(field) is None:
@@ -1003,25 +1013,34 @@ def _through_deformation(
     """Convert a coefficient field through a deformation field.
 
     The deformation field samples the spline at every voxel of the
-    reference, which loses, so the result is returned only with
-    `lossy=True`, and is carried by a `LossyConversionError` otherwise.
+    reference, which loses, so the result is carried by a
+    `LossyConversionError`. The error policy of the call, given as
+    `on_loss=` and `on_error=` among `kwargs`, acts on it as
+    `Transformation.to` acts on any other loss, so that
+    `on_loss="ignore"` returns the result.
     """
     from ._converters import to_fnirt
 
-    lossy = kwargs.pop("lossy", False)
-    try:
-        dense = to_fnirt(warp, FnirtWarpField)
-    except LossyConversionError as error:
-        dense = error.result
-    result = dense.to(cls, lossy=True, **kwargs)
-    if lossy:
-        return result
-    raise LossyConversionError(
-        f"The {getattr(cls, '__name__', cls)} that this FNIRT coefficient "
-        f"field converts to is not the same map: the cubic spline is "
-        f"sampled at the voxels of the reference, which are read back with "
-        f"linear interpolation. Pass lossy=True to accept it.",
-        result=result,
+    on_loss = kwargs.pop("on_loss", UNSET)
+    on_error = kwargs.pop("on_error", UNSET)
+
+    def densified() -> _xforms.Transformation:
+        try:
+            dense = to_fnirt(warp, FnirtWarpField)
+        except LossyConversionError as error:
+            dense = error.result
+        result = dense.to(cls, on_loss="ignore", **kwargs)
+        raise LossyConversionError(
+            f"The {getattr(cls, '__name__', cls)} that this FNIRT "
+            f"coefficient field converts to is not the same map: the cubic "
+            f"spline is sampled at the voxels of the reference, which are "
+            f"read back with linear interpolation. Pass on_loss='ignore' to "
+            f"accept it.",
+            result=result,
+        )
+
+    return call_under_policy(
+        densified, on_error, on_loss=on_loss, stacklevel=3
     )
 
 

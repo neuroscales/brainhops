@@ -25,11 +25,10 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 from brainhops._core.backends import has_dask, is_lazy
 from brainhops._core.dependencies import openslide
-from brainhops._core.proxy import StoredProxy
-from brainhops._core.typing import ArrayProtocol
 
 # io
-from brainhops.io.base._utils_files import is_local
+from brainhops._core.proxy import StoredProxy
+from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import ParserContentError
 
 # this format
@@ -82,18 +81,11 @@ def local_path(file: tx.Any) -> tx.Optional[str]:
         The name of the local file, or `None` when OpenSlide cannot open
         the file by name.
     """
-    if isinstance(file, (str, path.PathLike)):
-        try:
-            if not is_local(file):
-                return None
-        except Exception:
+    if not isinstance(file, (str, path.PathLike)):
+        file = getattr(file, "name", None)
+        if not isinstance(file, str):
             return None
-        local = str(path.Path(file))
-    else:
-        local = getattr(file, "name", None)
-        if not isinstance(local, str):
-            return None
-    return local if os.path.isfile(local) else None
+    return str(path.Path(file)) if path.is_local_file(file) else None
 
 
 def detect(filename: str) -> tx.Tuple[str, int]:

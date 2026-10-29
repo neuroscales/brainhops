@@ -14,10 +14,11 @@ from nibabel.volumeutils import array_to_file
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -196,33 +197,6 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
         return Confidence.NO
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes start with an MGH header.
-
-        The bytes are read as a stream with [`sniff_fileobj`][].
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no MGH header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "MghRaw":
         """Read the header, the footer and the tags of an MGH stream.
 
@@ -272,6 +246,7 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the fixed header as an MGH file stores it.
 
@@ -293,6 +268,7 @@ class MghRaw(Raw, BinaryFileReader, BinaryFileWriter):
         self.header.writehdr_to(buffer)
         return buffer.getvalue().ljust(MGH_HEADER_SIZE, b"\0")
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the fixed header to a path.
 

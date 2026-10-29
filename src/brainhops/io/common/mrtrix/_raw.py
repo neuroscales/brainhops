@@ -3,7 +3,6 @@
 # stdlib
 import math
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -11,6 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -443,37 +443,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
             return Confidence.LIKELY
         return _declined(error, failure)
 
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an MRtrix header.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test, which may be gzipped.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content holds no header, as
-            in [`sniff_fileobj`][].
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            `Confidence.LIKELY` or `Confidence.NO`.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content holds no header and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header as the file stores it.
 
@@ -501,6 +471,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
             return self.embedded()
         return self.to_text().encode("utf-8")
 
+    @takes_error_policy
     def to_lines(
         self, file: tx.Optional[tx.Tuple[str, tx.Optional[int]]] = None
     ) -> tx.List[str]:
@@ -547,6 +518,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         lines.append(_END)
         return lines
 
+    @takes_error_policy
     def to_text(self, *args, **kwargs) -> str:
         """Return the header text, terminated by a newline.
 

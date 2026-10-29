@@ -6,7 +6,6 @@ import typing_extensions as tx
 from bagof.magic import Alias, Inherit, NoRepr, replace
 
 # internals
-from brainhops._core import path
 from brainhops._core.properties import (
     InvalidatorInAttribute,
     smartproperty,
@@ -14,10 +13,12 @@ from brainhops._core.properties import (
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.errors import ConversionError
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     ParserContentError,
     TextFileReader,
@@ -303,12 +304,11 @@ class AfniAffine(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         oneline: tx.Optional[bool] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "AfniAffine":
         """Encode the pending matrix and systems into a new record.
@@ -328,7 +328,8 @@ class AfniAffine(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an AFNI
         affine file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -339,9 +340,6 @@ class AfniAffine(
             (`-1Dmatrix_save`), or a single matrix as 3 lines of 4
             numbers (`cat_matvec`). It defaults to the layout of the
             record, or to one row per matrix without a record.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -367,7 +365,7 @@ class AfniAffine(
         metadata = metadata_to_write(
             self.metadata, AfniAffineMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -415,6 +413,7 @@ class AfniAffine(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the AFNI matrix file of the affine.
 
@@ -441,6 +440,7 @@ class AfniAffine(
         """
         return self.consolidate(**kwargs).metadata.to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.List[str]:
         """Return the lines of the AFNI matrix file of the affine.
 
@@ -455,34 +455,6 @@ class AfniAffine(
             The lines of the file, without their line breaks.
         """
         return self.to_text(**kwargs).splitlines()
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the affine to a text stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in text mode.
-        **kwargs : Any
-            The options of [`consolidate`][].
-        """
-        file.write(self.to_text(**kwargs))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the affine to a path.
-
-        The content is encoded before the file is written, so an affine
-        that cannot be encoded leaves no file behind, and a local file is
-        replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The options of [`consolidate`][].
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------

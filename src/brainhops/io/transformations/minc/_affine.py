@@ -14,7 +14,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -501,11 +504,10 @@ class XfmAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -521,15 +523,13 @@ class XfmAffine(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a MINC
         transform file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this affine rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -553,7 +553,7 @@ class XfmAffine(
         metadata = metadata_to_write(
             self.metadata, XfmMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -583,6 +583,7 @@ class XfmAffine(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the affine to a path or a file object.
 
@@ -595,8 +596,8 @@ class XfmAffine(
         file : path or file object
             The path or the open file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -606,6 +607,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         record.to_file(file, **options)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the affine to a file, replacing a local file at once.
 
@@ -614,8 +616,8 @@ class XfmAffine(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -625,6 +627,7 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         record.to_filename(filename, **options)
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the affine to an open file, in text or binary mode.
 
@@ -633,8 +636,8 @@ class XfmAffine(
         file : IO
             The open file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -644,15 +647,15 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         record.to_fileobj(file, **options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the MNI transform file that encodes the affine.
 
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -667,15 +670,15 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         return record.to_text(**options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the MNI transform file that encodes the affine.
 
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -690,14 +693,15 @@ class XfmAffine(
         record, options = _written(self, kwargs)
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the MNI transform file that encodes the affine.
 
         Parameters
         ----------
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Returns
         -------
@@ -731,7 +735,7 @@ def _system_name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
 def _encode(xform: XfmAffine, old: tx.Optional[XfmRaw]) -> XfmRaw:
     """Encode the matrix of an affine as a new record.
 
-    See [`XfmAffine.consolidate`][].
+    See `XfmAffine._consolidate`.
 
     Raises
     ------
@@ -765,9 +769,9 @@ def _written(
 ) -> tx.Tuple[XfmRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from an affine holds.
 
-    The record is that of the copy consolidated with `on_loss` and the
-    fields of the metadata among `kwargs`, and the other options, for
-    the writer of the record, are returned with it.
+    The record is that of the copy consolidated with the fields of the
+    metadata among `kwargs`, and the other options, for the writer of
+    the record, are returned with it.
 
     Raises
     ------

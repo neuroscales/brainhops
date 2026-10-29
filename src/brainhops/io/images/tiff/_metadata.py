@@ -1,7 +1,6 @@
 """The metadata of a TIFF file."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import typing_extensions as tx
@@ -81,31 +80,6 @@ class TiffMetadata(BinaryFileReader, MetadataFormat):
                 error = SnifferContentError
             raise error("This content is not a TIFF file.")
         return Confidence.NO
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a TIFF file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no TIFF file.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
 
     @classmethod
     def from_fileobj(

@@ -9,18 +9,21 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    MetadataLossError,
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import same_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -83,31 +86,6 @@ class _TiffReader:
                 error = SnifferContentError
             raise error("This content is not a TIFF file.")
         return False
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a TIFF file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no TIFF file.
-        **kwargs : Any
-            The options of the reader.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
@@ -430,14 +408,13 @@ class TiffImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         dialect: tx.Optional[str] = None,
         name: tx.Optional[str] = None,
         bigtiff: tx.Optional[bool] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "TiffImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -468,7 +445,8 @@ class TiffImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a TIFF
         file holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -481,9 +459,6 @@ class TiffImage(
         bigtiff : bool, optional
             Whether to write BigTIFF. By default, BigTIFF is written only
             when the data is too large for a classic TIFF (about 4 GiB).
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -507,7 +482,7 @@ class TiffImage(
         metadata = metadata_to_write(
             self.metadata, TiffMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         if self._untouched(dialect, name, bigtiff):
@@ -541,6 +516,7 @@ class TiffImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Encode the image as TIFF.
 
@@ -557,7 +533,7 @@ class TiffImage(
             `bigtiff`), and the options of `TiffWriter.write` of
             tifffile that encode the pixels: `compression`,
             `compressionargs`, `predictor`, `tile` and `rowsperstrip`.
-            `on_loss` and the fields of the metadata are taken as by
+            The fields of the metadata are taken as by
             [`consolidate`][].
 
         Returns
@@ -572,11 +548,10 @@ class TiffImage(
         WriterError
             If the image cannot be written.
         """
-        on_loss = kwargs.pop("on_loss", None)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         report = ConversionReport(source="TiffImage", target="TiffImage")
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         options, encoding = split_options(kwargs)
         if not encoding and self._copies_source(**options):
             return self.rawdata.read_bytes()
@@ -584,6 +559,7 @@ class TiffImage(
         write_plan(self._planned(**options), buffer, encoding)
         return buffer.getvalue()
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file.
 
@@ -597,9 +573,10 @@ class TiffImage(
         **kwargs : Any
             The options of [`to_bytes`][].
         """
-        kwargs.setdefault("name", _to_filename(file))
+        kwargs.setdefault("name", path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a file.
 
@@ -619,8 +596,8 @@ class TiffImage(
         filename : str or PathLike
             The path of the file.
         **kwargs : Any
-            The options of [`to_bytes`][]. `on_loss` and the fields of
-            the metadata are taken as by [`consolidate`][].
+            The options of [`to_bytes`][]. The fields of the metadata
+            are taken as by [`consolidate`][].
 
         Raises
         ------
@@ -629,18 +606,17 @@ class TiffImage(
         WriterError
             If the image cannot be written.
         """
-        on_loss = kwargs.pop("on_loss", None)
         fields = {n: kwargs.pop(n) for n in list(kwargs) if n in FIELDS}
         report = ConversionReport(source="TiffImage", target="TiffImage")
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if isinstance(filename, str):
             filename = path.Path(filename)
-        kwargs.setdefault("name", _to_filename(filename))
+        kwargs.setdefault("name", path.base_name(filename))
         options, encoding = split_options(kwargs)
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(stored, _TiffProxy) and same_file(
+        reading = isinstance(stored, _TiffProxy) and is_same_file(
             stored.source.filename, filename
         )
         if not encoding and self._copies_source(**options):
@@ -652,7 +628,10 @@ class TiffImage(
             # write lost, as it does after any save over its own file.
             # The loss was reported above, so it is not reported again.
             self.consolidate(
-                inplace=True, on_loss="ignore", **options, **fields
+                inplace=True,
+                on_error={MetadataLossError: "ignore"},
+                **options,
+                **fields,
             )
             return
         plan = self._planned(**options)
@@ -670,20 +649,6 @@ class TiffImage(
             self.level = 0
             self.data = None
             self.transformations = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write the image to a path or a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path or the stream.
-        **kwargs : Any
-            The options of [`to_bytes`][].
-        """
-        if isinstance(file, (str, path.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return super().to_file(file, **kwargs)
 
     # --- helpers ------------------------------------------------------
 

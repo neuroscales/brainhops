@@ -12,7 +12,9 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
@@ -43,6 +45,7 @@ from brainhops.io.transformations.nifti import (
 )
 from brainhops.io.transformations.nifti._base import _consolidated_metadata
 from brainhops.io.transformations.nifti._views import (
+    _check_single_field,
     _field_to_disk,
     _field_to_model,
 )
@@ -79,7 +82,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
     """
 
     @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: _NiftiObject) -> float:
         """
         Score a header as an SPM field.
 
@@ -89,7 +92,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         tie instead, through
         [`PREFIXES`][brainhops.io.transformations.spm.SpmCoordinateField.PREFIXES].
         """
-        return NiftiRASCoordinateField._score_nibabel(header)
+        return NiftiRASCoordinateField.score_header(header)
 
     # --- data -----------------------------------------------------------
 
@@ -111,9 +114,11 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         Coordinates that are assigned are returned as they are, and stay
         pending until [`consolidate`][] or a write encodes them. Otherwise
         they are decoded from `rawdata`: NIfTI stores the field with
-        shape (X, Y, Z, 1, 3), and the singleton axis is dropped.
-        Assigning the data drops the chain decoded from the previous
-        data.
+        shape (X, Y, Z, 1, 3), and the singleton axis is dropped. A file
+        whose fourth axis is longer than one holds a field per volume,
+        which is not supported yet, so reading its data raises
+        `ParserContentError`. Assigning the data drops the chain decoded
+        from the previous data.
         """
         if self.rawdata is None:
             return None
@@ -194,12 +199,11 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> tx.Self:
         """
@@ -224,7 +228,8 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         the base of the new header. The fields given by keyword take
         precedence over `like`, and a `dtype` that is given, or changed
         in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        loses or approximates is acted on once, under the error policy
+        of the call.
 
         Parameters
         ----------
@@ -233,9 +238,6 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -255,7 +257,8 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         WriterError
-            If the field has no coordinates.
+            If the field has no coordinates, or if its array holds a
+            field for each of several volumes.
         """
         fields, overrides = _split_options(options)
         name = type(self).__name__
@@ -273,7 +276,8 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            _check_single_field(self.rawdata, WriterError)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -283,7 +287,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -316,13 +320,15 @@ def _spm_encoded(
     Raises
     ------
     WriterError
-        If the field has no coordinates.
+        If the field has no coordinates, or if its array holds a field
+        for each of several volumes.
     """
     if field._data is not None:
         stored = _field_to_disk(field._data)
     else:
         stored = field.rawdata
     if stored is not None and field._transformations is None:
+        _check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
         image = _record_image(stored, record, overrides=overrides)
     else:

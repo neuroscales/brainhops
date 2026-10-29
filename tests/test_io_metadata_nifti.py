@@ -57,7 +57,7 @@ def _read() -> NiftiMetadata:
 
 def _consolidated(meta: NiftiMetadata, **fields) -> tuple:  # noqa: ANN003
     report = ConversionReport()
-    return meta.consolidate(on_loss=report, **fields), report
+    return meta.consolidate(on_error=report, **fields), report
 
 
 # ----------------------------------------------------------------------
@@ -216,7 +216,7 @@ def test_what_the_header_cannot_hold_is_lost() -> None:
     # The oblique direction replaced the slice axis, which is cleared.
     assert copy.raw.header.get_dim_info() == (0, 1, None)
     with pytest.raises(MetadataLossError):
-        _read().consolidate(echo_time=0.03, on_loss="raise")
+        _read().consolidate(echo_time=0.03, on_error="raise")
     # A timing that no slice order describes clears the slice slots.
     copy, report = _consolidated(
         _read(), slice_timing=(0.0, 0.3, 0.1, 0.9, 0.2, 0.5)
@@ -266,7 +266,7 @@ def test_a_conversion_reports_a_lower_bound() -> None:
         description="d", echo_time=0.03, history=("a",), extra={"K": 1}
     )
     report = ConversionReport()
-    nifti = generic.to(NiftiMetadata, on_loss=report)
+    nifti = generic.to(NiftiMetadata, on_error=report)
     assert nifti.description == "d"
     assert nifti.raw is None
     assert report.lost == {

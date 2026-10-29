@@ -34,7 +34,6 @@ from ._frames import (
     with_components,
 )
 from ._transformations.compute.multiscale import (
-    _as_affine_ignoring_fields,
     _nearest_resolution_index,
     nearest_level,
 )
@@ -1008,7 +1007,9 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         )
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
-            _as_affine_ignoring_fields(_get_voxel2world(self, geometry)),
+            _get_voxel2world(self, geometry).to_affine(
+                include="affine", on_error=None
+            ),
         )
         return self.to_singlescale(level).reslice(geometry, **opt)
 
@@ -1067,10 +1068,13 @@ def _level_voxel_sizes(
     """
     sizes = []  # type: tx.List[tx.Optional[ArrayProtocol]]
     for level in multiscale.images or ():
-        affine = _as_affine_ignoring_fields(
-            multiscale.transformation @ level.transformation
+        affine = (multiscale.transformation @ level.transformation).to_affine(
+            include="affine", on_error=None
         )
-        sizes.append(None if affine is None else axis_scales(affine.matrix))
+        if affine is None:
+            sizes.append(None)
+        else:
+            sizes.append(axis_scales(affine.matrix))
     return sizes
 
 

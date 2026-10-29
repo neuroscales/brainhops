@@ -502,6 +502,33 @@ def test_cancellation_reaches_a_fixpoint() -> None:
     assert isinstance(seq.compute(), Identity)
 
 
+def test_a_product_that_is_the_identity_lets_its_neighbours_cancel() -> None:
+    # The two scalings compose to the identity, which the numeric policy
+    # recognizes as soon as the product is made. The field and its lazy
+    # inverse then become neighbours and cancel, instead of being
+    # composed into a resampled field.
+    x = DisplacementField(field=_small_field(seed=1))
+    double = Scaling(scale=[2.0, 2.0])
+    half = Scaling(scale=[0.5, 0.5])
+    seq = Sequence(transformations=[x, double, half, x.inverse()])
+    assert isinstance(seq.compute(simplify="numeric"), Identity)
+
+
+def test_compute_keeps_the_leaves_that_it_does_not_rewrite() -> None:
+    # The mode does not admit the field, so the field is kept as the
+    # same object and still cancels with its lazy inverse in a later
+    # computation.
+    x = DisplacementField(field=_small_field(seed=1))
+    a = Translation(translation=[1.0, 2.0])
+    b = Translation(translation=[3.0, 4.0])
+    result = Sequence(transformations=[a, b, x]).compute("affine")
+    product, field = result.transformations
+    assert field is x
+    again = Sequence(transformations=[result, x.inverse()]).compute()
+    assert isinstance(again, Translation)
+    assert np.allclose(again.translation, [4.0, 6.0])
+
+
 # ----------------------------------------------------------------------
 #   COLLAPSED IDENTITY TAKES THE ENDPOINTS  (#5)
 # ----------------------------------------------------------------------

@@ -246,7 +246,7 @@ def test_an_affine_between_other_spaces_is_refused(
         affine.to(NiftiVoxelToRAS)
     with pytest.raises(ConversionError, match="cannot be held exactly"):
         NiftiVoxelToRAS.from_any(affine)
-    assert affine.to(NiftiVoxelToRAS, error=False) is False
+    assert affine.to(NiftiVoxelToRAS, on_error=None) is None
 
 
 def test_a_chain_with_a_field_is_not_an_affine() -> None:
@@ -339,7 +339,7 @@ def test_a_cubic_displacement_field_is_lossy() -> None:
     chain = _lps_displacement_chain(degree=3)
     with pytest.raises(LossyConversionError, match="degree 3"):
         chain.to(NiftiRASDisplacementField)
-    nifti = chain.to(NiftiRASDisplacementField, lossy=True)
+    nifti = chain.to(NiftiRASDisplacementField, on_loss="ignore")
     # The values at the nodes are kept.
     lps = LPS2RAS @ VOX2WORLD
     nodes = _voxels()[:3] @ lps[:3, :3].T + lps[:3, 3]

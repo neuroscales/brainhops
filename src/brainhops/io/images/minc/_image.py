@@ -1,7 +1,6 @@
 """The MINC image formats, which are read only."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -11,12 +10,15 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import HAS_H5PY
+from brainhops._core.path import is_local
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
@@ -27,7 +29,6 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import is_local
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
 from brainhops.io.common.minc._data import read_minc
@@ -212,11 +213,10 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             return None
         return _minc_system(self.metadata.raw)
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "MincImage":
         """Move the pending data into `rawdata`.
@@ -232,16 +232,13 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a MINC
         file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`, and the copy holds the
-        consolidated metadata.
+        is reported as lost, once, under the error policy of the call,
+        and the copy holds the consolidated metadata.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -262,7 +259,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, MincMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         if self._data is None and not requested:
@@ -376,32 +373,6 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         return _score(sniff_minc(file, cls._versions()), error)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a MINC file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes are not a MINC file
-            that this class reads.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
-    @classmethod
     def from_filename(
         cls, filename: path.FilenameLike, **kwargs
     ) -> "MincImage":
@@ -484,7 +455,7 @@ class Minc1Image(MincImage):
     """
 
     HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("minc1", "1")
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc", ".mnc.gz")
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mnc",)
     VERSION: tx.ClassVar[int] = 1
 
 

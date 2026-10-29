@@ -9,6 +9,7 @@ from bagof.magic import fields
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import (
     FileFormat,
@@ -164,7 +165,7 @@ def test_format_parsers_compose_both_routes(
 
     assert issubclass(Record, FileReader)
     assert issubclass(Record, FileWriter)
-    assert Record.from_text("record").to_text() == "record"
+    assert Record.from_text("record").to_text() == "record\n"
 
 
 @pytest.mark.parametrize("binary", [False, True])
@@ -179,6 +180,7 @@ def test_write_only_adapters_preserve_borrowed_streams(
 
         if binary:
 
+            @takes_error_policy
             def to_bytes(self, **kwargs) -> bytes:
                 return b"\x00\xff"
 
@@ -192,7 +194,7 @@ def test_write_only_adapters_preserve_borrowed_streams(
     obj.save(target)
     assert (target.read_bytes() if binary else target.read_text()) == expected
     if not binary:
-        assert obj.to_bytes(encoding="latin-1") == b"\x63\x61\x66\xe9"
+        assert obj.to_bytes(encoding="latin-1") == b"\x63\x61\x66\xe9\n"
 
 
 class Note(DataModelBase):

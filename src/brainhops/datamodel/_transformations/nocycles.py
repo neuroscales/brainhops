@@ -10,12 +10,14 @@ import typing_extensions as tx
 
 if tx.TYPE_CHECKING:
     from .base import Transformation
+    from .concrete import Identity
     from .derived import DerivedTransformation
     from .sequence import Sequence
 
 # Type variables used by the registration decorators, so that a decorated
 # name keeps its exact class or signature for a static type checker.
 _DrvT = tx.TypeVar("_DrvT", bound="DerivedTransformation")
+_IdtT = tx.TypeVar("_IdtT", bound="Identity")
 _SeqT = tx.TypeVar("_SeqT", bound="Sequence")
 _TrfT = tx.TypeVar("_TrfT", bound="Transformation")
 _AdaptT = tx.TypeVar("_AdaptT", bound=tx.Callable[..., "Sequence"])
@@ -120,4 +122,24 @@ def register_transformation(cls: tx.Type[_TrfT]) -> tx.Type[_TrfT]:
     """Register the root class of the concrete hierarchy and return it."""
     global TRANSFORMATION
     TRANSFORMATION = cls
+    return cls
+
+
+# --- identity ---------------------------------------------------------
+
+# The identity is registered so that code below `concrete`, such as the
+# filters of `compute.filter`, can build one without importing `concrete`
+# at load time.
+IDENTITY: tx.Optional[tx.Type["Identity"]] = None
+"""The registered [`Identity`][] class, or `None` until it is registered."""
+
+
+def register_identity(cls: tx.Type[_IdtT]) -> tx.Type[_IdtT]:
+    """Register the class stored in [`IDENTITY`][] and return it.
+
+    Because the class is returned, the function can be used as a class
+    decorator.
+    """
+    global IDENTITY
+    IDENTITY = cls
     return cls

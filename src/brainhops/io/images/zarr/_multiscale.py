@@ -6,6 +6,7 @@ from bagof.magic import Inherit, replace
 
 # core
 from brainhops._core.backends import array_backend
+from brainhops._core.path import is_local, replace_directory
 from brainhops._core.properties import smartproperty
 
 # datamodel
@@ -29,7 +30,6 @@ from brainhops.datamodel.transformations import (
 
 # io
 from brainhops.io.base import register_format
-from brainhops.io.base._utils_files import is_local, replace_directory
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
 from brainhops.io.common.zarr._data import (

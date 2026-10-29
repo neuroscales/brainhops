@@ -157,8 +157,9 @@ class ConcreteTransformation(Transformation):
             converted.
         simplify : SimplifyLike, default="analytic"
             How much effort to spend on simplification. `"analytic"` decides
-            from the type alone, `"numeric"` also reads the parameter values,
-            and `"none"` skips simplification.
+            from the type alone, `"numeric"` also reads the parameter values
+            of a matrix transformation, `{None: "numeric"}` also reads
+            those of a field, and `"none"` skips simplification.
         factor : bool, default=False
             Whether to split the transformation into independent factors, one
             for each group of axes that transform together. To do so, the
@@ -1092,6 +1093,7 @@ class Translation(_CompactTransformation):
 
 
 @kinds.Identity
+@nocycles.register_identity
 class Identity(_CompactTransformation):
     """Identity transformation.
 

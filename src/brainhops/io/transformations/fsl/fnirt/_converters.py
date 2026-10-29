@@ -326,7 +326,7 @@ def _held(result: FnirtWarpField, loss: tx.Optional[str]) -> FnirtWarpField:
     if loss is not None:
         raise LossyConversionError(
             f"The FnirtWarpField that this transformation converts to is "
-            f"not the same map: {loss} Pass lossy=True to accept it.",
+            f"not the same map: {loss} Pass on_loss='ignore' to accept it.",
             result=result,
         )
     return result

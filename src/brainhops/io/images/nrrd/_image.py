@@ -12,13 +12,17 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes, is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -29,9 +33,6 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import same_file as _same_file
-from brainhops.io.base._utils_files import sibling as _sibling
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -551,32 +552,6 @@ class NrrdImage(
         return _declined(error, None)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this kind of NRRD file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes do not hold this
-            kind of NRRD file.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
-    @classmethod
     def from_filename(
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> "NrrdImage":
@@ -587,8 +562,9 @@ class NrrdImage(
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a NRRD
-        image holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`.
+        image holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -651,7 +627,7 @@ class NrrdImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
@@ -660,7 +636,6 @@ class NrrdImage(
         datatype: tx.Optional[tx.Any] = None,
         space: tx.Optional[str] = None,
         keyvalue: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "NrrdImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -731,9 +706,6 @@ class NrrdImage(
         keyvalue : mapping, optional
             Key/value pairs merged into those of the base. A value of
             `None` removes a key.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -767,7 +739,7 @@ class NrrdImage(
         metadata = metadata_to_write(
             self.metadata, NrrdMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -811,6 +783,7 @@ class NrrdImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a NRRD file with attached samples.
 
@@ -838,23 +811,7 @@ class NrrdImage(
         record = _nrrd_written(image, ())
         return record.to_bytes() + _payload(image, record)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write a NRRD file with attached samples to a stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream.
-        **kwargs : Any
-            The options of [`consolidate`][].
-
-        Raises
-        ------
-        TypeError
-            If an unknown option is given.
-        """
-        file.write(self.to_bytes(**kwargs))
-
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
@@ -902,7 +859,7 @@ class NrrdImage(
         if attached:
             written = [filename]
         else:
-            written = [filename, _sibling(filename, data_file)]
+            written = [filename, path.Path(filename).parent / data_file]
         reading = _reads_from(self.rawdata, written)
         if reading:
             mmap = self.rawdata.root.mmap
@@ -911,12 +868,14 @@ class NrrdImage(
             image = self.consolidate(**options)
         if attached:
             record = _nrrd_written(image, ())
-            write_file(filename, record.to_bytes() + _payload(image, record))
+            atomic_write_bytes(
+                filename, record.to_bytes() + _payload(image, record)
+            )
         else:
             record = _nrrd_written(image, (data_file,))
             header, data = record.to_bytes(), _payload(image, record)
-            write_file(written[1], data)
-            write_file(filename, header)
+            atomic_write_bytes(written[1], data)
+            atomic_write_bytes(filename, header)
         if reading:
             # The image holds what the files hold, and its lazy array reads
             # the new files, since the lazy array of the old files describes
@@ -937,9 +896,9 @@ _OPTIONS = ("encoding", "endian", "datatype", "space", "keyvalue")
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
-    The options of the writer, `on_loss` and the fields of the metadata,
-    which go to the consolidation of the metadata, are known. `space` is
-    the option of the writer.
+    The options of the writer and the fields of the metadata, which go
+    to the consolidation of the metadata, are known. `space` is the
+    option of the writer.
 
     Raises
     ------
@@ -947,9 +906,7 @@ def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
         If an unknown option is given.
     """
     unknown = [
-        name
-        for name in kwargs
-        if name not in _OPTIONS and name not in FIELDS and name != "on_loss"
+        name for name in kwargs if name not in _OPTIONS and name not in FIELDS
     ]
     if unknown:
         raise TypeError(f"Unknown NRRD writer option(s): {', '.join(unknown)}")
@@ -987,7 +944,7 @@ def _encoded(
 ) -> tx.Tuple[NrrdRaw, ArrayProtocol]:
     """Return the record and the samples that consolidating an image stores.
 
-    The record is encoded as [`NrrdImage.consolidate`][] describes, and the
+    The record is encoded as `NrrdImage._consolidate` describes, and the
     held record is returned when the encoding changes nothing. The samples
     are the assigned data, or else `rawdata`, in the order of the image,
     converted to the stored type as the writer converts them, with
@@ -1424,7 +1381,7 @@ def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     if not isinstance(raw, _NrrdProxy):
         return False
     return any(
-        _same_file(read, file)
+        is_same_file(read, file)
         for read in (raw.source, *raw.files)
         for file in written
     )

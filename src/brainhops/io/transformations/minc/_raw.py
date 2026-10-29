@@ -3,7 +3,6 @@
 __all__ = ["XfmRaw"]
 
 # stdlib
-import io as _io
 
 # dependencies
 import numpy as np
@@ -12,8 +11,8 @@ from bagof.magic import Magic, field
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import open_path, write_file
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -349,6 +348,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file that the record holds.
 
@@ -394,6 +394,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
                 return self.text
         return encoded
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file that the record holds.
 
@@ -409,6 +410,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
         """
         yield from self.to_text(**kwargs).splitlines()
 
+    @takes_error_policy
     def to_bytes(self, encoding: str = "utf-8", **kwargs) -> bytes:
         """Return the bytes of the file that the record holds.
 
@@ -426,36 +428,6 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
             because they did not decode are written back unchanged.
         """
         return self.to_text(**kwargs).encode(encoding, "surrogateescape")
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the file that the record holds to an open file.
-
-        A text stream receives the text, and any other stream the bytes,
-        so that the line endings are written as stored.
-
-        Parameters
-        ----------
-        file : IO
-            The open file.
-        **kwargs : Any
-            Options of [`to_bytes`][].
-        """
-        if isinstance(file, _io.TextIOBase):
-            file.write(self.to_text(**kwargs))
-        else:
-            file.write(self.to_bytes(**kwargs))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the file that the record holds, replacing a local file.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Options of [`to_bytes`][].
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ----------------------------------------------------------------------
@@ -615,7 +587,7 @@ def _read_bytes(filename: path.FilenameLike) -> tx.Optional[bytes]:
         filename = path.Path(filename)
     if not path.exists(filename):
         return None
-    with open_path(filename) as file:
+    with path.Path(filename).open("rb") as file:
         return file.read()
 
 

@@ -22,7 +22,6 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -102,9 +101,7 @@ def _evaluate(
     if isinstance(xform, Identity):
         matrix = np.eye(len(target.order), len(source.order) + 1)
     else:
-        affine = _as_affine(xform)
-        assert affine is not None
-        matrix = np.asarray(affine.matrix, dtype=float)
+        matrix = np.asarray(xform.to_affine().matrix, dtype=float)
     vector = np.asarray([point[name] for name in source.names] + [1.0])
     values = matrix @ vector
     return dict(zip(target.names, values.tolist()))
@@ -661,7 +658,7 @@ def test_a_transformation_into_the_intrinsic_space_is_read_inverted() -> None:
     )
     assert placement.input.name == "intrinsic"
     assert placement.output.name == "world"
-    matrix = np.asarray(_as_affine(placement).matrix)
+    matrix = np.asarray(placement.to_affine().matrix)
     np.testing.assert_allclose(np.diag(matrix[:, :3]), [1 / 8, 1 / 4, 1 / 2])
 
 

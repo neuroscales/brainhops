@@ -8,13 +8,14 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
-from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -329,13 +330,12 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         byteorder: tx.Optional[str] = None,
         precision: tx.Optional[tx.Union[ItkPrecision, str]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain, systems and options into a new record.
@@ -362,7 +362,8 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an ITK
         MATLAB file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -377,9 +378,6 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             which also appears in the name of each block. By default, each
             block keeps its precision. The fixed parameters of a block
             that is encoded again are written in double precision.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -409,7 +407,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         metadata = metadata_to_write(
             self.metadata, MatMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         byteorder = _byteorder(byteorder)
@@ -468,6 +466,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the ITK `.mat` file of the transformation.
 
@@ -495,32 +494,6 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             If `byteorder` is invalid.
         """
         return _record(self.consolidate(**kwargs)).to_bytes()
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the transformation to a file.
-
-        The content is built before the file is opened, so that an
-        unrepresentable transformation does not create or truncate the
-        file, and the transformation itself is not changed. A local file
-        is replaced at once.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The writer options `byteorder` and `precision`, as
-            [`consolidate`][] takes them.
-
-        Raises
-        ------
-        UnrepresentableTransformationError
-            If the chain does not hold a single ITK block or affine
-            between ITK spaces.
-        WriterError
-            If `byteorder` is invalid.
-        """
-        write_file(filename, self.to_bytes(**kwargs))
 
 
 # ---------------------------------------------------------------------

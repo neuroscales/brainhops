@@ -1,28 +1,21 @@
-"""Writing NIfTI files and streams through `nibabel`, and recognising
-NIfTI headers."""
+"""Writing NIfTI streams through `nibabel`, and recognising NIfTI headers."""
 
 # stdlib
-import gzip
-from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
 
-from brainhops._core import path
 from brainhops._core.streams import open_compressed
-from brainhops.io.base._utils_files import is_local, replace_file
 
 # ----------------------------------------------------------------------
-#   WRITING THROUGH A PATH
+#   RECOGNISING AND WRITING STREAMS
 # ----------------------------------------------------------------------
 #
-# `nibabel` opens a file it is handed by name with the built-in `open`,
-# so it takes any name for a local file: given `s3://bucket/x.nii` or
-# `memory://x.nii`, it looks for a local file of that name. The helpers
-# below are the one place in `io` that hands `nibabel` a path. A local
-# path goes to `nibabel` by name. A remote path is opened through its
-# own backend, and `nibabel` is handed the open file. The voxels are not
+# `nibabel` writes a NIfTI file to a stream, which the writer of
+# `NiftiReaderWriter` opens on a local or a remote path, compressed as
+# its name asks. `nibabel` is never handed a path, because it would take
+# `s3://bucket/x.nii` for the name of a local file. The voxels are not
 # read through `nibabel` (see `_data.py`).
 
 _NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
@@ -89,28 +82,3 @@ def _image_to_stream(
     image.to_file_map(
         image.make_file_map({"image": fileobj, "header": fileobj})
     )
-
-
-def _save_nifti(
-    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
-) -> None:
-    """Write a NIfTI image to a local or remote path.
-
-    The file is compressed when its name ends with `.gz`.
-    """
-    if is_local(file):
-        # The file is written beside the target and moved over it, because
-        # nibabel reads the voxels of a lazy image while it writes, and the
-        # lazy image may read the target itself.
-        replace_file(path.Path(file), image.to_filename)
-        return
-    # The name is taken from the URL, because the backend may not know it and a
-    # query is not part of it. `open_compressed` only reads, so gzip compresses
-    # here.
-    compress = urlsplit(str(file)).path.lower().endswith(".gz")
-    with path.Path(file).open("wb") as f:
-        if compress:
-            with gzip.GzipFile(fileobj=f, mode="wb") as gz:
-                _image_to_stream(image, gz)
-        else:
-            _image_to_stream(image, f)

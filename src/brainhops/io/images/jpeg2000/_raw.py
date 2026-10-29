@@ -11,6 +11,7 @@ from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -278,32 +279,6 @@ class Jpeg2000Raw(Raw, BinaryFileReader, BinaryFileWriter):
         return Confidence.LIKELY
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a JPEG 2000 header.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no JPEG 2000
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(data)), error=error)
-
-    @classmethod
     def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> "Jpeg2000Raw":
         """Read the header of a JP2 file or a codestream from a stream.
 
@@ -340,6 +315,7 @@ class Jpeg2000Raw(Raw, BinaryFileReader, BinaryFileWriter):
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header of the file, up to its first tile.
 

@@ -3,7 +3,6 @@
 __all__ = ["BdvImage"]
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -16,7 +15,9 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -206,11 +207,10 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             return self.data.shape
         return tuple(int(d) for d in reversed(self.rawdata.shape))
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "BdvImage":
         """Move the pending data into `rawdata`.
@@ -226,15 +226,13 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a
         BigDataViewer dataset holds no field of the vocabulary yet, so a
-        field that is set is reported as lost, once, by `on_loss`.
+        field that is set is reported as lost, once, under the error
+        policy of the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this image rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -255,7 +253,7 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, BdvMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         # The record cannot be encoded, so a copy is given the list that
@@ -371,32 +369,6 @@ class BdvImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         if not score or level is not None:
             return score
         return Confidence.LIKELY
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score the bytes of the XML of a dataset.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the XML file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes are not a dataset
-            that this class reads.
-        **kwargs : Any
-            Options of the reader, as for [`sniff_fileobj`][].
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error, **kwargs)
 
     @classmethod
     def from_filename(

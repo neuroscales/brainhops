@@ -1,7 +1,6 @@
 """The shared base of the transformations stored in NIfTI files."""
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import nibabel as nb
@@ -9,27 +8,18 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops._core import path
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import (
-    BinaryFileReader,
-    BinaryFileWriter,
-    Confidence,
-    ParserExistsError,
-    WriterError,
     WriterNotImplementedError,
 )
-from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
+from brainhops.io.common.nifti import (
+    NiftiMetadata,
+    NiftiRaw,
+    NiftiReaderWriter,
+)
 from brainhops.io.common.nifti._data import _NiftiProxy
 from brainhops.io.common.nifti._header import (
     _NiftiObject,
-    _written_nifti,
-)
-from brainhops.io.common.nifti._raw import (
-    _sniffed_header,
-    read_nifti,
-    reads_file,
-    write_nifti,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -37,9 +27,7 @@ _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
 
-class NiftiBasedTransformation(
-    BinaryFileReader, BinaryFileWriter, TransformationFormat
-):
+class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
     """A transformation stored in a NIfTI file.
 
     A NIfTI transformation holds the header of its file as
@@ -71,9 +59,6 @@ class NiftiBasedTransformation(
     field holds [`NiftiMetadata`][] and converts other metadata into it.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = ("nifti",)
-
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The array of the file as it is stored, or `None` without one.
 
@@ -84,171 +69,6 @@ class NiftiBasedTransformation(
     transformation was last consolidated, so assigning `data` leaves it
     as it is.
     """
-
-    # --- reading ------------------------------------------------------
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that a stream holds this transformation.
-
-        A stream that starts with a NIfTI header is scored with
-        `_score_nibabel`. Any other stream is declined by
-        [`NiftiRaw.sniff_fileobj`][], which raises the requested error.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, which is read from its current position.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the stream holds no NIfTI
-            header.
-        **kwargs : Any
-            Options of the reader. The NIfTI version is read from
-            `version`.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        header = _sniffed_header(file, kwargs.get("version"))
-        if header is None:
-            return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
-        return cls._score_nibabel(header)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        data: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold this transformation.
-
-        Parameters
-        ----------
-        data : bytes
-            The content of a file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no NIfTI header.
-        **kwargs : Any
-            Options of the reader, as for [`sniff_fileobj`][].
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-    @classmethod
-    def _score_nibabel(cls, header: _NiftiObject) -> float:
-        """Return how well a valid NIfTI header matches this class.
-
-        The header has already passed the check of its size and magic
-        number, so the score says how likely the file holds the kind of
-        transformation that this class builds. Each concrete format
-        overrides this method, and the base returns `Confidence.MAYBE`.
-        """
-        return Confidence.MAYBE
-
-    @classmethod
-    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
-        """Read a transformation from the path of a NIfTI file.
-
-        A local file is kept by its name, so that the lazy array opens it
-        whenever the array is read, and memory-maps it when the file is
-        not compressed. A remote file is read into memory instead.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            Reader options that nibabel's readers also take. `mmap`
-            tells whether the array of a local file that is not
-            compressed is memory-mapped. The other options, such as
-            `keep_file_open`, are ignored.
-
-        Returns
-        -------
-        NiftiBasedTransformation
-            The transformation, whose array is read lazily.
-
-        Raises
-        ------
-        ParserExistsError
-            If the path does not exist.
-        """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.exists(filename):
-            raise ParserExistsError(f"No such file: {filename}")
-        raw, proxy = read_nifti(filename, **kwargs)
-        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
-
-    @classmethod
-    def from_fileobj(cls, file: tx.BinaryIO, **kwargs) -> tx.Self:
-        """Read a transformation from an open NIfTI stream.
-
-        The lazy array reads the array from the stream when it is needed,
-        so the stream must stay open while the data may be read.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream, which may be compressed with gzip.
-        **kwargs : Any
-            Reader options that nibabel's readers also take. `mmap`
-            tells whether the array of a local file that is not
-            compressed is memory-mapped. The other options, such as
-            `keep_file_open`, are ignored.
-
-        Returns
-        -------
-        NiftiBasedTransformation
-            The transformation, whose array is read lazily.
-        """
-        raw, proxy = read_nifti(file, **kwargs)
-        return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(raw))
-
-    @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
-        """Build a transformation from a nibabel image or header.
-
-        The array of an image becomes `rawdata`, and a copy of its header
-        becomes the record of the metadata. A header alone gives a
-        transformation without an array. The array proxy of an image that
-        nibabel read from a file is replaced by the lazy array that
-        [`from_filename`][] builds for that file, and any other array is
-        kept as it is.
-
-        Parameters
-        ----------
-        nifti : nibabel.Nifti1Image or nibabel.Nifti1Header
-            The nibabel image or header. NIfTI-2 images and headers are
-            accepted too.
-        **kwargs : Any
-            Other fields of the transformation.
-
-        Returns
-        -------
-        NiftiBasedTransformation
-            The transformation.
-
-        Raises
-        ------
-        TypeError
-            If `nifti` is neither a NIfTI image nor a NIfTI header.
-        """
-        raw, header = _nibabel_parts(nifti)
-        metadata = NiftiMetadata.from_raw(NiftiRaw(header=header.copy()))
-        return cls(rawdata=raw, metadata=metadata, **kwargs)
 
     # --- writing ------------------------------------------------------
 
@@ -262,7 +82,7 @@ class NiftiBasedTransformation(
             return None
         return self.metadata.raw.copy()
 
-    def consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
+    def _consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
         """Encode the pending state into `rawdata` and the header.
 
         Each concrete format implements this method, on which the writers
@@ -294,90 +114,6 @@ class NiftiBasedTransformation(
             f"NIfTI."
         )
 
-    def to_nibabel(self, **options) -> _NibabelImage:
-        """Build the nibabel image that a file written from this holds.
-
-        The transformation is consolidated with the options, as by
-        [`consolidate`][], into a copy, and the nibabel image holds the
-        `rawdata` array and the header of that copy. The transformation itself
-        is not changed.
-
-        Parameters
-        ----------
-        **options : Any
-            The writer options of [`consolidate`][], such as the template
-            `like` and the header overrides.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
-
-        Raises
-        ------
-        WriterError
-            If the transformation has no array to write.
-        """
-        return _nifti_written(self.consolidate(**options))
-
-    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the transformation to a path.
-
-        The file is compressed when its name ends with `.gz`. The
-        transformation is consolidated into a copy, which is written, and
-        the transformation itself is not changed. A local file is replaced
-        at once, so a transformation can be written over the file that it
-        was read from. The transformation is then consolidated in place,
-        so that it holds what the file holds (#426): its lazy array reads
-        the new file, and its record is the header of that file.
-
-        Parameters
-        ----------
-        filename : path-like
-            The path of the file.
-        **kwargs : Any
-            The writer options of [`consolidate`][].
-        """
-        if not reads_file(self.rawdata, filename):
-            write_nifti(self.to_nibabel(**kwargs), filename)
-            return
-        self.consolidate(inplace=True, **kwargs)
-        write_nifti(self.to_nibabel(), filename)
-        # The lazy array of the old file describes how that file stored
-        # the values, so the transformation reads the new file, holds the
-        # record of its header, and drops the views decoded before.
-        record, proxy = read_nifti(filename)
-        self.rawdata = proxy
-        self.metadata = type(self.metadata).from_raw(record)
-        self.data = None
-
-    def to_fileobj(self, file: tx.BinaryIO, **kwargs) -> None:
-        """Write the transformation to a stream as an uncompressed file.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream.
-        **kwargs : Any
-            The writer options of [`consolidate`][].
-        """
-        write_nifti(self.to_nibabel(**kwargs), file)
-
-    def to_bytes(self, **kwargs) -> bytes:
-        """Return the uncompressed NIfTI encoding of the transformation.
-
-        Parameters
-        ----------
-        **kwargs : Any
-            The writer options of [`consolidate`][].
-
-        Returns
-        -------
-        bytes
-            The content of an uncompressed NIfTI file.
-        """
-        return self.to_nibabel(**kwargs).to_bytes()
-
 
 # ----------------------------------------------------------------------
 #   HELPERS OF THE CONCRETE FORMATS
@@ -403,22 +139,6 @@ def _nibabel_parts(
     if isinstance(nifti, nb.Nifti1Header):
         return None, nifti
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
-
-
-def _nifti_written(xform: NiftiBasedTransformation) -> _NibabelImage:
-    """Return the nibabel image that writes a consolidated transformation.
-
-    Raises
-    ------
-    WriterError
-        If the transformation has no array to write.
-    """
-    if xform.rawdata is None:
-        raise WriterError(
-            f"This {type(xform).__name__} has no array, so there is "
-            f"nothing to write."
-        )
-    return _written_nifti(xform.rawdata, xform.metadata.raw)
 
 
 def _consolidated_metadata(

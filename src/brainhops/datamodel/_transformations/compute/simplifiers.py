@@ -54,6 +54,7 @@ from ..meta import (
 from ..multiscale import MultiscaleField
 from ..sequence import Sequence, _unnest
 from .check import is_kind
+from .prune import may_prune, prune_chain
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
 from .utils import axis_list
@@ -245,21 +246,47 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
     new opportunities for the other, so both run in rounds until a round
     changes nothing. The collapse runs first in each round, so that a
     transformation cancels with its lazy inverse before a downcast can
-    rebuild either side and break the link between them. Nothing is composed
-    or bridged, so the sequence can only get shorter.
+    rebuild either side and break the link between them.
+
+    The axes that the chain does not need are then removed by the
+    pruning of the `prune` module, which cuts elements down and
+    moves, merges or cancels projections. It runs after the rounds, so
+    that no lazy inverse is cut before it has had the chance to cancel,
+    and the rounds run again on its result. Nothing is composed or
+    bridged, so the sequence can only get shorter.
     """
     if policy.is_noop():
         return t
-    leaves = _unnest(t.transformations)
+    leaves = _settle(_unnest(t.transformations), policy)
+    for _ in range(_PRUNING_ROUNDS):
+        if len(leaves) < 2 or not may_prune(leaves, policy):
+            break
+        pruned = prune_chain(leaves, policy)
+        if pruned is None:
+            break
+        leaves = _settle(pruned, policy)
+    return _rebuild(t, leaves)
+
+
+# The pruning finds everything in one run, and a second run only takes
+# what the collapse of the projections that the first run moved makes
+# visible. The bound is a safety net against two runs that undo each
+# other.
+_PRUNING_ROUNDS = 4
+
+
+def _settle(
+    leaves: tx.List[Transformation], policy: SimplifyTable
+) -> tx.List[Transformation]:
+    # Collapse and downcast in rounds until a round changes nothing.
     while True:
         collapsed = _collapse_pass(leaves, policy)
         simplified = _downcast_pass(collapsed, policy)
         if len(simplified) == len(leaves) and all(
             a is b for a, b in zip(simplified, leaves)
         ):
-            break
+            return leaves
         leaves = simplified
-    return _rebuild(t, leaves)
 
 
 # ======================================================================
@@ -308,9 +335,11 @@ def _(
 # --- Projections ------------------------------------------------------
 # Two consecutive projections are one projection, because each keeps the
 # order of the axes that it does not drop. Merging them reads only the
-# positions of the axes, so it costs nothing. An embedding followed by the
-# projection that drops the same axes merges into the identity, while the
-# reverse order merges into a projection that sets these axes to zero.
+# positions of the axes and the values of the created axes, so it costs
+# nothing. An embedding followed by the projection that drops the same axes
+# merges into the identity, whatever the values of these axes, and a free
+# axis that is dropped therefore disappears. The reverse order merges into
+# a projection that sets these axes to their values.
 
 
 @simplifier
@@ -320,12 +349,13 @@ def _(
     merged = _merge_projections(first, second)
     if merged is None:
         return None
-    dropped, created = merged
+    dropped, created, at = merged
     if not dropped and not created:
         return Identity(input=first.input, output=second.output)
     return Projection(
         dropped=dropped,
         created=created,
+        at=at,
         input=first.input,
         output=second.output,
     )
@@ -333,37 +363,46 @@ def _(
 
 def _merge_projections(
     first: Projection, second: Projection
-) -> tx.Optional[tx.Tuple[tx.List[int], tx.List[int]]]:
-    """Return the axes that two consecutive projections drop and create.
+) -> tx.Optional[tx.Tuple[tx.List[int], tx.List[int], tx.List[float]]]:
+    """Return what two consecutive projections drop and create, and where.
 
-    The axes after the last position that either projection names pass
-    through both unchanged, so the merge is computed in a space just wide
-    enough to hold every position, and holds in any wider space. `None`
-    is returned when a position is negative.
+    The result holds the dropped input axes, the created output axes and
+    the value of each created axis. The axes after the last position that
+    either projection names pass through both unchanged, so the merge is
+    computed in a space just wide enough to hold every position, and
+    holds in any wider space. `None` is returned when a position is
+    negative or named twice.
     """
     d1, c1 = axis_list(first.dropped), axis_list(first.created)
     d2, c2 = axis_list(second.dropped), axis_list(second.created)
     if any(i < 0 for i in d1 + c1 + d2 + c2):
         return None
+    if any(len(set(axes)) != len(axes) for axes in (d1, c1, d2, c2)):
+        return None
     width = 1 + max(d1 + c1 + d2 + c2, default=-1) + len(d1) + len(d2)
 
     def sources(
-        inputs: tx.List[tx.Optional[int]],
+        inputs: tx.List[tx.Any],
         dropped: tx.List[int],
         created: tx.List[int],
-    ) -> tx.List[tx.Optional[int]]:
-        # Each output holds the input that it comes from, or None for a
-        # created axis.
+        values: tx.List[float],
+    ) -> tx.List[tx.Any]:
+        # Each output holds the input that it comes from, or the value of
+        # a created axis, wrapped in a tuple to tell it from an input.
         kept = iter(x for i, x in enumerate(inputs) if i not in dropped)
+        value = dict(zip(created, values))
         size = len(inputs) - len(dropped) + len(created)
-        return [None if o in created else next(kept) for o in range(size)]
+        return [(value[o],) if o in value else next(kept) for o in range(size)]
 
-    middle = sources(list(range(width)), d1, c1)
-    outputs = sources(middle, d2, c2)
-    reached = set(o for o in outputs if o is not None)
+    middle = sources(list(range(width)), d1, c1, list(first.at))
+    outputs = sources(middle, d2, c2, list(second.at))
+    reached = set(o for o in outputs if not isinstance(o, tuple))
     dropped = [i for i in range(width) if i not in reached]
-    created = [o for o, source in enumerate(outputs) if source is None]
-    return dropped, created
+    created = [
+        o for o, source in enumerate(outputs) if isinstance(source, tuple)
+    ]
+    at = [outputs[o][0] for o in created]
+    return dropped, created, at
 
 
 # --- Cancellation -----------------------------------------------------

@@ -6,7 +6,6 @@ import os
 import time
 import uuid
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -15,6 +14,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import (
     smartproperty,
 )
@@ -24,7 +24,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -34,7 +37,6 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -431,32 +433,6 @@ class AfniImage(
         return cls._score_header(raw)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an AFNI image header.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a `.HEAD` file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes hold no AFNI image
-            header.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
-    @classmethod
     def from_filename(
         cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
     ) -> "AfniImage":
@@ -561,14 +537,13 @@ class AfniImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "AfniImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -619,7 +594,8 @@ class AfniImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of an AFNI
         dataset holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -638,9 +614,6 @@ class AfniImage(
             the grid and the view (`SCENE_DATA`) are refused, because the
             data, `datatype`, the transformations and `view` decide them.
             A string must be Latin-1 text.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -669,7 +642,7 @@ class AfniImage(
         metadata = metadata_to_write(
             self.metadata, AfniMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -715,13 +688,13 @@ class AfniImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> None:
         """Write the `.HEAD` and `.BRIK` files of a dataset.
@@ -754,9 +727,6 @@ class AfniImage(
             The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
             Attributes set last, as for [`consolidate`][].
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold, as
-            for [`consolidate`][].
         **fields : Any
             Fields of the metadata to override, as for [`consolidate`][].
             Any other option is refused.
@@ -778,9 +748,9 @@ class AfniImage(
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
-        options.update(fields, on_loss=on_loss)
+        options.update(fields)
         reading = reads_brik(self.rawdata, brik) or any(
-            reads_brik(self.rawdata, sibling) for sibling, _ in stale
+            reads_brik(self.rawdata, sibling) for sibling in stale
         )
         if reading:
             mmap = self.rawdata.root.mmap
@@ -789,36 +759,15 @@ class AfniImage(
             image = self.consolidate(**options)
         record, data = _afni_written(image)
         write_brik(record, data, brik)
-        write_file(head, record.to_bytes())
-        for _, local in stale:
-            os.remove(local)
+        atomic_write_bytes(head, record.to_bytes())
+        for sibling in stale:
+            sibling.unlink()
         if reading:
             # The image holds what the dataset holds, and its lazy array
             # reads the new BRIK, since the lazy array of the old BRIK
             # describes how that BRIK stored the voxels.
             self.rawdata = brik_proxy(record, brik, mmap)
             self.data = None
-
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        """Write to a path; AFNI datasets cannot be written to a stream.
-
-        Parameters
-        ----------
-        file : path-like or IO
-            The path, or a stream, which is refused.
-        **kwargs : Any
-            Arguments of [`to_filename`][].
-
-        Raises
-        ------
-        WriterError
-            If `file` is a stream.
-        """
-        if isinstance(file, str):
-            file = path.Path(file)
-        if isinstance(file, (path.PathLike, os.PathLike)):
-            return self.to_filename(file, **kwargs)
-        return self.to_fileobj(file, **kwargs)
 
     to_fileobj = disabled(
         WriterError,
@@ -846,7 +795,7 @@ def _encoded(
 ) -> tx.Tuple[AfniRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`AfniImage.consolidate`][] describes, and
+    The record is encoded as `AfniImage._consolidate` describes, and
     the held record is returned when the encoding changes nothing. The
     voxels are `rawdata` when it is a lazy array that is copied as the
     BRIK stores it, and otherwise the assigned data or the data, as an

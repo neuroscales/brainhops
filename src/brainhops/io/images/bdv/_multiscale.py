@@ -3,7 +3,6 @@
 __all__ = ["BdvMultiScaleImage"]
 
 # stdlib
-from io import BytesIO
 
 # dependencies
 import typing_extensions as tx
@@ -138,32 +137,6 @@ class BdvMultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         if level is not None:
             return Confidence.NO
         return _sniff_stream(file, error)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score the bytes of the XML of a dataset.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the XML file.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the bytes are not a dataset
-            that this class reads.
-        **kwargs : Any
-            Options of the reader, as for [`sniff_fileobj`][].
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error, **kwargs)
 
     @classmethod
     def from_filename(

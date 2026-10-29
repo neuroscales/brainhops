@@ -32,7 +32,7 @@ deformation field, and it is kept as it is in a velocity field. A
 velocity field holds only a velocity, since brainhops computes no
 logarithm of a displacement. A field interpolated with another degree
 than 1 is sampled at its nodes, which is a loss: the converter raises a
-`LossyConversionError`, and `t.to(Format, lossy=True)` returns the
+`LossyConversionError`, and `t.to(Format, on_loss="ignore")` returns the
 sampled field.
 
 The control-point grids of NiftyReg have converters of their own. A

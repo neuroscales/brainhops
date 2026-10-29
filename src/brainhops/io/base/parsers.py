@@ -22,12 +22,20 @@ __all__ = [
 
 from collections.abc import Iterable
 from contextvars import ContextVar
-from io import BytesIO
+from io import BytesIO, TextIOBase
 
 import typing_extensions as tx
 
 from brainhops._core import path, peek
-from brainhops._core.streams import preserve_position
+from brainhops._core.path import is_local, replace_file
+from brainhops._core.streams import (
+    compression_suffix,
+    decompress,
+    open_compressing,
+    open_decompressed,
+    preserve_position,
+)
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.errors import (
     AmbiguousFormatError,  # noqa: F401
     ParserContentError,  # noqa: F401
@@ -44,7 +52,6 @@ from brainhops.errors import (
     WriterError,  # noqa: F401
     WriterNotImplementedError,
 )
-from brainhops.io.base._utils_files import is_local, replace_file
 from brainhops.io.base.specs import SourceSpec
 
 # ----------------------------------------------------------------------
@@ -144,12 +151,16 @@ class _FileNamesMixin:
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ()
-    """File extensions that the format handles, such as `(".nii", ".nii.gz")`.
+    """File extensions that the format handles, such as `(".mgh", ".mgz")`.
 
     A matching extension keeps the format among the candidates even if its
     sniffer declines, and the extension match is the next ranking criterion
-    after the sniffer score. The longest matching extension wins, so `.nii.gz`
-    beats `.gz`.
+    after the sniffer score. The longest matching extension wins, so
+    `.note.txt` beats `.txt`. Every format may be compressed, so the
+    extensions leave out compression suffixes: a name that ends with
+    `.gz`, `.bz2` or `.xz` also matches the extensions of the name without
+    that suffix, and `x.nii.gz` matches `.nii`. An extension that implies
+    compression without such a suffix, such as `.mgz`, is listed.
     """
 
     PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ()
@@ -175,6 +186,15 @@ class _FileNamesMixin:
     The higher value wins. The priority should stay at 0 unless two parsers
     genuinely collide.
     """
+
+
+# The parser classes whose sniff_bytes is currently falling back to
+# sniff_fileobj. If sniff_bytes is entered again for one of these classes,
+# then sniff_fileobj has passed the content back to sniff_bytes, and the
+# fallback would loop.
+_SNIFF_BYTES_FALLBACK: ContextVar[frozenset] = ContextVar(
+    "_SNIFF_BYTES_FALLBACK", default=frozenset()
+)
 
 
 class _SnifferMixin(_FileNamesMixin):
@@ -266,7 +286,8 @@ class _SnifferMixin(_FileNamesMixin):
         """Same as [`sniff`][], for a path.
 
         A missing file scores [`Confidence.NO`][], or raises
-        [`SnifferExistsError`][] if `error` is set.
+        [`SnifferExistsError`][] if `error` is set. A compressed file is
+        decompressed as it is read.
         """
         kwargs["error"] = error
 
@@ -280,7 +301,7 @@ class _SnifferMixin(_FileNamesMixin):
                         error = SnifferExistsError
                     raise error(f"No such file: {filename}")
                 return Confidence.NO
-            with filename.open(cls._READ_MODE) as f:
+            with open_decompressed(filename, cls._READ_MODE) as f:
                 return cls.sniff_fileobj(f, **kwargs)
 
         if error:
@@ -339,11 +360,27 @@ class _SnifferMixin(_FileNamesMixin):
     ) -> float:
         """Same as [`sniff`][], for binary content.
 
+        Compressed content is decompressed first. The content is then
+        wrapped in an `io.BytesIO` and scored with [`sniff_fileobj`][], so
+        that a class that scores a stream also scores bytes. If that
+        method only reads the stream back into bytes, as the default
+        does, the content would come back to this method, which then
+        raises instead.
+
         Raises
         ------
         SnifferNotImplementedError
-            In the base class, which cannot sniff binary content.
+            If neither this method nor `sniff_fileobj` is implemented.
         """
+        active = _SNIFF_BYTES_FALLBACK.get()
+        if cls not in active:
+            token = _SNIFF_BYTES_FALLBACK.set(active | {cls})
+            try:
+                return cls.sniff_fileobj(
+                    BytesIO(decompress(bytes(content))), error=error, **kwargs
+                )
+            finally:
+                _SNIFF_BYTES_FALLBACK.reset(token)
         raise SnifferNotImplementedError(
             f"sniff_bytes() is not available in parser of type {cls.__name__}"
         )
@@ -496,7 +533,10 @@ class _ReaderMixin:
         with [`from_bytes`][], and a [`SourceSpec`][] with [`from_spec`][].
         A `str` is always a path, whether or not the file exists, so text
         held in memory must be read with [`from_text`][] or
-        [`from_content`][].
+        [`from_content`][]. The default [`from_filename`][],
+        [`from_fileobj`][] and [`from_bytes`][] decompress a file or
+        content that gzip, bzip2 or xz compresses, so that a format that
+        does not override them reads compressed files too.
 
         Raises
         ------
@@ -554,6 +594,9 @@ class _ReaderMixin:
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
         """Read an object from a path.
 
+        The file is opened in the read mode of the class, and a compressed
+        file is decompressed as it is read.
+
         Raises
         ------
         ParserExistsError
@@ -564,7 +607,7 @@ class _ReaderMixin:
 
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
-        with filename.open(cls._READ_MODE) as f:
+        with open_decompressed(filename, cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
 
     @classmethod
@@ -573,9 +616,14 @@ class _ReaderMixin:
         """Read an object from a file object open for reading.
 
         The default implementation reads the whole stream and passes it to
-        [`from_content`][]. A parser that needs only part of the stream, such
-        as a header, should override this method. [`from_bytes`][] then wraps
-        binary content in a stream and reads it with the override.
+        [`from_content`][], and [`from_bytes`][] decompresses binary content
+        that is compressed. A parser that needs only part of the stream,
+        such as a header, should override this method. [`from_bytes`][]
+        then wraps binary content in a stream and reads it with the
+        override. An override receives the stream as the caller gave it,
+        compressed or not, and decompresses it itself, because a lazy array
+        that keeps the stream must read it from the position where the
+        file starts.
         """
         with preserve_position(file):
             return cls.from_content(file.read(), **kwargs)
@@ -598,7 +646,8 @@ class _ReaderMixin:
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         """Read an object from binary content.
 
-        If the class implements [`from_fileobj`][] itself, the content is
+        Compressed content is decompressed first. If the class implements
+        [`from_fileobj`][] itself, the content is
         wrapped in an `io.BytesIO` and read with that method. Otherwise, this
         method raises, because the default `from_fileobj` would pass the
         content back to `from_bytes` and the fallback would recurse. An
@@ -616,7 +665,9 @@ class _ReaderMixin:
         if cls not in active and _overrides_from_fileobj(cls):
             token = _FROM_BYTES_FALLBACK.set(active | {cls})
             try:
-                return cls.from_fileobj(BytesIO(content), **kwargs)
+                return cls.from_fileobj(
+                    BytesIO(decompress(bytes(content))), **kwargs
+                )
             finally:
                 _FROM_BYTES_FALLBACK.reset(token)
         raise ParserNotImplementedError(
@@ -675,10 +726,41 @@ class _WriterMixin:
     as `to_bytes` or `to_lines`, and this mixin derives the other `to_*`
     methods and `save` from it. It is the counterpart of
     [`_ReaderMixin`][], and is independent of reading and sniffing.
+
+    Every entry point (`save`, `to_file`, `to_filename`, `to_fileobj`,
+    `to_bytes`, `to_text`, `to_lines`, and `to_h5` where a format has
+    it) takes the error policy of the write as two keywords. The
+    `on_error=` keyword is an error policy (see
+    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
+    happens to a conversion error of the write, and the `on_loss=`
+    keyword is the action for a loss, such as the metadata that the
+    file cannot hold, which takes precedence over `on_error=` for a
+    loss. By default, an error is raised, and a loss follows the policy
+    in effect (see
+    [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+
+    Each entry point that the mixin defines carries the decorator
+    `takes_error_policy`, and so must each entry point that a subclass
+    defines or overrides, so that a format never declares the two
+    keywords. A test of the suite checks that no entry point lacks the
+    decorator. The decorator removes the keywords from the keyword
+    arguments and applies the policy around the call: while the body
+    runs, the action for a loss is the policy in effect, which the
+    consolidation of the object reads, and an error that the body
+    raises is handed to the policy. A value to return in place of the
+    result, such as `on_error=None`, is therefore applied once, by the
+    entry point that was called, and an entry point that the body calls
+    without a policy, including the method of a base class that an
+    override calls with `super()`, follows the policy of that call.
+    When `to_lines` is a generator, whose body runs only while its lines
+    are read, the decorator applies the policy while each line is
+    computed, and an error on which the policy does not raise ends the
+    lines there.
     """
 
     _WRITE_MODE = "w"
 
+    @takes_error_policy
     def save(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or an open file.
 
@@ -688,10 +770,11 @@ class _WriterMixin:
         """
         return self.to_file(file, **kwargs)
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or a file object.
 
-        A file object needs a `write` or a `writelines` method.
+        A file object needs a `write` method.
 
         Raises
         ------
@@ -701,48 +784,64 @@ class _WriterMixin:
         if isinstance(file, (str, path.PathLike)):
             return self.to_filename(file, **kwargs)
 
-        if hasattr(file, "write") or hasattr(file, "writelines"):
+        if hasattr(file, "write"):
             return self.to_fileobj(file, **kwargs)
 
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
-        """Write the object to a path, opened in the class write mode.
+        """Write the object to a path, always as bytes.
 
-        A local file is written next to its target, which it then
-        replaces at once, so that an error while the content is written
-        leaves the target as it was. Other paths are written in place.
+        The content is encoded before the target changes, so that an
+        error while it is encoded leaves the target as it was. A local
+        file is written next to its target, which it then replaces at
+        once. A remote file is written once the whole content is
+        encoded. A text format is written with [`to_bytes`][], so that
+        its line endings are written as they are, on every system. A
+        binary format is written with [`to_fileobj`][], which a local
+        file receives as it is written and a remote file receives once
+        it is complete. A name that ends with `.gz`, `.bz2` or `.xz`
+        compresses the file, whatever the format.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
+        suffix = compression_suffix(path.base_name(filename))
+
+        def encode(file: tx.BinaryIO) -> None:
+            with open_compressing(file, suffix) as stream:
+                if "b" in self._WRITE_MODE:
+                    self.to_fileobj(stream, **kwargs)
+                else:
+                    stream.write(self.to_bytes(**kwargs))
+
         if not is_local(filename):
-            with filename.open(self._WRITE_MODE) as f:
-                return self.to_fileobj(f, **kwargs)
+            buffer = BytesIO()
+            encode(buffer)
+            filename.write_bytes(buffer.getvalue())
+            return
 
-        mode = self._WRITE_MODE.replace("w", "x")
-
-        def write(name: str) -> None:
-            with open(name, mode) as f:
-                self.to_fileobj(f, **kwargs)
+        def write(name: path.Path) -> None:
+            with name.open("xb") as f:
+                encode(f)
 
         replace_file(filename, write)
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the object to a file object open for writing.
 
-        If the class writes in binary mode, the result of [`to_bytes`][] is
-        written. Otherwise, if the file object has a `writelines` method, the
-        lines of [`to_lines`][] are written with that method, each followed by
-        a newline. A file object without `writelines` receives the result of
-        [`to_text`][] through `write`.
+        A binary format writes the result of [`to_bytes`][]. A text
+        format writes the result of [`to_text`][] to a text stream, such
+        as a file opened with `"w"` or an `io.StringIO`, and the result
+        of [`to_bytes`][] to any other stream, such as a file opened with
+        `"wb"` or an `io.BytesIO`.
         """
-        if "b" in self._WRITE_MODE:
-            file.write(self.to_bytes(**kwargs))
-        elif hasattr(file, "writelines"):
-            file.writelines(line + "\n" for line in self.to_lines(**kwargs))
-        else:
+        if "b" not in self._WRITE_MODE and isinstance(file, TextIOBase):
             file.write(self.to_text(**kwargs))
+        else:
+            file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the binary content of the file.
 
@@ -756,13 +855,16 @@ class _WriterMixin:
             f"to_bytes() is not available in writer of type {cls.__name__}"
         )
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file.
 
-        The text is made of the lines of [`to_lines`][] joined by newlines.
+        The text is made of the lines of [`to_lines`][], each followed by
+        a newline.
         """
-        return "\n".join(self.to_lines(**kwargs))
+        return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Return the lines of the file, without terminators.
 
@@ -834,15 +936,16 @@ class _TextSnifferMixin(_SnifferMixin):
     ) -> float:
         """Sniff binary content as text.
 
-        The content is decoded with the `encoding` keyword, UTF-8 by default,
-        and passed to `sniff_text`. Content that does not decode scores
+        Compressed content is decompressed first. The content is decoded
+        with the `encoding` keyword, UTF-8 by default, and passed to
+        `sniff_text`. Content that does not decode scores
         [`Confidence.NO`][], or raises [`SnifferContentError`][] if `error` is
         set.
         """
         kwargs["error"] = error
         encoding = kwargs.pop("encoding", "utf-8")
         try:
-            text = content.decode(encoding)
+            text = decompress(bytes(content)).decode(encoding)
         except UnicodeDecodeError as e:
             return _not_text(cls, error, e)
         return cls.sniff_text(text, **kwargs)
@@ -873,10 +976,12 @@ class _TextReaderMixin(_ReaderMixin):
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         """Read an object from bytes decoded as text.
 
-        The `encoding` keyword selects the encoding, UTF-8 by default.
+        Compressed content is decompressed first. The `encoding` keyword
+        selects the encoding, UTF-8 by default.
         """
         encoding = kwargs.pop("encoding", "utf-8")
-        return cls.from_text(content.decode(encoding), **kwargs)
+        text = decompress(bytes(content)).decode(encoding)
+        return cls.from_text(text, **kwargs)
 
 
 class TextFileReader(_TextReaderMixin, _TextSnifferMixin, FileReader):
@@ -886,6 +991,7 @@ class TextFileReader(_TextReaderMixin, _TextSnifferMixin, FileReader):
 class TextFileWriter(FileWriter):
     """Output adapters for text, without any reading methods."""
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the text of the file, encoded.
 

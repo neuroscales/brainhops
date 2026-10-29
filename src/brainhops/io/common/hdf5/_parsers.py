@@ -11,10 +11,11 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core.streams import preserve_position
 
 # io
-from brainhops.io.base._utils_files import is_local, replace_file
+from brainhops._core.path import is_local, replace_file
+from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -243,38 +244,6 @@ class Hdf5Reader(BinaryFileReader):
                 )
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Score the bytes of an HDF5 file.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content is not of this
-            format. With `True`, the error is a `SnifferContentError`, and
-            an exception class is raised instead when one is given.
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            The confidence that the content is of this format.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content is not of this format and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
-
-    @classmethod
     def from_file(cls, file: H5Like, **kwargs) -> tx.Self:
         """
         Build an object from a path, a binary stream or an open HDF5 file.
@@ -364,6 +333,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
     The format also implements `to_h5`, which fills a new, empty HDF5 file.
     """
 
+    @takes_error_policy
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the object into an empty HDF5 file open for writing.
 
@@ -392,6 +362,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
         """
         return lambda h5file: self.to_h5(h5file, **kwargs)
 
+    @takes_error_policy
     def to_file(self, file: H5Like, **kwargs) -> None:
         """Write to a path, a binary stream or an open HDF5 file.
 
@@ -406,6 +377,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             return self._h5_writer(**kwargs)(file)
         return super().to_file(file, **kwargs)
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Union[str, PathLike], **kwargs) -> None:
         """Write to the file at a path, replacing it.
 
@@ -435,18 +407,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             with h5py.File(str(filename), "w") as f:
                 writer(f)
 
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write to a binary stream open for writing.
-
-        Parameters
-        ----------
-        file : file object
-            The stream, open in binary mode.
-        **kwargs : Any
-            The options of the writer.
-        """
-        file.write(self.to_bytes(**kwargs))
-
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of an HDF5 file that encodes the object.
 

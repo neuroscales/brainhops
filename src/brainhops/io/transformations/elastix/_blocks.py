@@ -20,6 +20,7 @@ import typing_extensions as tx
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
+from brainhops.errors import ConversionError
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserNotImplementedError,
@@ -512,10 +513,12 @@ def _affine_map(xform: _xforms.Transformation) -> ParameterMap:
     """
     affine = xform
     if not isinstance(affine, _xforms.Affine):
-        affine = xform.to(_xforms.Affine, error=None)
+        affine = xform.to(_xforms.Affine, on_error={ConversionError: None})
     if affine is None:
         try:
-            affine = xform.compute().to(_xforms.Affine, error=None)
+            affine = xform.compute().to(
+                _xforms.Affine, on_error={ConversionError: None}
+            )
         except Exception:  # noqa: BLE001
             affine = None
     matrix = None if affine is None else affine.matrix

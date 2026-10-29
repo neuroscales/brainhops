@@ -4,7 +4,6 @@
 import os
 import re
 from collections import OrderedDict
-from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -15,8 +14,8 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 from brainhops._core.magic import replace
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -487,7 +486,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         head, _, _ = afni_dataset_files(filename)
         if not path.exists(head):
             raise ParserExistsError(f"No such file: {head}")
-        with _open_path(head) as f:
+        with head.open("rb") as f:
             return cls.from_bytes(f.read())
 
     @classmethod
@@ -566,39 +565,9 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
             return Confidence.LIKELY
         return _declined(error, failure)
 
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold a valid AFNI header.
-
-        Parameters
-        ----------
-        content : bytes
-            The content to test.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when the content holds no valid
-            header, as in [`sniff_fileobj`][].
-        **kwargs : Any
-            Ignored.
-
-        Returns
-        -------
-        float
-            `Confidence.LIKELY` or `Confidence.NO`.
-
-        Raises
-        ------
-        SnifferContentError
-            If the content holds no valid header and `error` is `True`.
-        """
-        return cls.sniff_fileobj(BytesIO(bytes(content)), error=error)
-
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the `.HEAD` file.
 
@@ -623,6 +592,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
                 return self.text
         return formatted
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the `.HEAD` file, encoded as Latin-1.
 
@@ -826,7 +796,7 @@ def _sniffed_raw_at(
     head, _, _ = afni_dataset_files(filename)
     if not path.exists(head):
         return None, ParserExistsError(f"No such file: {head}")
-    with _open_path(head) as f:
+    with head.open("rb") as f:
         return _sniffed_raw(f)
 
 

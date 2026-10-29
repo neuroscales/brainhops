@@ -16,8 +16,8 @@ import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, replace
 
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
-from brainhops.io.base._utils_files import open_path
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -297,6 +297,7 @@ class ElastixRaw(
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self) -> str:
         """Return the text of the file, ending with a newline.
 
@@ -326,13 +327,9 @@ class ElastixRaw(
                 return self.text
         return formatted
 
+    @takes_error_policy
     def to_lines(self) -> tx.Iterator[str]:
         return iter(self.to_text().splitlines())
-
-    def to_fileobj(self, file: tx.IO) -> None:
-        # The base writes `to_lines`, each followed by "\n", which would
-        # change the line endings of the text that was read.
-        file.write(self.to_text())
 
 
 # ----------------------------------------------------------------------
@@ -485,7 +482,7 @@ def _read_file(
         filename = path.Path(filename)
     if not path.exists(filename):
         raise ParserExistsError(f"No such file: {filename}")
-    with open_path(filename) as file:
+    with path.Path(filename).open("rb") as file:
         text = file.read().decode(encoding)
     if syntax is None:
         syntax = syntax_of(filename)

@@ -11,17 +11,19 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base._dispatch import _to_filename
-from brainhops.io.base._utils_files import write_file
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -371,32 +373,6 @@ class PillowImage(
         return PillowRaw.sniff_fileobj(file, error=error)
 
     @classmethod
-    def sniff_bytes(
-        cls,
-        content: path.BinaryContentLike,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Return the confidence that bytes hold an image that Pillow reads.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of a file, or its first bytes.
-        error : bool or type[Exception], default=False
-            Whether to raise an error when Pillow does not recognise the
-            content.
-        **kwargs : Any
-            Options of the reader, which are ignored.
-
-        Returns
-        -------
-        float
-            The confidence, between 0 and 1.
-        """
-        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
-
-    @classmethod
     def from_filename(
         cls,
         filename: path.FilenameLike,
@@ -519,13 +495,12 @@ class PillowImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         format: tx.Optional[str] = None,
         dpi: _DpiLike = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options,
     ) -> "PillowImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -567,7 +542,8 @@ class PillowImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a raster
         image holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -581,9 +557,6 @@ class PillowImage(
             The resolution recorded by PNG, JPEG, BMP and TIFF. By default
             it is chosen as described above. `False` records none, and a
             number or an `(x, y)` pair is recorded as is.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **options : Any
             Options passed to `Image.save`, such as `quality=95` for JPEG.
             Only the options that Pillow reads for the format are taken.
@@ -617,7 +590,7 @@ class PillowImage(
         metadata = metadata_to_write(
             self.metadata, PillowMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         held = None if self.metadata is None else self.metadata.raw
@@ -668,6 +641,7 @@ class PillowImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(
         self,
         format: tx.Optional[str] = None,
@@ -711,6 +685,7 @@ class PillowImage(
         image = self.consolidate(format=format, dpi=dpi, **options)
         return image.rawdata.read_stored()
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file, in the `format` given or the
         one that the name of the file calls for (see `to_bytes`).
@@ -723,9 +698,10 @@ class PillowImage(
             The options of [`to_bytes`][].
         """
         if kwargs.get("format") is None:
-            kwargs["format"] = format_for_name(_to_filename(file))
+            kwargs["format"] = format_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a file, in the format its extension calls for.
 
@@ -766,7 +742,7 @@ class PillowImage(
             kwargs["format"] = fmt
         reading = reads_from(self.rawdata, filename)
         image = self.consolidate(inplace=reading, **kwargs)
-        write_file(filename, image.rawdata.read_stored())
+        atomic_write_bytes(filename, image.rawdata.read_stored())
         if reading:
             # The image holds what the file holds, and its lazy array reads
             # the new file, since the old lazy array may read other bytes.
@@ -956,7 +932,7 @@ def _encoded(
     options: tx.Mapping[str, tx.Any],
 ) -> bytes:
     """Return the bytes that Pillow writes for an image, as
-    [`PillowImage.consolidate`][] describes.
+    `PillowImage._consolidate` describes.
 
     The data and the transformations are read without being stored, so
     that a write leaves the image as it was. The transformations are those

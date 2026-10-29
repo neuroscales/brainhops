@@ -2,7 +2,6 @@
 array that reads it."""
 
 # stdlib
-import os
 
 # dependencies
 import numpy as np
@@ -11,13 +10,11 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.path import is_local_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, ScaledProxy
 from brainhops._core.streams import open_compressed
 from brainhops._core.strided import StridedProxy
-from brainhops.io.base._utils_files import local_path as _local_path
-from brainhops.io.base._utils_files import open_path as _open_path
-from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,
@@ -111,7 +108,7 @@ def encode_data(header: MrtrixRaw, data: tx.Any) -> bytes:
 def _is_gzip(file: tx.Any) -> bool:
     """Tell whether a path names a gzip file, judged by its content."""
     try:
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             return f.read(2) == b"\x1f\x8b"
     except Exception:
         return False
@@ -399,11 +396,11 @@ def read_mrtrix(
     """
     if isinstance(file, str):
         file = path.Path(file)
-    named = isinstance(file, (path.PathLike, os.PathLike))
+    named = isinstance(file, path.PathLike)
     if named:
         if not path.exists(file):
             raise ParserExistsError(f"No such file: {file}")
-        with _open_path(file) as f:
+        with path.Path(file).open("rb") as f:
             record = MrtrixRaw.from_fileobj(f)
         origin, start = file, 0
     else:
@@ -413,15 +410,13 @@ def read_mrtrix(
     if name == ".":
         source = file
     else:
-        if not isinstance(origin, (str, bytes, os.PathLike, path.PathLike)):
+        if not isinstance(origin, (str, path.PathLike)):
             raise ParserContentError(
                 f"The MRtrix header names a separate data file "
                 f"({name!r}), which cannot be found from a stream that "
                 f"has no file name. Read it from its path instead."
             )
-        if isinstance(origin, bytes):
-            origin = os.fsdecode(origin)
-        source = _sibling(origin, name)
+        source = path.Path(origin).parent / name
         start = 0
         if not path.exists(source):
             raise ParserExistsError(
@@ -429,9 +424,8 @@ def read_mrtrix(
                 f"MRtrix header {origin})"
             )
     if named or name != ".":
-        local = _local_path(source)
-        if local is not None and not _is_gzip(source):
-            size = os.path.getsize(local)
+        if is_local_file(source) and not _is_gzip(source):
+            size = path.Path(source).stat().st_size
             if size < offset + record.nbytes:
                 raise ParserContentError(
                     f"The MRtrix data file {source} holds {size} bytes, but "

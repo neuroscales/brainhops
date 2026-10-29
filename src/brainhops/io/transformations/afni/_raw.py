@@ -10,6 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -257,6 +258,7 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the file, ending with a newline.
 
@@ -295,6 +297,7 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
             ]
         return "".join(line + "\n" for line in lines)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.List[str]:
         """Return the lines of the file, without their line breaks.
 
@@ -309,18 +312,6 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
             The lines of [`to_text`][].
         """
         return self.to_text(**kwargs).splitlines()
-
-    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        """Write the content of the file to a text stream.
-
-        Parameters
-        ----------
-        file : IO
-            The stream, open in text mode.
-        **kwargs : Any
-            Refused, since the writer has no option.
-        """
-        file.write(self.to_text(**kwargs))
 
     def __repr__(self) -> str:
         return (
