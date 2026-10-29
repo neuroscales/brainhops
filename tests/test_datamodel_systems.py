@@ -846,6 +846,35 @@ def test_restrict_from_an_unknown_system(
     assert restricted == CS(axes=[Axis(), Axis()])
 
 
+@pytest.mark.parametrize(
+    "layout, refs, expected",
+    [
+        ("start", ["t", -3], [-1, -3]),
+        ("middle", [-1, "x", 1], [-1, 0, 1]),
+        ("end", [TimeAxis, 2], [1, 2]),
+    ],
+)
+def test_positions_give_what_restrict_selects(
+    layout: str, refs: list, expected: list
+) -> None:
+    # The positions of an open sequence count from the end after `...`,
+    # and `at` reads the axes that `restrict` selects.
+    axes = get_axes(CS(axes=OPEN_LAYOUTS[layout]))
+    positions = axes.positions(refs)
+    assert positions == expected
+    assert [axes.at(p) for p in positions] == list(axes.restrict(refs))
+
+
+def test_positions_are_non_negative_in_a_closed_sequence() -> None:
+    axes = get_axes(CS(axes=[X, Y, T]))
+    assert axes.positions(["t", -3]) == [2, 0]
+    assert axes.positions(TimeAxis) == [2]
+    with pytest.raises(IndexError, match="out of range"):
+        axes.positions([3])
+    with pytest.raises(ValueError, match="more than once"):
+        axes.positions(["x", 0])
+
+
 def test_restrict_refuses_a_repeated_axis() -> None:
     for refs in ([0, 0], [0, -2], ["x", 0]):
         with pytest.raises(ValueError, match="more than once"):

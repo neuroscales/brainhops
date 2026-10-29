@@ -29,7 +29,7 @@ from .transformations import (
 )
 
 if tx.TYPE_CHECKING:
-    from ._transformations.restriction import AxisRefs
+    from ._transformations.restriction import AxisReferences, InputValues
 
 
 def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
@@ -137,9 +137,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
     def restrict(
         self,
-        input_axes: "AxisRefs",
-        output_axes: "AxisRefs",
-        at: tx.Optional[tx.Mapping[tx.Any, float]] = None,
+        input_axes: "AxisReferences",
+        output_axes: "AxisReferences",
+        at: tx.Optional["InputValues"] = None,
     ) -> Transformation:
         """Return the geometry restricted to some of its axes.
 
@@ -214,33 +214,36 @@ class Geometry(_GeometryFields, ImmutableSequence):
             is not a mapping of real numbers.
         """
         from ._transformations.restriction import (
-            require_counts,
-            resolve_block,
-            restricted_chain,
+            build_restriction,
+            require_axis_counts,
+            resolve_restriction,
         )
 
-        block = resolve_block(self, input_axes, output_axes, at)
-        require_counts(self, block)
+        restriction = resolve_restriction(self, input_axes, output_axes, at)
+        require_axis_counts(self, restriction)
+        inputs, outputs = restriction.inputs, restriction.outputs
+        values = restriction.removed_input_values
         shape = self.shape
         if shape is None or not all(
-            _is_sample(block.values.get(p), shape[p]) for p in block.removed_in
+            _is_index(values.get(p), shape[p])
+            for p in inputs.removed_positions
         ):
             return super().restrict(input_axes, output_axes, at)
-        if not block.removed_in and not block.removed_out:
+        if not inputs.removed_positions and not outputs.removed_positions:
             return self
         # The transformation reads the coordinates that the grid gives
         # it, so the projection that creates the removed axes of the grid
         # faces the output system of the grid.
-        transformation = restricted_chain(
-            self.transformation, block, self.grid.output, self.output
+        transformation = build_restriction(
+            self.transformation, restriction, self.grid.output, self.output
         )
-        if not block.removed_in:
+        if not inputs.removed_positions:
             return Geometry((self.grid, transformation))
         voxels = self.grid.input
         if voxels is not None:
-            voxels = voxels.expand(len(shape)).restrict(block.kept_in)
+            voxels = voxels.expand(len(shape)).restrict(inputs.positions)
         grid = CartesianField(
-            shape=tuple(shape[p] for p in block.kept_in),
+            shape=tuple(shape[p] for p in inputs.positions),
             input=voxels,
             output=voxels,
         )
@@ -296,7 +299,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
         )
 
 
-def _is_sample(value: tx.Optional[float], size: int) -> bool:
+def _is_index(value: tx.Optional[float], size: int) -> bool:
     """Return whether a coordinate is the index of a sample of an axis."""
     return (
         value is not None and float(value).is_integer() and 0 <= value < size

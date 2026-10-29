@@ -820,7 +820,7 @@ def _affine_to_ome(
     # element that adds or removes axes, such as a projection inside a
     # sequence that is not computed, would lose rows or columns when its
     # matrix is reordered.
-    shape = np.shape(affine.matrix)
+    shape = affine.matrix.shape
     if shape != (len(storage_perm), len(storage_perm) + 1):
         raise OmeMappingError(
             f"This transformation maps {shape[1] - 1} axes onto {shape[0]} "

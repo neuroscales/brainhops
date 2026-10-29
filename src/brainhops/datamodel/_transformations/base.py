@@ -21,7 +21,7 @@ from .modes import ModeLike
 
 if tx.TYPE_CHECKING:
     from .concrete import CoordinateField
-    from .restriction import AxisRefs
+    from .restriction import AxisReferences, InputValues
     from .sequence import Sequence
 
 
@@ -306,9 +306,9 @@ class Transformation(
 
     def restrict(
         self,
-        input_axes: "AxisRefs",
-        output_axes: "AxisRefs",
-        at: tx.Optional[tx.Mapping[tx.Any, float]] = None,
+        input_axes: "AxisReferences",
+        output_axes: "AxisReferences",
+        at: tx.Optional["InputValues"] = None,
     ) -> "Transformation":
         """Return the transformation restricted to some of its axes.
 
