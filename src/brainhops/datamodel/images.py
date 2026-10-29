@@ -441,15 +441,19 @@ class SingleScaleImage(Image):
             A degree of 1 gives linear interpolation.
 
         bound : str or float, default="reflect"
-            Boundary condition. A float is used as a constant value beyond
-            the edge.
-            The strings are:
+            Boundary condition, which says how the data continues beyond
+            its edges. A float is a constant value beyond the edges. The
+            strings are the following names, and their aliases listed in
+            [`BoundaryCondition`][brainhops.datamodel.enums.BoundaryCondition],
+            such as 'wrap' for 'grid-wrap':
 
-                - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-                - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-                - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-                - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-                - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+                - 'nearest': nearest edge value  (a a a a | a b c d | d d d d)
+                - 'reflect': reflect at edge     (d c b a | a b c d | d c b a)
+                - 'mirror': mirror at edge       (d c b | a b c d | c b a)
+                - 'grid-wrap': wrap around       (a b c d | a b c d | a b c d)
+                - 'constant': zero beyond edge   (0 0 0 0 | a b c d | 0 0 0 0)
+                - 'antimirror': odd mirror       (-b -a 0 | a b c d | 0 -d -c)
+                - 'antireflect': odd reflection  (-b -a | a b c d | -d -c)
 
         coeff : bool, default=False
             Whether the data already holds spline coefficients.
@@ -946,15 +950,19 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             gives linear interpolation.
 
         bound : str or float, default="reflect"
-            Boundary condition. A float is used as a constant value beyond
-            the edge.
-            The strings are:
+            Boundary condition, which says how the data continues beyond
+            its edges. A float is a constant value beyond the edges. The
+            strings are the following names, and their aliases listed in
+            [`BoundaryCondition`][brainhops.datamodel.enums.BoundaryCondition],
+            such as 'wrap' for 'grid-wrap':
 
-                - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
-                - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
-                - 'mirror': mirror at edge        (d c b | a b c d | c b a)
-                - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
-                - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+                - 'nearest': nearest edge value  (a a a a | a b c d | d d d d)
+                - 'reflect': reflect at edge     (d c b a | a b c d | d c b a)
+                - 'mirror': mirror at edge       (d c b | a b c d | c b a)
+                - 'grid-wrap': wrap around       (a b c d | a b c d | a b c d)
+                - 'constant': zero beyond edge   (0 0 0 0 | a b c d | 0 0 0 0)
+                - 'antimirror': odd mirror       (-b -a 0 | a b c d | 0 -d -c)
+                - 'antireflect': odd reflection  (-b -a | a b c d | -d -c)
 
         coeff : bool, default=False
             Whether the data already holds spline coefficients. If false, the
