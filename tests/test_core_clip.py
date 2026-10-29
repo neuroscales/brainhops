@@ -6,6 +6,7 @@ from scipy.ndimage import map_coordinates
 
 from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, pull_axes
+from brainhops._ext import interpol
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.transformations import Affine, CartesianField
 
@@ -20,13 +21,25 @@ def test_clip_keeps_closed_endpoints_and_leaves_stencils_unchanged(
     x = np.array([-1, -0.5, -0.25, 0, 0.5, 2.5, 3, 3.25, 3.5, 4])
     mode = bound if isinstance(bound, str) else "grid-constant"
     cval = 0 if isinstance(bound, str) else bound
+    # SciPy evaluates the exact coefficients, since its prefilter is wrong
+    # near the edges for `nearest` and `grid-constant` (#250).
+    name = "zero" if mode == "grid-constant" else mode
+    coeff = interpol.spline_coeff(values - cval, degree, name) + cval
     expected = map_coordinates(
-        values, x[None], order=degree, mode=mode, cval=cval
+        coeff, x[None], order=degree, mode=mode, cval=cval, prefilter=False
     )
+    if degree == 0 and bound == "mirror":
+        # At a tie beyond the edge, interpol takes the upper sample before
+        # it mirrors the coordinate, and SciPy after (see `interpol.pull`).
+        expected[x == -0.5] = values[0]
     if margin is not None:
         expected[(x < -margin) | (x > 3 + margin)] = 0
     got = pull(values, x[:, None], degree, bound, False, clip=margin)
-    np.testing.assert_array_equal(got, expected)
+    # The values are computed in float32, and SciPy rounds its float64
+    # result to float32, so the two can differ by one unit in the last
+    # place. The clipped samples are exactly zero in both.
+    np.testing.assert_allclose(got, expected, rtol=2e-7, atol=0)
+    np.testing.assert_array_equal(got == 0, expected == 0)
     assert got.dtype == values.dtype
 
 
@@ -226,3 +239,39 @@ def test_per_axis_margins_follow_input_axes_after_permutation() -> None:
             values, seq, degree=1, bound="nearest", coeff=False, clip=clip
         )
     np.testing.assert_array_equal(got, np.where(valid, 10, 0))
+
+
+def test_clip_keeps_coordinates_that_rounding_puts_beyond_a_limit() -> None:
+    # The margins are widened by 1e-5 voxel, as in `interpol.pull`.
+    values = np.array([10.0, 20.0, 40.0, 80.0])
+    x = np.array([-1e-7, 3 + 1e-7, 3.001, -0.001])
+    for bound in ("nearest", 7.0):
+        got = pull(values, x[:, None], 1, bound, False, clip=0)
+        np.testing.assert_allclose(got, [10, 80, 0, 0])
+
+
+def test_separable_pulls_clip_inside_interpol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With a zero fill value, each pull step hands its margins to
+    # interpol and returns no mask of its own.
+    values = np.random.default_rng(5).normal(size=(4, 5, 6))
+    matrix = np.array([[0.7, 0, 0, -0.5], [0, 1.2, 0, -1], [0, 0, 1, 0]])
+    seq = Affine(matrix=matrix) @ CartesianField(shape=(8, 7, 6))
+    clips = []
+    original = interpol.pull
+
+    def spy(*args: object, **kwargs: object) -> object:
+        clips.append(kwargs.get("clip"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interpol, "pull", spy)
+    with backend("numpy"):
+        steps = sep._plan(values.shape, seq, 3, "nearest", False, clip=0.5)
+        masks = [
+            s["run"](values, [("data", i) for i in range(3)])[2]
+            for s in steps
+            if s["kind"] == "pull1d"
+        ]
+    assert masks and all(mask is None for mask in masks)
+    assert ((0.5, 0.5),) in clips

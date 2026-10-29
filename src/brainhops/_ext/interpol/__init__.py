@@ -25,6 +25,12 @@ an axis lies at the coordinate `i`. As in torch-interpol, the grid has
 as many output spatial axes as coordinates, and its leading axes are
 batch axes that broadcast against those of the input.
 
+Beyond the edges of the input, the values follow the boundary condition.
+The argument `clip` of [`pull`][] sets margins, in voxels, beyond which
+the values are zero instead. It replaces the argument `extrapolate` of
+torch-interpol: `extrapolate=False` becomes `clip=0`, and
+`extrapolate="edges"` becomes `clip=0.5`.
+
 A spline of order 2 or more does not pass through its coefficients.
 [`spline_coeff`][] computes the coefficients of the spline that passes
 through the values of an array, and [`pull`][] calls it when

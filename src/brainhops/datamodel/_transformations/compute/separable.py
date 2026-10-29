@@ -13,12 +13,15 @@ exact zeros of the matrices. In the
 normal form, each factor acts on its own group of grid axes, and the
 trailing permutation sends the groups to the data axes.
 
-This module executes one step per group. A group that needs no
-interpolation, such as a flip or an integer shift, is applied as a gather or
-a view. A one-dimensional affine group is applied with a precomputed weight
-matrix, and any other group is sampled by an N-d pull over its own axes. The
-result equals that of the monolithic reslice, a single N-d pull over all
-axes, within interpolation tolerance. It is bit-identical when nothing is
+This module executes one step per group. A group that maps each output
+sample onto an input sample, such as a flip, an integer shift or an
+integer stride, is applied as a gather or a view when no value needs to
+be interpolated. A one-dimensional affine group is sampled by a
+one-dimensional pull along its axis, in which the other axes are batch
+axes, and any other group is sampled by an N-d pull over its own axes.
+The prefilter is separable, so each pull only prefilters its own axes.
+The result equals that of the monolithic reslice, a single N-d pull
+over all axes, to rounding errors. It is bit-identical when nothing is
 separable, because the monolithic pull is then used unchanged.
 """
 
@@ -34,19 +37,19 @@ from brainhops._core._internal_api import (
     cast_output,
     clip_mask,
     copy_array,
-    creation_options,
+    interpol_boundary,
     may_share_memory,
     normalize_clip,
     pull,
     pull_axes,
     resolve_backend,
     sampling_dtype,
-    spline_matrix,
     to_backend_of,
 )
 
 # core
 from brainhops._core.backends import backend
+from brainhops._ext import interpol
 
 # api
 from brainhops.datamodel import kinds
@@ -101,7 +104,7 @@ def pull_separable(
         Uncomputed transformation from output grid coordinates to data
         coordinates.
     degree : int
-        Spline degree, from 0 to 5.
+        Spline degree, from 0 to 7.
     bound : str or float
         Boundary condition, as accepted by
         [`pull`][brainhops._core.bsplines.pull].
@@ -116,7 +119,8 @@ def pull_separable(
 
     clip : float, pair, sequence of pairs, or None, default=None
         Zero samples outside the closed voxel margin, as in [`pull`][].
-        Each independent group builds its own mask, without a full field.
+        A pull step passes the margins of its axes to the pull, and a
+        gather builds a mask along its own axis, without a full field.
 
     dtype : DTypeLike, optional
         Output dtype. None preserves the input dtype. An explicit dtype
@@ -167,8 +171,8 @@ def pull_separable(
     if masks:
         arr = _apply_clip_masks(arr, masks)
         fresh = True
-    # The monolithic pull reproduces scipy's map_coordinates, so an integer
-    # or boolean output is converted back in the same way as in scipy.
+    # An integer or boolean output is converted back with the same rules
+    # as in the monolithic pull.
     if arr.dtype != out_dtype:
         fresh = True
         arr = cast_output(arr, out_dtype)
@@ -266,12 +270,23 @@ def _line(inner: tx.Optional[Transformation]) -> tx.Optional[tuple]:
 # ----------------------------------------------------------------------
 
 
-# This constant is the largest number of elements, n_out * n_in, that the
-# weight matrix of a one-dimensional step may have. A larger matrix is not
-# built, and the axis is sampled by a batched pull instead, which gives the
-# same result without materializing the matrix. Four million elements take
-# about 32 MiB at float64.
-_MAX_WEIGHT_MATRIX_ELEMENTS = 4_000_000
+_SYMMETRIC_BOUNDS = (
+    "mirror",
+    "reflect",
+    "grid-wrap",
+    "antimirror",
+    "antireflect",
+)
+"""The boundaries of `interpol` under which a spline extends its values.
+
+Under these boundaries, the extension of the coefficients is symmetric
+or antisymmetric about each edge, and the spline values at the integers
+beyond the edges are the same extension of the values inside. A gather
+along the boundary therefore gives the samples of the monolithic pull
+at every integer coordinate. The replicate and the zero boundaries
+extend the coefficients instead, and a spline of degree 2 or more then
+takes other values than the gathered ones beyond the edges.
+"""
 
 
 def _classify(
@@ -286,8 +301,8 @@ def _classify(
     clip: Clip = None,
 ) -> dict:
     # Build one executable step for a group. The step is a gather when no
-    # value is interpolated, a weight matrix for a one-dimensional affine
-    # group, and a batched pull for a coupled or interpolating group.
+    # value is interpolated, a one-dimensional pull for any other
+    # one-dimensional affine group, and an N-d pull for a coupled group.
     grid_axes = group["G"]
     data_axes = group["D"]
     clip = [clip[d] for d in data_axes] if clip is not None else None
@@ -306,20 +321,34 @@ def _classify(
         line = _line(inner)
     if line is not None:
         scale, shift = line
-        # A scale of exactly unit magnitude with an integer shift maps each
-        # output sample to one input sample, so no interpolation is needed.
+        # An integer scale with an integer shift maps each output sample
+        # onto one input sample, so that no value lies between samples.
         integer_shift = abs(shift - round(shift)) < 1e-9
-        unit = abs(abs(scale) - 1.0) == 0.0 and integer_shift
-        # A gather returns the input sample itself, which matches the
-        # monolithic pull only when the pull returns the same sample. The
-        # pull returns a reconstruction instead when the data holds spline
-        # coefficients at degree 2 or more, and scipy's `reflect` prefilter
-        # is not exactly interpolating above degree 1. A continuous axis in
-        # those cases uses the weight matrix, which reproduces the pull.
-        gather = degree <= 1 or (not coeff and bound != "reflect")
-        # A discrete axis holds no value between samples, so a whole-sample map
-        # along it is always an exact gather and is never blended.
-        kind = "gather" if unit and (gather or discrete) else "matrix"
+        whole = scale != 0 and scale == round(scale) and integer_shift
+        unit = whole and abs(scale) == 1.0
+        kind = "pull1d"
+        if whole:
+            scale, shift = int(round(scale)), int(round(shift))
+            coords = np.arange(n_out) * scale + shift
+            inside = n_out == 0 or (
+                coords.min() >= 0 and coords.max() <= n_in - 1
+            )
+            # A gather returns the input samples themselves. The pull
+            # returns the same samples when the data holds values, since
+            # the prefilter is exact, or when the degree is 0 or 1. Beyond
+            # the edges, this only holds for the boundaries that extend
+            # the values (see `_SYMMETRIC_BOUNDS`). The pull returns a
+            # reconstruction instead when the data holds coefficients at
+            # degree 2 or more.
+            name = interpol_boundary(bound)[0]
+            same = degree <= 1 or (
+                not coeff and (inside or name in _SYMMETRIC_BOUNDS)
+            )
+            # A discrete axis holds no value between samples, so a
+            # whole-sample map along it is always a gather and is never
+            # blended.
+            if same or discrete:
+                kind = "gather"
 
     _check_discrete(group, unit, grid_system, data_system)
 
@@ -332,7 +361,7 @@ def _classify(
         "n_out": n_out,
     }
     if kind == "gather":
-        step["run"] = _make_gather(
+        step["view"], step["run"] = _make_gather(
             data_axes[0],
             grid_axes[0],
             scale,
@@ -342,8 +371,8 @@ def _classify(
             shape,
             clip,
         )
-    elif kind == "matrix" and n_in * n_out <= _MAX_WEIGHT_MATRIX_ELEMENTS:
-        step["run"] = _make_matrix(
+    elif kind == "pull1d":
+        step["run"] = _make_pull1d(
             data_axes[0],
             grid_axes[0],
             scale,
@@ -356,8 +385,6 @@ def _classify(
             clip,
         )
     else:
-        # A coupled group, or a weight matrix that is too large, gives a
-        # batched pull.
         step["run"] = _make_pull(
             inner,
             data_axes,
@@ -423,22 +450,25 @@ def _order_steps(
 ) -> tx.List[dict]:
     # The steps act on disjoint axes and commute, so they are ordered to keep
     # the intermediate arrays small. The ratio r of a step is its output size
-    # over its input size, and its weight w estimates the work per element.
-    # Steps that shrink the array run first, and steps that keep its size run
-    # next, with the free views first. Steps that grow the array run last.
+    # over its input size, and its weight w estimates the work per input
+    # element. A view costs nothing, and a gather copies each output
+    # element once. A pull over k axes adds (degree + 1) ** k taps per
+    # output element, and its prefilter, when the data holds values at
+    # degree 2 or more, makes about `degree` passes per axis over the
+    # input. Steps that shrink the array run first, and steps that keep
+    # its size run next, from the cheapest to the most expensive. Steps
+    # that grow the array run last.
     for step in steps:
         k = step["k"]
-        kind = step["kind"]
         n_in = step["n_in"]
         n_out = step["n_out"]
         r = (n_out / n_in) if n_in else 1.0
-        if kind == "gather":
-            c = 1.0
-        elif kind == "matrix":
-            c = float(n_in)
+        if step["kind"] == "gather":
+            a = 0.0
+            c = 0.0 if step["view"] else 1.0
         else:
+            a = float(k * degree) if (degree > 1 and not coeff) else 0.0
             c = float((degree + 1) ** k)
-        a = k * degree if (degree > 1 and not coeff) else 0
         step["_r"] = r
         step["_w"] = a + c * r
 
@@ -447,7 +477,7 @@ def _order_steps(
     expand = [s for s in steps if s["_r"] > 1]
 
     shrink.sort(key=lambda s: s["_w"] / (1 - s["_r"]))
-    unit.sort(key=lambda s: 0 if s["kind"] == "gather" else 1)
+    unit.sort(key=lambda s: s["_w"])
     # For a growing step 1 - r is negative, so a smaller growth gives a more
     # negative key and sorts first.
     expand.sort(key=lambda s: s["_w"] / (1 - s["_r"]))
@@ -503,80 +533,96 @@ def _plan(
 # ----------------------------------------------------------------------
 
 
-def _is_unit_progression(idx: np.ndarray) -> bool:
-    if idx.size < 1:
-        return False
-    if idx.size == 1:
-        return True
-    steps = np.diff(idx)
-    return bool((steps == 1).all() or (steps == -1).all())
-
-
-def _slice_axis(arr: tx.Any, axis: int, idx: np.ndarray) -> tx.Any:
-    start = int(idx[0])
-    if idx.size == 1 or int(idx[1]) - int(idx[0]) == 1:
-        stop = int(idx[-1]) + 1
-        step = 1
-    else:
-        stop = int(idx[-1]) - 1
-        step = -1
-        if stop < 0:
-            stop = None
-    index = [slice(None)] * arr.ndim
-    index[axis] = slice(start, stop, step)
-    return arr[tuple(index)]
+def _as_slice(index: np.ndarray) -> tx.Optional[slice]:
+    # Return the slice that selects these indices, or None when they do
+    # not form an arithmetic progression with a nonzero step.
+    if index.size == 0:
+        return None
+    start = int(index[0])
+    if index.size == 1:
+        return slice(start, start + 1)
+    steps = np.diff(index)
+    step = int(steps[0])
+    if step == 0 or not bool((steps == step).all()):
+        return None
+    stop = int(index[-1]) + step
+    return slice(start, stop if stop >= 0 else None, step)
 
 
 def _make_gather(
     d: int,
     g: int,
-    scale: float,
-    shift: float,
+    scale: int,
+    shift: int,
     bound: tx.Union[str, float],
     data_shape: tx.Tuple[int, ...],
     shape: tx.Tuple[int, ...],
     clip: Clip,
-) -> _StepRunner:
+) -> tx.Tuple[bool, _StepRunner]:
+    # Return whether the gather is a view of its input, and the runner.
     n_in = data_shape[d]
     n_out = shape[g]
-    bound0 = bound if isinstance(bound, str) else 0.0
+    name, cval = interpol_boundary(bound)
+    coords = np.arange(n_out, dtype=np.float64) * scale + shift
+    # The boundary folds each coordinate onto a sample of the input, and
+    # may flip its sign or give zero. Sampling the ramp 1, 2, ..., n_in
+    # with degree 0 at the coordinates, which are integers, returns the
+    # sample number with that sign, or zero for a sample beyond the edge
+    # of the zero boundary, or on the zero of `antimirror`.
+    ramp = np.arange(1, n_in + 1, dtype=np.float64)
+    signed = np.rint(interpol.pull(ramp, coords[:, None], 0, name))
+    signed = signed.astype(np.intp)
+    sign = np.sign(signed)
+    outside = sign == 0
+    index = np.where(outside, 0, np.abs(signed) - 1)
+    view = _as_slice(index) if bool((sign == 1).all()) else None
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         xp = array_backend(arr)
         axis = labels.index(("data", d))
-        coords = np.arange(n_out) * scale + shift
-        # Degree-0 weights map each output coordinate to the input sample
-        # that it lands on. A row that sums to zero lies outside the grid
-        # and is filled with the boundary constant, or with zero when the
-        # boundary is given by name.
-        # TODO: spline_matrix builds an n_in x n_in identity here, which
-        # takes O(n_in**2) memory. Index arithmetic per boundary mode would
-        # avoid that cost, but it must reproduce scipy's boundary indices
-        # exactly.
-        weights = np.asarray(spline_matrix(n_in, coords, 0, bound0, True))
-        rowsum = weights.sum(1)
-        idx = weights.argmax(1)
-        inbounds = rowsum > 0
-        if bool(inbounds.all()) and _is_unit_progression(idx):
-            result = _slice_axis(arr, axis, idx)
+        shape = [1] * arr.ndim
+        shape[axis] = n_out
+        if view is not None:
+            selection = [slice(None)] * arr.ndim
+            selection[axis] = view
+            result = arr[tuple(selection)]
         else:
-            result = xp.take(arr, xp.asarray(idx), axis=axis)
-            if not bool(inbounds.all()):
-                cval = 0.0 if isinstance(bound, str) else float(bound)
-                mask_shape = [1] * result.ndim
-                mask_shape[axis] = n_out
-                mask = inbounds.reshape(tuple(mask_shape))
-                mask = to_backend_of(mask, result)
-                result = xp.where(mask, result, cval)
+            result = xp.take(arr, xp.asarray(index), axis=axis)
+            if bool((sign < 0).any()):
+                factor = np.where(outside, 1, sign).astype(arr.dtype)
+                factor = to_backend_of(factor.reshape(shape), result)
+                result = result * factor
+            if bool(outside.any()):
+                mask = to_backend_of(outside.reshape(shape), result)
+                result = xp.where(mask, cval, result)
         labels = list(labels)
         labels[axis] = ("grid", g)
         mask = clip_mask(coords[..., None], (n_in,), clip)
         return result, labels, mask
 
-    return run
+    return view is not None, run
 
 
-def _make_matrix(
+def _step_clip(
+    bound: tx.Union[str, float], clip: Clip
+) -> tx.Tuple[Clip, bool]:
+    # Return the margins that a pull step passes to the pull, and whether
+    # the step returns its mask, to be applied after every step instead.
+    # A step leaves zeros in the samples that it clips, and a later step
+    # along other axes reads them as values. With a zero fill value, a
+    # clipped sample spans a whole slab across the other axes, which a
+    # later step interpolates into zeros again, so the pull can clip
+    # while it adds its taps. A nonzero fill value would instead bring
+    # the fill value back near the edges of the slab, so the masks are
+    # then applied after the last step.
+    if clip is None:
+        return None, False
+    if interpol_boundary(bound)[1]:
+        return None, True
+    return clip, False
+
+
+def _make_pull1d(
     d: int,
     g: int,
     scale: float,
@@ -590,29 +636,20 @@ def _make_matrix(
 ) -> _StepRunner:
     n_in = data_shape[d]
     n_out = shape[g]
+    # The coordinates are a small NumPy array, which the pull moves to
+    # the device of the data.
+    coords = (np.arange(n_out, dtype=np.float64) * scale + shift)[:, None]
+    step_clip, defer = _step_clip(bound, clip)
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
-        xp = array_backend(arr)
         axis = labels.index(("data", d))
-        # The coordinates are created in the backend of the data, with
-        # CuPy chunks when its chunks are CuPy arrays, so that the weights
-        # computed from them are there as well.
-        coords = xp.arange(n_out, **creation_options(arr)) * scale + shift
-        weights = spline_matrix(n_in, coords, degree, bound, coeff)
-        out = xp.moveaxis(
-            xp.tensordot(arr, weights, axes=([axis], [1])), -1, axis
+        moved = pull_axes(
+            arr, coords, [axis], degree, bound, coeff, clip=step_clip
         )
-        if not isinstance(bound, str):
-            # A constant boundary is not linear, so the fill value is added
-            # separately through the partition of unity of the weights.
-            correction = float(bound) * (1.0 - weights.sum(1))
-            corr_shape = [1] * out.ndim
-            corr_shape[axis] = n_out
-            out = out + correction.reshape(tuple(corr_shape))
-        labels = list(labels)
-        labels[axis] = ("grid", g)
-        mask = clip_mask(coords[..., None], (n_in,), clip)
-        return out, labels, mask
+        remaining = [label for i, label in enumerate(labels) if i != axis]
+        labels = remaining + [("grid", g)]
+        mask = clip_mask(coords, (n_in,), clip) if defer else None
+        return moved, labels, mask
 
     return run
 
@@ -647,15 +684,21 @@ def _make_pull(
     ]
     if inner is not None:
         chain.append(inner)
+    step_clip, defer = _step_clip(bound, clip)
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         coords = _coordinates_like(Sequence(transformations=chain), arr)
         positions = [labels.index(("data", d)) for d in data_axes]
-        moved = pull_axes(arr, coords, positions, degree, bound, coeff)
+        moved = pull_axes(
+            arr, coords, positions, degree, bound, coeff, clip=step_clip
+        )
         used = set(positions)
         remaining = [labels[i] for i in range(len(labels)) if i not in used]
         labels = remaining + [("grid", g) for g in grid_axes]
-        mask = clip_mask(coords, [data_shape[d] for d in data_axes], clip)
+        mask = None
+        if defer:
+            sizes = [data_shape[d] for d in data_axes]
+            mask = clip_mask(coords, sizes, clip)
         return moved, labels, mask
 
     return run
@@ -683,9 +726,10 @@ def _apply_clip_masks(
 ) -> ArrayProtocol:
     """Zero the union of group cutoffs after every interpolation step.
 
-    Delaying the masks prevents a later nonzero constant boundary from
-    bringing clipped samples back. Masks stay lazy and only span the axes
-    of their independent group.
+    The masks are those of the gathers, and those of the pull steps when
+    the fill value is nonzero (see `_step_clip`). Delaying them prevents
+    a later nonzero constant boundary from bringing clipped samples back.
+    Masks stay lazy and only span the axes of their independent group.
     """
     xp = array_backend(arr)
     for mask, axes in masks:

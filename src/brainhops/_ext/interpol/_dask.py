@@ -21,7 +21,8 @@ range of the samples read, with the boundary condition, over the whole
 axis. For a smooth transformation, it is a little larger than the block,
 while a coordinate that the boundary wraps around the axis makes it
 grow to the whole axis. The zero weights of the `zero` boundary and the
-mask of the argument `extrapolate` are computed for the whole axis.
+mask of the argument `clip` are computed for the whole axis, with the
+margins of the whole array.
 
 The prefilter is not local, but it nearly is. The coefficient at a
 sample is a sum over all the samples of the extended input, with weights
@@ -39,9 +40,9 @@ rounding error. This holds for every boundary condition and every order,
 including the zero and replicate boundaries, whose correction near an
 edge reaches up to `K` samples into the axis. The coefficients of the
 whole array are the exact solution for its boundary condition, and the
-interpolation extends them with the same condition, so that no padding
-of the array is needed, unlike in `brainhops._core.dask_ndimage`, which
-reproduces the padding that SciPy applies before its prefilter.
+interpolation extends them with the same condition. No padding of the
+array is therefore needed, whereas SciPy pads the array before its
+prefilter for some boundary conditions.
 """
 
 # stdlib
@@ -460,7 +461,7 @@ def _axis_window(
     read by a group of coordinates are therefore those of a run of
     consecutive indices, from the smallest coordinate to the largest,
     brought inside the axis. The run is computed in the precision of the
-    coordinates, as [`_axis_taps`][brainhops._ext.interpol._taps.axis_taps]
+    coordinates, as [`axis_taps`][brainhops._ext.interpol._taps.axis_taps]
     computes it, and extended by one sample on each side, which guards
     against any difference in rounding. A run that covers a period of
     every boundary condition reads the whole axis, and so do coordinates
@@ -766,7 +767,7 @@ def pull_dask(
     grid: tx.Any,
     order: tx.Any,
     bound: tx.Any,
-    extrapolate: tx.Any,
+    clip: tx.Any,
     prefilter: bool,
     strategy: str,
     block_size: tx.Optional[int],
@@ -819,9 +820,8 @@ def pull_dask(
         The argument `order` of [`pull`][brainhops._ext.interpol.pull].
     bound : str or sequence of str
         The argument `bound` of [`pull`][brainhops._ext.interpol.pull].
-    extrapolate : bool or str
-        The argument `extrapolate` of
-        [`pull`][brainhops._ext.interpol.pull].
+    clip : float or sequence or None
+        The argument `clip` of [`pull`][brainhops._ext.interpol.pull].
     prefilter : bool
         The argument `prefilter` of
         [`pull`][brainhops._ext.interpol.pull].
@@ -842,7 +842,7 @@ def pull_dask(
     input = _to_namespace(xp, input)
     grid = _to_namespace(xp, grid)
     orders, bounds, margin, blocked = check_arguments(
-        xp, input, grid, order, bound, extrapolate, strategy, block_size
+        xp, input, grid, order, bound, clip, strategy, block_size
     )
     blocked = blocked and strategy != "auto"
     ndim = len(orders)

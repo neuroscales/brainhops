@@ -45,3 +45,18 @@ def test_a_reslice_takes_a_degree() -> None:
     image = SingleScaleImage(data=np.zeros((4, 5)))
     assert image.reslice(degree=0).data.shape == (4, 5)
     MultiScaleImage(images=[image]).reslice(degree=0)
+
+
+@pytest.mark.parametrize("degree", [6, 7])
+def test_degrees_six_and_seven_are_accepted(degree: int) -> None:
+    # The spline coefficients of a field of degree 6 or 7 give back its
+    # values, and a reslice at that degree keeps the data of an image.
+    rng = np.random.default_rng(degree)
+    values = rng.standard_normal((5, 6, 2))
+    field = DisplacementField(field=values, degree=degree)
+    coefficients = field.to(store="coefficients")
+    assert coefficients.degree == degree
+    np.testing.assert_allclose(coefficients.field, values, atol=1e-10)
+    data = rng.standard_normal((4, 5))
+    image = SingleScaleImage(data=data)
+    np.testing.assert_allclose(image.reslice(degree=degree).data, data)

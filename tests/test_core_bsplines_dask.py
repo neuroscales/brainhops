@@ -1,12 +1,11 @@
 """Tests of spline sampling and prefiltering of dask arrays.
 
-For each block of coordinates, the dask sampler reads a window of the
-input around the stencils of the block, extended by the boundary
-condition as scipy extends the whole array and padded by the prefilter
-halo. The tests compare the sampler with the numpy backend for points on
-both sides of every axis, and check that a block never reads more than its
-window. An earlier sampler cropped each chunk to the grid, which gave an
-empty crop for chunks lying before an axis.
+The wrappers of `brainhops._core.bsplines` hand dask arrays to
+`brainhops._ext.interpol`, which samples each block of coordinates from
+the window of the input that its stencils read. The tests compare the
+lazy results with those of NumPy, for points on both sides of every
+axis, and check that the coefficients of a chunk only read the chunks
+around it.
 """
 
 import numpy as np
@@ -16,19 +15,23 @@ dask = pytest.importorskip("dask")
 da = pytest.importorskip("dask.array")
 pytest.importorskip("dask.optimization")
 
-import brainhops._core.dask_ndimage as dask_ndimage  # noqa: E402
 from brainhops._core.bsplines import (  # noqa: E402
     coeff2value,
     pull,
     pull_field,
     value2coeff,
 )
-from brainhops._core.dask_ndimage import (  # noqa: E402
-    SPLINE_POLES,
-    prefilter_halo,
-)
 
-BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant", 2.5]
+BOUNDS = [
+    "nearest",
+    "reflect",
+    "mirror",
+    "grid-wrap",
+    "constant",
+    "antimirror",
+    "antireflect",
+    2.5,
+]
 DEGREES = [0, 1, 2, 3, 4, 5]
 SHAPE = (7, 8, 9)
 """Small spatial shape with no two axes of equal length."""
@@ -77,10 +80,8 @@ def test_dask_samples_outside_the_grid_as_numpy_does(
         coeff,
     )
     assert isinstance(lazy, da.Array)
-    # scipy approximates the reflect prefilter near the edges of a short axis.
-    atol = 1e-4 if bound == "reflect" and not coeff and degree > 2 else 1e-12
     np.testing.assert_allclose(
-        np.asarray(lazy.compute()), expected, rtol=1e-7, atol=atol
+        np.asarray(lazy.compute()), expected, rtol=1e-7, atol=1e-12
     )
 
 
@@ -118,9 +119,8 @@ def test_the_window_prefilter_is_exact(
 ) -> None:
     """The window prefilter equals the spline of the fully extended signal.
 
-    The reference prefilters an extension long enough that its ends have no
-    weight, whereas scipy approximates the reflect prefilter near the edges of
-    a short axis.
+    The reference prefilters, with SciPy, an extension long enough that
+    its ends have no weight.
     """
     from scipy.ndimage import map_coordinates, spline_filter1d
 
@@ -149,80 +149,15 @@ def test_the_window_prefilter_is_exact(
     np.testing.assert_allclose(np.asarray(lazy.compute()), exact, atol=1e-10)
 
 
-def test_the_halo_leaves_out_only_negligible_samples() -> None:
-    for degree, pole in SPLINE_POLES.items():
-        assert pole ** prefilter_halo(degree) < 1e-12
-    assert prefilter_halo(0) == prefilter_halo(1) == 0
-
-
-@pytest.fixture
-def reads(monkeypatch) -> list:  # noqa: ANN001
-    """Record the sorted indices that each block reads along each axis."""
-    seen = []
-    gather = dask_ndimage._gather
-
-    def spy(input, indices, cval):  # noqa: ANN001, ANN202
-        seen.append([np.unique(i[i >= 0]) for i in indices])
-        return gather(input, indices, cval)
-
-    monkeypatch.setattr(dask_ndimage, "_gather", spy)
-    return seen
-
-
 LARGE = (300, 400, 500)
 """A volume much larger than the window of a block."""
 
 
-@pytest.mark.parametrize("degree", [1, 3, 5])
-@pytest.mark.parametrize(
-    "bound", ["nearest", "reflect", "mirror", "grid-wrap", "constant"]
-)
-@pytest.mark.parametrize("where", ["inside", "before", "after", "edge"])
-def test_a_block_reads_a_window_around_its_stencils(
-    reads,  # noqa: ANN001
-    degree: int,
-    bound: str,
-    where: str,
-) -> None:
-    """A block reads at most its stencils plus the prefilter halo on each side,
-    wherever the points lie.
-    """
-    rng = np.random.default_rng(4)
-    span = 6.0
-    high = np.asarray(LARGE, dtype=float)
-    low = {
-        "inside": np.full(3, 100.0),
-        "before": np.full(3, -60.0),
-        "after": high + 40.0,
-        "edge": np.full(3, -span / 2),
-    }[where]
-    points = low + rng.uniform(0, span, size=(4, 4, 4, 3))
-    volume = da.random.default_rng(5).random(LARGE, chunks=100)
-    pull(volume, points, degree, bound, False).compute()
-    assert reads
-    limit = span + 2 * (prefilter_halo(degree) + degree // 2 + 2) + 24
-    for block in reads:
-        for used in block:
-            assert used.size <= limit
-
-
-def test_a_grid_wrap_window_reads_both_ends_of_an_axis(reads) -> None:  # noqa: ANN001
-    """At an edge, a grid-wrap window reads a few samples from each end."""
-    points = np.random.default_rng(6).uniform(-2, 2, size=(4, 4, 4, 3))
-    volume = da.random.default_rng(7).random(LARGE, chunks=100)
-    pull(volume, points, 3, "grid-wrap", False).compute()
-    for used, size in zip(reads[0], LARGE):
-        assert used.min() == 0
-        assert used.max() == size - 1
-        assert not np.isin(size // 2, used)
-
-
-def test_points_outside_a_constant_boundary_read_nothing(reads) -> None:  # noqa: ANN001
+def test_points_outside_a_constant_boundary_take_the_fill_value() -> None:
     points = np.full((2, 2, 2, 3), -100.0)
     volume = da.random.default_rng(8).random(LARGE, chunks=100)
     out = pull(volume, points, 3, 2.5, False).compute()
     np.testing.assert_allclose(np.asarray(out), 2.5)
-    assert all(used.size == 0 for block in reads for used in block)
 
 
 def test_a_point_that_is_not_finite_maps_to_nan() -> None:
@@ -242,18 +177,26 @@ def test_a_point_that_is_not_finite_maps_to_nan() -> None:
     )
 
 
-def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
-    """Numpy coordinates are cut into blocks, each reading its own window."""
+def test_numpy_coordinates_are_sampled_in_blocks() -> None:
+    """Numpy coordinates are cut into blocks, which dask computes."""
     axis = np.arange(64.0) + 100.0
     points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
     volume = da.random.default_rng(10).random(LARGE, chunks=100)
     with dask.config.set({"array.chunk-size": "256KiB"}):
         lazy = pull(volume, points, 3, "nearest", False)
         assert lazy.numblocks != (1, 1, 1)
-        lazy.compute()
-    assert len(reads) > 1
-    for block in reads:
-        assert max(used.size for used in block) < 64 + 2 * prefilter_halo(3)
+        out = lazy.compute()
+    np.testing.assert_allclose(
+        np.asarray(out),
+        pull(
+            np.asarray(volume[90:180, 90:180, 90:180]),
+            points - 90,
+            3,
+            "nearest",
+            False,
+        ),
+        atol=1e-12,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -264,18 +207,18 @@ def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
 @pytest.mark.parametrize("degree", [2, 3, 5])
 @pytest.mark.parametrize(
     "bound",
-    ["nearest", "reflect", "mirror", "grid-wrap", "wrap", 2.5],
+    ["nearest", "reflect", "mirror", "grid-wrap", "antireflect", 2.5],
     ids=str,
 )
 @pytest.mark.parametrize("chunks", [(4, 5, 6), (2, 3, 3)], ids=["4", "2"])
-def test_dask_coefficients_are_scipys(
+def test_dask_coefficients_are_numpys(
     bound,  # noqa: ANN001
     degree: int,
     chunks: tuple,
 ) -> None:
-    """Dask coefficients keep the chunks and equal those of scipy.
+    """Dask coefficients keep the chunks and equal those of NumPy.
 
-    The check includes chunks shorter than the halo and the `wrap` mode.
+    The check includes chunks shorter than the halo of the prefilter.
     """
     values = np.random.default_rng(11).standard_normal((2, 12, 14, 16))
     expected = value2coeff(values, degree, bound, ndim=3)
@@ -283,15 +226,14 @@ def test_dask_coefficients_are_scipys(
         da.from_array(values, chunks=(1, *chunks)), degree, bound, ndim=3
     )
     assert lazy.chunks == da.from_array(values, chunks=(1, *chunks)).chunks
-    # scipy approximates the reflect extension, also used by nearest, near
-    # the edges of a short axis.
-    atol = 1e-6 if bound in ("reflect", "nearest") else 1e-9
-    np.testing.assert_allclose(np.asarray(lazy), expected, atol=atol)
+    np.testing.assert_allclose(np.asarray(lazy), expected, atol=1e-12)
 
 
 @pytest.mark.parametrize("degree", [2, 3, 5])
-@pytest.mark.parametrize("bound", ["reflect", "mirror", "grid-wrap"])
-def test_dask_coefficients_round_trip(degree: int, bound: str) -> None:
+@pytest.mark.parametrize(
+    "bound", ["nearest", "reflect", "mirror", "grid-wrap", "constant", 2.5]
+)
+def test_dask_coefficients_round_trip(degree: int, bound: object) -> None:
     values = np.random.default_rng(12).standard_normal((12, 14, 16))
     lazy = da.from_array(values, chunks=5)
     coeff = value2coeff(lazy, degree, bound)
@@ -302,8 +244,8 @@ def test_dask_coefficients_round_trip(degree: int, bound: str) -> None:
 
 def test_a_coefficient_chunk_reads_its_neighbours_only() -> None:
     """A coefficient chunk depends only on the input chunks within its halo."""
-    size = 25
-    assert size > prefilter_halo(3)
+    # The horizon of the prefilter at degree 3 is shorter than a chunk.
+    size = 40
     lazy = da.from_array(np.zeros((6 * size,) * 3), chunks=size)
     coeff = value2coeff(lazy, 3, "mirror")
     assert coeff.chunks == lazy.chunks
@@ -341,6 +283,6 @@ def test_the_dask_backend_needs_only_dask() -> None:
     from brainhops._core.backends import backends, ndimage_backend
 
     assert "dask" in backends()
-    assert ndimage_backend(da.zeros(3)) is dask_ndimage
-    assert ndimage_backend("dask") is dask_ndimage
+    with pytest.raises(TypeError):
+        ndimage_backend(da.zeros(3))
     assert "dask_image" not in sys.modules

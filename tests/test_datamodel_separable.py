@@ -2,9 +2,9 @@
 
 The axis groups are read from the factored normal form of
 `compute(factor=True)` and executed by `separable`. The tests cover the
-groups, the order of the steps, the strategy of each step (gather, weight
-matrix or pull) and equality with the monolithic pull, which is exact when
-nothing is separable.
+groups, the order of the steps, the strategy of each step (gather,
+one-dimensional pull or N-d pull) and equality with the monolithic pull,
+which is exact when nothing is separable.
 """
 
 import numpy as np
@@ -12,7 +12,8 @@ import pytest
 
 from brainhops._core import backends
 from brainhops._core.backends import backend
-from brainhops._core.bsplines import pull, spline_matrix
+from brainhops._core.bsplines import pull
+from brainhops._ext import interpol
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations.compute import pruners
 from brainhops.datamodel._transformations.compute import separable as sep
@@ -348,13 +349,18 @@ def test_discrete_channel_genuine_scale_raises_at_high_degree() -> None:
 # ----------------------------------------------------------------------
 
 
-def _step(kind: str, k: int, n_in: int, n_out: int) -> dict:
-    return {"kind": kind, "k": k, "n_in": n_in, "n_out": n_out}
+def _step(
+    kind: str, k: int, n_in: int, n_out: int, view: bool = False
+) -> dict:
+    step = {"kind": kind, "k": k, "n_in": n_in, "n_out": n_out}
+    if kind == "gather":
+        step["view"] = view
+    return step
 
 
 def test_ordering_runs_shrinking_before_expanding() -> None:
-    shrink = _step("matrix", 1, 100, 10)
-    grow = _step("matrix", 1, 10, 100)
+    shrink = _step("pull1d", 1, 100, 10)
+    grow = _step("pull1d", 1, 10, 100)
     same = _step("gather", 1, 10, 10)
     order = sep._order_steps([grow, same, shrink], degree=1, coeff=False)
     assert order[0] is shrink
@@ -363,42 +369,20 @@ def test_ordering_runs_shrinking_before_expanding() -> None:
 
 
 def test_ordering_puts_views_before_other_unit_steps() -> None:
-    view = _step("gather", 1, 10, 10)
-    matmul = _step("matrix", 1, 10, 10)
-    order = sep._order_steps([matmul, view], degree=1, coeff=False)
-    assert order[0] is view
-    assert order[1] is matmul
+    view = _step("gather", 1, 10, 10, view=True)
+    take = _step("gather", 1, 10, 10)
+    line = _step("pull1d", 1, 10, 10)
+    plane = _step("pull", 2, 100, 100)
+    order = sep._order_steps([plane, line, take, view], degree=1, coeff=False)
+    assert order == [view, take, line, plane]
 
 
 def test_ordering_smaller_expansion_first() -> None:
-    small = _step("matrix", 1, 10, 20)
-    large = _step("matrix", 1, 10, 100)
+    small = _step("pull1d", 1, 10, 20)
+    large = _step("pull1d", 1, 10, 100)
     order = sep._order_steps([large, small], degree=1, coeff=False)
     assert order[0] is small
     assert order[1] is large
-
-
-# ----------------------------------------------------------------------
-#   ONE-DIMENSIONAL AFFINE VS SPLINE MATRIX
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("degree", [0, 1, 3])
-@pytest.mark.parametrize("bound", ["reflect", "nearest", "mirror", 2.5])
-@pytest.mark.parametrize("coeff", [False, True])
-def test_spline_matrix_reproduces_pull_1d(
-    degree: int, bound: object, coeff: bool
-) -> None:
-    with backend("numpy"):
-        arr = np.linspace(-1.0, 1.0, 12)
-        # Scale and shift send some samples outside the grid.
-        coords = np.arange(9) * 1.3 - 1.5
-        weights = np.asarray(spline_matrix(12, coords, degree, bound, coeff))
-        got = weights @ arr
-        if not isinstance(bound, str):
-            got = got + float(bound) * (1.0 - weights.sum(1))
-        ref = pull(arr, coords[:, None], degree, bound, coeff)
-    assert np.allclose(got, ref)
 
 
 # ----------------------------------------------------------------------
@@ -445,7 +429,7 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
     with backend("numpy"):
         data = np.arange(10.0)
         # The first case is a gather; the second is a genuine resampling
-        # through the weight matrix.
+        # by a one-dimensional pull.
         for scale, shift in ((1.0, 2.0), (0.9999999, 0.0)):
             matrix = np.asarray([[scale, shift]])
             grid = CartesianField(shape=(10,), input=system, output=system)
@@ -581,28 +565,52 @@ def _classify_single(
     return plan[(0,)]
 
 
-def test_exact_unit_scale_is_a_gather_and_near_unit_is_a_matrix() -> None:
-    # A unit scale or flip with an integer shift is a gather.
+def test_whole_sample_maps_are_gathers_and_others_are_pulled() -> None:
+    # A unit scale or flip with an integer shift is a gather, and so is
+    # an integer stride. Any other scale is a one-dimensional pull.
     assert _classify_single(1.0, 2.0) == "gather"
     assert _classify_single(-1.0, 3.0) == "gather"
-    assert _classify_single(0.9999999, 0.0) == "matrix"
-    assert _classify_single(1.3, 0.0) == "matrix"
+    assert _classify_single(2.0, 1.0) == "gather"
+    assert _classify_single(-3.0, 9.0) == "gather"
+    assert _classify_single(0.9999999, 0.0) == "pull1d"
+    assert _classify_single(1.3, 0.0) == "pull1d"
+    assert _classify_single(2.0, 0.5) == "pull1d"
 
 
-def test_unit_scale_with_coeff_at_high_degree_is_a_matrix() -> None:
+def test_unit_scale_with_coeff_at_high_degree_is_pulled() -> None:
     # Above degree 1, coefficients need a reconstruction, so the step
-    # uses the weight matrix.
-    assert _classify_single(1.0, 2.0, degree=3, coeff=True) == "matrix"
+    # is a one-dimensional pull.
+    assert _classify_single(1.0, 2.0, degree=3, coeff=True) == "pull1d"
     assert _classify_single(1.0, 2.0, degree=1, coeff=True) == "gather"
     assert _classify_single(1.0, 2.0, degree=0, coeff=True) == "gather"
 
 
-def test_unit_scale_with_reflect_above_degree_one_is_a_matrix() -> None:
-    # The reflect prefilter is inexact above degree 1, so the step uses
-    # the weight matrix.
-    assert _classify_single(1.0, 2.0, degree=3, bound="reflect") == "matrix"
-    assert _classify_single(1.0, 2.0, degree=5, bound="reflect") == "matrix"
-    assert _classify_single(1.0, 2.0, degree=1, bound="reflect") == "gather"
+@pytest.mark.parametrize(
+    "bound", ["reflect", "mirror", "grid-wrap", "antimirror", "antireflect"]
+)
+@pytest.mark.parametrize("degree", [1, 3, 5])
+def test_whole_sample_map_with_a_symmetric_boundary_is_a_gather(
+    bound: str, degree: int
+) -> None:
+    # The prefilter is exact, and these boundaries extend the values in
+    # the same way as the coefficients, so the gather is exact even for
+    # the samples beyond the edges.
+    assert _classify_single(1.0, 2.0, degree=degree, bound=bound) == "gather"
+    assert _classify_single(-2.0, 12.0, degree=degree, bound=bound) == (
+        "gather"
+    )
+
+
+@pytest.mark.parametrize("bound", ["nearest", "constant", 2.5])
+def test_whole_sample_map_beyond_a_flat_boundary_is_pulled(
+    bound: object,
+) -> None:
+    # The replicate and constant boundaries extend the coefficients, so
+    # that a spline of degree 2 or more does not take the gathered values
+    # beyond the edges. Inside the input, the gather stays exact.
+    assert _classify_single(1.0, 2.0, degree=3, bound=bound) == "pull1d"
+    assert _classify_single(1.0, 2.0, degree=1, bound=bound) == "gather"
+    assert _classify_single(-1.0, 9.0, degree=3, bound=bound) == "gather"
 
 
 def test_coupled_and_interpolating_groups_are_pulled() -> None:
@@ -634,7 +642,7 @@ def test_matrix_less_affine_is_the_identity_in_a_group() -> None:
     assert _components(els, (6, 7)) == [((0,), (0,)), ((1,), (1,))]
     seq = Sequence(transformations=[CartesianField(shape=(6, 7)), *els])
     opt = dict(degree=1, bound="reflect", coeff=False)
-    assert _plan(seq, (6, 7), **opt) == {(0,): "matrix", (1,): "matrix"}
+    assert _plan(seq, (6, 7), **opt) == {(0,): "gather", (1,): "gather"}
 
 
 def test_constant_boundary_near_all_corners_of_a_warp() -> None:
@@ -694,7 +702,7 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
 
 
 def test_class_a_gather_with_coeff_matches_monolithic() -> None:
-    # A flip with coefficients at degree 3 needs the weight matrix.
+    # A flip with coefficients at degree 3 needs a one-dimensional pull.
     system = _voxel_system(2)
     with backend("numpy"):
         rng = np.random.default_rng(7)
@@ -1013,7 +1021,9 @@ def _demonstration_image() -> tuple:
     )
 
 
-def test_issue_11_spatial_warp_and_time_affine() -> None:
+def test_issue_11_spatial_warp_and_time_affine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     img, vox4, world4 = _demonstration_image()
     data = np.asarray(img.data)
     # Reslice onto fewer time points, rescaling the time axis.
@@ -1039,33 +1049,33 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
         )
 
     shapes = []
-    original = backends.npndi.map_coordinates
+    original = interpol.pull
 
-    def spy(inp: object, coords: object, **kwargs: object) -> object:
-        shapes.append(coords.shape)
-        return original(inp, coords, **kwargs)
+    def spy(inp: object, grid: object, *args: object, **kwargs: object):  # noqa: ANN202
+        shapes.append(grid.shape)
+        return original(inp, grid, *args, **kwargs)
 
-    backends.npndi.map_coordinates = spy
-    try:
-        with backend("numpy"):
-            got = sep.pull_separable(
-                data,
-                transformation,
-                degree=1,
-                bound="reflect",
-                coeff=False,
-            )
-    finally:
-        backends.npndi.map_coordinates = original
+    monkeypatch.setattr(interpol, "pull", spy)
+    with backend("numpy"):
+        got = sep.pull_separable(
+            data,
+            transformation,
+            degree=1,
+            bound="reflect",
+            coeff=False,
+        )
+    monkeypatch.undo()
 
     assert np.allclose(got, ref)
     # The coupled warp runs as a 3-D pull, never a 4-D one.
-    ndims = {shape[0] for shape in shapes}
+    ndims = {shape[-1] for shape in shapes}
     assert 4 not in ndims
     assert 3 in ndims
 
 
-def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
+def test_issue_11_flip_and_scale_do_not_interpolate_the_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     img, vox4, world4 = _demonstration_image()
     # There is no warp, only a diagonal affine with a y flip and fewer
     # time points.
@@ -1095,104 +1105,30 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
             coeff=False,
         )
 
-    inputs = []
-    original = backends.npndi.map_coordinates
+    calls = []
+    original = interpol.pull
 
-    def spy(inp: object, coords: object, **kwargs: object) -> object:
-        inputs.append(np.asarray(inp).shape)
-        return original(inp, coords, **kwargs)
+    def spy(inp: object, grid: object, *args: object, **kwargs: object):  # noqa: ANN202
+        calls.append((np.asarray(inp).shape, args[0] if args else None))
+        return original(inp, grid, *args, **kwargs)
 
-    backends.npndi.map_coordinates = spy
-    try:
-        with backend("numpy"):
-            got = sep.pull_separable(
-                data,
-                transformation,
-                degree=1,
-                bound="reflect",
-                coeff=False,
-            )
-    finally:
-        backends.npndi.map_coordinates = original
+    monkeypatch.setattr(interpol, "pull", spy)
+    with backend("numpy"):
+        got = sep.pull_separable(
+            data,
+            transformation,
+            degree=1,
+            bound="reflect",
+            coeff=False,
+        )
+    monkeypatch.undo()
 
     assert np.allclose(got, ref)
-    # Only 1-D identity rows are resampled, to build the weight matrices.
-    for shape in inputs:
+    # Only the 1-D index ramps of the gathers are sampled, with degree 0.
+    assert calls
+    for shape, order in calls:
         assert len(shape) == 1
-
-
-# ----------------------------------------------------------------------
-#   LARGE-AXIS ROUTING (C1)
-# ----------------------------------------------------------------------
-
-
-def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
-    # The weight matrix of a long axis is huge, so above a threshold the
-    # step falls back to a batched pull.
-    system = _voxel_system(2)
-    threshold = sep._MAX_WEIGHT_MATRIX_ELEMENTS
-
-    def _build(n: int) -> tuple:
-        data = np.arange(n * 3, dtype=float).reshape(n, 3)
-        matrix = np.zeros((2, 3))
-        # Axis 0 is genuinely rescaled and axis 1 flipped.
-        matrix[0, 0], matrix[1, 1] = 1.3, -1.0
-        matrix[1, 2] = 2.0
-        grid = CartesianField(shape=(n, 3), input=system, output=system)
-        affine = Affine(matrix=matrix, input=system, output=system)
-        return data, Sequence(transformations=[grid, affine])
-
-    calls = {"pull_axes": 0}
-    original = sep.pull_axes
-
-    def spy(*args: object, **kwargs: object) -> object:
-        calls["pull_axes"] += 1
-        return original(*args, **kwargs)
-
-    small_n = 100
-    assert small_n * small_n <= threshold
-    sep.pull_axes = spy
-    try:
-        with backend("numpy"):
-            data, seq = _build(small_n)
-            small = sep.pull_separable(
-                data, seq, degree=3, bound="mirror", coeff=False
-            )
-            small_ref = pull(
-                data,
-                seq.compute().field,
-                degree=3,
-                bound="mirror",
-                coeff=False,
-            )
-    finally:
-        sep.pull_axes = original
-    # A small axis uses the weight matrix.
-    assert calls["pull_axes"] == 0
-    assert np.allclose(small, small_ref)
-
-    large_n = int(threshold**0.5) + 200
-    assert large_n * large_n > threshold
-    calls["pull_axes"] = 0
-    sep.pull_axes = spy
-    try:
-        with backend("numpy"):
-            data, seq = _build(large_n)
-            large = sep.pull_separable(
-                data, seq, degree=3, bound="mirror", coeff=False
-            )
-            large_ref = pull(
-                data,
-                seq.compute().field,
-                degree=3,
-                bound="mirror",
-                coeff=False,
-            )
-    finally:
-        sep.pull_axes = original
-    # A large axis uses the batched pull.
-    assert calls["pull_axes"] >= 1
-    assert np.allclose(large, large_ref)
+        assert order == 0
 
 
 # ----------------------------------------------------------------------
@@ -1514,8 +1450,8 @@ def test_scaling_translation_reslice_matches_monolithic() -> None:
         seq = Sequence(transformations=[CartesianField(shape=(6, 7)), *els])
         opt = dict(degree=3, bound="mirror", coeff=False)
         assert _plan(seq, data.shape, **opt) == {
-            (0,): "matrix",
-            (1,): "matrix",
+            (0,): "pull1d",
+            (1,): "pull1d",
         }
         got = sep.pull_separable(data, seq, **opt)
         ref = pull(data, seq.compute().field, **opt)
@@ -1824,7 +1760,7 @@ def test_a_subspace_product_factors_into_space_and_time() -> None:
     opt = dict(degree=1, bound="reflect", coeff=False)
     assert _plan(seq, shape, **opt) == {
         (0, 1): "pull",
-        (2,): "matrix",
+        (2,): "pull1d",
         (3,): "gather",
     }
 

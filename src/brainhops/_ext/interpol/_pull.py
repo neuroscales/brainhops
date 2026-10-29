@@ -6,6 +6,7 @@
 # stdlib
 import itertools
 import math
+import numbers
 from types import ModuleType
 
 # dependencies
@@ -23,12 +24,19 @@ from ._coeff import (
 )
 from ._taps import axis_taps
 
-_TOLERANCE = 5e-2
-"""Margin, in voxels, that the mask of `extrapolate=False` allows.
+_TOLERANCE = 1e-5
+"""Distance, in voxels, by which the mask of `clip` widens each margin.
 
-It keeps the samples that rounding errors put just outside the edge
-samples. The value comes from torch-interpol.
+A coordinate that should fall exactly on the limit of the margin, such
+as the centre of an edge sample with `clip=0`, can land just outside it
+because of rounding errors. The tolerance keeps such a coordinate. It
+is far smaller than any margin that has a meaning, and brainhops widens
+the margins of its own `clip` by the same tolerance.
 """
+
+
+_Margins = tx.Tuple[tx.Tuple[float, float], ...]
+"""The margins of the argument `clip`, as one pair per spatial axis."""
 
 
 _BLOCK_VALUES = 65536
@@ -72,7 +80,7 @@ def pull(
     grid: tx.Any,
     order: tx.Any = 1,
     bound: tx.Any = "reflect",
-    extrapolate: tx.Any = True,
+    clip: tx.Any = None,
     prefilter: bool = False,
     strategy: str = "auto",
     block_size: tx.Optional[int] = None,
@@ -161,12 +169,19 @@ def pull(
     bound : str or sequence of str, default="reflect"
         The boundary condition, for all axes or for each spatial axis,
         by any name of the table in the documentation of the package.
-    extrapolate : bool or str, default=True
-        What to return at coordinates outside the input. True uses the
-        boundary condition. False returns zero beyond the centres of the
-        edge samples, with a tolerance of 0.05 voxel. The string "edges"
-        returns zero beyond the outer edges of the edge samples, which
-        lie half a voxel farther.
+    clip : float or sequence, optional
+        The margins beyond which the output is zero. By default, every
+        value is kept, and the boundary condition gives the values
+        outside the input. A number sets the same margin below and
+        above every axis. A pair `(lower, upper)` sets the margins of
+        every axis, and a sequence of `ndim` pairs sets them for each
+        spatial axis, in the order of the coordinates. A value is zero
+        when one of its coordinates lies outside the closed interval
+        `[-lower, size - 1 + upper]` of its axis, widened by 1e-5 voxel
+        on each side so that rounding errors do not drop a coordinate
+        that lies on a limit. The coordinates themselves are never
+        clamped. A margin of 0 keeps the values up to the centres of
+        the edge samples, and a margin of 0.5 up to their outer edges.
     prefilter : bool, default=False
         Whether to compute the spline coefficients of the input first,
         with [`spline_coeff`][brainhops._ext.interpol.spline_coeff], so
@@ -201,7 +216,7 @@ def pull(
             grid,
             order,
             bound,
-            extrapolate,
+            clip,
             prefilter,
             strategy,
             block_size,
@@ -210,7 +225,7 @@ def pull(
     input = to_namespace(xp, input)
     grid = to_namespace(xp, grid)
     orders, bounds, margin, blocked = check_arguments(
-        xp, input, grid, order, bound, extrapolate, strategy, block_size
+        xp, input, grid, order, bound, clip, strategy, block_size
     )
     dtype = normalize_dtype(input.dtype)
     if prefilter and max(orders) > 1:
@@ -229,10 +244,10 @@ def check_arguments(
     grid: tx.Any,
     order: tx.Any,
     bound: tx.Any,
-    extrapolate: tx.Any,
+    clip: tx.Any,
     strategy: str,
     block_size: tx.Optional[int],
-) -> tx.Tuple[tx.List[int], tx.List[str], tx.Optional[float], bool]:
+) -> tx.Tuple[tx.List[int], tx.List[str], tx.Optional[_Margins], bool]:
     """Check the arguments of [`pull`][] and return them in normal form.
 
     The eager and the dask versions of [`pull`][] share this function,
@@ -251,8 +266,8 @@ def check_arguments(
         The argument `order` of [`pull`][].
     bound : str or sequence of str
         The argument `bound` of [`pull`][].
-    extrapolate : bool or str
-        The argument `extrapolate` of [`pull`][].
+    clip : float or sequence or None
+        The argument `clip` of [`pull`][].
     strategy : str
         The argument `strategy` of [`pull`][].
     block_size : int or None
@@ -265,8 +280,8 @@ def check_arguments(
     bounds : list of str
         The boundary condition of each spatial axis, one of the names
         in `_BOUNDS`.
-    margin : float or None
-        The margin of [`_inside`][], or None to keep every point.
+    margin : tuple of tuple of float, or None
+        The margins of [`_inside`][], or None to keep every point.
     blocked : bool
         Whether the blocked strategy is used.
 
@@ -287,7 +302,7 @@ def check_arguments(
     bounds = [
         normalize_bound(b) for b in normalize_per_axis(bound, ndim, "bound")
     ]
-    margin = _normalize_extrapolate(extrapolate)
+    margin = _normalize_clip(clip, ndim)
     blocked = _select_strategy(xp, strategy) == "blocked"
     if block_size is not None and int(block_size) < 1:
         raise ValueError(f"The block size must be positive: {block_size}.")
@@ -300,7 +315,7 @@ def pull_arrays(
     grid: tx.Any,
     orders: tx.List[int],
     bounds: tx.List[str],
-    margin: tx.Optional[float],
+    margin: tx.Optional[_Margins],
     blocked: bool,
     block_size: tx.Optional[int],
     shape: tx.Optional[tx.Sequence[int]] = None,
@@ -315,7 +330,7 @@ def pull_arrays(
     the window holds the samples `origin[d]` to
     `origin[d] + input.shape[d] - 1` of an axis of length `shape[d]`.
     The boundary condition, the zero weights of the `zero` boundary and
-    the mask of `extrapolate` then apply to the whole array, and the
+    the mask of `clip` then apply to the whole array, and the
     samples that the coordinates read must all lie in the window.
 
     Parameters
@@ -333,8 +348,8 @@ def pull_arrays(
     bounds : list of str
         The boundary condition of each spatial axis, one of the names in
         `_BOUNDS`.
-    margin : float or None
-        The margin of [`_inside`][], or None to keep every point.
+    margin : tuple of tuple of float, or None
+        The margins of [`_inside`][], or None to keep every point.
     blocked : bool
         Whether to use the blocked strategy rather than the batched one.
     block_size : int or None
@@ -594,7 +609,7 @@ def _block_taps(
     bounds: tx.List[str],
     dtype: tx.Any,
     strides: tx.List[int],
-    margin: tx.Optional[float],
+    margin: tx.Optional[_Margins],
     pool: BufferPool,
     origin: tx.Sequence[int],
 ) -> tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]]:
@@ -619,8 +634,8 @@ def _block_taps(
     strides : list of int
         The strides of the spatial axes in the flattened spatial axes of
         the window that is read.
-    margin : float or None
-        The margin of [`_inside`][], or None to keep every point.
+    margin : tuple of tuple of float, or None
+        The margins of [`_inside`][], or None to keep every point.
     pool : BufferPool
         The pool that provides the arrays.
     origin : sequence of int
@@ -657,43 +672,71 @@ def _block_taps(
     return taps
 
 
-def _normalize_extrapolate(extrapolate: tx.Any) -> tx.Optional[float]:
-    """Return the margin beyond the edge samples where values are kept.
+def _normalize_clip(clip: tx.Any, ndim: int) -> tx.Optional[_Margins]:
+    """Return the margins of the argument `clip`, one pair per axis.
 
     Parameters
     ----------
-    extrapolate : bool or str
-        The argument `extrapolate` of [`pull`][].
+    clip : float or sequence or None
+        The argument `clip` of [`pull`][].
+    ndim : int
+        The number of spatial axes.
 
     Returns
     -------
-    float or None
-        The margin in voxels, or None when values are kept everywhere.
+    tuple of tuple of float, or None
+        The pair `(lower, upper)` of each spatial axis, in voxels, or
+        None when every value is kept.
 
     Raises
     ------
     ValueError
     """
-    if isinstance(extrapolate, str):
-        if extrapolate.lower() in ("edges", "hist"):
-            return 0.5 + _TOLERANCE
-        raise ValueError(f"Unknown value of extrapolate: {extrapolate!r}.")
-    return None if extrapolate else _TOLERANCE
+    if clip is None:
+        return None
+    if isinstance(clip, numbers.Real):
+        pairs = [(clip, clip)] * ndim
+    else:
+        try:
+            items = tuple(clip)
+            if len(items) == 2 and all(
+                isinstance(x, numbers.Real) for x in items
+            ):
+                pairs = [items] * ndim
+            else:
+                pairs = [tuple(pair) for pair in items]
+            if len(pairs) != ndim or any(len(pair) != 2 for pair in pairs):
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "The argument clip must be a number, a pair (lower, "
+                "upper) or one pair per spatial axis, not "
+                f"{clip!r}."
+            ) from error
+    if any(
+        not isinstance(x, numbers.Real) or not math.isfinite(x)
+        for pair in pairs
+        for x in pair
+    ):
+        raise ValueError(f"The margins of clip must be finite: {clip!r}.")
+    return tuple((float(lower), float(upper)) for lower, upper in pairs)
 
 
 def _inside(
     xp: ModuleType,
     coords: tx.Any,
     shape: tx.Sequence[int],
-    margin: float,
+    margin: _Margins,
     pool: BufferPool,
 ) -> tx.Any:
-    """Return where coordinates lie inside an array, up to a margin.
+    """Return where coordinates lie inside an array, up to margins.
 
-    A coordinate along an axis of length `n` is inside when it lies
-    between `-margin` and `n - 1 + margin`, that is, when its distance
-    to the centre `(n - 1) / 2` of the axis is less than
-    `(n - 1) / 2 + margin`.
+    A coordinate along an axis of length `n`, with the margins
+    `(lower, upper)`, is inside when it lies between `-lower` and
+    `n - 1 + upper`, widened by `_TOLERANCE` on each side. This is
+    computed as the distance of the coordinate to the middle of that
+    interval, which must not exceed half its length, so that each axis
+    costs one subtraction, one absolute value and one comparison.
 
     Parameters
     ----------
@@ -704,8 +747,8 @@ def _inside(
         last axis.
     shape : sequence of int
         The spatial shape of the array.
-    margin : float
-        The margin, in voxels.
+    margin : tuple of tuple of float
+        The pair `(lower, upper)` of each axis, in voxels.
     pool : BufferPool
         The pool that provides the arrays.
 
@@ -719,11 +762,12 @@ def _inside(
     inside = pool.get("inside", points, bool)
     mask = pool.get("mask", points, bool)
     distance = pool.get("distance", points, coords.dtype)
-    for d, n in enumerate(shape):
-        half = (n - 1) / 2
-        xp.subtract(coords[..., d], half, out=distance)
+    for d, (n, (lower, upper)) in enumerate(zip(shape, margin)):
+        middle = (n - 1 + upper - lower) / 2
+        half = (n - 1 + upper + lower) / 2 + _TOLERANCE
+        xp.subtract(coords[..., d], middle, out=distance)
         xp.abs(distance, out=distance)
-        xp.less(distance, half + margin, out=mask if d else inside)
+        xp.less_equal(distance, half, out=mask if d else inside)
         if d:
             xp.logical_and(inside, mask, out=inside)
     return inside

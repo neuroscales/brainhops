@@ -148,17 +148,17 @@ def test_lazy_grid_prefilters_windows(bound) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("order", [1, 3])
 @pytest.mark.parametrize("bound", ["zero", "replicate", "dst2"])
-def test_pull_extrapolate(order, bound) -> None:  # noqa: ANN001
-    # The mask of `extrapolate` and the zeros of the zero boundary are
+def test_pull_clip(order, bound) -> None:  # noqa: ANN001
+    # The mask of `clip` and the zeros of the zero boundary are
     # those of the whole input, not of the window that a block reads.
     rng = np.random.default_rng(2)
     x = rng.standard_normal((12, 10))
     grid = rng.uniform(-1.5, 12.5, (8, 9, 2))
     lazy = da.from_array(x, chunks=(3, 4))
-    for extrapolate in (True, False, "edges"):
-        expected = pull(x, grid, order, bound, extrapolate, prefilter=True)
+    for clip in (None, 0, 0.5, [(0.2, -1.0), (1.5, 0.0)]):
+        expected = pull(x, grid, order, bound, clip, prefilter=True)
         _close(
-            pull(lazy, grid, order, bound, extrapolate, prefilter=True),
+            pull(lazy, grid, order, bound, clip, prefilter=True),
             expected,
         )
         _close(
@@ -167,7 +167,7 @@ def test_pull_extrapolate(order, bound) -> None:  # noqa: ANN001
                 da.from_array(grid, chunks=(3, 2, 2)),
                 order,
                 bound,
-                extrapolate,
+                clip,
                 prefilter=True,
             ),
             expected,
