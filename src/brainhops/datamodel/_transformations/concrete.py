@@ -101,7 +101,7 @@ def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
     of the values (bagof-converters 0.2.1). This check can be removed once
     the converter checks the shape that the hint names.
     """
-    ndim = obj._element_ndim
+    ndim = obj.element_ndim
     if value is None or ndim is None:
         return
     value_ndim = np.ndim(value)
@@ -119,8 +119,25 @@ def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
         )
 
 
-def _set_element_data(obj: "_CompactTransformation", value: tx.Any) -> None:
-    """Store the data of a matrix or vector type after checking its shape."""
+def set_element_data(obj: "_CompactTransformation", value: tx.Any) -> None:
+    """Store the data of a matrix or vector type after checking its shape.
+
+    This is the setter of the `data` property of the matrix and vector
+    types and of their tangent classes. It refuses data that does not
+    have exactly `element_ndim` dimensions.
+
+    Parameters
+    ----------
+    obj : _CompactTransformation
+        The transformation whose data is assigned.
+    value : Any
+        The data, or None.
+
+    Raises
+    ------
+    ValueError
+        If the data does not have the number of dimensions of one element.
+    """
     _require_element(obj, value)
     obj._data = value
 
@@ -685,7 +702,7 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
 class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation):
     """Base class of the transformations that a matrix or a vector stores."""
 
-    _element_ndim: tx.ClassVar[tx.Optional[int]] = None
+    element_ndim: tx.ClassVar[tx.Optional[int]] = None
     """Number of dimensions of the data of one transformation.
 
     It is 2 for a matrix type and 1 for a vector type. Data with more
@@ -737,7 +754,7 @@ class Affine(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    _element_ndim: tx.ClassVar[tx.Optional[int]] = 2
+    element_ndim: tx.ClassVar[tx.Optional[int]] = 2
 
     map_field: _FieldName = "matrix"
     data_fields: _FieldNames = ("data",)
@@ -779,7 +796,7 @@ class Affine(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=_set_element_data)
+    data = _invalidating_property("data", fset=set_element_data)
     log = _invalidating_property("log", fset=False)
     matrix = alias("data")
 
@@ -838,7 +855,7 @@ class Linear(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
-    _element_ndim: tx.ClassVar[tx.Optional[int]] = 2
+    element_ndim: tx.ClassVar[tx.Optional[int]] = 2
 
     map_field: _FieldName = "matrix"
     data_fields: _FieldNames = ("data",)
@@ -873,7 +890,7 @@ class Linear(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=_set_element_data)
+    data = _invalidating_property("data", fset=set_element_data)
     log = _invalidating_property("log", fset=False)
     matrix = alias("data")
 
@@ -966,7 +983,7 @@ class Permutation(_CompactTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+    element_ndim: tx.ClassVar[tx.Optional[int]] = 1
 
     map_field: _FieldNames = "permutation"
     data_fields: _FieldNames = ("data",)
@@ -986,7 +1003,7 @@ class Permutation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=_set_element_data)
+    data = _invalidating_property("data", fset=set_element_data)
     permutation = alias("data")
 
     @lazyproperty
@@ -1052,7 +1069,7 @@ class Scaling(_CompactTransformation, polymorphic=True):
     # the number of axes is read from the length of the vector, and the
     # vector would have to be expanded to the number of axes of the
     # systems or of a neighbour before it is converted or composed.
-    _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+    element_ndim: tx.ClassVar[tx.Optional[int]] = 1
 
     map_field: _FieldNames = "scale"
     data_fields: _FieldNames = ("data",)
@@ -1084,7 +1101,7 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=_set_element_data)
+    data = _invalidating_property("data", fset=set_element_data)
     log = _invalidating_property("log", fset=False)
     scale = alias("data")
 
@@ -1128,7 +1145,7 @@ class Translation(_CompactTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
+    element_ndim: tx.ClassVar[tx.Optional[int]] = 1
 
     map_field: _FieldNames = "translation"
     data_fields: _FieldNames = ("data",)
@@ -1147,7 +1164,7 @@ class Translation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=_set_element_data)
+    data = _invalidating_property("data", fset=set_element_data)
     translation = alias("data")
 
     @lazyproperty
