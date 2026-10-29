@@ -14,6 +14,7 @@ from brainhops._core.path import is_local
 
 # internals
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -268,6 +269,7 @@ class ZarrReaderWriter(ZarrReader, BinaryFileWriter):
             f"{type(self).__name__} does not implement to_store."
         )
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         if isinstance(file, str):
             file = path.Path(file)
@@ -280,6 +282,7 @@ class ZarrReaderWriter(ZarrReader, BinaryFileWriter):
 
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         # The inherited writer opens the name as a stream, which a store is
         # not.

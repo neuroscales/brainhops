@@ -38,8 +38,8 @@ field has no other place for an affine, so what the affines on either
 side of the field do not undo of each other is carried into its values,
 which is exact. A field interpolated with another
 degree than 1 is sampled at its nodes, which is a loss: the converter
-raises a `LossyConversionError`, and `t.to(Format, lossy=True)` returns
-the sampled field.
+raises a `LossyConversionError`, and `t.to(Format, on_loss="ignore")`
+returns the sampled field.
 
 A NIfTI-1 header stores its affine in single precision, and a NIfTI-2
 header in double precision. The rounding to single precision is not

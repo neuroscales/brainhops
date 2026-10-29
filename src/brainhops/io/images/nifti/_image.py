@@ -15,7 +15,9 @@ from brainhops._core.typing import ArrayProtocol
 # datamodel
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -264,12 +266,11 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> "NiftiImage":
         """Encode the pending data and geometry into `rawdata` and the header.
@@ -303,14 +304,15 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the options that name its fields, so any field of
-        the metadata can be overridden here, and its record is the base of
-        the new header. The image owns its geometry, so a field that the
-        geometry encodes over, such as the repetition time, which is the
-        time step of the image, is reported as approximated when it
+        the metadata can be overridden here, and its record is the base
+        of the new header. The image owns its geometry, so a field that
+        the geometry encodes over, such as the repetition time, which is
+        the time step of the image, is reported as approximated when it
         disagrees. The data are stored with the type given as `dtype=`,
-        or else with `metadata.dtype`, or else with the type of the data,
-        and nibabel scales them into an integer type. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        or else with `metadata.dtype`, or else with the type of the
+        data, and nibabel scales them into an integer type. What the
+        write loses or approximates is acted on once, under the error
+        policy of the call.
 
         Parameters
         ----------
@@ -319,9 +321,6 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose description and intent are copied. The geometry
             always comes from this image.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect (see [`metadata_loss_policy`][]).
         **options : Any
             Fields of the metadata to override, such as `dtype`, `intent`
             or `description`, and fields of the header, which are set
@@ -367,7 +366,7 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
@@ -377,7 +376,7 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
         )
         metadata = type(metadata or NiftiMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,

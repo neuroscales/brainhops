@@ -8,11 +8,13 @@ from bagof.magic import NotKwOnly, replace
 
 # core
 from brainhops._core.backends import BackendLike, DeviceLike
+from brainhops._core.errors import UNSET
 from brainhops._core.properties import smartproperty
 
 # datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
+from brainhops.datamodel.metadata._report import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
@@ -219,10 +221,18 @@ class Sequence(SequenceMixin, MetaTransformation):
 
         Any other chain raises a [`ConversionError`][] before anything is
         computed. Without `log=`, the conversion follows
-        [`Transformation.to`][Transformation.to], and so does `copy=`.
+        [`Transformation.to`][Transformation.to], and so do `copy=`,
+        `on_loss=` and `on_error=`. With `log=`, `on_loss=` and
+        `on_error=` apply to the whole conversion of the chain.
         """
         if "log" in kwargs:
-            return _copied(self, _chain_to(self, cls, kwargs), copy)
+            on_loss = kwargs.pop("on_loss", UNSET)
+            on_error = kwargs.pop("on_error", UNSET)
+            return call_under_policy(
+                lambda: _copied(self, _chain_to(self, cls, kwargs), copy),
+                on_error,
+                on_loss=on_loss,
+            )
         return super().to(cls, copy=copy, **kwargs)
 
     def compute(

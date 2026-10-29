@@ -6,7 +6,9 @@ three passes and the design of pending data and `consolidate()` are
 merged, and the fourth pass is in progress. The plain matrix formats
 and the NiftyReg affine are moved on the model of LTA (items 300 to
 306). The fifth pass, which brings the vocabulary of #233, is in
-progress, and its first part is #310.
+progress, and its first part is #310. The `on_loss=` keyword that this
+memo names is now the half of an error policy that concerns losses,
+beside `on_error=` (see `error-policy.md`, #590).
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides

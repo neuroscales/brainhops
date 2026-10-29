@@ -6,7 +6,7 @@ from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
@@ -83,17 +83,15 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         """
         return cls(raw=raw, **{**decode(raw), **kwargs})
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "NiftiMetadata":
         """Encode the fields that differ from the header into a copy of it.
 
-        The contract is that of
-        [`MetadataFormat.consolidate`][brainhops.io.metadata.MetadataFormat.consolidate]:
+        The contract is that of `consolidated`:
         the changes are written into a copy of the record, or into an
         empty NIfTI-1 header, and the result is decoded from it afresh.
 
@@ -101,9 +99,6 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the header cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields to override before the encoding.
 
@@ -124,7 +119,6 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             encode,
             NiftiRaw,
             inplace=inplace,
-            on_loss=on_loss,
             fields=fields,
         )
 
@@ -163,8 +157,10 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
             return derived
         return replace(derived, raw=clear_spatial_slots(self.raw))
 
+    @takes_error_policy
     def to_bytes(
-        self, *, on_loss: tx.Optional[OnLoss] = None, **fields: tx.Any
+        self,
+        **fields: tx.Any,
     ) -> bytes:
         """Return the header of the consolidated record as NIfTI stores it.
 
@@ -175,8 +171,6 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
 
         Parameters
         ----------
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the header cannot hold.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -185,14 +179,13 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         bytes
             The header and its extensions.
         """
-        raw = self.consolidate(on_loss=on_loss, **fields).raw
+        raw = self.consolidate(**fields).raw
         return (NiftiRaw() if raw is None else raw).to_bytes()
 
+    @takes_error_policy
     def to_fileobj(
         self,
         file: tx.BinaryIO,
-        *,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> None:
         """Write the header of the consolidated record to a stream.
@@ -204,9 +197,7 @@ class NiftiMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         ----------
         file : BinaryIO
             The stream, open in binary mode.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that the header cannot hold.
         **fields : Any
             Fields to override, as in [`consolidate`][].
         """
-        file.write(self.to_bytes(on_loss=on_loss, **fields))
+        file.write(self.to_bytes(**fields))

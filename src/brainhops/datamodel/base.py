@@ -465,7 +465,13 @@ class DataModelConverter(Converter[DataModelBase, tx.Any]):
     instance is read field by field rather than passed to the constructor.
     A `TypeError` or `ValueError` raised during conversion becomes a
     [`ConversionError`][bagof.converters.ConversionError] that keeps the
-    original message.
+    original message. A refused loss
+    ([`LossyConversionError`][brainhops.errors.LossyConversionError]),
+    such as a loss of metadata, is a `TypeError` too, but it passes
+    through unchanged, so that the error policy of the caller can act on
+    it as on any other loss. Any other conversion error of brainhops is
+    wrapped, so that a caller that tries several converters, such as the
+    converter of a union, still moves on to the next one.
     """
 
     DEFAULT = DataModelBase
@@ -478,7 +484,7 @@ class DataModelConverter(Converter[DataModelBase, tx.Any]):
             return value
         try:
             return self.origin.from_any(value)
-        except ConversionError:
+        except (ConversionError, errors.LossyConversionError):
             raise
         except (TypeError, ValueError) as e:
             raise self.value_error(value, str(e)) from e

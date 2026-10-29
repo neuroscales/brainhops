@@ -15,7 +15,10 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -364,14 +367,13 @@ class M3zMorph(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         spacing: tx.Optional[int] = None,
         image_shape: tx.Optional[tx.Sequence[int]] = None,
         atlas_shape: tx.Optional[tx.Sequence[int]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain into a new record.
@@ -399,9 +401,10 @@ class M3zMorph(
         record.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an M3Z file
-        holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_loss`.
+        write), with the fields given by keyword. The record of an M3Z
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -420,9 +423,6 @@ class M3zMorph(
             Shape of the atlas. The default is the shape that the
             current record records, or else the shape of the node grid
             multiplied by `spacing`.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -450,7 +450,7 @@ class M3zMorph(
         metadata = metadata_to_write(
             self.metadata, M3zMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -490,6 +490,7 @@ class M3zMorph(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, compress: bool = True, **kwargs) -> bytes:
         """Return the content of the morph file that encodes this morph.
 
@@ -521,6 +522,7 @@ class M3zMorph(
         record = _record(self.consolidate(**kwargs))
         return record.to_bytes(compress=compress)
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
@@ -571,7 +573,7 @@ def _encode(
 ) -> M3zRaw:
     """Encode a chain of transformations as a new record.
 
-    The rules are described in [`M3zMorph.consolidate`][]. The current
+    The rules are described in `M3zMorph._consolidate`. The current
     record, `old`, is never changed: the new record replaces its fields,
     and it shares the arrays that it keeps.
     """

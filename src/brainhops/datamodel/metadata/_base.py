@@ -10,6 +10,9 @@ import typing_extensions as tx
 from bagof.magic import Factory, HideIf, HideIfNone, replace
 
 # internals
+from brainhops._core.errors import UNSET
+from brainhops.errors import ErrorAction, ErrorPolicy
+
 from ._derive import (
     Indexed,
     Reframed,
@@ -19,7 +22,7 @@ from ._derive import (
     with_brainhops,
     with_history,
 )
-from ._report import OnLoss
+from ._report import call_under_policy
 from ._terms import EncodingDirection
 from ._vocabulary import (
     ALONG,
@@ -106,15 +109,17 @@ class Metadata(
         cls,
         other: tx.Any,
         *args: tx.Any,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_loss: ErrorAction = UNSET,
+        on_error: ErrorPolicy = UNSET,
         **kwargs: tx.Any,
     ) -> tx.Self:
         """
         Copy metadata into this class, field by field.
 
-        Generic metadata supports every field, so nothing is lost and
-        `on_loss` has no effect here. The metadata of a file format
-        reports the fields it has no slot for (see
+        Generic metadata supports every field, so nothing is lost, and
+        `on_loss` and the entry of `on_error` for a loss have no
+        effect here. The metadata of a file format reports the fields
+        it has no slot for (see
         [`MetadataFormat.from_instance`][brainhops.io.metadata.MetadataFormat.from_instance]).
         The `extra` dictionary is copied, so that the new metadata does
         not share it with `other`.
@@ -126,9 +131,13 @@ class Metadata(
         *args : Any
             Constructor arguments, which take precedence over the fields
             of `other`.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            Accepted for the symmetry with the metadata of a file format,
-            and ignored.
+        on_loss : ErrorAction, optional
+            The action for a loss, accepted for the symmetry with the
+            metadata of a file format.
+        on_error : ErrorPolicy, optional
+            What to do with a conversion error of the copy (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A mapping
+            may also name other errors. By default, an error is raised.
         **kwargs : Any
             Fields to set on the result.
 
@@ -137,16 +146,22 @@ class Metadata(
         Metadata
             The copy.
         """
-        if isinstance(other, Metadata) and "extra" not in kwargs:
-            kwargs["extra"] = dict(other.extra)
-        return super().from_instance(other, *args, **kwargs)
+        copy = super().from_instance
+
+        def copy_fields() -> tx.Self:
+            if isinstance(other, Metadata) and "extra" not in kwargs:
+                kwargs["extra"] = dict(other.extra)
+            return copy(other, *args, **kwargs)
+
+        return call_under_policy(copy_fields, on_error, on_loss=on_loss)
 
     def to(
         self,
         cls: tx.Optional[tx.Type["Metadata"]] = None,
         *,
         copy: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
+        on_loss: ErrorAction = UNSET,
+        on_error: ErrorPolicy = UNSET,
         **values: tx.Any,
     ) -> "Metadata":
         """
@@ -156,8 +171,10 @@ class Metadata(
         transformations. Each field is copied by name. The record of a
         file format means nothing to another format, so it is copied
         only into the same class. A file format that has no slot for a
-        field that is set still receives the value, and reports it,
-        because its next consolidation will drop it.
+        field that is set still receives the value, and reports it as
+        lost, because its next consolidation will drop it. The report is
+        acted on by the action that `on_loss` or `on_error` takes for a
+        [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError].
 
         Parameters
         ----------
@@ -168,13 +185,20 @@ class Metadata(
             Whether to return new metadata when nothing changes. By
             default, metadata converted to its own class without any
             field is returned itself.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that `cls` has no slot for. By
-            default, the policy in effect (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
-            A report,
+        on_loss : ErrorAction, optional
+            What to do with the fields that `cls` has no slot for:
+            `"ignore"` accepts the loss, `"warn"` warns about it,
+            `"raise"` raises, and a report,
             [`ConversionReport`][brainhops.datamodel.metadata.ConversionReport],
-            is filled instead of warning or raising.
+            is filled instead of warning or raising. By default, the
+            action of `on_error`, or else the policy in effect (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        on_error : ErrorPolicy, optional
+            What to do with a conversion error, including a loss (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A mapping
+            may also name other errors. An entry for a loss in
+            `on_error` takes precedence over `on_loss`. By default, an
+            error is raised.
         **values : Any
             Fields to set on the result.
 
@@ -196,10 +220,14 @@ class Metadata(
         report.lost  # the fields MGH has no slot for
         ```
         """
-        target = type(self) if cls is None else cls
-        if type(self) is target and not values and not copy:
-            return self
-        return target.from_instance(self, on_loss=on_loss, **values)
+
+        def convert() -> "Metadata":
+            target = type(self) if cls is None else cls
+            if type(self) is target and not values and not copy:
+                return self
+            return target.from_instance(self, **values)
+
+        return call_under_policy(convert, on_error, on_loss=on_loss)
 
     def derive(
         self,

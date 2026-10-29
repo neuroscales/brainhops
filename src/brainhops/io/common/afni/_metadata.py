@@ -8,6 +8,7 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileReader, BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat
@@ -163,6 +164,7 @@ class AfniMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
         record = AfniRaw.from_filename(filename, **kwargs)
         return cls.from_raw(record.validate())
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the `.HEAD` file.
 
@@ -182,6 +184,7 @@ class AfniMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
             return b""
         return self.raw.to_bytes(**kwargs)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the `.HEAD` file of the dataset that a path names.
 

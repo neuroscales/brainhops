@@ -654,12 +654,12 @@ def test_a_multiscale_image_writes_its_metadata_over_its_level() -> None:
     # The metadata of the pyramid is written, and the field that the
     # record cannot hold is reported as lost.
     report = ConversionReport(source="a", target="b")
-    copy = pyramid.consolidate(on_loss=report)
+    copy = pyramid.consolidate(on_error=report)
     assert list(report.lost) == ["flip_angle"]
     assert copy.metadata.raw.comments == ("pyramid",)
     np.testing.assert_array_equal(np.asarray(copy.data), RAMP.T)
     with pytest.raises(MetadataLossError):
-        pyramid.consolidate(on_loss="raise")
+        pyramid.consolidate(on_error="raise")
 
 
 def test_a_multiscale_image_written_with_its_placement(

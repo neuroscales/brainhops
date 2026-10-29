@@ -67,7 +67,10 @@ from brainhops.datamodel.metadata import (
     MetadataLossError,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
@@ -549,6 +552,7 @@ class ToyRaw(Magic, BinaryFileReader, BinaryFileWriter):
         note = file.read(length).decode("utf-8")
         return cls(shape=shape, dtype=dtype, spacing=spacing, note=note)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         ndim = len(self.shape)
         note = self.note.encode("utf-8")
@@ -647,6 +651,7 @@ class ToyMetadata(BinaryFileReader, BinaryFileWriter, MetadataFormat):
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyMetadata":
         return cls.from_raw(ToyRaw.from_fileobj(file, **kwargs))
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         record = ToyRaw() if self.raw is None else self.raw
         return record.to_bytes(**kwargs)
@@ -706,11 +711,10 @@ class ToyImage(
         # `_transformations`.
         return _toy_to_transformations(self.metadata)
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Any = None,
         note: tx.Optional[str] = None,
         **fields: tx.Any,
     ) -> "ToyImage":
@@ -722,7 +726,7 @@ class ToyImage(
         consolidated = metadata_to_write(
             self.metadata, ToyMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss)
+        apply_loss_policy(report)
         options = {} if note is None else {"note": note}
         # Nothing is encoded for an image that has a record, no pending
         # data, and transformations that are never read or the same as a
@@ -791,9 +795,11 @@ class ToyImage(
         proxy = _toy_proxy(file, start, metadata.raw)
         return cls(rawdata=proxy, metadata=metadata)
 
+    @takes_error_policy
     def to_bytes(self, **options) -> bytes:
         return _toy_written(self.consolidate(**options))
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Any, **options) -> None:
         filename = os.fspath(filename)
         if not _toy_reads(self.rawdata, filename):
@@ -1056,9 +1062,7 @@ class ToyLevel(
             return tuple(reversed(self.rawdata.shape))
         return ()
 
-    def consolidate(
-        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
-    ) -> "ToyLevel":
+    def _consolidate(self, *, inplace: bool = False, **options) -> "ToyLevel":
         # The metadata is consolidated first, and the toy record holds no
         # field of the vocabulary, so a field that is set is reported as
         # lost.
@@ -1068,7 +1072,7 @@ class ToyLevel(
         consolidated = metadata_to_write(
             self.metadata, ToyPyramidMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss)
+        apply_loss_policy(report)
         # A level whose record describes it alone, at index 0, with nothing
         # pending, keeps its `rawdata` and its metadata. Any other level
         # is encoded into a record of its level alone.
@@ -1159,6 +1163,7 @@ class ToyLevel(
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyLevel":
         raise ParserTypeError("A toy pyramid is a directory, not a stream.")
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Any, **options) -> None:
         directory = os.fspath(filename)
         if not _toyp_reads((self.rawdata,), directory):
@@ -1247,8 +1252,8 @@ class ToyPyramid(
             return tuple(reversed(self.rawdata[0].shape))
         return ()
 
-    def consolidate(
-        self, *, inplace: bool = False, on_loss: tx.Any = None, **options
+    def _consolidate(
+        self, *, inplace: bool = False, **options
     ) -> "ToyPyramid":
         # The metadata is consolidated first, and the toy record holds no
         # field of the vocabulary, so a field that is set is reported as
@@ -1259,7 +1264,7 @@ class ToyPyramid(
         consolidated = metadata_to_write(
             self.metadata, ToyPyramidMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss)
+        apply_loss_policy(report)
         # Nothing is encoded for a pyramid that has a record, whose levels
         # are those of its file, and whose placements are never read or the
         # same as a fresh decode of the record, so its copy shares
@@ -1355,6 +1360,7 @@ class ToyPyramid(
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ToyPyramid":
         raise ParserTypeError("A toy pyramid is a directory, not a stream.")
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Any, **options) -> None:
         directory = os.fspath(filename)
         if not _toyp_reads(self.rawdata, directory):
@@ -6806,11 +6812,11 @@ def test_23_a_field_without_a_slot_is_lost(
     name = unsupported[0]
     value = _FIELD_SAMPLES[name]
     report = ConversionReport()
-    copy = metadata.consolidate(on_loss=report, **{name: value})
+    copy = metadata.consolidate(on_error=report, **{name: value})
     assert report.lost == {name: value}
     assert getattr(copy, name) == ({} if name == "extra" else None)
     with pytest.raises(MetadataLossError):
-        metadata.consolidate(on_loss="raise", **{name: value})
+        metadata.consolidate(on_error="raise", **{name: value})
 
 
 @pytest.mark.parametrize("cls, exemplar", VOCABULARY_CASES)
@@ -6842,7 +6848,7 @@ def test_24_a_conversion_carries_the_vocabulary(
     report = ConversionReport()
     if exemplar.source is not None:
         return
-    converted.save(path, on_loss=report)
+    converted.save(path, on_error=report)
     written = cls.load(path).metadata
     for name, value in exemplar.vocabulary.items():
         assert getattr(written, name) == value or name in report.lost, name

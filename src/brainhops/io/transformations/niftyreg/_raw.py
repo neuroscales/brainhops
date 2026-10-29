@@ -6,6 +6,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -125,6 +126,7 @@ class NiftyRegAffineRaw(Raw, TextFileReader, TextFileWriter):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file, ending with a newline.
 
@@ -158,6 +160,7 @@ class NiftyRegAffineRaw(Raw, TextFileReader, TextFileWriter):
             for row in self.matrix
         )
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file, without their line breaks.
 

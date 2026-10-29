@@ -246,7 +246,9 @@ def save_object(
     """
     options: tx.Dict[str, tx.Any] = {}
     if isinstance(obj, Transformation):
-        options = {"lossy": lossy, "conversion": conversion}
+        options = {"conversion": conversion}
+        if lossy:
+            options["on_loss"] = "ignore"
     try:
         io.save(obj, output, hint=tuple(hints) or None, **options)
     except (AmbiguousFormatError, WriterError) as exc:

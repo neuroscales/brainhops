@@ -17,7 +17,10 @@ from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
@@ -492,13 +495,12 @@ class PillowImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         format: tx.Optional[str] = None,
         dpi: _DpiLike = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options,
     ) -> "PillowImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -540,7 +542,8 @@ class PillowImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a raster
         image holds no field of the vocabulary yet, so a field that is
-        set is reported as lost, once, by `on_loss`.
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -554,9 +557,6 @@ class PillowImage(
             The resolution recorded by PNG, JPEG, BMP and TIFF. By default
             it is chosen as described above. `False` records none, and a
             number or an `(x, y)` pair is recorded as is.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **options : Any
             Options passed to `Image.save`, such as `quality=95` for JPEG.
             Only the options that Pillow reads for the format are taken.
@@ -590,7 +590,7 @@ class PillowImage(
         metadata = metadata_to_write(
             self.metadata, PillowMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         held = None if self.metadata is None else self.metadata.raw
@@ -641,6 +641,7 @@ class PillowImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(
         self,
         format: tx.Optional[str] = None,
@@ -684,6 +685,7 @@ class PillowImage(
         image = self.consolidate(format=format, dpi=dpi, **options)
         return image.rawdata.read_stored()
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file, in the `format` given or the
         one that the name of the file calls for (see `to_bytes`).
@@ -699,6 +701,7 @@ class PillowImage(
             kwargs["format"] = format_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a file, in the format its extension calls for.
 
@@ -929,7 +932,7 @@ def _encoded(
     options: tx.Mapping[str, tx.Any],
 ) -> bytes:
     """Return the bytes that Pillow writes for an image, as
-    [`PillowImage.consolidate`][] describes.
+    `PillowImage._consolidate` describes.
 
     The data and the transformations are read without being stored, so
     that a write leaves the image as it was. The transformations are those

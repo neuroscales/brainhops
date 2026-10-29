@@ -1,10 +1,38 @@
-import warnings
+__all__ = [
+    "AdaptationError",
+    "AmbiguousFormatError",
+    "AxisError",
+    "CompositionError",
+    "ConversionError",
+    "ConversionWarning",
+    "DomainError",
+    "ErrorAction",
+    "ErrorPolicy",
+    "IncompatibleSystemError",
+    "LossyConversionError",
+    "ParserContentError",
+    "ParserError",
+    "ParserExistsError",
+    "ParserNotImplementedError",
+    "ParserTypeError",
+    "RestrictionError",
+    "SnifferContentError",
+    "SnifferError",
+    "SnifferExistsError",
+    "SnifferNotImplementedError",
+    "SnifferTypeError",
+    "UnrepresentableTransformationError",
+    "WriterError",
+    "WriterNotImplementedError",
+]
 
 import typing_extensions as tx
 
 if tx.TYPE_CHECKING:
-    from .datamodel._transformations.base import Transformation
-
+    # imported for the annotations, and for the cross-references of
+    # mkdocstrings
+    from .datamodel._transformations.base import Transformation  # noqa: F401
+    from .datamodel.base import DataModelBase
 
 # --- transformations --------------------------------------------------
 
@@ -68,15 +96,19 @@ class ConversionError(TypeError):
 class LossyConversionError(ConversionError):
     """A conversion would discard information.
 
-    [`Transformation.to`][] raises this error when a conversion is lossy and
-    the loss was not allowed. The `result` attribute holds the transformation
-    that the conversion would have produced, or `None`.
+    [`Transformation.to`][] raises this error when a conversion is lossy
+    and the loss was not allowed. The `result` attribute holds the
+    object that the conversion would have produced, or `None`. An error
+    policy that accepts the loss, such as `on_loss="ignore"`, returns
+    that object instead of raising (see [`ErrorPolicy`][]). A loss of
+    metadata is reported by a subclass,
+    [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError].
     """
 
     def __init__(
         self,
         *args,
-        result: tx.Optional["Transformation"] = None,
+        result: tx.Optional["DataModelBase"] = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -216,92 +248,83 @@ class UnrepresentableTransformationError(WriterError):
     pass
 
 
-OnError: tx.TypeAlias = tx.Union[
-    tx.Literal["raise", "warn", "ignore"],
-    tx.Type[Exception],
-    tx.Type[Warning],
-    Exception,
-    Warning,
-    None,
-    tx.Any,
-]
-
-_ExceptionOrWarning: tx.TypeAlias = tx.Union[
-    tx.Type[Exception],
-    tx.Type[Warning],
-]
-_DefaultError: tx.TypeAlias = tx.Union[
-    _ExceptionOrWarning,
-    tx.Sequence[_ExceptionOrWarning],
-]
+# --- error policy ------------------------------------------------------
 
 
-def raise_or_warn(
-    msg: str,
-    on_error: OnError = "raise",
-    default: _DefaultError = (RuntimeError, UserWarning),
-) -> tx.Any:
+class ConversionWarning(UserWarning):
+    """The warning that an error policy issues for its `"warn"` action.
+
+    A conversion that is given `on_error="warn"` turns the error into
+    this warning and returns its result (see [`ErrorPolicy`][]). A loss
+    of metadata is reported by a subclass,
+    [`MetadataLossWarning`][brainhops.datamodel.metadata.MetadataLossWarning],
+    which also carries the report of what was lost.
     """
-    Raise an error or warn based on the specified error handling strategy.
-
-    Parameters
-    ----------
-    msg : str
-        The error or warning message.
-    on_error : OnError, optional
-        The error handling strategy. It can be one of the following:
-        - "raise": Raise an exception (default).
-        - "warn": Issue a warning.
-        - "ignore": Do nothing.
-        - Exception class or instance: Raise the specified exception.
-        - Warning class or instance: Issue the specified warning.
-        - Anything else: return as is
-    default : _DefaultError, optional
-        The default exception or warning to use if `on_error` is not specified.
-
-    Returns
-    -------
-    Any
-        If `on_error` is not an exception or warning, return the value
-        of `on_error`.
-
-    Raises
-    ------
-    Exception
-        If `on_error` is "raise" or an exception class/instance, raise
-        the specified exception with the provided message.
-    """
-    if on_error == "ignore":
-        return
-    if on_error == "raise":
-        on_error = _get_default_exception(default)
-    if on_error == "warn":
-        on_error = _get_default_warning(default)
-    if isinstance(on_error, type):
-        if issubclass(on_error, Warning):
-            return warnings.warn(msg, on_error, stacklevel=2)
-        elif issubclass(on_error, Exception):
-            on_error = on_error(msg)
-    if isinstance(on_error, Exception):
-        raise on_error
-    return on_error
 
 
-def _get_default_exception(default: _DefaultError) -> tx.Type[Exception]:
-    if isinstance(default, type):
-        return default
-    if isinstance(default, (list, tuple)):
-        for cls in default:
-            if issubclass(cls, Exception):
-                return cls
-    return RuntimeError
+ErrorAction: tx.TypeAlias = tx.Any
+"""
+What an error policy does with one error.
 
+| Value                  | Effect                                      |
+| ---------------------- | ------------------------------------------- |
+| `"raise"`              | Raise the error again.                      |
+| `"warn"`               | Warn, then return the result.               |
+| `"ignore"`             | Return the result without warning.          |
+| a `ConversionReport`   | Record the error, then return the result.   |
+| an exception class     | Raise it, from the original error.          |
+| an exception instance  | Raise it, from the original error.          |
+| any other value        | Return the value.                           |
 
-def _get_default_warning(default: _DefaultError) -> tx.Type[Warning]:
-    if isinstance(default, type):
-        return default
-    if isinstance(default, (list, tuple)):
-        for cls in default:
-            if issubclass(cls, Warning):
-                return cls
-    return UserWarning
+The result is the lossy result that a [`LossyConversionError`][]
+carries in its `result` attribute, and `None` for any other error. A
+string is always read as an action, so a policy cannot return the
+string `"raise"`, `"warn"` or `"ignore"`, and any other string is
+refused. The report is a
+[`ConversionReport`][brainhops.datamodel.metadata.ConversionReport].
+"""
+
+ErrorPolicy: tx.TypeAlias = tx.Union[
+    ErrorAction,
+    tx.Mapping[tx.Type[BaseException], ErrorAction],
+]
+"""
+What a conversion does when it fails or loses information.
+
+A policy is the value that the `on_error=` keyword of a conversion
+takes. It is either one action (see [`ErrorAction`][]) or a mapping
+from exception classes to actions, such as
+`{LossyConversionError: "warn", ConversionError: None}`.
+
+Each call that takes a policy declares its scope, which is the tuple
+of the exception classes that the call raises on purpose when it
+cannot convert. The scope of a conversion is `(ConversionError,)`,
+which covers a [`LossyConversionError`][] and a loss of metadata. A
+single action `v` is read as the mapping `{cls: v for cls in scope}`,
+so that `on_error=None` returns `None` when the conversion fails, and
+an error outside the scope, such as an `OSError` or a bug, is raised
+unchanged. A mapping is taken as written, and may name a class outside
+the scope, as `{Exception: None}` does to catch every error. The value
+`True` or `False` is refused as a single action, because it reads as a
+yes or a no rather than as an action.
+
+When a conversion raises an error, the policy walks the classes of the
+error in method resolution order and applies the action of the first
+class that has an entry. An error whose classes have no entry is
+raised. For example, a [`LossyConversionError`][] matches its own entry
+before that of [`ConversionError`][], which it subclasses.
+
+The `on_loss=` keyword of a conversion is the half of the policy that
+concerns losses. It takes the same values as `on_error=`, except a
+mapping, and sets the entry of [`LossyConversionError`][], which also
+covers a loss of metadata, so that the policy that a call applies is
+`{LossyConversionError: on_loss, **on_error}`.
+Because that class is more specific than the scope of a single value
+of `on_error=`, `on_loss="raise", on_error="ignore"` raises on a loss
+and ignores the other conversion errors. Without `on_loss=`, a loss
+falls under `on_error=`, so `on_error="ignore"` alone also returns the
+lossy result of a conversion that loses information.
+
+The strings `"raise"`, `"warn"` and `"ignore"` are reserved for the
+actions, so a policy cannot return one of them as a value.
+"""

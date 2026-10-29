@@ -22,7 +22,10 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -364,11 +367,10 @@ class RegisterDatTransformation(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -390,15 +392,13 @@ class RegisterDatTransformation(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a
         register.dat file holds no field of the vocabulary yet, so a
-        field that is set is reported as lost, once, by `on_loss`.
+        field that is set is reported as lost, once, under the error
+        policy of the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -425,7 +425,7 @@ class RegisterDatTransformation(
         metadata = metadata_to_write(
             self.metadata, RegisterDatMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -455,6 +455,7 @@ class RegisterDatTransformation(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the transformation to a path or a file object.
 
@@ -467,8 +468,8 @@ class RegisterDatTransformation(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            Options of the writer of the record. `on_loss` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer of the record. The fields of the
+            metadata are given to [`consolidate`][].
 
         Raises
         ------
@@ -478,6 +479,7 @@ class RegisterDatTransformation(
         record, options = _written(self, kwargs)
         return record.to_file(file, **options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the `register.dat` file of the transformation.
 
@@ -487,8 +489,8 @@ class RegisterDatTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record. `on_loss` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer of the record. The fields of the
+            metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -503,6 +505,7 @@ class RegisterDatTransformation(
         record, options = _written(self, kwargs)
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the `register.dat` file of the transformation.
 
@@ -512,8 +515,8 @@ class RegisterDatTransformation(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record. `on_loss` and the
-            fields of the metadata are given to [`consolidate`][].
+            Options of the writer of the record. The fields of the
+            metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -637,7 +640,7 @@ def _scanner_to_tkr(
 def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
     """Encode the matrix and coordinate systems of `xform` as a record.
 
-    See [`RegisterDatTransformation.consolidate`][].
+    See `RegisterDatTransformation._consolidate`.
 
     Raises
     ------
@@ -716,9 +719,9 @@ def _written(
 ) -> tx.Tuple[RegisterDatRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
 
-    The record is that of the copy consolidated with `on_loss` and the
-    fields of the metadata among `kwargs`, and the other options, for
-    the writer of the record, are returned with it.
+    The record is that of the copy consolidated with the fields of the
+    metadata among `kwargs`, and the other options, for the writer of
+    the record, are returned with it.
 
     The record is that of the consolidated copy of the transformation.
 
