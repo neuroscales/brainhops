@@ -738,6 +738,15 @@ class BatchedTransformation(
         )
         return obj.compute(**kwargs) if compute else obj
 
+    def _target_class(
+        self, kwargs: tx.Dict[str, tx.Any]
+    ) -> tx.Type[Transformation]:
+        # A new element type selects its own stacked subclass, which the
+        # constructor of the general form chooses.
+        if "element_type" in kwargs:
+            return BatchedTransformation
+        return type(self)
+
     def as_backend(
         self,
         backend: tx.Any = None,
@@ -1623,6 +1632,71 @@ def widen(
     return batch._rebuild(
         batch._stack_as(family),
         element_type=family,
+        input_axes=batch._input_axes,
+        output_axes=batch._output_axes,
+        positions=batch._positions,
+        input=batch._input,
+        output=batch._output,
+    )
+
+
+def restack(
+    batch: BatchedTransformation, element_type: tx.Type[Transformation]
+) -> BatchedTransformation:
+    """Return a batch as a stacked batch of an element type.
+
+    A general batch copies the data of its elements, converted to
+    `element_type`, into one stack, which is the cheaper form to compute
+    with. A stacked batch is widened, as by [`widen`][], and is returned
+    as it is when it already has this element type. `t.to(element_type=...)`
+    calls this function.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch to convert.
+    element_type : type
+        Matrix or vector type of the elements of the result.
+
+    Returns
+    -------
+    BatchedTransformation
+        The stacked batch.
+
+    Raises
+    ------
+    ConversionError
+        If `element_type` cannot be stacked, if an element does not
+        convert to it, or if the elements disagree on their systems, or
+        state systems that the batch does not, because the elements of a
+        stacked batch take their systems from the batch.
+    """
+    try:
+        model = _element_type(element_type)
+    except TypeError as error:
+        raise ConversionError(str(error)) from None
+    if batch.element_type is not None:
+        return batch if model is batch.element_type else widen(batch, model)
+    elements = list(batch.elements.flat)
+    first = elements[0]
+    if any(
+        e.input != first.input or e.output != first.output for e in elements
+    ):
+        raise ConversionError(
+            "The elements of a stacked batch share the systems of the "
+            "batch, but these elements have different systems."
+        )
+    if (first.input is not None and batch.element_input is None) or (
+        first.output is not None and batch.element_output is None
+    ):
+        raise ConversionError(
+            "The elements of this batch state systems that the batch does "
+            "not, and a stacked batch would lose them."
+        )
+    data = np.stack([np.asarray(e.to(model).data) for e in elements])
+    return BatchedTransformation(
+        element_type=model,
+        data=data.reshape(batch.batch_shape + data.shape[1:]),
         input_axes=batch._input_axes,
         output_axes=batch._output_axes,
         positions=batch._positions,

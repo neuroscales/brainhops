@@ -26,6 +26,7 @@ neighbours, which is the job of composition. The note above
 `_collapse_pass` explains why declining such pairs loses nothing.
 """
 
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
@@ -33,6 +34,7 @@ from brainhops.datamodel import kinds
 from brainhops.errors import ConversionError, DomainError
 
 from ..base import Transformation
+from ..batched import BatchedTransformation
 from ..concrete import (
     Affine,
     CartesianField,
@@ -54,10 +56,18 @@ from ..meta import (
 from ..multiscale import MultiscaleField
 from ..sequence import Sequence, _unnest
 from .check import is_kind
-from .prune import may_prune, prune_chain
+from .prune import (
+    close_counts,
+    may_prune,
+    prune_chain,
+    read_pattern,
+    restrict_block,
+    stage_counts,
+    unnamed_system,
+)
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
-from .utils import axis_list
+from .utils import UNREADABLE, axis_list
 from .utils import with_endpoints as _with_endpoints
 
 NONE = SimplifyPolicy.none
@@ -236,6 +246,100 @@ def _(t: MultiscaleField, policy: SimplifyTable) -> Transformation:
     if policy.resolve(t) is NONE:
         return t
     return _simplify(t._as_sequence(), policy=policy)
+
+
+@simplifier
+def _(t: BatchedTransformation, policy: SimplifyTable) -> Transformation:
+    """Simplify a batch, its elements and its batch axes.
+
+    The elements of a general batch are simplified one by one, and a
+    batch whose elements share one matrix or vector type is converted to
+    the stacked form, which is cheaper to compute with. A batch of
+    identities that keeps its axes in place is the identity. A batch axis
+    of length 1, and, under the numeric policy, a batch axis along which
+    the elements do not change, is removed: the batch over the other
+    batch axes, or the single element when none is left, is wrapped in a
+    [`SubspaceTransformation`][] that passes that axis through.
+
+    These rewrites are exact on the positions of the elements, which are
+    the only coordinates of a batch axis that select an element, but not
+    between the positions, where a batch gives NaN. A batch that is
+    simplified away therefore applies its element at every coordinate of
+    the axis that it removes.
+    """
+    resolved = policy.resolve(t)
+    if resolved is NONE:
+        return t
+    numeric = resolved is NUMERIC
+    if t.element_type is None:
+        t = _simplify_elements(t, policy)
+    if t.input_axes == t.output_axes and t.elements_are(
+        kinds.Identity, numeric
+    ):
+        return Identity(input=t.input, output=t.output)
+    if t.element_type is None:
+        t = _stacked_form(t)
+    constant = [
+        j
+        for j, n in enumerate(t.batch_shape)
+        if n == 1 or (numeric and not t.varies_along(j))
+    ]
+    if constant:
+        return _simplify(_without_batch_dims(t, constant), policy=policy)
+    return t
+
+
+def _simplify_elements(
+    t: BatchedTransformation, policy: SimplifyTable
+) -> BatchedTransformation:
+    # Simplify each element of a general batch. The batch is kept as the
+    # same object when no element changes, so that its lazy inverse
+    # still cancels with it. An element that simplifies to the identity
+    # receives unnamed systems, because every element of a batch states
+    # its numbers of axes.
+    n_in, n_out = t.element_counts
+    elements = t.elements
+    simplified = np.empty(t.batch_shape, dtype=object)
+    for index in np.ndindex(*t.batch_shape):
+        element = _simplify(elements[index], policy=policy)
+        if element is not elements[index]:
+            element = close_counts(element, n_in, n_out) or elements[index]
+        simplified[index] = element
+    if all(a is b for a, b in zip(simplified.flat, elements.flat)):
+        return t
+    return replace(t, elements=simplified)
+
+
+def _stacked_form(t: BatchedTransformation) -> BatchedTransformation:
+    # Convert a general batch whose elements share one type to the
+    # stacked form, when that type has one.
+    types = {type(e) for e in t.elements.flat}
+    if len(types) != 1:
+        return t
+    try:
+        return t.to(element_type=types.pop())
+    except ConversionError:
+        return t
+
+
+def _without_batch_dims(
+    t: BatchedTransformation, dims: tx.List[int]
+) -> Transformation:
+    # Remove some batch dimensions by taking their first element, and
+    # pass their axes through, so that the space keeps its axes.
+    key = tuple(0 if j in dims else slice(None) for j in range(t.batch_ndim))
+    gone_in = [t.batch_input_axes[j] for j in dims]
+    gone_out = [t.batch_output_axes[j] for j in dims]
+    n_in, n_out = t.counts
+    # The subspace states its numbers of axes, which a batch reads from
+    # its elements, through closed systems.
+    return SubspaceTransformation(
+        t[key],
+        [i for i in range(n_in) if i not in gone_in],
+        [o for o in range(n_out) if o not in gone_out],
+        input=t.input if t.input is not None else unnamed_system(n_in),
+        output=t.output if t.output is not None else unnamed_system(n_out),
+    )
 
 
 @simplifier
@@ -481,6 +585,115 @@ def _(
     if not both_identity:
         return None
     return Identity(input=first.input, output=second.output)
+
+
+# --- Batches ----------------------------------------------------------
+# A batch whose batch axes are fixed by its neighbour reduces to the
+# elements at these values, which is how a chain selects one element.
+# Two batches cancel when every pair of their elements cancels, which a
+# general batch and its inverse do. The elements of a stacked batch are
+# new objects each time that they are created, so a stacked batch and
+# its inverse, whose stack is computed, do not cancel this way.
+
+
+@simplifier
+def _(
+    first: Transformation, second: BatchedTransformation, policy: SimplifyTable
+) -> tx.Optional[Transformation]:
+    return section_before(first, second, policy)
+
+
+@simplifier
+def _(
+    first: BatchedTransformation,
+    second: BatchedTransformation,
+    policy: SimplifyTable,
+) -> tx.Optional[Transformation]:
+    if first.element_type is not None or second.element_type is not None:
+        return None
+    if (
+        first.output_axes != second.input_axes
+        or first.input_axes != second.output_axes
+        or first.batch_shape != second.batch_shape
+        or not all(
+            np.array_equal(p, q)
+            for p, q in zip(first.positions, second.positions)
+        )
+    ):
+        return None
+    pairs = zip(first.elements.flat, second.elements.flat)
+    if not all(_cancels(a, b) for a, b in pairs):
+        return None
+    return Identity(input=first.input, output=second.output)
+
+
+def section_before(
+    first: Transformation,
+    batch: BatchedTransformation,
+    policy: SimplifyTable,
+) -> tx.Optional[Sequence]:
+    """Return the chain that selects the elements of a batch, or None.
+
+    When `first` creates some batch axes of `batch` at a value, which
+    means that the outputs of `first` at these axes read no input, the
+    pair `[first, batch]` is the chain `[piece, selected, creation]`. The
+    piece is `first` without these outputs, and it is left out when it
+    is the identity. `selected` is the element of the batch at these
+    values, or the smaller batch when some batch axes are not fixed, and
+    the projection `creation` creates the batch axes again, at their
+    values, after the element. The chain is cheaper than the pair,
+    because it holds an element instead of the whole batch.
+
+    Parameters
+    ----------
+    first : Transformation
+        Transformation applied before the batch.
+    batch : BatchedTransformation
+        The batch.
+    policy : SimplifyTable
+        Policy that says how closely `first` may be read to find the
+        outputs that read no input.
+
+    Returns
+    -------
+    Sequence or None
+        The chain, or None when `first` fixes no batch axis, when a value
+        matches no position of the batch, including a free axis whose
+        value is NaN, or when `first` cannot be cut.
+    """
+    counts = stage_counts([first, batch])
+    if counts is None:
+        return None
+    closed = close_counts(first, counts[0], counts[1])
+    if closed is None:
+        return None
+    pattern = read_pattern(closed, policy)
+    if pattern is UNREADABLE:
+        return None
+    pattern = np.asarray(pattern, dtype=bool)
+    fixed = [a for a in batch.batch_input_axes if not pattern[a].any()]
+    if not fixed:
+        return None
+    creation = restrict_block(closed, [], fixed, policy)
+    if not isinstance(creation, Projection) or axis_list(creation.dropped):
+        return None
+    values = [float(v) for v in creation.at]
+    selected = batch.select(dict(zip(fixed, values)))
+    if selected is None:
+        return None
+    others = [o for o in range(counts[1]) if o not in fixed]
+    piece = restrict_block(closed, list(range(counts[0])), others, policy)
+    if piece is None:
+        return None
+    chain = [] if isinstance(piece, Identity) else [piece]
+    created = [
+        batch.batch_output_axes[batch.batch_input_axes.index(a)] for a in fixed
+    ]
+    chain += [
+        selected,
+        Projection(created=created, at=values, output=batch.output),
+    ]
+    return Sequence(chain)
 
 
 # ======================================================================

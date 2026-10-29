@@ -25,6 +25,8 @@ from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    BatchedAffine,
+    BatchedScaling,
     BatchedTransformation,
     CartesianField,
     CoordinateField,
@@ -39,7 +41,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
-from brainhops.errors import ConversionError
+from brainhops.errors import ConversionError, RestrictionError
 
 ANALYTIC = SimplifyTable.from_like("analytic")
 NUMERIC = SimplifyTable.from_like({None: "numeric"})
@@ -500,3 +502,145 @@ def test_the_factor_pass_keeps_a_batch_whole(general: bool) -> None:
     assert first.transformation is batch
     assert list(first.input_axes) == [0, 1, 2, 3]
     assert list(second.input_axes) == [4]
+
+
+# ----------------------------------------------------------------------
+#   SIMPLIFICATION
+# ----------------------------------------------------------------------
+
+
+def _series(general: bool) -> BatchedTransformation:
+    # A batch of scalings of (x, y, z) at the times 0, 2, 4 and 6 of the
+    # last axis of (x, y, z, t).
+    batch = _stacked("scaling")
+    batch = BatchedTransformation(
+        element_type=batch.element_type,
+        data=batch.data,
+        input_axes=[0, 1, 2],
+        positions=[[0.0, 2.0, 4.0, 6.0]],
+    )
+    return _general(batch) if general else batch
+
+
+def _section(batch: BatchedTransformation, at: float) -> Sequence:
+    # The element of a batch on (x, y, z, t) at time `at`, as a chain.
+    return Sequence(
+        [Projection(created=[3], at=[at]), batch, Projection(dropped=[3])]
+    )
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_section_of_a_batch_simplifies_to_its_element(general: bool) -> None:
+    batch = _series(general)
+    element = _section(batch, 4.0).simplify()
+    assert isinstance(element, Scaling)
+    assert np.allclose(element.scale, batch[2].scale)
+    if general:
+        assert element is batch[2]
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_free_batch_axis_raises_when_the_section_is_computed(
+    general: bool,
+) -> None:
+    chain = _section(_series(general), np.nan)
+    assert isinstance(chain.simplify(), Sequence)
+    with pytest.raises(RestrictionError):
+        chain.compute()
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_coordinate_between_two_positions_selects_nothing(
+    general: bool,
+) -> None:
+    batch = _series(general)
+    chain = _section(batch, 3.0).simplify()
+    assert any(t is batch or isinstance(t, type(batch)) for t in chain)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_partial_section_gives_a_smaller_batch(general: bool) -> None:
+    batch = _grid(general)
+    chain = Sequence(
+        [Projection(created=[0], at=[20.0]), batch, Projection(dropped=[0])]
+    ).simplify()
+    assert isinstance(chain, BatchedTransformation)
+    assert chain.batch_shape == (3,)
+    assert np.allclose(chain[1].scale, batch[1, 1].scale)
+
+
+def test_a_general_batch_of_one_type_becomes_a_stack() -> None:
+    general = _general(_stacked("affine"))
+    stacked = general.simplify()
+    assert isinstance(stacked, BatchedAffine)
+    assert _same_elements(stacked, general)
+    assert stacked.simplify() is stacked
+
+
+def test_the_element_type_stacks_or_widens_a_batch() -> None:
+    general = _general(_stacked("scaling"))
+    assert isinstance(general.to(element_type=Scaling), BatchedScaling)
+    widened = general.to(element_type=Scaling).to(element_type=Affine)
+    assert isinstance(widened, BatchedAffine)
+    assert _same_elements(widened, general)
+    with pytest.raises(ConversionError):
+        widened.to(element_type=Scaling)
+    with pytest.raises(ConversionError):
+        general.to(element_type=Sequence)
+
+
+def test_elements_with_different_systems_are_not_stacked() -> None:
+    elements = [
+        Scaling([1.0, 2.0], input=_system("xy"), output=_system("xy")),
+        Scaling([1.0, 2.0], input=_system("uv"), output=_system("uv")),
+    ]
+    batch = BatchedTransformation(elements)
+    with pytest.raises(ConversionError, match="systems"):
+        batch.to(element_type=Scaling)
+    assert batch.simplify() is batch
+
+
+def test_a_general_batch_cancels_with_its_inverse() -> None:
+    batch = _general(_stacked("affine"))
+    assert isinstance(Sequence([batch, batch.inverse()]).simplify(), Identity)
+    assert isinstance(Sequence([batch.inverse(), batch]).simplify(), Identity)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_axis_of_length_one_is_passed_through(general: bool) -> None:
+    batch = Affine.batch(_stacked("affine").data[:1], input_axes=[0, 1, 2])
+    batch = _general(batch) if general else batch
+    simplified = batch.simplify()
+    assert isinstance(simplified, SubspaceTransformation)
+    assert list(simplified.input_axes) == [0, 1, 2]
+    assert np.allclose(simplified.transformation.matrix, batch[0].matrix)
+    assert simplified.simplify() is simplified
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_axis_along_which_nothing_changes_is_removed(
+    general: bool,
+) -> None:
+    scale = np.tile([[[1.0, 2.0]], [[3.0, 4.0]]], (1, 3, 1))
+    batch = Scaling.batch(scale, input_axes=[1, 2])
+    batch = _general(batch) if general else batch
+    if general:
+        # The general form tells equal elements by their identity.
+        elements = batch.elements
+        elements[:, 1:] = elements[:, :1]
+        batch = BatchedTransformation(elements, input_axes=[1, 2])
+    assert batch.simplify("analytic") is batch or general
+    simplified = batch.simplify("numeric")
+    assert isinstance(simplified, SubspaceTransformation)
+    assert list(simplified.input_axes) == [0, 1, 2]
+    inner = simplified.transformation
+    assert inner.batch_shape == (2,)
+    assert np.allclose(inner[1].scale, [3.0, 4.0])
+    assert simplified.simplify("numeric") is simplified
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_of_identities_is_the_identity(general: bool) -> None:
+    batch = Scaling.batch(np.ones((3, 2)))
+    batch = _general(batch) if general else batch
+    assert isinstance(batch.simplify("numeric"), Identity)
