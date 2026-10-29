@@ -26,12 +26,10 @@ __all__ = [
     "cpt",
     "dkt",
     "is_instance_or_subclass",
-    "ToNumpyParameter",
 ]
 import sys
 
 import typing_extensions as tx
-from bagof.converters import Converter
 from bagof.core.magic import safe_get_origin
 from bagof.hints import array as art
 from bagof.hints import cupy as cpt
@@ -75,63 +73,34 @@ Internal: tx.TypeAlias = tx.Annotated[
 """Internal attribute that is not exposed to the user."""
 
 
-class ToNumpyParameter(Converter):
-    """Converter of a small parameter, such as a matrix, to a NumPy array.
+# The hints of the small parameters of transformations, such as the
+# matrix of an affine, are converted by the NumPy converter of bagof
+# (bagof-converters 0.3). It computes a Dask array and copies a CuPy
+# array to memory, so that a parameter is a NumPy array whatever the
+# backend of the value it is built from, and it fits the array to the
+# shape of the hint with the rules of NumPy broadcasting.
 
-    Small parameters are NumPy arrays whatever the backend setting (see
-    [`brainhops.backends`][]), but a user may build one from an array of
-    another backend, such as the CuPy matrix of an affine
-    transformation. The NumPy converter of bagof calls
-    `numpy.asanyarray`, which CuPy refuses. This converter first moves
-    the value to memory with
-    [`to_backend`][brainhops.backends.to_backend], which copies an array
-    from the GPU and computes a Dask array, and then lets the NumPy
-    converter of bagof check the shape and the type of the values.
-
-    It is the metadata of the annotated hints [`npscalar`][],
-    [`npvector`][] and [`npmatrix`][], and it receives the NumPy hint
-    that they annotate.
-    """
-
-    def __call__(self, value: tx.Any) -> tx.Any:
-        """Return the value as a NumPy array of the annotated hint.
-
-        Parameters
-        ----------
-        value : Any
-            An array of any backend, or a value that NumPy converts, such
-            as a list.
-
-        Returns
-        -------
-        np.ndarray
-            The NumPy array.
-        """
-        if isinstance(value, dkt.Array):
-            value = value.compute()
-        if isinstance(value, cpt.ndarray):
-            value = value.get()
-        return Converter.get(self.hint)(value)
-
-
-npscalar: tx.TypeAlias = tx.Union[
-    T, tx.Annotated[ndarray[tx.Tuple[()], dtype[T]], ToNumpyParameter]
-]
+npscalar: tx.TypeAlias = tx.Union[T, ndarray[tx.Tuple[()], dtype[T]]]
 """Scalar, given either as a plain value or as a 0-d array."""
 
-npvector: tx.TypeAlias = tx.Annotated[
-    ndarray[tx.Tuple[int], dtype[T]], ToNumpyParameter
-]
-"""One-dimensional NumPy array, converted from an array of any backend."""
+npvector: tx.TypeAlias = ndarray[tx.Tuple[int], dtype[T]]
+"""One-dimensional NumPy array, converted from an array of any backend.
 
-npmatrix: tx.TypeAlias = tx.Annotated[
-    ndarray[tx.Tuple[int, int], dtype[T]], ToNumpyParameter
-]
-"""Two-dimensional NumPy array, converted from an array of any backend."""
+A scalar becomes a vector of one element. An array with more
+dimensions is refused, unless its extra leading dimensions have length
+one, in which case they are removed.
+"""
 
-nparray: tx.TypeAlias = tx.Annotated[
-    ndarray[tx.Tuple[int, ...], dtype[T]], ToNumpyParameter
-]
+npmatrix: tx.TypeAlias = ndarray[tx.Tuple[int, int], dtype[T]]
+"""Two-dimensional NumPy array, converted from an array of any backend.
+
+A scalar becomes a matrix of one element and a vector becomes a matrix
+of one row. An array with more dimensions, such as a stack of matrices,
+is refused, unless its extra leading dimensions have length one, in
+which case they are removed.
+"""
+
+nparray: tx.TypeAlias = ndarray[tx.Tuple[int, ...], dtype[T]]
 """NumPy array of any shape, converted from an array of any backend."""
 
 Clip: tx.TypeAlias = tx.Optional[
