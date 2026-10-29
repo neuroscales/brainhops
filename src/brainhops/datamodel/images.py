@@ -437,7 +437,7 @@ class SingleScaleImage(Image):
             By default, the image is resampled onto its ow geometry.
 
         degree : int, default=1
-            Spline degree, from 0 (nearest neighbour) up to 5.
+            Spline degree, from 0 (nearest neighbour) up to 7.
             A degree of 1 gives linear interpolation.
 
         bound : str or float, default="reflect"
@@ -946,7 +946,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             [`SingleScaleImage.reslice`][].
 
         degree : int, default=1
-            Spline degree, from 0 (nearest neighbour) up to 5. A degree of 1
+            Spline degree, from 0 (nearest neighbour) up to 7. A degree of 1
             gives linear interpolation.
 
         bound : str or float, default="reflect"

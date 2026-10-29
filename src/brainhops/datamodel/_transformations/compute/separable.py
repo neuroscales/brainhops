@@ -104,7 +104,7 @@ def pull_separable(
         Uncomputed transformation from output grid coordinates to data
         coordinates.
     degree : int
-        Spline degree, from 0 to 5.
+        Spline degree, from 0 to 7.
     bound : str or float
         Boundary condition, as accepted by
         [`pull`][brainhops._core.bsplines.pull].

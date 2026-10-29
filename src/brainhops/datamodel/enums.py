@@ -245,6 +245,8 @@ class InterpolationOrder(IntEnum):
     | `third`       | `cubic`     | 3     | Cubic interpolation.            |
     | `fourth`      |             | 4     | Fourth-order interpolation.     |
     | `fifth`       |             | 5     | Fifth-order interpolation.      |
+    | `sixth`       |             | 6     | Sixth-order interpolation.      |
+    | `seventh`     |             | 7     | Seventh-order interpolation.    |
     | `barycentric` |             | -1    | Barycentric interpolation.      |
     | `fourier`     |             | -2    | Fourier interpolation.          |
     """
@@ -255,6 +257,8 @@ class InterpolationOrder(IntEnum):
     third = cubic = 3
     fourth = 4
     fifth = 5
+    sixth = 6
+    seventh = 7
     barycentric = -1
     fourier = -2
 
@@ -270,12 +274,14 @@ InterpolationName: tx.TypeAlias = tx.Literal[
     "cubic",
     "fourth",
     "fifth",
+    "sixth",
+    "seventh",
     "barycentric",
     "fourier",
 ]
 """Interpolation order names."""
 
-InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5]
+InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5, 6, 7]
 """Interpolation order values."""
 
 InterpolationLike: tx.TypeAlias = tx.Union[
