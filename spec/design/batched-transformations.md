@@ -35,10 +35,13 @@ Two more properties follow from the formats that store batches.
   vary continuously with time, such as a spatio-temporal deformation
   sampled at a few times and meant to be interpolated, is not a batch.
   It is a field over a grid that includes time.
-- All the elements have the same type and the same number of axes. A
-  file that stores transformations of different types side by side,
-  such as an ITK file with several blocks and no composite header, holds
-  a list of transformations, not a batch.
+- All the elements have the same numbers of input and output axes,
+  but they need not have the same type. What makes a family a batch is
+  the axis that selects its elements. A file that stores several
+  transformations side by side without saying which axis selects them,
+  such as an ITK file with several blocks and no composite header,
+  holds a list of transformations, not a batch, and its readers keep
+  returning one of them, selected by `position=`.
 
 A batch may have several batch axes. BigStitcher, for example, stores
 one registration per time point and per view, although only the time
@@ -81,121 +84,142 @@ which positions along that axis the elements sit.
 
 ## 3. Proposed representation
 
-A batched transformation is a new class, `BatchedTransformation`, which
-holds the type of its elements, their parameters stacked along leading
-dimensions, and the positions of the elements along the batch axes.
+A batched transformation is a new class, `BatchedTransformation`. It
+holds one transformation per element, arranged on a grid whose
+dimensions are the batch axes, and the positions of the elements along
+these axes. The class has two forms, which share the same axes,
+positions and rules.
+
+- The general form holds an array of transformations, one per element.
+  The elements may be of any type, such as affines, fields, sequences
+  or lazy inverses, and they may differ from one element to the next,
+  as long as they all have the same numbers of input and output axes.
+- The stacked form holds elements of one matrix, vector or field type,
+  with one encoding, and it stores their parameters in one array whose
+  leading dimensions index the elements. Its typed subclasses, such as
+  `BatchedAffine`, compute on the whole stack at once.
 
 ```python
+# general form: an array of arbitrary transformations
 BatchedTransformation(
-    Affine,
-    data=matrices,  # shape (*batch, 3, 4)
+    [chain_0, chain_1, chain_2],  # one transformation per element
     input_axes=["x", "y", "z"],  # every other axis is a batch axis
-    output_axes=["x", "y", "z"],
     positions=None,  # element k sits at index k
     input=...,  # (x, y, z, t)
     output=...,  # (x, y, z, t)
 )
+
+# stacked form: the parameters of all the elements in one array
+Affine.batch(matrices, input_axes=["x", "y", "z"])  # (*batch, 3, 4)
 ```
 
-The first argument, `element_type`, is a concrete transformation class:
-`Affine`, `Linear`, `Rotation`, `Scaling`, `Translation`, `Permutation`,
-one of the tangent classes, or a field. `data` has the shape of the data
-of one element preceded by one dimension per batch axis, and the
-keywords that encode an element, such as `degree`, `bound`, `store` and
-`log`, are shared by all the elements. `positions` gives, for each
-batch axis, the coordinate of each element along that axis. Its default
-is the index of the element, which is what a file that knows nothing
-about the timing of the volumes can give.
+The array of elements of the general form may be a nested list or a
+NumPy array of objects, and its shape is the shape of the batch. The
+data of the stacked form has the shape of the data of one element
+preceded by one dimension per batch axis, and the keywords that encode
+an element, such as `degree`, `bound`, `store` and `log`, are shared by
+all the elements. `positions` gives, for each batch axis, the
+coordinate of each element along that axis. Its default is the index of
+the element, which is what a file that knows nothing about the timing
+of the volumes can give.
+
+The two forms are needed for different reasons. Some families are made
+of transformations that one array cannot hold. BigStitcher, for
+example, stores a chain of affines for each time point, and the chains
+can differ in length when a time point receives an extra correction. A
+batch of fields with different grids, or of lazy inverses, is in the
+same situation. Other families are made of many small matrices, such as
+the hundreds of affines of a motion correction, and the stacked form
+computes their products and inverses with one call on the whole stack
+instead of one call per element.
 
 ### Which axes are batch axes
 
 `input_axes` and `output_axes` give the axes of the elements, by position
 or by name (A.9), with the same meaning as for `SubspaceTransformation`.
 Every other axis is a batch axis, and the batch axes are taken in the
-same order on both sides and in the order of the batch dimensions of
-the data. A batched transformation is therefore a subspace
-transformation whose inner transformation changes along the axes that
-it passes through. A batch axis may sit at different positions in the
-input and output systems, as an axis that a subspace transformation
-passes through may. `output_axes` defaults to `input_axes` when only
+same order on both sides and in the order of the dimensions of the
+batch. A batched transformation is therefore a subspace transformation
+whose inner transformation changes along the axes that it passes
+through. A batch axis may sit at different positions in the input and
+output systems, as an axis that a subspace transformation passes
+through may. `output_axes` defaults to `input_axes` when only
 `input_axes` is given.
 
 When `input_axes` and `output_axes` are not given, the batch axes come
 first and the axes of the elements follow, so that the space is
 `(*batch_axes, *element_axes)`. This is the order of the dimensions of
-the data and the order that broadcasting uses. A batch of motion
+the stacked data and the order that broadcasting uses. A batch of motion
 parameters for a series `(x, y, z, t)`, whose time axis is last, names
-its spatial axes, as in the example above.
+its spatial axes, as in the examples above.
 
 The number of batch axes is the number of axes of the space minus the
-number of axes of the elements, and the constructor checks that it
-equals the number of leading dimensions of the data. When the systems
-are not known, the data gives that number for the types whose data has
-a fixed number of dimensions. The matrix of an affine has two
-dimensions, so the data of a batch of affines has two dimensions more
-than it has batch axes. The data of a field has one dimension per axis
-of its grid and one for its components, so the shape
+number of axes of the elements. The general form reads it from the
+shape of its array of elements. The stacked form reads it from its data
+for the types whose data has a fixed number of dimensions. The matrix
+of an affine has two dimensions, so the data of a batch of affines has
+two dimensions more than it has batch axes. The data of a field has one
+dimension per axis of its grid and one for its components, so the shape
 `(*batch, X, Y, Z, 3)` alone does not tell how many of its leading
 dimensions are batch dimensions (#588). `input_axes` tells it, because
 the grid of each element has one dimension per input axis of the
 elements. The output system tells it too, because the output space has
-the components of the elements and the batch axes. A batch of fields is
-refused when neither `input_axes` nor the output system gives that
-number.
+the components of the elements and the batch axes. A stacked batch of
+fields is refused when neither `input_axes` nor the output system gives
+that number.
 
 Taking the discrete axes of the systems as batch axes was rejected,
 because the NIfTI reader never marks time as discrete, whereas a
 channel axis is discrete without being a batch axis.
 
-### Elements are created on demand
+### Elements
 
-A `BatchedTransformation` holds the whole stack in one array, and no
-element exists until one is asked for. `b[k]` returns element `k` along
-the first batch axis, and `b[k, v]` indexes several batch axes, as an
-ordinary transformation of the element type whose data is a view of the
-stack. A slice, such as `b[2:5]`, returns a smaller batch whose data and
-positions are views as well. Iterating over `b` gives its elements one
-at a time. When the stack is a lazy array of a file, indexing it keeps
-it lazy, so an element reads only its own part of the file. Element `k`
-is the same map as
+`b[k]` returns element `k` along the first batch axis, and `b[k, v]`
+indexes several batch axes. A slice, such as `b[2:5]`, returns a smaller
+batch whose positions are sliced in the same way, and an integer
+removes its batch axis from the space. Iterating over `b` gives its
+elements one at a time. Element `k` is the same map as
 `b.restrict(element_axes, element_axes, at={"t": positions[k]})`, and
 the restrictor of section 4 returns it.
 
-### One generic class, with typed subclasses
+The general form returns the transformations that it holds. The stacked
+form creates an element only when one is asked for, as an ordinary
+transformation of the element type whose data is a view of the stack.
+When the stack is a lazy array of a file, indexing it keeps it lazy, so
+an element reads only its own part of the file.
 
-A batch is consistent by definition: its elements have one type and
-one encoding, which is what lets one array hold them all. A collection
-of transformations of different types is not a batch, and it needs no
-container of its own, because the readers keep returning one of its
-members, selected by `position=` as the ITK readers do today.
+### One class, with stacked subclasses
 
-`BatchedTransformation` is generic, so that
-`BatchedTransformation[Affine]` names a batch of affines, as
-`SubspaceTransformation[T]` names a subspace transformation of a `T`.
-It is also polymorphic. The class that the constructor builds is chosen
-from the element type, in the way that `Inverse` builds an
-`InverseAffine` for the inverse of an `Affine`. The subclasses, such as
-`BatchedAffine` and `BatchedDisplacementField`, give the views of the
-stack that the element type has, such as `matrix`,
-`homogeneous_matrix`, `field` and `coefficients`, and they let the
-composers and the other dispatched functions register a rule for a batch
-of one type. Unlike `InverseAffine`, which is also an `Affine`, a
-`BatchedAffine` does not inherit from `Affine`.
+`BatchedTransformation` is the general form. It is polymorphic, and the
+constructor builds a stacked subclass when it is given an element type
+and stacked data instead of an array of elements, in the way that
+`Inverse` builds an `InverseAffine` for the inverse of an `Affine`. The
+stacked subclasses, such as `BatchedAffine` and
+`BatchedDisplacementField`, give the views of the stack that the element
+type has, such as `matrix`, `homogeneous_matrix`, `field` and
+`coefficients`, and they let the composers and the other dispatched
+functions register a rule that computes on the stack. Unlike
+`InverseAffine`, which is also an `Affine`, a `BatchedAffine` does not
+inherit from `Affine`.
 
-No subclass is registered as any of the kinds of `kinds.py`. A batched
+A rule written for the general form applies to every batch, because it
+reads the elements one at a time. A stacked subclass overrides a rule
+only to compute it on the whole stack, so that the two forms always
+give the same result.
+
+No form is registered as any of the kinds of `kinds.py`. A batched
 affine is therefore never mistaken for an affine, and every rule that
 applies to it is written for it. The ordinary types, in turn, refuse
 data with leading dimensions in their constructor, so that a stacked
-array never enters an `Affine` by accident. This validation is new,
-because no type checks the shape of its data today.
+array never enters an `Affine` by accident.
 
 ### Building a batch
 
-Every concrete class has a class method `batch`, which builds a batch of
-its own type from a stacked array without creating any element. It takes
-the stack, or one of the views of the class, such as
-`homogeneous_matrix`, `field` or `coefficients`, together with
-`input_axes`, `output_axes` and `positions`. The encoding of the
+Every matrix, vector and field type has a class method `batch`, which
+builds a stacked batch of its own type from a stacked array without
+creating any element. It takes the stack, or one of the views of the
+class, such as `homogeneous_matrix`, `field` or `coefficients`, together
+with `input_axes`, `output_axes` and `positions`. The encoding of the
 elements, such as `degree`, `bound`, `store` and `log`, and their
 systems are given as the other keywords of the constructor of the class,
 whose defaults apply to the keywords that are not given.
@@ -219,32 +243,25 @@ the metadata of a format describes one record of a file and not one
 element of a batch. A class that holds no data, such as `Identity`,
 refuses `batch`, since a batch of identities is the identity. The meta
 transformations, whose parameters are other transformations, have no
-`batch` either.
+`batch` either, and a batch of them is a general batch.
 
 `BatchedTransformation.stack(elements, batch_axis=...)` builds a batch
-from instances that already exist, and copies their data into one array.
-It checks that the elements have the same type, the same encoding and
-the same shape. The elements do not know the batch axis, so `batch_axis`
-gives it, and it is added before the axes of their systems. An axis
-about which nothing is known is added when `batch_axis` is not given. It
-suits a format that stores each element on its own, such as the
-directory of one file per volume that MCFLIRT writes, whereas a format
-that stores a stack passes its array to `batch`. `stack` also accepts
-meta transformations, and moves the batch inside them, so that a
-`BatchedTransformation` always holds stacked data directly.
+from transformations that already exist, along a new batch axis that
+comes before the axes of the elements. The elements must have the same
+numbers of axes and, when they have any, the same systems. The elements
+do not know the batch axis, so `batch_axis` gives it, and an axis about
+which nothing is known is added when it is not given. The result is a
+general batch, which holds the elements as they are. It suits a format
+that stores each element on its own, such as the directory of one file
+per volume that MCFLIRT writes or the registrations of BigStitcher,
+whereas a format that stores a stack passes its array to `batch`.
 
-- Sequences of the same length, whose transformations have the same type
-  at each position, give a sequence of batches. This is exact, because
-  every batch carries its batch axes through, so that composing the
-  batches composes the chains element by element. A registration of
-  BigStitcher, which is a chain of affines for each time point, is read
-  in this way.
-- Subspace transformations that act on the same axes give a subspace
-  transformation of a batch, whose axes include the batch axes.
-- Lazy inverses give the lazy inverse of the batch of their forward
-  transformations.
+A general batch whose elements share one matrix, vector or field type
+and one encoding can be converted to the stacked form, which copies
+their data into one array. `simplify` makes this conversion, because
+the stacked form is the cheaper one to compute with (section 4).
 
-A batch whose elements are fields covers a coordinate field of shape
+A stacked batch of fields covers a coordinate field of shape
 `(*batch, *shape, n_out)`, which maps the batch axes and the axes of its
 grid to the batch axes and `n_out` other axes. Its elements have `n_out`
 components on a grid of dimension `len(shape)`, so the case `n_out !=
@@ -288,9 +305,12 @@ compute machinery: the pattern readers and block restrictors of
 The pattern reader of a batch says that each output of the elements
 reads the inputs that it reads in some element, and also every batch
 axis, and that each batch output reads only its own input. This is the
-"reports that dependence" of A.10, decision 27. Under the numeric
-policy, an output reads a batch axis only when the stack is not
-constant along that axis.
+"reports that dependence" of A.10, decision 27. The general form reads
+the pattern of each element and takes their union. A stacked batch
+reads the pattern of its element type once under the analytic policy,
+and the exact zeros of the whole stack under the numeric policy. Under
+the numeric policy, an output reads a batch axis only when the elements
+are not all equal along that axis.
 
 ### Restriction
 
@@ -298,24 +318,31 @@ The restrictor of a batch handles two cases. When a batch axis is fixed
 by `at`, it selects the elements at that position, which gives a batch
 with one batch axis fewer, or a single element when no batch axis
 remains. When the block that is kept contains every batch axis, it cuts
-each element down to the block, by indexing the last dimensions of the
-stack. A kept output that reads a free batch axis raises at `compute`,
-as A.10 requires, because no single map exists.
+each element down to the block. The general form calls the restrictor of
+each element, and declines when one of them declines. A stacked batch
+indexes the last dimensions of its stack. A kept output that reads a
+free batch axis raises at `compute`, as A.10 requires, because no single
+map exists.
 
 ### Simplification
 
 `simplify` removes a batch axis of length 1, and, under the numeric
-policy, a batch axis along which the stack is constant. A batch with no
-batch axis left becomes its single element, wrapped in a
-`SubspaceTransformation` when the space has other axes. The cancellation
-of a transformation against its own lazy inverse applies to batches as
-to any other transformation.
+policy, a batch axis along which the elements are all equal. A batch
+with no batch axis left becomes its single element, wrapped in a
+`SubspaceTransformation` when the space has other axes. `simplify` also
+simplifies each element of a general batch, and converts a general
+batch whose elements share one matrix, vector or field type and one
+encoding to the stacked form. The cancellation of a transformation
+against its own lazy inverse applies to batches as to any other
+transformation.
 
 ### Inverse, square root, logarithm and exponential
 
 `b.inverse()` is the batch of the inverses of the elements, with the
 same batch axes and positions, and the same holds for `sqrt` and for the
-conversions to and from the tangent classes. The functions of
+conversions to and from the tangent classes. The general form holds the
+inverse of each element, which may be a lazy inverse, and a stacked
+batch computes the inverses on its stack. The functions of
 `_core/affines.py` already accept stacks of matrices, except
 `to_homogeneous`, whose padding row has no batch dimensions. That
 function is used by `expm`, `logm` and `sqrtm`. The checks of
@@ -349,17 +376,21 @@ Four composers are proposed.
    reads the created axis, so this composer is how a composing
    `compute` selects an element (section 5).
 
-Rules 1 and 2 compute on the stacked arrays, with the functions of
-`_core/affines.py` and `_core/linalg.py`, which accept stacks of
-matrices. The element type of the result is the type that the
+On the general form, rules 1 and 2 compose the elements one at a time
+with `compose`, and the result is a general batch, which `simplify` may
+convert to the stacked form. Rule 3 groups the points by the element
+that they select, and applies each element to its group. On a stacked
+batch, rules 1 and 2 compute on the stacked arrays instead, with the
+functions of `_core/affines.py` and `_core/linalg.py`, which accept
+stacks of matrices. The element type of the result is the type that the
 composition of two elements would have, such as a scaling for two
-batches of scalings. The composers of the ordinary types are not reused,
-because they receive transformations, and an ordinary transformation
-never holds a stack. They index the first dimensions of a matrix
-(`matrix[:, :-1]`, `matrix.T`, `matrix.shape[0]`), which is correct as
-long as their data has a single element. A composition that reads or
-writes a batch axis in any other way, such as a scaling of the time
-axis, has no composer, and the batch stays in the chain.
+batches of scalings. The composers of the ordinary types are not used on
+a stack, because they receive transformations, and an ordinary
+transformation never holds a stack. They index the first dimensions of a
+matrix (`matrix[:, :-1]`, `matrix.T`, `matrix.shape[0]`), which is
+correct as long as their data has a single element. A composition that
+reads or writes a batch axis in any other way, such as a scaling of the
+time axis, has no composer, and the batch stays in the chain.
 
 ### Kinds and modes
 
@@ -434,7 +465,7 @@ current reader.
 | FSL MCFLIRT                       | directory of `MAT_0000`, `MAT_0001`, ...   | not readable: no reader accepts a directory        | new reader of the directory                            |
 | SPM realignment                   | `rp_*.txt` `(N, 6)`; `.mat` `(4, 4, N)`    | no reader                                          | new reader of `rp_*.txt`                               |
 | elastix                           | `*StackTransform`                          | `ParserNotImplementedError`                        | batch of the inner transform                           |
-| BigStitcher XML                   | one registration per time point and view   | one view, chosen by `setup=` and `timepoint=`      | batch over time points for one setup                   |
+| BigStitcher XML                   | one registration per time point and view   | one view, chosen by `setup=` and `timepoint=`      | general batch over time points for one setup           |
 | NIfTI fields, SPM `y_`, ITK       | `(X, Y, Z, T, 3)`                          | `ParserContentError` when `T > 1`                  | batch of fields along `T`                              |
 | OME-NGFF `coordinates`, `displacements` | array with an extra discrete axis    | the extra axis is read as a grid axis              | batch when the axis is discrete and is not an output   |
 
@@ -505,17 +536,20 @@ of components differs from the dimension of their grid need #588.
    their behaviour on a single matrix: `to_homogeneous` broadcasts its
    padding row, the square checks of `_core/linalg.py` read the last two
    dimensions, and `sqrtm`, `expm` and `logm` apply to each matrix of a
-   stack. The ordinary matrix and vector types refuse data with leading
-   dimensions.
-2. Add `BatchedTransformation`, with the class method `batch` of the
-   concrete classes, `stack`, indexing, the systems, `inverse` and
-   `sqrt`, the pattern reader, the restrictor, the simplifier and the
-   four composers of section 4.
-3. Add the resampling step of section 5, the check of discrete axes in
+   stack. The ordinary matrix and vector types accept only data with
+   the number of dimensions of one element (#608).
+2. Add the data model: `BatchedTransformation` in its general form, its
+   stacked subclasses for the matrix and vector types, the class method
+   `batch` of these types, `stack`, indexing, the systems and `inverse`
+   (#610).
+3. Add the rules of section 4: the pattern reader, the restrictor, the
+   simplifier and the four composers.
+4. Add the resampling step of section 5, the check of discrete axes in
    the monolithic path, and the per-element Jacobian.
-4. Add the readers and writers of section 6, starting with X5, AFNI and
-   MCFLIRT, which cover the motion-correction case.
-5. Change the command line as in section 8.
+5. Add the stacked subclasses for fields, and the readers and writers of
+   section 6, starting with X5, AFNI and MCFLIRT, which cover the
+   motion-correction case.
+6. Change the command line as in section 8.
 
 Each step is tested against the element-by-element result: a batch of
 `N` elements, applied or composed, must give the same values as each of
