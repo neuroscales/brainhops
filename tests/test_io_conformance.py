@@ -82,6 +82,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import FileFormat, register_format, takes_over
+from brainhops.io.base._parsers import overrides_from_fileobj
 from brainhops.io.base._save import data_model_of
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -93,7 +94,6 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     UnrepresentableTransformationError,
     WriterError,
-    _overrides_from_fileobj,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
@@ -5643,7 +5643,7 @@ def test_12_adapter_contract(
         assert not klass._is_dispatcher()
         if exemplar.binary:
             # `from_bytes` reads through a real `from_fileobj` only.
-            assert _overrides_from_fileobj(klass)
+            assert overrides_from_fileobj(klass)
             assert klass._READ_MODE == "rb"
         else:
             assert klass._READ_MODE == "rt"

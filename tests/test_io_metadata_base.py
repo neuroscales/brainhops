@@ -30,12 +30,12 @@ from brainhops.datamodel.metadata import (
     metadata_loss_policy,
 )
 from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.io.base._parsers import overrides_from_fileobj
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     TextFileReader,
     TextFileWriter,
     WriterError,
-    _overrides_from_fileobj,
 )
 from brainhops.io.metadata import (
     BidsSidecar,
@@ -274,8 +274,8 @@ def test_a_format_with_a_record_class_opens_files_in_its_mode() -> None:
 
 def test_a_record_class_that_reads_streams_reads_bytes_too() -> None:
     # A format with no record class reads no stream itself.
-    assert not _overrides_from_fileobj(DictMetadata)
-    assert _overrides_from_fileobj(StreamDictMetadata)
+    assert not overrides_from_fileobj(DictMetadata)
+    assert overrides_from_fileobj(StreamDictMetadata)
     meta = StreamDictMetadata.from_bytes(b"shortest")
     assert isinstance(meta.raw, StreamDictRaw)
     assert meta.description == "shor"

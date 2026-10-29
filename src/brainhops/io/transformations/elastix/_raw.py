@@ -17,7 +17,7 @@ from bagof.magic import Factory, NoRepr, replace
 
 from brainhops._core import path
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
-from brainhops.io.base._internal_api import Raw
+from brainhops.io.base._internal_api import Raw, passthrough_from_fileobj
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -25,7 +25,6 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileReader,
     TextFileWriter,
-    _passthrough_from_fileobj,
 )
 
 from ._parser import (
@@ -235,7 +234,7 @@ class ElastixRaw(
         return _read_file(filename, syntax, initial, encoding, ())
 
     @classmethod
-    @_passthrough_from_fileobj
+    @passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> "ElastixRaw":
         """Read the record from an open file, in text or binary mode.
 

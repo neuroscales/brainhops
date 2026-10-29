@@ -448,7 +448,7 @@ def takes_error_policy(method: tx.Callable) -> tx.Callable:
 
     The writers of the file formats use this decorator. It is written
     above each entry point of a writer, such as `to_bytes` or `save`,
-    both in their common base, `_WriterMixin`, and in each format that
+    both in their common base, `WriterMixin`, and in each format that
     defines or overrides one. The wrapper removes `on_error=` and
     `on_loss=` from the keyword arguments and calls the method with
     [`call_under_policy`][], so that the body of the method never

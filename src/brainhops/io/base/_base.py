@@ -19,17 +19,17 @@ from brainhops.datamodel.metadata._internal_api import (
 from brainhops.datamodel.metadata._report import ConversionReport
 from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._dispatch import Source, parse, sniff
-from brainhops.io.base.parsers import (
-    FileReader,
-    FileWriter,
-    _FileNamesMixin,
-    _passthrough_from_fileobj,
-    _ReaderMixin,
-    _SnifferMixin,
-    _TextReaderMixin,
-    _WriterMixin,
-)
+from brainhops.io.base.parsers import FileReader, FileWriter
 from brainhops.io.base.specs import SourceSpec
+
+from ._parsers import (
+    FileNamesMixin,
+    ReaderMixin,
+    SnifferMixin,
+    TextReaderMixin,
+    WriterMixin,
+    passthrough_from_fileobj,
+)
 
 _T = tx.TypeVar("_T")
 
@@ -147,7 +147,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 
 
 @format_registry
-class FileFormat(_FileNamesMixin):
+class FileFormat(FileNamesMixin):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
@@ -215,7 +215,7 @@ class FileFormat(_FileNamesMixin):
         defaults of the reader mixins are export-only and must not be
         selected by sniffing or loading.
         """
-        adapters = (FileFormat, _ReaderMixin, _TextReaderMixin)
+        adapters = (FileFormat, ReaderMixin, TextReaderMixin)
         routes = (
             "load",
             "from_spec",
@@ -468,7 +468,7 @@ class FileFormat(_FileNamesMixin):
         )
 
     @classmethod
-    @_passthrough_from_fileobj
+    @passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for an open file object."""
         cls._check_dispatcher("from_fileobj")
@@ -868,7 +868,7 @@ def _check_base_order(cls: type) -> None:
             f"the format decides whether to convert another object before "
             f"the data model copies its fields."
         )
-    io_bases = (_ReaderMixin, _SnifferMixin, _WriterMixin)
+    io_bases = (ReaderMixin, SnifferMixin, WriterMixin)
     late = []
     after_format = False
     for base in cls.__bases__:

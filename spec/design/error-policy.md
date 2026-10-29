@@ -178,7 +178,7 @@ The policy is applied in three ways.
 - Each entry point of a writer (`save`, `to_file`, `to_filename`,
   `to_fileobj`, `to_bytes`, `to_text`, `to_lines` and `to_h5`) carries
   the decorator `takes_error_policy()`, written above the method in the
-  base class of the writers, `_WriterMixin`, and in every class that
+  base class of the writers, `WriterMixin`, and in every class that
   defines or overrides one. The decorator is explicit, so that a reader
   of a format sees which methods take a policy. Its wrapper removes the
   two keywords and calls the method with `call_under_policy()`. An

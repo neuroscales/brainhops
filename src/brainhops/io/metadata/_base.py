@@ -503,7 +503,7 @@ def metadata_options(
     A writer that writes the record of a consolidated copy gives the
     fields of the vocabulary to `consolidate`, and the other options to
     the writer of the record. The error policy of the write never
-    reaches the writer, which runs under it (see the `_WriterMixin`
+    reaches the writer, which runs under it (see the `WriterMixin`
     class of `brainhops.io.base.parsers`).
 
     Parameters

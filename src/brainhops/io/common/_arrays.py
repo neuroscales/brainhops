@@ -53,6 +53,7 @@ import typing_extensions as tx
 
 from brainhops._core import path
 from brainhops._core._internal_api import peekable_lines, preserve_position
+from brainhops.io.base._internal_api import not_text
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -61,7 +62,6 @@ from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     SnifferContentError,
     TextFileReader,
-    _not_text,
 )
 
 
@@ -604,7 +604,7 @@ class TextArrayReader(ArrayReader, TextFileReader):
         try:
             return super().sniff_fileobj(file, error=error, **kwargs)
         except UnicodeDecodeError as e:  # a binary file opened as text
-            return _not_text(cls, error, e)
+            return not_text(cls, error, e)
 
     @classmethod
     def sniff_lines(
