@@ -322,10 +322,10 @@ class ItkDisplacementBase(ItkBlockBase):
     """
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree of the field."""
+    """The spline degree of the data."""
 
     store: tx.ClassVar[StoreEnum] = StoreEnum.values
-    """Whether the field holds spline coefficients or values."""
+    """Whether the data holds spline coefficients or values."""
 
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.nearest
@@ -349,7 +349,7 @@ class ItkDisplacementBase(ItkBlockBase):
         return _vox2lps(self.fixed_parameters, self.ndim_input)
 
     @smartproperty(cache=True)
-    def field(self) -> ArrayProtocol:
+    def data(self) -> ArrayProtocol:
         """The warp on its own grid, as an `(Nx, Ny, Nz, D)` array.
 
         ITK stores the warp as a flat buffer of world-space displacements, or of
@@ -407,7 +407,7 @@ class ItkDisplacementBase(ItkBlockBase):
         """The displacement field on the warp grid."""
         VOX = _make_grid_system(self.ndim_input)
         return _xforms.DisplacementField(
-            data=self.field,
+            data=self.data,
             input=VOX,
             output=VOX,
             degree=self.degree,
