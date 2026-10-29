@@ -151,6 +151,4 @@ that only tests use.
 When another module needs a private name, promote the name to internal
 or public instead of importing it with its underscore. The test
 `tests/test_visibility.py` checks these rules on every import of
-`src/` and `tests/`. The only exceptions are the private names of four
-public modules that it lists in `PENDING_PRIVATE`, and new code must
-not add to them.
+`src/` and `tests/`, without exceptions.

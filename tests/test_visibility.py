@@ -34,16 +34,6 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 TESTS = ROOT / "tests"
 
-PENDING_PRIVATE = frozenset(
-    {
-        # These private names are defined in public modules, where
-        # removing the underscore would not make them internal. They
-        # wait for a decision on whether to move them into a private
-        # module or to make them public.
-    }
-)
-"""The private names that other modules still import, as dotted paths."""
-
 
 def _module_name(path: Path, base: Path, prefix: str = "") -> str:
     """Return the dotted name of the module stored in a file.
@@ -354,20 +344,8 @@ def test_no_private_names_are_imported() -> None:
             name = alias.name
             if not name.startswith("_") or name.startswith("__"):
                 continue
-            if f"{source}.{name}" in PENDING_PRIVATE:
-                continue
             errors.append(f"{_where(module, node)}: {source}.{name}")
     assert not errors, "Private names are imported:\n" + "\n".join(errors)
-
-
-def test_pending_private_names_are_still_imported() -> None:
-    """Every name of `PENDING_PRIVATE` is still private and imported."""
-    imported = {
-        f"{source}.{alias.name}"
-        for module in MODULES
-        for _, source, alias in _imports(module)
-    }
-    assert not PENDING_PRIVATE - imported
 
 
 def _internal_imports() -> tx.Iterator[tx.Tuple[str, ast.stmt, str, str]]:
