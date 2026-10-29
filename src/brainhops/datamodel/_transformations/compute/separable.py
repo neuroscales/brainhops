@@ -119,7 +119,8 @@ def pull_separable(
 
     clip : float, pair, sequence of pairs, or None, default=None
         Zero samples outside the closed voxel margin, as in [`pull`][].
-        Each independent group builds its own mask, without a full field.
+        A pull step passes the margins of its axes to the pull, and a
+        gather builds a mask along its own axis, without a full field.
 
     dtype : DTypeLike, optional
         Output dtype. None preserves the input dtype. An explicit dtype
@@ -602,6 +603,25 @@ def _make_gather(
     return view is not None, run
 
 
+def _step_clip(
+    bound: tx.Union[str, float], clip: Clip
+) -> tx.Tuple[Clip, bool]:
+    # Return the margins that a pull step passes to the pull, and whether
+    # the step returns its mask, to be applied after every step instead.
+    # A step leaves zeros in the samples that it clips, and a later step
+    # along other axes reads them as values. With a zero fill value, a
+    # clipped sample spans a whole slab across the other axes, which a
+    # later step interpolates into zeros again, so the pull can clip
+    # while it adds its taps. A nonzero fill value would instead bring
+    # the fill value back near the edges of the slab, so the masks are
+    # then applied after the last step.
+    if clip is None:
+        return None, False
+    if interpol_boundary(bound)[1]:
+        return None, True
+    return clip, False
+
+
 def _make_pull1d(
     d: int,
     g: int,
@@ -619,13 +639,16 @@ def _make_pull1d(
     # The coordinates are a small NumPy array, which the pull moves to
     # the device of the data.
     coords = (np.arange(n_out, dtype=np.float64) * scale + shift)[:, None]
+    step_clip, defer = _step_clip(bound, clip)
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         axis = labels.index(("data", d))
-        moved = pull_axes(arr, coords, [axis], degree, bound, coeff)
+        moved = pull_axes(
+            arr, coords, [axis], degree, bound, coeff, clip=step_clip
+        )
         remaining = [label for i, label in enumerate(labels) if i != axis]
         labels = remaining + [("grid", g)]
-        mask = clip_mask(coords, (n_in,), clip)
+        mask = clip_mask(coords, (n_in,), clip) if defer else None
         return moved, labels, mask
 
     return run
@@ -661,15 +684,21 @@ def _make_pull(
     ]
     if inner is not None:
         chain.append(inner)
+    step_clip, defer = _step_clip(bound, clip)
 
     def run(arr: ArrayProtocol, labels: _AxisLabels) -> _StepResult:
         coords = _coordinates_like(Sequence(transformations=chain), arr)
         positions = [labels.index(("data", d)) for d in data_axes]
-        moved = pull_axes(arr, coords, positions, degree, bound, coeff)
+        moved = pull_axes(
+            arr, coords, positions, degree, bound, coeff, clip=step_clip
+        )
         used = set(positions)
         remaining = [labels[i] for i in range(len(labels)) if i not in used]
         labels = remaining + [("grid", g) for g in grid_axes]
-        mask = clip_mask(coords, [data_shape[d] for d in data_axes], clip)
+        mask = None
+        if defer:
+            sizes = [data_shape[d] for d in data_axes]
+            mask = clip_mask(coords, sizes, clip)
         return moved, labels, mask
 
     return run
@@ -697,9 +726,10 @@ def _apply_clip_masks(
 ) -> ArrayProtocol:
     """Zero the union of group cutoffs after every interpolation step.
 
-    Delaying the masks prevents a later nonzero constant boundary from
-    bringing clipped samples back. Masks stay lazy and only span the axes
-    of their independent group.
+    The masks are those of the gathers, and those of the pull steps when
+    the fill value is nonzero (see `_step_clip`). Delaying them prevents
+    a later nonzero constant boundary from bringing clipped samples back.
+    Masks stay lazy and only span the axes of their independent group.
     """
     xp = array_backend(arr)
     for mask, axes in masks:

@@ -39,6 +39,7 @@ from .backends import (
     is_numpy,
     promote_backends,
     to_backend,
+    to_backend_of,
     to_promoted_backend,
 )
 from .dependencies import np
@@ -182,6 +183,7 @@ def _sample(
     degree: int,
     bound: BoundaryLike,
     prefilter: bool,
+    clip: tx.Optional[tx.Tuple[tx.Tuple[float, float], ...]] = None,
 ) -> ArrayProtocol:
     """Interpolate an array with `interpol`, with any number of points.
 
@@ -190,7 +192,10 @@ def _sample(
     output axes, such as a list of points, are therefore flattened into
     a grid of shape `(npoints, 1, ..., 1, ndim)`, and the output is
     given back its shape. A numeric boundary is handled as explained in
-    the documentation of the module.
+    the documentation of the module. The margins of `clip` are passed to
+    `interpol`, which zeroes the samples beyond them as it adds the
+    taps. With a nonzero fill value, the fill value is added only inside
+    the margins, so that the clipped samples stay zero.
     """
     name, cval = interpol_boundary(bound)
     ndim = coords.shape[-1]
@@ -201,9 +206,17 @@ def _sample(
         grid = coords.reshape((-1,) + (1,) * (ndim - 1) + (ndim,))
     if cval:
         input = input - cval
-    output = interpol.pull(input, grid, degree, name, prefilter=prefilter)
+    output = interpol.pull(
+        input, grid, degree, name, clip=clip, prefilter=prefilter
+    )
     if cval:
-        output = output + cval
+        mask = clip_mask(coords, input.shape[input.ndim - ndim :], clip)
+        if mask is None:
+            output = output + cval
+        else:
+            mask = to_backend_of(mask.reshape(grid.shape[:-1]), output)
+            xp = array_backend(output)
+            output = output + xp.where(mask, cval, 0.0).astype(output.dtype)
     if len(spatial) != ndim:
         output = output.reshape(batch + spatial)
     return output
@@ -282,15 +295,10 @@ def pull(
     # It moves them to the device of the chunks itself.
     if not (is_dask(input) and (is_numpy(coords) or is_cupy(coords))):
         coords = to_backend(coords, backend)
-    xp = array_backend(input)
     output_dtype = np.dtype(input.dtype if dtype is None else dtype)
     input = input.astype(sampling_dtype(input.dtype, dtype), copy=False)
-    ndim = coords.shape[-1]
-    clip = normalize_clip(clip, ndim)
-    mask = clip_mask(coords, input.shape[-ndim:], clip)
-    output = _sample(input, coords, int(degree), bound, not coeff)
-    if mask is not None:
-        output = xp.where(mask, output, xp.zeros_like(output))
+    clip = normalize_clip(clip, coords.shape[-1])
+    output = _sample(input, coords, int(degree), bound, not coeff, clip)
     return cast_output(output, output_dtype)
 
 
