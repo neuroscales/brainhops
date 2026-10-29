@@ -6,6 +6,7 @@ from scipy.ndimage import map_coordinates
 
 from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, pull_axes
+from brainhops._ext import interpol
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.transformations import Affine, CartesianField
 
@@ -20,13 +21,25 @@ def test_clip_keeps_closed_endpoints_and_leaves_stencils_unchanged(
     x = np.array([-1, -0.5, -0.25, 0, 0.5, 2.5, 3, 3.25, 3.5, 4])
     mode = bound if isinstance(bound, str) else "grid-constant"
     cval = 0 if isinstance(bound, str) else bound
+    # SciPy evaluates the exact coefficients, since its prefilter is wrong
+    # near the edges for `nearest` and `grid-constant` (#250).
+    name = "zero" if mode == "grid-constant" else mode
+    coeff = interpol.spline_coeff(values - cval, degree, name) + cval
     expected = map_coordinates(
-        values, x[None], order=degree, mode=mode, cval=cval
+        coeff, x[None], order=degree, mode=mode, cval=cval, prefilter=False
     )
+    if degree == 0 and bound == "mirror":
+        # At a tie beyond the edge, interpol takes the upper sample before
+        # it mirrors the coordinate, and SciPy after (see `interpol.pull`).
+        expected[x == -0.5] = values[0]
     if margin is not None:
         expected[(x < -margin) | (x > 3 + margin)] = 0
     got = pull(values, x[:, None], degree, bound, False, clip=margin)
-    np.testing.assert_array_equal(got, expected)
+    # The values are computed in float32, and SciPy rounds its float64
+    # result to float32, so the two can differ by one unit in the last
+    # place. The clipped samples are exactly zero in both.
+    np.testing.assert_allclose(got, expected, rtol=2e-7, atol=0)
+    np.testing.assert_array_equal(got == 0, expected == 0)
     assert got.dtype == values.dtype
 
 
