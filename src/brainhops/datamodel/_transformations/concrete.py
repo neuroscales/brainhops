@@ -16,7 +16,6 @@ __all__ = [
 from numbers import Integral, Real
 
 # dependencies
-import numpy as np
 import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
@@ -87,62 +86,6 @@ def _invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
-
-
-def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
-    """Raise a `ValueError` unless `value` holds exactly one element.
-
-    A matrix type holds one matrix and a vector type holds one vector, so
-    their data has exactly two or one dimensions. A stack of elements has
-    leading dimensions, and it would otherwise be read as a single
-    element, so that a view such as `matrix[:, :-1]` would select the
-    wrong axis. A scalar is refused too, because the number of axes of a
-    transformation is read from the length of its vector.
-
-    The data is annotated as `npmatrix` or `npvector`, which names the
-    number of dimensions, but the converter of bagof checks only the type
-    of the values (bagof-converters 0.2.1). This check can be removed once
-    the converter checks the shape that the hint names.
-    """
-    ndim = obj.element_ndim
-    if value is None or ndim is None:
-        return
-    value_ndim = np.ndim(value)
-    what = "matrix" if ndim == 2 else "vector"
-    if value_ndim > ndim:
-        raise ValueError(
-            f"{type(obj).__name__} holds a single {what}, so its data must "
-            f"have {ndim} dimensions, but it has {value_ndim}. A stack of "
-            f"transformations is not supported yet."
-        )
-    if value_ndim < ndim:
-        raise ValueError(
-            f"{type(obj).__name__} holds a {what}, so its data must have "
-            f"{ndim} dimensions, but it has {value_ndim}."
-        )
-
-
-def set_element_data(obj: "_CompactTransformation", value: tx.Any) -> None:
-    """Store the data of a matrix or vector type after checking its shape.
-
-    This is the setter of the `data` property of the matrix and vector
-    types and of their tangent classes. It refuses data that does not
-    have exactly `element_ndim` dimensions.
-
-    Parameters
-    ----------
-    obj : _CompactTransformation
-        The transformation whose data is assigned.
-    value : Any
-        The data, or None.
-
-    Raises
-    ------
-    ValueError
-        If the data does not have the number of dimensions of one element.
-    """
-    _require_element(obj, value)
-    obj._data = value
 
 
 # --- API --------------------------------------------------------------
@@ -708,16 +651,12 @@ class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation):
     element_ndim: tx.ClassVar[tx.Optional[int]] = None
     """Number of dimensions of the data of one transformation.
 
-    It is 2 for a matrix type and 1 for a vector type. Data with more
-    dimensions is refused, because it would stack several
-    transformations. `None` disables the check.
+    It is 2 for a matrix type and 1 for a vector type, as the annotation
+    of the data says, and None for a type that holds no data. The
+    converter of the annotation refuses data with more dimensions, such
+    as a stack of transformations, and a batch reads this number to
+    count its batch dimensions.
     """
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        super().__post_init__(arguments)
-        # The data given to the constructor is stored without going
-        # through the setter of `data`, so it is checked here.
-        _require_element(self, getattr(self, "_data", None))
 
     @classmethod
     def batch(
@@ -877,7 +816,7 @@ class Affine(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=set_element_data)
+    data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
     matrix = alias("data")
 
@@ -971,7 +910,7 @@ class Linear(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=set_element_data)
+    data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
     matrix = alias("data")
 
@@ -1084,7 +1023,7 @@ class Permutation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=set_element_data)
+    data = _invalidating_property("data")
     permutation = alias("data")
 
     @lazyproperty
@@ -1182,7 +1121,7 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=set_element_data)
+    data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
     scale = alias("data")
 
@@ -1245,7 +1184,7 @@ class Translation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data", fset=set_element_data)
+    data = _invalidating_property("data")
     translation = alias("data")
 
     @lazyproperty

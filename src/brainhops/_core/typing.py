@@ -87,10 +87,18 @@ class ToNumpyParameter(Converter):
     [`to_backend`][brainhops.backends.to_backend], which copies an array
     from the GPU and computes a Dask array, and then lets the NumPy
     converter of bagof convert the values to the type that the hint
-    names. The NumPy converter of bagof does not check the shape that the
-    hint names (bagof-converters 0.2.1), so `npmatrix` accepts an array
-    with any number of dimensions. A class that relies on the shape must
-    check it itself.
+    names.
+
+    The NumPy converter of bagof does not check the shape that the hint
+    names (bagof-converters 0.2.1), so this converter fits the array to
+    that shape with the rules of NumPy broadcasting. An array with fewer
+    dimensions than the hint names receives dimensions of length one on
+    the left, so that a scalar becomes a vector of one element. A
+    dimension that the hint gives as a `Literal` size is broadcast to
+    that size. An array with more dimensions than the hint names is
+    refused, because broadcasting never removes a dimension. A stack of
+    matrices, for example, is not a matrix. A hint whose shape is
+    variadic, such as `Tuple[int, ...]`, accepts any shape.
 
     It is the metadata of the annotated hints [`npscalar`][],
     [`npvector`][] and [`npmatrix`][], and it receives the NumPy hint
@@ -115,7 +123,65 @@ class ToNumpyParameter(Converter):
             value = value.compute()
         if isinstance(value, cpt.ndarray):
             value = value.get()
-        return Converter.get(self.hint)(value)
+        return self._fit(Converter.get(self.hint)(value))
+
+    def _fit(self, array: tx.Any) -> tx.Any:
+        # Fit the array to the shape that the hint names, with the rules
+        # of NumPy broadcasting.
+        sizes = _shape_of(self.hint)
+        if sizes is None:
+            return array
+        ndim = len(sizes)
+        if array.ndim > ndim:
+            raise self.value_error(
+                array,
+                f"The array must have {ndim} dimensions, but it has "
+                f"{array.ndim}. Dimensions are never removed, so an array "
+                f"with more dimensions, such as a stack, is refused.",
+            )
+        if array.ndim < ndim:
+            array = array.reshape((1,) * (ndim - array.ndim) + array.shape)
+        target = tuple(
+            n if size is None else size for size, n in zip(sizes, array.shape)
+        )
+        if target != array.shape:
+            import numpy as np
+
+            try:
+                array = np.array(np.broadcast_to(array, target))
+            except ValueError as error:
+                raise self.value_error(
+                    array,
+                    f"The array of shape {array.shape} cannot be broadcast "
+                    f"to the shape {target}.",
+                ) from error
+        return array
+
+
+def _shape_of(hint: tx.Any) -> tx.Optional[tx.Tuple[tx.Optional[int], ...]]:
+    """Return the sizes that the shape of an array hint names.
+
+    The hint is `ndarray[Tuple[...], dtype[...]]`. Each dimension of the
+    result is the size that a `Literal` names, or None for any size. None
+    is returned when the hint names no shape or a variadic one.
+    """
+    args = tx.get_args(hint)
+    if not args or safe_get_origin(args[0]) is not tuple:
+        return None
+    dims = tx.get_args(args[0])
+    if dims == ((),):
+        # Python 3.10 and earlier spell `Tuple[()]` with an empty tuple as
+        # its only argument.
+        dims = ()
+    if Ellipsis in dims:
+        return None
+    sizes = []
+    for dim in dims:
+        if safe_get_origin(dim) is tx.Literal:
+            sizes.append(int(tx.get_args(dim)[0]))
+        else:
+            sizes.append(None)
+    return tuple(sizes)
 
 
 npscalar: tx.TypeAlias = tx.Union[
