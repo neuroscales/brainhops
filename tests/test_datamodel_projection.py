@@ -292,3 +292,14 @@ def test_the_ome_writer_refuses_a_free_axis() -> None:
     projection = Projection(created=[2], at=[np.nan], input=_xy())
     with pytest.raises(OmeMappingError, match="free"):
         to_ome(projection, [0, 1, 2], 3)
+
+
+def test_the_ome_writer_refuses_an_element_that_changes_the_axes() -> None:
+    # Each element of a sequence is written as a map of the image axes
+    # onto as many axes, so an element with another shape would lose
+    # rows or columns when its matrix is reordered.
+    projection = Projection(created=[2], at=[4.0], input=_xy())
+    with pytest.raises(OmeMappingError, match="axes onto"):
+        to_ome(projection, [0, 1], 2)
+    with pytest.raises(OmeMappingError, match="axes onto"):
+        to_ome(Sequence([projection, Affine(matrix=np.eye(3, 4))]), [0, 1], 2)

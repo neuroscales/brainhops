@@ -405,6 +405,54 @@ class AxisSequence(tx.Sequence[AXIS]):
         TypeError
             If a reference is neither an integer nor a query.
         """
+        return type(self)([self.at(p) for p in self.positions(refs)])
+
+    def positions(
+        self,
+        refs: tx.Union[AxisQuery, tx.Iterable[tx.Union[int, AxisQuery]]],
+    ) -> tx.List[int]:
+        """Return the positions of the axes that references designate.
+
+        The references are read as [`restrict`][] reads them, and the
+        result lists the position of each designated axis, in the order
+        of `refs`, instead of the axes themselves. A position in a
+        finite sequence is made non-negative. A position in a variadic
+        sequence is returned as it is given, and the position of an
+        axis after `...` counts from the end, as in [`indices`][].
+
+        !!! example
+            ```pycon
+            >>> x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+            >>> t = TimeAxis(name="t")
+            >>> AxisList([x, y, t]).positions(["t", -3])
+            [2, 0]
+            >>> AxisList([x, ..., t]).positions([SpaceAxis, "t", 1])
+            [0, -1, 1]
+            ```
+
+        Parameters
+        ----------
+        refs : AxisQuery or iterable of (int or AxisQuery)
+            The positions, names and other queries that designate the
+            axes.
+
+        Returns
+        -------
+        list of int
+            The position of each designated axis.
+
+        Raises
+        ------
+        IndexError
+            If a position lies outside a finite sequence.
+        KeyError
+            If no explicit axis has a name.
+        ValueError
+            If a name is shared, or two references designate the same
+            axis.
+        TypeError
+            If a reference is neither an integer nor a query.
+        """
         if _is_query(refs) or isinstance(refs, str):
             refs = [refs]
         positions = []
@@ -417,7 +465,7 @@ class AxisSequence(tx.Sequence[AXIS]):
             else:
                 positions.append(self._position(ref))
         _check_unique(positions, "refs")
-        return type(self)([self.at(p) for p in positions])
+        return positions
 
     def embed(
         self,
