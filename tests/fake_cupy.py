@@ -288,6 +288,9 @@ def install(monkeypatch: pytest.MonkeyPatch) -> object:
     from brainhops._core import backends
 
     monkeypatch.setattr(backends, "cp", cupy)
-    monkeypatch.setattr(backends, "cpndi", ndimage)
-    monkeypatch.setitem(backends._MODULES, "cupy", (cupy, ndimage))
+    monkeypatch.setitem(backends._MODULES, "cupy", cupy)
+    monkeypatch.setitem(backends._NDIMAGE, "cupy", ndimage)
+    # The interpolation runs in `interpol`, which finds CuPy by itself
+    # and documents this attribute as the one that tests replace.
+    monkeypatch.setattr("brainhops._ext.interpol._backend._cupy", cupy)
     return cupy

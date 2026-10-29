@@ -7,9 +7,9 @@ import pytest
 from scipy.ndimage import map_coordinates
 
 from brainhops import io
-from brainhops._core import bsplines
 from brainhops._core.backends import backend
 from brainhops._core.bsplines import pull, pull_axes
+from brainhops._ext import interpol
 from brainhops.cli import main
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel.images import MultiScaleImage
@@ -28,7 +28,8 @@ from brainhops.datamodel.transformations import Affine, CartesianField
         (np.uint8, np.float16, np.float32, np.float32),
         (np.complex64, np.complex64, np.complex64, np.complex64),
         (np.float32, None, np.float32, np.float32),
-        (np.int16, None, np.int16, np.float64),
+        # Integers are sampled in float64 and rounded back at the end.
+        (np.int16, None, np.float64, np.float64),
     ],
 )
 def test_sampling_precision_promotes_only_as_needed(
@@ -40,18 +41,13 @@ def test_sampling_precision_promotes_only_as_needed(
 ) -> None:
     values = np.array([0, 3, 9], dtype=input_dtype)
     sampled = []
-    factory = bsplines._map_coordinates_for
+    sample = interpol.pull
 
-    def capture_factory(nx: object, nd: object) -> object:
-        sample = factory(nx, nd)
+    def capture(input: np.ndarray, *args: object, **opts: object) -> object:
+        sampled.append(input.dtype)
+        return sample(input, *args, **opts)
 
-        def capture(input: np.ndarray, coords: np.ndarray, **opts) -> object:
-            sampled.append(input.dtype)
-            return sample(input, coords, **opts)
-
-        return capture
-
-    monkeypatch.setattr(bsplines, "_map_coordinates_for", capture_factory)
+    monkeypatch.setattr(interpol, "pull", capture)
     pull(
         values,
         np.array([[0.25]]),
@@ -97,19 +93,29 @@ def test_float32_integer_conversion_keeps_values_below_half_thresholds() -> (
 @pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int8, np.uint8])
 @pytest.mark.parametrize("degree", [0, 1, 3])
 def test_pull_dtype_matches_scipy(dtype: object, degree: int) -> None:
+    # SciPy evaluates the exact coefficients of the values, since its own
+    # prefilter is wrong near the edges for `nearest` (#250).
     values = np.array([[-12, 3, 257, 20], [2, 9, 103, 5]], dtype=np.int16)
     coords = np.array([[-0.25], [0.5], [1.25], [2.75], [3.5]])
     got = pull(values, coords, degree, "nearest", False, dtype=dtype)
     expected = np.stack(
         [
             map_coordinates(
-                row, coords.T, order=degree, mode="nearest", output=dtype
+                interpol.spline_coeff(row, degree, "nearest"),
+                coords.T,
+                order=degree,
+                mode="nearest",
+                output=dtype,
+                prefilter=False,
             )
             for row in values
         ]
     )
     assert got.dtype == dtype
-    np.testing.assert_allclose(got, expected, rtol=1e-6)
+    # A float32 output is computed in float32 arithmetic, whereas SciPy
+    # computes in float64 whatever the output.
+    rtol = 1e-5 if dtype == np.float32 else 1e-6
+    np.testing.assert_allclose(got, expected, rtol=rtol)
 
 
 def test_pull_axes_dtype_preserves_fractions_and_clipping() -> None:
