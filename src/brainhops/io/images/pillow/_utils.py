@@ -540,7 +540,7 @@ def _png_scal(
             with preserve_position(file):
                 file.seek(start)
                 return scan(file)
-        with open(str(file), "rb") as f:
+        with path.Path(file).open("rb") as f:
             return scan(f)
     except Exception:
         return None

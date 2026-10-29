@@ -23,8 +23,6 @@ from brainhops.io.base.parsers import WriterError
 
 abczarr = pytest.importorskip("abczarr")
 
-from abczarr.errors import UnsupportedZarrOperation  # noqa: E402
-
 from brainhops.io.common.zarr import ZarrMetadata, ZarrRaw  # noqa: E402
 from brainhops.io.common.zarr import _data as zarr_data  # noqa: E402
 from brainhops.io.common.zarr._data import _ZarrProxy  # noqa: E402
@@ -218,26 +216,28 @@ def test_a_save_over_its_own_store_reads_the_new_store(tmp_path: Path) -> None:
 
 
 def test_a_remote_save_over_its_own_store_is_refused() -> None:
+    # Only the zarr-python driver of abczarr writes to memory://. The
+    # TensorStore driver refuses such locations, because the memory
+    # store of TensorStore is not the memory file system of fsspec, so
+    # this test asks for the zarr-python driver by name.
     pytest.importorskip("upath")
+    pytest.importorskip("zarr")
     from bagof.paths import Path
 
+    driver = "zarr-python"
     store = Path("memory://brainhops-tests/arrays/own.zarr")
-    try:
-        ZarrImage(data=DATA).save(store)
-    except UnsupportedZarrOperation as error:
-        # The TensorStore driver, the only Zarr driver available on
-        # Python 3.8, refuses memory:// locations, because the memory
-        # store of TensorStore is not the memory file system of fsspec.
-        pytest.skip(f"the Zarr driver cannot write to memory://: {error}")
-    image = ZarrImage.load(store)
+    ZarrImage(data=DATA).save(store, driver=driver)
+    image = ZarrImage.load(store, driver=driver)
     image.data = DATA + 1
     with pytest.raises(WriterError, match="remote store"):
-        image.save(store)
-    assert np.array_equal(np.asarray(ZarrImage.load(store).data), DATA)
+        image.save(store, driver=driver)
+    back = ZarrImage.load(store, driver=driver)
+    assert np.array_equal(np.asarray(back.data), DATA)
     # Another remote store is written in place.
     other = Path("memory://brainhops-tests/arrays/other.zarr")
-    image.save(other)
-    assert np.array_equal(np.asarray(ZarrImage.load(other).data), DATA + 1)
+    image.save(other, driver=driver)
+    back = ZarrImage.load(other, driver=driver)
+    assert np.array_equal(np.asarray(back.data), DATA + 1)
 
 
 def test_a_store_taken_as_remote_is_written_in_place(
@@ -247,7 +247,13 @@ def test_a_store_taken_as_remote_is_written_in_place(
     # remote, so that the writer follows the branch of remote stores.
     from brainhops.io.images.zarr import _image as zarr_image
 
-    monkeypatch.setattr(zarr_image, "is_local", lambda location: False)
+    class RemotePath(zarr_image.Path):
+        __slots__ = ()
+
+        def is_local(self) -> bool:
+            return False
+
+    monkeypatch.setattr(zarr_image, "Path", RemotePath)
     monkeypatch.setattr(zarr_data, "_local", lambda location: False)
     path = str(tmp_path / "own.zarr")
     ZarrImage(data=DATA).save(path)

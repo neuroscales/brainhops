@@ -27,7 +27,7 @@ interpolation that formats store is sampled at its nodes, and a field
 that a format stores on a grid of its own is sampled on that grid
 ([`sample_on_grid`][]). Both are losses: [`held`][] then raises a
 [`LossyConversionError`][brainhops.errors.LossyConversionError] that
-carries the result, which `t.to(Format, lossy=True)` returns.
+carries the result, which `t.to(Format, on_loss="ignore")` returns.
 
 These helpers only take apart and check. Each converter decides, in one
 place, whether what they return is held exactly by its format. Every
@@ -584,7 +584,7 @@ def held(result: tx.Any, parts: FieldParts) -> tx.Any:
     it through this function. When the parts are not exact, the result
     is carried by a
     [`LossyConversionError`][brainhops.errors.LossyConversionError],
-    which `t.to(cls, lossy=True)` turns back into the result.
+    which `t.to(cls, on_loss="ignore")` turns back into the result.
 
     Parameters
     ----------
@@ -606,7 +606,7 @@ def held(result: tx.Any, parts: FieldParts) -> tx.Any:
     if parts.loss is not None:
         raise LossyConversionError(
             f"The {type(result).__name__} that this transformation converts "
-            f"to is not the same map: {parts.loss} Pass lossy=True to "
+            f"to is not the same map: {parts.loss} Pass on_loss='ignore' to "
             f"accept it.",
             result=result,
         )

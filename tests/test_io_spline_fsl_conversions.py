@@ -3,7 +3,7 @@
 Each test converts a transformation and checks that points inside the
 field of view map to the same positions before and after the
 conversion. An exact conversion is checked to the rounding of the
-arithmetic, and a lossy one, which needs `lossy=True`, to a loose
+arithmetic, and a lossy one, which needs `on_loss="ignore"`, to a loose
 tolerance. The FSL fixtures are those of `tests/data/fsl`, taken from
 fslpy (see `tests/data/fsl/ATTRIBUTION.md`).
 """
@@ -194,7 +194,7 @@ def test_a_fnirt_warp_without_its_images_names_the_missing_options(
 ) -> None:
     warp = io.load(path)
     with pytest.raises(ConversionError, match="moving="):
-        warp.to(NiftiRASDisplacementField, lossy=True)
+        warp.to(NiftiRASDisplacementField, on_loss="ignore")
 
 
 @pytest.mark.parametrize("path", [DENSE, COEFFICIENTS])
@@ -202,11 +202,11 @@ def test_the_images_of_a_fnirt_warp_are_conversion_options(path: str) -> None:
     warp = _load(path)
     plain = io.load(path)
     converted = plain.to(
-        NiftiRASDisplacementField, reference=REF, moving=SRC, lossy=True
+        NiftiRASDisplacementField, reference=REF, moving=SRC, on_loss="ignore"
     )
     assert type(converted) is NiftiRASDisplacementField
     assert plain.moving is None
-    expected = warp.to(NiftiRASDisplacementField, lossy=True)
+    expected = warp.to(NiftiRASDisplacementField, on_loss="ignore")
     assert _error(converted, expected) < EXACT
 
 
@@ -233,11 +233,13 @@ def test_a_fnirt_deformation_converts_to_a_dense_field(
     if relabels(warp, cls):
         pytest.skip(f"{cls.__name__} has no exact converter yet.")
     try:
-        converted = warp.to(cls, lossy=True)
+        converted = warp.to(cls, on_loss="ignore")
     except ConversionError as error:
         pytest.skip(f"{cls.__name__} refuses the warp: {error}")
     assert _error(converted, warp) < EXACT
-    back = converted.to(FnirtWarpField, reference=REF, moving=SRC, lossy=True)
+    back = converted.to(
+        FnirtWarpField, reference=REF, moving=SRC, on_loss="ignore"
+    )
     assert _error(back, warp) < EXACT
 
 
@@ -255,7 +257,7 @@ def test_a_fnirt_coefficient_field_is_sampled_on_the_reference() -> None:
     warp = _load(COEFFICIENTS)
     with pytest.raises(LossyConversionError):
         warp.to(NiftiRASDisplacementField)
-    nifti = warp.to(NiftiRASDisplacementField, lossy=True)
+    nifti = warp.to(NiftiRASDisplacementField, on_loss="ignore")
     shape = nb.load(REF).shape[:3]
     assert tuple(nifti.displacement.data.shape[:3]) == shape
     assert _error(nifti, warp) < LOOSE
@@ -283,7 +285,9 @@ def test_a_field_on_another_grid_is_sampled_into_fnirt() -> None:
     chain = _chain(shape=(9, 27, 12), degree=3)
     with pytest.raises(LossyConversionError):
         chain.to(FnirtWarpField, reference=REF, moving=SRC)
-    warp = chain.to(FnirtWarpField, reference=REF, moving=SRC, lossy=True)
+    warp = chain.to(
+        FnirtWarpField, reference=REF, moving=SRC, on_loss="ignore"
+    )
     assert _error(warp, chain) < LOOSE
 
 
@@ -300,7 +304,11 @@ def test_a_fnirt_coefficient_field_is_exact_on_its_own_knot_grid() -> None:
     with pytest.raises(LossyConversionError):
         nifti.to(FnirtWarpField, reference=REF, moving=SRC, knot_spacing=5)
     fitted = nifti.to(
-        FnirtWarpField, reference=REF, moving=SRC, knot_spacing=5, lossy=True
+        FnirtWarpField,
+        reference=REF,
+        moving=SRC,
+        knot_spacing=5,
+        on_loss="ignore",
     )
     assert _error(fitted, nifti) < COARSE
 
@@ -315,7 +323,7 @@ def test_fnirt_warps_written_by_save_read_back(
     if spacing is not None:
         conversion["knot_spacing"] = spacing
     path = str(tmp_path / "warp.nii.gz")
-    io.save(chain, path, hint="fnirt", lossy=True, conversion=conversion)
+    io.save(chain, path, hint="fnirt", on_loss="ignore", conversion=conversion)
     back = io.load(path, reference=REF, moving=SRC)
     assert type(back) is FnirtWarpField
     assert back.degree == (1 if spacing is None else 3)
@@ -359,19 +367,19 @@ def test_a_dense_field_is_interpolated_on_a_niftyreg_grid() -> None:
     chain = _chain()
     with pytest.raises(LossyConversionError):
         chain.to(NiftyRegControlPointGrid)
-    grid = chain.to(NiftyRegControlPointGrid, lossy=True)
+    grid = chain.to(NiftyRegControlPointGrid, on_loss="ignore")
     assert grid.degree == 3
     assert _error(grid, chain) < LOOSE
     linear = chain.to(NiftyRegControlPointGrid, degree=1)
     assert linear.degree == 1
     assert _error(linear, chain) < EXACT
-    coarse = chain.to(NiftyRegControlPointGrid, spacing=6.0, lossy=True)
+    coarse = chain.to(NiftyRegControlPointGrid, spacing=6.0, on_loss="ignore")
     assert _error(coarse, chain) < LOOSE
 
 
 def test_a_niftyreg_grid_converts_to_a_dense_field() -> None:
     grid = _chain(degree=3).to(NiftyRegControlPointGrid)
-    nifti = grid.to(NiftiRASDisplacementField, lossy=True)
+    nifti = grid.to(NiftiRASDisplacementField, on_loss="ignore")
     assert _error(nifti, grid) < LOOSE
     with pytest.raises(LossyConversionError):
         grid.to(NiftiRASDisplacementField)
@@ -388,7 +396,7 @@ def test_a_velocity_is_held_by_a_niftyreg_velocity_grid() -> None:
     grid = velocity.to(NiftyRegVelocityGrid)
     assert _error(grid, velocity) < EXACT
     dense = _chain(log=True)
-    fitted = dense.to(NiftyRegVelocityGrid, lossy=True)
+    fitted = dense.to(NiftyRegVelocityGrid, on_loss="ignore")
     assert _error(fitted, dense) < LOOSE
     with pytest.raises(ConversionError, match="logarithm"):
         _chain(degree=3).to(NiftyRegVelocityGrid)
@@ -458,7 +466,10 @@ def test_a_fnirt_spline_is_chained_in_elastix_files(tmp_path) -> None:  # noqa: 
     back = io.load(path)
     assert _error(back, warp) < EXACT
     assert _error(back.to(NiftyRegControlPointGrid), warp) < EXACT
-    assert _error(back.to(NiftiRASDisplacementField, lossy=True), warp) < 1.0
+    assert (
+        _error(back.to(NiftiRASDisplacementField, on_loss="ignore"), warp)
+        < 1.0
+    )
 
 
 def test_an_affine_alone_is_the_initial_affine_of_a_fnirt_spline() -> None:
@@ -476,7 +487,7 @@ def test_an_affine_alone_is_the_initial_affine_of_a_fnirt_spline() -> None:
 @pytest.mark.parametrize("degree", [1, 3])
 def test_a_field_is_an_elastix_bspline(degree: int) -> None:
     chain = _chain(degree=degree)
-    nifti = chain.to(NiftiRASDisplacementField, lossy=True)
+    nifti = chain.to(NiftiRASDisplacementField, on_loss="ignore")
     for source in (chain, nifti) if degree == 1 else (chain,):
         converted = source.to(ElastixParameterTransform)
         block = converted.transformations[-1]
@@ -544,3 +555,56 @@ def test_images_given_to_save_select_the_fsl_format(
     assert type(io.load(path)) is NiftiRASDisplacementField
     io.save(_chain(), path, hint="fnirt", conversion=conversion)
     assert type(io.load(path)) is FnirtWarpField
+
+
+def test_on_loss_of_save_chooses_how_a_lossy_format_is_taken(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    import warnings
+
+    from brainhops.datamodel.metadata import ConversionReport
+    from brainhops.errors import ConversionWarning, WriterError
+
+    chain = _chain(degree=3)
+    conversion = {"reference": REF, "moving": SRC}
+    # Only formats that lose the cubic spline can hold the chain, so the
+    # default refuses each of them.
+    with pytest.raises(WriterError):
+        io.save(
+            chain,
+            str(tmp_path / "a.nii.gz"),
+            hint="fnirt",
+            conversion=conversion,
+        )
+    with pytest.warns(ConversionWarning):
+        io.save(
+            chain,
+            str(tmp_path / "b.nii.gz"),
+            hint="fnirt",
+            on_loss="warn",
+            conversion=conversion,
+        )
+    assert os.path.exists(tmp_path / "b.nii.gz")
+    report = ConversionReport()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConversionWarning)
+        io.save(
+            chain,
+            str(tmp_path / "c.nii.gz"),
+            hint="fnirt",
+            on_loss=report,
+            conversion=conversion,
+        )
+    assert len(report.errors) == 1
+    assert isinstance(report.errors[0], LossyConversionError)
+    # A value takes the place of the loss when only lossy formats remain.
+    marker = object()
+    returned = io.save(
+        chain,
+        str(tmp_path / "d.nii.gz"),
+        hint="fnirt",
+        on_loss=marker,
+        conversion=conversion,
+    )
+    assert returned is marker
+    assert not os.path.exists(tmp_path / "d.nii.gz")

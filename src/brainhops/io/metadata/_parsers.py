@@ -5,6 +5,7 @@ __all__ = ["MetadataReader", "MetadataWriter"]
 import typing_extensions as tx
 
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     FileReader,
     FileWriter,
@@ -393,6 +394,7 @@ class MetadataWriter(FileWriter):
             )
         return self.raw
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the file of the record to an open file.
 
@@ -405,6 +407,7 @@ class MetadataWriter(FileWriter):
         """
         self._record_to_write().to_fileobj(file, **kwargs)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the file of the record.
 
@@ -420,6 +423,7 @@ class MetadataWriter(FileWriter):
         """
         return self._record_to_write().to_bytes(**kwargs)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file of the record.
 
@@ -435,6 +439,7 @@ class MetadataWriter(FileWriter):
         """
         return self._record_to_write().to_text(**kwargs)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Return the lines of the file of the record.
 

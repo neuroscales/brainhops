@@ -10,6 +10,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
+from brainhops._core import path
 from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import Internal
@@ -41,7 +42,7 @@ class _StackProxy(StoredProxy):
 
     # --- magic attributes ----
 
-    folder: tx.Any
+    folder: path.Path
     """The path of the folder that holds the files."""
 
     record: NoRepr[StackRaw]
@@ -153,7 +154,7 @@ class _StackProxy(StoredProxy):
         if not os.path.isfile(filename):
             raise ParserContentError(
                 f"The file {member.name!r} of the stack in "
-                f"{self.folder!r} no longer exists."
+                f"{str(self.folder)!r} no longer exists."
             )
         values = _read_file(filename, member)
         if tuple(values.shape) != member.shape or values.dtype != np.dtype(

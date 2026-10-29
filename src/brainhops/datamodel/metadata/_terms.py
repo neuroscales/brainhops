@@ -343,11 +343,10 @@ def _linear_part(linear: tx.Any) -> np.ndarray:
     # Not at the top: the transformations import the metadata (their
     # `metadata` field), which imports this module.
     from .._transformations.base import Transformation
-    from .._transformations.multiscale import _as_affine
 
     if not isinstance(linear, Transformation):
         return np.asarray(linear, dtype=float)
-    affine = _as_affine(linear)
+    affine = linear.to_affine(on_error=None)
     if affine is None:
         raise TypeError(
             f"A direction is mapped by a linear map; {type(linear).__name__} "

@@ -1,20 +1,16 @@
 """The JPEG 2000 image format: every resolution level of a file."""
 
-# stdlib
-import os
-
 # dependencies
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import cached_value, smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -301,20 +297,19 @@ class Jpeg2000MultiScaleImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         container: tx.Optional[str] = None,
         num_resolutions: tx.Optional[int] = None,
         comment: tx.Optional[str] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options,
     ) -> "Jpeg2000MultiScaleImage":
         """Encode the full-resolution level and the placements of the pyramid.
 
         The pyramid is consolidated through its full-resolution level, as
-        [`Jpeg2000Image.consolidate`][] describes, with the record of the
+        `Jpeg2000Image._consolidate` describes, with the record of the
         pyramid as the base of the new file. The transformation of that
         level is composed with the preferred placement of the pyramid, if
         it has one. A pyramid of another number of levels than its file is
@@ -332,9 +327,9 @@ class Jpeg2000MultiScaleImage(
         levels are decoded from the new record.
 
         The metadata of the pyramid, which its levels share, is
-        consolidated by that of the full-resolution level, with the fields
-        given by keyword, and a field that the record cannot hold is
-        reported as lost, once, by `on_loss`.
+        consolidated by that of the full-resolution level, with the
+        fields given by keyword, and a field that the record cannot hold
+        is reported as lost, once, under the error policy of the call.
 
         Parameters
         ----------
@@ -342,18 +337,15 @@ class Jpeg2000MultiScaleImage(
             Whether to change this pyramid rather than a copy.
         container : {"jp2", "j2k"}, optional
             The container of the file, as for
-            [`Jpeg2000Image.consolidate`][].
+            `Jpeg2000Image._consolidate`.
         num_resolutions : int, optional
             The number of resolution levels to encode, by default the
             number of levels of the pyramid.
         comment : str, optional
             The comment of the file, in place of those of the record.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **options : Any
             Options of the JPEG 2000 writer of Pillow, and fields of the
-            metadata, as for [`Jpeg2000Image.consolidate`][].
+            metadata, as for `Jpeg2000Image._consolidate`.
 
         Returns
         -------
@@ -382,7 +374,6 @@ class Jpeg2000MultiScaleImage(
             container=container,
             num_resolutions=num_resolutions,
             comment=comment,
-            on_loss=on_loss,
             **options,
         )
         if level.rawdata is self.rawdata and level.metadata is self.metadata:
@@ -405,6 +396,7 @@ class Jpeg2000MultiScaleImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the JPEG 2000 file of the pyramid.
 
@@ -429,6 +421,7 @@ class Jpeg2000MultiScaleImage(
         """
         return _written(self.consolidate(**kwargs))
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the JPEG 2000 file of the pyramid to a stream.
 
@@ -446,6 +439,7 @@ class Jpeg2000MultiScaleImage(
             kwargs["container"] = _container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the pyramid to a path.
 
@@ -465,15 +459,18 @@ class Jpeg2000MultiScaleImage(
         **kwargs : Any
             The options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         if kwargs.get("container") is None:
             kwargs["container"] = _container_for_name(filename)
         if not _reads_file(self.rawdata, filename):
-            atomic_write_bytes(filename, self.to_bytes(**kwargs))
+            filename.write_bytes(
+                self.to_bytes(**kwargs), atomic=filename.is_local()
+            )
             return
         self.consolidate(inplace=True, **kwargs)
-        atomic_write_bytes(filename, _written(self))
+        filename.write_bytes(_written(self), atomic=filename.is_local())
         self.rawdata = _Jpeg2000Proxy(
-            _Jpeg2000Source(filename=os.fspath(filename)),
+            _Jpeg2000Source(filename=filename),
             self.metadata.raw,
             0,
         )

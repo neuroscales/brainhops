@@ -56,7 +56,7 @@ def test_a_changed_field_is_written_into_a_copy() -> None:
     meta = _read()
     report = ConversionReport()
     copy = meta.consolidate(
-        echo_time=0.03, extra={"Other": 2}, description=None, on_loss=report
+        echo_time=0.03, extra={"Other": 2}, description=None, on_error=report
     )
     assert not report.lossy
     assert copy.raw.nodes[0].metadata == {
@@ -82,7 +82,7 @@ def test_which_transform_holds_the_vocabulary() -> None:
     )
     assert composed.description is None
     report = ConversionReport()
-    copy = composed.consolidate(description="c", on_loss=report)
+    copy = composed.consolidate(description="c", on_error=report)
     assert report.lost == {"description": "c"}
     assert copy.raw is not composed.raw
     assert [n.metadata for n in copy.raw.nodes] == [
@@ -91,7 +91,7 @@ def test_which_transform_holds_the_vocabulary() -> None:
     ]
     # A record is never given a transform to hold the fields.
     report = ConversionReport()
-    assert X5Metadata(description="d").consolidate(on_loss=report).raw is None
+    assert X5Metadata(description="d").consolidate(on_error=report).raw is None
     assert report.lost == {"description": "d"}
 
 
@@ -99,7 +99,7 @@ def test_metadata_that_is_not_json_is_replaced() -> None:
     meta = X5Metadata.from_raw(_raw("not json"))
     assert meta.description is None
     report = ConversionReport()
-    copy = meta.consolidate(description="d", on_loss=report)
+    copy = meta.consolidate(description="d", on_error=report)
     assert set(report.approximated) == {"extra"}
     assert copy.raw.nodes[0].metadata == {"Description": "d"}
 

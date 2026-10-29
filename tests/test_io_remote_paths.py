@@ -16,6 +16,7 @@ import brainhops.io as io
 from brainhops._core import path
 from brainhops._core.dependencies import has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base import FileFormat
 from brainhops.io.base._base import (
     is_format_registry,
@@ -158,6 +159,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
     """Two text note formats, .n and .long.n, registered for one test."""
 
     def make(name: str, extensions: tx.Tuple[str, ...]) -> type:
+        @takes_error_policy
         def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
             yield f"{name}:{self.text}"
 
@@ -190,25 +192,18 @@ def test_from_other_reads_a_remote_path_rather_than_building() -> None:
     assert RemotePath.fspath_calls == 0
 
 
-def _save_in_memory(save: tx.Callable[[], object]) -> None:
-    """Run the first write to `memory://`, or skip the test.
-
-    The TensorStore driver of abczarr, the only Zarr driver available on
-    Python 3.8, refuses `memory://` locations, because the memory store of
-    TensorStore is not the memory file system of fsspec.
-    """
-    from abczarr.errors import UnsupportedZarrOperation
-
-    try:
-        save()
-    except UnsupportedZarrOperation as error:
-        pytest.skip(f"the Zarr driver cannot write to memory://: {error}")
+# Only the zarr-python driver of abczarr writes to `memory://`. The
+# TensorStore driver refuses such locations, because the memory store of
+# TensorStore is not the memory file system of fsspec, so the tests that
+# write to `memory://` ask for the zarr-python driver by name.
+ZARR_PYTHON = "zarr-python"
 
 
 @pytest.mark.skipif(not has_abczarr_driver(), reason="needs a zarr driver")
 def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
     # fsspec memory storage stands in for the cloud.
     pytest.importorskip("upath")
+    pytest.importorskip("zarr")
     from bagof.paths import Path
 
     from brainhops.datamodel.images import SingleScaleImage
@@ -216,7 +211,7 @@ def test_a_zarr_store_round_trips_through_in_memory_storage() -> None:
 
     data = np.arange(8, dtype="float32").reshape(2, 2, 2)
     store = Path("memory://brainhops-tests/remote.zarr")
-    _save_in_memory(lambda: io.save(SingleScaleImage(data=data), store))
-    back = io.images.ImageFormat.from_any(store)
+    io.save(SingleScaleImage(data=data), store, driver=ZARR_PYTHON)
+    back = io.images.ImageFormat.from_any(store, driver=ZARR_PYTHON)
     assert isinstance(back, ZarrImage)
     assert np.array_equal(np.asarray(back.data), data)

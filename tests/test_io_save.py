@@ -20,6 +20,7 @@ import brainhops.io as io
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.systems import LPSmm, RASmm
 from brainhops.datamodel.transformations import (
     Affine,
@@ -82,6 +83,7 @@ class OtherNote(DataModelBase):
 def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
     """A text format for `model`, writing the text after a tag."""
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
         yield f"{name}:{kwargs.get('suffix', '')}{self.text}"
 
@@ -730,6 +732,7 @@ def test_an_image_is_written_to_an_open_named_file(tmp_path) -> None:  # noqa: A
 def _raising(error: Exception) -> tx.Callable[..., tx.Iterator[str]]:
     """A `to_lines` that raises `error` after the first line is written."""
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
         yield "partial"
         raise error

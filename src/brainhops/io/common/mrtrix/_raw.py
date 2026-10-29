@@ -10,6 +10,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.streams import open_compressed, preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -442,6 +443,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
             return Confidence.LIKELY
         return _declined(error, failure)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header as the file stores it.
 
@@ -469,6 +471,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
             return self.embedded()
         return self.to_text().encode("utf-8")
 
+    @takes_error_policy
     def to_lines(
         self, file: tx.Optional[tx.Tuple[str, tx.Optional[int]]] = None
     ) -> tx.List[str]:
@@ -515,6 +518,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         lines.append(_END)
         return lines
 
+    @takes_error_policy
     def to_text(self, *args, **kwargs) -> str:
         """Return the header text, terminated by a newline.
 

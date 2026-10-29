@@ -145,7 +145,7 @@ def _versor_rigid_3d(
 def test_versor_rigid_3d_applies_its_translation() -> None:
     """The rotation acts about the center, then the translation applies."""
     block = _versor_rigid_3d((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
-    matrix = block.compute().to(xforms.Affine, lossy=True).matrix
+    matrix = block.compute().to(xforms.Affine, on_loss="ignore").matrix
     assert np.allclose(np.asarray(matrix)[:, :3], np.eye(3))
     assert np.allclose(np.asarray(matrix)[:, 3], [1.0, 2.0, 3.0])
 
@@ -165,7 +165,9 @@ def test_versor_rigid_3d_folds_a_real_rotation_about_its_center() -> None:
     )
 
     block = _versor_rigid_3d(versor, translation, center)
-    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    matrix = np.asarray(
+        block.compute().to(xforms.Affine, on_loss="ignore").matrix
+    )
     assert np.allclose(matrix[:, :3], rotation)
     assert np.allclose(matrix[:, 3], center + translation - rotation @ center)
 
@@ -175,7 +177,9 @@ def test_versor_tolerates_a_rounded_unit_versor() -> None:
     block = _versor_rigid_3d(
         (1.0000000002, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
     )
-    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    matrix = np.asarray(
+        block.compute().to(xforms.Affine, on_loss="ignore").matrix
+    )
     assert np.allclose(matrix[:, :3], np.diag([1.0, -1.0, -1.0]))
 
     too_long = _versor_rigid_3d(
@@ -281,7 +285,9 @@ def test_euler_3d_composes_its_angles_the_way_itk_does(name: str) -> None:
     block = TfmTransform.from_file(data_dir / f"{name}.tfm")[0]
     assert block.type == itk.ItkTransformClass.Euler3DTransform
 
-    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    matrix = np.asarray(
+        block.compute().to(xforms.Affine, on_loss="ignore").matrix
+    )
     np.testing.assert_allclose(
         matrix, np.load(data_dir / f"{name}_expected.npy"), atol=1e-12
     )
@@ -312,7 +318,9 @@ def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
     )
     assert legacy.compute_zyx is False
     np.testing.assert_allclose(
-        np.asarray(legacy.compute().to(xforms.Affine, lossy=True).matrix),
+        np.asarray(
+            legacy.compute().to(xforms.Affine, on_loss="ignore").matrix
+        ),
         np.load(data_dir / "itk_euler3d_expected.npy"),
         atol=1e-12,
     )
@@ -668,7 +676,9 @@ def test_similarity_2d_composes_the_expected_affine() -> None:
     )
 
     block = _similarity_2d(scale, angle, translation, center)
-    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    matrix = np.asarray(
+        block.compute().to(xforms.Affine, on_loss="ignore").matrix
+    )
     assert matrix.shape == (2, 3)
     np.testing.assert_allclose(matrix[:, :2], linear)
     np.testing.assert_allclose(
@@ -685,7 +695,9 @@ def test_similarity_3d_composes_the_expected_affine() -> None:
     linear = scale * _versor_matrix(versor)
 
     block = _similarity_3d(scale, versor, translation, center)
-    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    matrix = np.asarray(
+        block.compute().to(xforms.Affine, on_loss="ignore").matrix
+    )
     assert matrix.shape == (3, 4)
     np.testing.assert_allclose(matrix[:, :3], linear)
     np.testing.assert_allclose(
@@ -736,7 +748,7 @@ def _itk_order(points: np.ndarray) -> np.ndarray:
 
 def _apply(transform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
     matrix = np.asarray(
-        transform.compute().to(xforms.Affine, lossy=True).matrix
+        transform.compute().to(xforms.Affine, on_loss="ignore").matrix
     )
     return points @ matrix[:, :-1].T + matrix[:, -1]
 

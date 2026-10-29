@@ -135,7 +135,7 @@ def test_the_constant_names_fields_of_the_vocabulary(cls) -> None:  # noqa: ANN0
 def test_the_losses_are_the_complement_of_the_constant(cls) -> None:  # noqa: ANN001
     unsupported = set(FIELDS) - set(cls.SUPPORTED_FIELDS)
     lower = ConversionReport()
-    converted = HUB.to(cls, on_loss=lower)
+    converted = HUB.to(cls, on_error=lower)
     assert set(lower.lost) == unsupported
     # The conversion carries every value; the consolidation drops them.
     for name in VOCABULARY:
@@ -143,7 +143,7 @@ def test_the_losses_are_the_complement_of_the_constant(cls) -> None:  # noqa: AN
     exact = ConversionReport()
     fields = {name: FULL[name] for name in FIELDS}
     fresh = cls.from_raw(FORMATS[cls]())
-    consolidated = fresh.consolidate(on_loss=exact, **fields)
+    consolidated = fresh.consolidate(on_error=exact, **fields)
     assert set(exact.lost) == unsupported
     assert set(exact.approximated) == GEOMETRY.get(cls, set())
     for name in sorted(set(cls.SUPPORTED_FIELDS) - GEOMETRY.get(cls, set())):
@@ -153,7 +153,7 @@ def test_the_losses_are_the_complement_of_the_constant(cls) -> None:  # noqa: AN
         assert getattr(consolidated, name) == expected, name
     # And back: nothing is lost on the way to generic metadata.
     back = ConversionReport()
-    generic = consolidated.to(Metadata, on_loss=back)
+    generic = consolidated.to(Metadata, on_error=back)
     assert not back.lossy
     for name in FIELDS:
         assert getattr(generic, name) == getattr(consolidated, name), name

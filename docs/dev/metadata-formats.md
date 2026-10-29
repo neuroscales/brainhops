@@ -15,7 +15,7 @@ package of the format. It holds the record of the file, `<X>Raw`, in its
 `raw` field, and it holds the vocabulary in the fields that it inherits
 from `Metadata`. A format that stores a vocabulary adds four things to
 its class: the constant `SUPPORTED_FIELDS`, a `from_raw` that decodes
-the record, a `consolidate` that encodes the fields that changed, and
+the record, a `_consolidate` that encodes the fields that changed, and
 two module-level functions that do the work, `_decode` and `_encode`.
 NIfTI (`io/common/nifti/_metadata.py` and `_vocabulary.py`), MGH
 (`io/common/mgh/_metadata.py`) and X5
@@ -36,7 +36,7 @@ it.
 |---|---|
 | `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `FIELDS`, `GROUPS`, `BIDS_KEYS`, `SCOPES` and `ALONG` |
 | `brainhops.datamodel.metadata._derive` | `Indexed` and `Resampled`, which an image operation builds for `derive` |
-| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `OnLoss` and `LossPolicy` |
+| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `call_under_policy`, `takes_error_policy`, `OnLoss` and `LossPolicy` |
 | `brainhops.io.metadata._base` | `consolidated`, `lost_fields` and `unsupported_values`, and, for the format objects, `metadata_to_write`, `requested_fields`, `overruled_fields` and `metadata_options` |
 | `brainhops.io.metadata._json` | the codec of the JSON stores, which BIDS and X5 share |
 | `brainhops.io.metadata._storage` | `preferred_storage` and `stored_values` |
@@ -60,15 +60,15 @@ class MyMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
     def from_raw(cls, raw, **kwargs):
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    def consolidate(self, *, inplace=False, on_loss=None, **fields):
+    def _consolidate(self, *, inplace=False, **fields):
         return consolidated(
-            self,
-            _encode,
-            MyRaw,
-            inplace=inplace,
-            on_loss=on_loss,
-            fields=fields,
+            self, _encode, MyRaw, inplace=inplace, fields=fields
         )
+
+    @takes_error_policy
+    def to_bytes(self, **fields):
+        raw = self.consolidate(**fields).raw
+        return (MyRaw() if raw is None else raw).to_bytes()
 ```
 
 The record class `MyRaw` already scores and reads a file, so the
@@ -96,7 +96,7 @@ empty, holds `None`. Readers call `from_raw` once per read, and the
 format objects call it when they consolidate, so the decoding must be
 cheap and must not read the data of the file.
 
-`consolidate` hands the encoder of the format to `consolidated`, with a
+`_consolidate` hands the encoder of the format to `consolidated`, with a
 function that builds an empty record for metadata that has none, or
 `None` when the format never makes up a record, as X5 does, because its
 vocabulary lives in a transform. `consolidated` follows the contract of
@@ -106,24 +106,50 @@ the record when nothing differs, encodes the changes into a copy of the
 record otherwise, reports what is lost and approximated, and decodes the
 result afresh, so that a second consolidation changes nothing.
 
+A format never declares the keywords `on_error=` and `on_loss=`, which
+say what happens to what a file cannot hold (see
+[`ErrorPolicy`][brainhops.errors.ErrorPolicy]). The public
+`consolidate`, which the format inherits, takes them, applies the
+policy with `call_under_policy`, and calls `_consolidate` under it. A
+writer gets them from the decorator `takes_error_policy`, which the
+format puts above each writer method that it defines or overrides, as
+the `to_bytes` of the example does. The writer methods are `save`,
+`to_file`, `to_filename`, `to_fileobj`, `to_bytes`, `to_text`,
+`to_lines` and `to_h5`. The decorator removes the two keywords and
+applies the policy around the method, so the method neither declares
+nor documents them. A test of the suite fails when a writer method of
+a class under `brainhops.io` lacks the decorator.
+
+While the body of `_consolidate` or of a writer runs, the action that
+the policy takes for a loss of metadata is the policy in effect, and
+`consolidated` and `apply_loss_policy` act on a loss where it happens
+by reading that policy. The body therefore passes no policy to the
+methods that it calls, and a method called without a policy follows
+the policy of the call that the user made. This includes an override
+that calls the writer of its base class with `super()`. A value to
+return in place of the result, such as `on_error=None`, is applied
+once, by that outermost call.
+
 The writers of the metadata, `to_bytes`, `to_filename` or `to_h5`,
 consolidate first and write the record of the copy, and they take the
-same overrides and `on_loss=` as `consolidate`. The metadata itself is
-never changed by a write.
+same overrides as `consolidate`. The metadata itself is never changed
+by a write.
 
 An image or a transformation of the format consolidates its metadata
 first, as step 2 of the precedence on write, whether or not the format
-stores a vocabulary. Its `consolidate` takes `on_loss=` and the fields
-of the metadata by keyword. It asks `requested_fields` which fields the
+stores a vocabulary. Its `_consolidate` takes the fields of the
+metadata by keyword. It asks `requested_fields` which fields the
 write is asked to store, consolidates the metadata with
 `metadata_to_write` and the report of the write, encodes its geometry
 and its data over the record of the result, and acts on the report once
 with `apply_loss_policy`. A format whose model owns a slot, such as the
 time step of a NIfTI image, reports a field that it encoded over with
-`overruled_fields`. A writer that writes the record of a consolidated
-copy splits its options with `metadata_options`, so that `on_loss` and
-the fields go to `consolidate` and the other options to the writer of
-the record.
+`overruled_fields`. A format that holds no record does not define
+`_consolidate`, because the hook of the common base has nothing to
+encode: it returns the object unchanged, and it reports each field
+given by keyword as lost with `apply_loss_policy`. A writer that writes the record of a consolidated
+copy splits its options with `metadata_options`, so that the fields go
+to `consolidate` and the other options to the writer of the record.
 
 ## The codec
 

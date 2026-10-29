@@ -9,6 +9,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, HideIfNone, Magic
 
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -172,6 +173,7 @@ class H5Raw(Raw, Hdf5ReaderWriter):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the record into an empty HDF5 file open for writing.
 

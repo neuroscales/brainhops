@@ -32,8 +32,8 @@ and the affines on either side of a field are carried into its values
 when they do not undo each other. A field interpolated with another
 degree than 1 is sampled at its nodes, and a field on an oblique grid
 is sampled on the nearest cardinal grid. Both are losses: the converter
-raises a `LossyConversionError`, and `t.to(Format, lossy=True)` returns
-the sampled field.
+raises a `LossyConversionError`, and `t.to(Format, on_loss="ignore")`
+returns the sampled field.
 
 A conversion to an `AfniBrikWarp` takes no option, and a conversion to
 an `AfniNiftiWarp` takes `metadata=`, since every other option would

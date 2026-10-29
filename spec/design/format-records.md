@@ -6,7 +6,9 @@ three passes and the design of pending data and `consolidate()` are
 merged, and the fourth pass is in progress. The plain matrix formats
 and the NiftyReg affine are moved on the model of LTA (items 300 to
 306). The fifth pass, which brings the vocabulary of #233, is in
-progress, and its first part is #310.
+progress, and its first part is #310. The `on_loss=` keyword that this
+memo names is now the half of an error policy that concerns losses,
+beside `on_error=` (see `error-policy.md`, #590).
 
 A file format in brainhops is a class that reads and writes one kind of
 file, such as a NIfTI image or an LTA transformation. This memo decides
@@ -2384,14 +2386,18 @@ pyramid of the conformance test and the checks P1 to P12.
      `io.save`, writes it. Assigning the list of levels keeps the change
      everywhere. Status: open, together with item 191.
 296. `replace_directory` (`_core/path.py`) cannot exchange two
-     directories in one step. It moves the old directory aside and then
+     directories in one step. It is built on the method `staged` of
+     bagof-paths 0.3.2, which moves the old directory aside and then
      the new one into place, so a reader that opens the target between
      the two moves finds no directory, but never a half-written one. The
-     old directory is moved back when the second move fails. The new
-     directory has a hidden name that ends like the name of the target,
-     as the new file of `replace_file` has, so that a library that chooses
-     an encoding from the suffix of a name chooses the same. Status:
-     accepted in pass 4a.
+     old directory is moved back when the second move fails. When even
+     that fails, nothing is removed: the old directory stays in a hidden
+     directory of its own beside the target, and the error names it
+     (bagofseeds/bagof-paths#57). A directory never replaces a file. The
+     new directory is filled in a hidden staging directory beside the
+     target and has the name of the target, so that a library that
+     chooses an encoding from the suffix of a name chooses the same.
+     Status: accepted in pass 4a, and implemented.
 297. The conformance harness has a new field, `Exemplar.container`, which
      says whether an object is stored in a file or in a directory. The
      metadata of a directory writes no bytes, so checks 7 and 10 compare

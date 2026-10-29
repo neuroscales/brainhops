@@ -19,7 +19,6 @@ __all__ = ["BidsSidecar", "from_bids", "to_bids"]
 
 # stdlib
 import json
-import os
 
 # externals
 import typing_extensions as tx
@@ -27,14 +26,20 @@ from bagof.magic import Field, NoRepr
 
 # internals
 from brainhops._core import path
+from brainhops._core.errors import UNSET
 from brainhops.datamodel.metadata import (
     ConversionReport,
     DiffusionVocabulary,
     EncodingDirection,
     Metadata,
 )
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    call_under_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import GROUPS, VOCABULARY
+from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -107,16 +112,15 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         """
         return cls(raw=raw, **{**_decode(raw), **kwargs})
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "BidsSidecar":
         """Encode the fields that differ from the JSON object into a copy.
 
-        The contract is that of [`MetadataFormat.consolidate`][]: the
+        The contract is that of `consolidated`: the
         changes are written into a copy of the object, or into a new
         object, and the result is decoded from it afresh.
 
@@ -124,9 +128,6 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         ----------
         inplace : bool, default=False
             Whether to change this metadata rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that a sidecar cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields to override before the encoding.
 
@@ -147,7 +148,6 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             _encode,
             dict,
             inplace=inplace,
-            on_loss=on_loss,
             fields=fields,
         )
 
@@ -218,7 +218,11 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
             raise ValueError("A BIDS sidecar is a JSON object.")
         return cls.from_raw(obj)
 
-    def to_text(self, *, on_loss: tx.Optional[OnLoss] = None, **fields) -> str:
+    @takes_error_policy
+    def to_text(
+        self,
+        **fields,
+    ) -> str:
         """Return the JSON text of the consolidated sidecar.
 
         The metadata is consolidated first, so a field that was changed
@@ -226,8 +230,6 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
 
         Parameters
         ----------
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that a sidecar cannot hold.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -236,18 +238,18 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         str
             The JSON text, indented by two spaces.
         """
-        record = self.consolidate(on_loss=on_loss, **fields).raw
+        record = self.consolidate(**fields).raw
         return json.dumps({} if record is None else record, indent=2) + "\n"
 
+    @takes_error_policy
     def to_lines(
-        self, *, on_loss: tx.Optional[OnLoss] = None, **fields
+        self,
+        **fields,
     ) -> tx.Iterator[str]:
         """Return the lines of the JSON text of the consolidated sidecar.
 
         Parameters
         ----------
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the fields that a sidecar cannot hold.
         **fields : Any
             Fields to override, as in [`consolidate`][].
 
@@ -256,7 +258,7 @@ class BidsSidecar(TextFileReader, TextFileWriter, MetadataFormat):
         iterator of str
             The lines of [`to_text`][], without terminators.
         """
-        return iter(self.to_text(on_loss=on_loss, **fields).splitlines())
+        return iter(self.to_text(**fields).splitlines())
 
 
 def from_bids(source: tx.Any) -> Metadata:
@@ -281,7 +283,8 @@ def from_bids(source: tx.Any) -> Metadata:
 def to_bids(
     metadata: Metadata,
     *,
-    on_loss: tx.Optional[OnLoss] = None,
+    on_error: ErrorPolicy = UNSET,
+    on_loss: ErrorAction = UNSET,
 ) -> tx.Dict[str, tx.Any]:
     """
     Write metadata as the JSON object of a BIDS sidecar.
@@ -290,10 +293,17 @@ def to_bids(
     ----------
     metadata : Metadata
         The metadata to write. Only its vocabulary and `extra` are used.
-    on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+    on_error : ErrorPolicy, optional
         What to do with the fields a sidecar cannot hold (the diffusion
-        fields, an encoding direction along no voxel axis). By default,
-        the policy in effect; a `ConversionReport` is filled instead.
+        fields, an encoding direction along no voxel axis), and with any
+        other error (see [`ErrorPolicy`][brainhops.errors.ErrorPolicy]).
+        By default, an error is raised, and a loss follows the policy in
+        effect. A report, `ConversionReport`, is filled instead of
+        warning or raising.
+    on_loss : ErrorAction, optional
+        What to do with a loss of metadata, with the same values as a
+        single action of `on_error`, over which it takes precedence for
+        a loss. By default, a loss falls under `on_error`.
 
     Returns
     -------
@@ -305,11 +315,17 @@ def to_bids(
     MetadataLossError
         If a field is reported under the `"raise"` policy.
     """
-    report = ConversionReport()
-    sidecar = BidsSidecar.from_instance(metadata, on_loss=report)
-    record = sidecar.consolidate(on_loss=report).raw
-    apply_loss_policy(report, on_loss, stacklevel=2)
-    return {} if record is None else record
+
+    def write() -> tx.Dict[str, tx.Any]:
+        # The copy and the consolidation fill one report, on which the
+        # policy then acts once.
+        report = ConversionReport()
+        sidecar = BidsSidecar.from_instance(metadata, on_loss=report)
+        record = sidecar.consolidate(on_loss=report).raw
+        apply_loss_policy(report, stacklevel=2)
+        return {} if record is None else record
+
+    return call_under_policy(write, on_error, on_loss=on_loss)
 
 
 # ----------------------------------------------------------------------
@@ -358,8 +374,9 @@ def _read(source: tx.Any) -> tx.Dict[str, tx.Any]:
         return dict(source)
     if isinstance(source, str) and source.lstrip().startswith("{"):
         return json.loads(source)
-    if isinstance(source, (str, os.PathLike, path.PathLike)):
-        with path.Path(source).open("r") as f:
+    source = path.as_path_or_stream(source)
+    if isinstance(source, path.Path):
+        with source.open("r") as f:
             return json.load(f)
     if hasattr(source, "read"):
         return json.load(source)

@@ -26,6 +26,7 @@ if not features.check("jpg_2000"):  # pragma: no cover
     pytest.skip("Pillow was built without OpenJPEG", allow_module_level=True)
 
 import brainhops.io as bio  # noqa: E402
+from brainhops._core import path as path_module  # noqa: E402
 from brainhops._core.backends import backend  # noqa: E402
 from brainhops.datamodel.images import (  # noqa: E402
     MultiScaleImage,
@@ -654,12 +655,12 @@ def test_a_multiscale_image_writes_its_metadata_over_its_level() -> None:
     # The metadata of the pyramid is written, and the field that the
     # record cannot hold is reported as lost.
     report = ConversionReport(source="a", target="b")
-    copy = pyramid.consolidate(on_loss=report)
+    copy = pyramid.consolidate(on_error=report)
     assert list(report.lost) == ["flip_angle"]
     assert copy.metadata.raw.comments == ("pyramid",)
     np.testing.assert_array_equal(np.asarray(copy.data), RAMP.T)
     with pytest.raises(MetadataLossError):
-        pyramid.consolidate(on_loss="raise")
+        pyramid.consolidate(on_error="raise")
 
 
 def test_a_multiscale_image_written_with_its_placement(
@@ -705,7 +706,7 @@ def test_a_pyramid_saved_over_its_own_file(tmp_path: Path) -> None:
     pyramid = load(path, pixel_size=0.5, unit="mm")
     pyramid.save(path)
     assert pyramid._images is None
-    assert pyramid.rawdata.source.is_file(path)
+    assert pyramid.rawdata.source.is_file(path_module.Path(path))
     np.testing.assert_allclose(
         pyramid.images[1].transformation.scale, [1.0, 1.0]
     )

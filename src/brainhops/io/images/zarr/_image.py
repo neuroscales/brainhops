@@ -8,7 +8,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # core
 from brainhops._core.dependencies import da
-from brainhops._core.path import is_local, replace_directory
+from brainhops._core.path import Path, replace_directory
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -16,9 +16,13 @@ from brainhops._core.typing import ArrayProtocol
 # internals
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.datamodel.transformations import Transformation
-from brainhops.errors import UnrepresentableTransformationError
+from brainhops.errors import (
+    UnrepresentableTransformationError,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -284,7 +288,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
 
     # --- consolidate --------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
@@ -297,7 +301,6 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         fill_value: tx.Optional[tx.Any] = None,
         dimension_separator: tx.Optional[str] = None,
         zarr_version: tx.Optional[int] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "ZarrImage":
         """Encode the pending data into `rawdata` and the record.
@@ -327,8 +330,9 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
 
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a Zarr
-        array holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`.
+        array holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
@@ -353,9 +357,6 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             `"."`.
         zarr_version : int, optional
             The version of the Zarr format to write, 2 or 3.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -380,7 +381,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         metadata = metadata_to_write(
             self.metadata, ZarrMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         options = {
@@ -523,7 +524,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             self.to_node(node, **kwargs)
             return
         location = absolute_location(location)
-        local = is_local(location)
+        local = Path(location).is_local()
         if not reads_store(self.rawdata, location):
             copy = self.consolidate(**kwargs)
             record, raw = copy.metadata.raw, copy.rawdata
