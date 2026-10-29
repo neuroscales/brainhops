@@ -44,12 +44,15 @@ def to_homogeneous(
     The function appends the row `[0, ..., 0, 1]`. When `tangent` is true,
     the function appends the row `[0, ..., 0, 0]` instead, because the input
     is then a tangent, that is, the generator of an affine transform, whose
-    bottom row is zero.
+    bottom row is zero. A stack of matrices, of shape `(..., N, N+1)`,
+    receives the row under each of its matrices.
     """
     xp = array_backend(matrix)
     nd = matrix.shape[-1] - 1
     corner = 0 if tangent else 1
     pad = xp.asarray([[0] * nd + [corner]])
+    # A stack of matrices receives one padding row per matrix.
+    pad = xp.broadcast_to(pad, tuple(matrix.shape[:-2]) + tuple(pad.shape))
     full = xp.concatenate([matrix, pad], axis=-2)
     return full
 

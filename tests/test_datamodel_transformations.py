@@ -3,6 +3,7 @@
 import inspect
 
 import numpy as np
+import pytest
 import typing_extensions as tx
 from bagof.magic import fields_dict, replace
 
@@ -983,3 +984,57 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
                 DisplacementField(field=np.zeros((2, 2, 2, 3))),
             ]
         ).to(Affine)
+
+
+# --- one element per matrix or vector type ----------------------------
+# The converter of the `npmatrix` and `npvector` annotations fits the
+# data to one element. bagof reports the failure of an optional field as
+# a `TypeConversionError`, which is a `TypeError`.
+
+_STACKED = [
+    (Affine, np.zeros((2, 3, 4))),
+    (Linear, np.zeros((2, 3, 3))),
+    (Scaling, np.ones((2, 3))),
+    (Translation, np.zeros((2, 3))),
+    (Permutation, np.zeros((2, 3), dtype=int)),
+]
+
+
+@pytest.mark.parametrize("cls, stack", _STACKED)
+def test_matrix_and_vector_types_refuse_a_stack(
+    cls: tx.Type[Transformation], stack: np.ndarray
+) -> None:
+    with pytest.raises(TypeError, match="could not convert"):
+        cls(stack)
+
+
+@pytest.mark.parametrize("cls, stack", _STACKED)
+def test_matrix_and_vector_types_refuse_a_stack_on_assignment(
+    cls: tx.Type[Transformation], stack: np.ndarray
+) -> None:
+    t = cls(stack[0])
+    with pytest.raises(TypeError, match="could not convert"):
+        t.data = stack
+    np.testing.assert_array_equal(t.data, stack[0])
+
+
+def test_a_view_of_an_affine_refuses_a_stack() -> None:
+    t = Affine(np.eye(3, 4))
+    with pytest.raises(TypeError, match="could not convert"):
+        t.matrix = np.zeros((2, 3, 4))
+
+
+def test_a_tangent_type_refuses_a_stack() -> None:
+    with pytest.raises(TypeError, match="could not convert"):
+        Affine(np.zeros((2, 3, 4)), log=True)
+
+
+@pytest.mark.parametrize("cls", [Scaling, Translation, Permutation])
+def test_a_scalar_becomes_a_vector_of_one_element(
+    cls: tx.Type[Transformation],
+) -> None:
+    assert cls(np.array(2)).data.shape == (1,)
+
+
+def test_a_vector_becomes_a_matrix_of_one_row() -> None:
+    assert Linear([1.0, 2.0]).data.shape == (1, 2)

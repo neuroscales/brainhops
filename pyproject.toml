@@ -9,7 +9,16 @@ dependencies = [
     "numpy",
     "scipy",
     "bagof-dispatchers >= 0.3.1",
+    # The NumPy converter of bagof-converters 0.3 computes a Dask array,
+    # copies a CuPy array to memory, and fits the array to the shape of
+    # its hint with the rules of NumPy broadcasting, which the hints
+    # `npvector` and `npmatrix` of `_core/typing.py` rely on. The
+    # validators and factories of the same releases, which bagof-magic
+    # uses, read the shapes of array hints in the same way.
     "bagof-hints ~= 0.1",
+    "bagof-converters ~= 0.3",
+    "bagof-validators ~= 0.2",
+    "bagof-factories ~= 0.2",
     # 0.2 parameterises a polymorphic class (`Inverse[Affine]`), which the
     # typed inverses declare; 0.1 raises on it. 0.3 registers a subclass
     # with every polymorphic level above it and conjoins the constraints

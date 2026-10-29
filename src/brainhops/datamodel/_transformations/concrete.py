@@ -985,6 +985,14 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
+    # The scaling factors are a vector with one factor per axis, so a
+    # scalar becomes a vector of one factor, which scales a single axis.
+    # A scalar could stand for an isotropic scaling of a space whose
+    # number of axes is unknown, but nothing supports it: the number of
+    # axes is read from the length of the vector, and the vector would
+    # have to be expanded to the number of axes of the systems or of a
+    # neighbour before it is converted or composed.
+
     map_field: _FieldNames = "scale"
     data_fields: _FieldNames = ("data",)
     encoding_fields: _FieldNames = ("log",)

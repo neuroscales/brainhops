@@ -31,19 +31,20 @@ error of the boundary are refused rather than given an inaccurate answer.
 """
 
 
-# --- batching ---------------------------------------------------------
+# --- chunking and batching -------------------------------------------
 
 
-def batch(
+def chunk(
     function: tx.Callable[[ArrayProtocol], ArrayProtocol],
     array: ArrayProtocol,
     dims: tx.Union[int, tx.Sequence[int]],
 ) -> ArrayProtocol:
-    """Apply a batched function to an array of any backend.
+    """Apply a function to an array, block by block when it is a Dask array.
 
-    The function receives a NumPy or CuPy array. Dask has no linear
-    algebra on batches of matrices, so the function is applied to each
-    block, with the last two axes in a single block.
+    Dask has no linear algebra on stacks of matrices, so a Dask array is
+    rechunked to hold the dimensions in `dims` whole, and the function is
+    applied to each block, which is a NumPy or CuPy array. Any other array
+    is passed to the function as it is.
     """
     if isinstance(dims, int):
         dims = (dims,)
@@ -54,14 +55,13 @@ def batch(
     return function(array)
 
 
-def batched(dims: tx.Union[int, tx.Sequence[int]]) -> tx.Callable:
-    """Return a decorator that applies a function to each batch of an array.
+def chunked(dims: tx.Union[int, tx.Sequence[int]]) -> tx.Callable:
+    """Return a decorator that applies a function to the blocks of an array.
 
-    The decorated function receives a NumPy or CuPy array. Dask has no
-    linear algebra on batches of matrices, so the function is applied to
-    each block, with the last two axes in a single block. The arguments
-    that follow the array are passed to the function unchanged, on every
-    backend.
+    The decorated function receives a NumPy or CuPy array, as in
+    [`chunk`][], whose blocks hold the dimensions in `dims` whole. The
+    arguments that follow the array are passed to the function unchanged,
+    on every backend.
     """
 
     def decorator(function: tx.Callable) -> tx.Callable:
@@ -73,27 +73,68 @@ def batched(dims: tx.Union[int, tx.Sequence[int]]) -> tx.Callable:
             def apply(block: ArrayProtocol) -> ArrayProtocol:
                 return function(block, *a, **k)
 
-            return batch(apply, array, dims=dims)
+            return chunk(apply, array, dims=dims)
 
         return wrapper
 
     return decorator
 
 
-batchedvector = batched(-1)
-batchedmatrix = batched((-2, -1))
+def batched(ndim: int) -> tx.Callable:
+    """Return a decorator that applies a function to each element of a stack.
+
+    The decorated function receives one element, an array of `ndim`
+    dimensions such as a single matrix. The leading dimensions of a larger
+    array index the elements of a stack, and the function is applied to
+    each element in turn, after which the results are stacked again in the
+    same order. This serves the functions, such as those of SciPy, that
+    accept a stack only in recent releases. A [`DomainError`][] raised for
+    one element names the index of that element in the stack. The
+    arguments that follow the array are passed to the function unchanged.
+    """
+
+    def decorator(function: tx.Callable) -> tx.Callable:
+        @functools.wraps(function)
+        def wrapper(array: ArrayProtocol, *a, **k) -> ArrayProtocol:
+            if array.ndim <= ndim:
+                return function(array, *a, **k)
+            batch = tuple(array.shape[:-ndim])
+            results = []
+            for index in np.ndindex(*batch):
+                try:
+                    results.append(function(array[index], *a, **k))
+                except DomainError as error:
+                    raise DomainError(
+                        f"{error} It is the element at index {index} of "
+                        f"the stack."
+                    ) from error
+            if not results:
+                return array_backend(array).empty_like(array)
+            xp = array_backend(results[0])
+            stacked = xp.stack(results)
+            return stacked.reshape(batch + tuple(stacked.shape[1:]))
+
+        return wrapper
+
+    return decorator
+
+
+chunkedvector = chunked(-1)
+chunkedmatrix = chunked((-2, -1))
+batchedmatrix = batched(2)
 
 
 # --- linalg -----------------------------------------------------------
 
 
-@batchedmatrix
+@chunkedmatrix
 def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
     """Return the inverse of a square matrix."""
     xp = array_backend(matrix)
     return xp.linalg.inv(matrix)
 
 
+@chunkedmatrix
 @batchedmatrix
 def sqrtm(
     matrix: "ArrayProtocol", what: str = "The square root of this matrix"
@@ -112,6 +153,7 @@ def sqrtm(
     return like(_ensure_real(scipy.linalg.sqrtm(host)), matrix, dtype=dtype)
 
 
+@chunkedmatrix
 @batchedmatrix
 def expm(
     tangent: ArrayProtocol, what: str = "The exponential of this matrix"
@@ -125,6 +167,7 @@ def expm(
     return like(scipy.linalg.expm(host), tangent)
 
 
+@chunkedmatrix
 @batchedmatrix
 def logm(
     matrix: ArrayProtocol, what: str = "The logarithm of this matrix"
@@ -178,14 +221,14 @@ _PolarWhich: tx.TypeAlias = tx.Union[
 ]
 
 
-@batchedmatrix
+@chunkedmatrix
 def _polar_u(matrix: ArrayProtocol) -> ArrayProtocol:
     xp = array_backend(matrix)
     u, _, vt = xp.linalg.svd(matrix)
     return xp.matmul(u, vt)
 
 
-@batchedmatrix
+@chunkedmatrix
 def _polar_p(matrix: ArrayProtocol) -> ArrayProtocol:
     xp = array_backend(matrix)
     u, s, vt = xp.linalg.svd(matrix)
@@ -264,14 +307,24 @@ def require_positive(array: ArrayProtocol, what: str = "This") -> None:
 
 
 def is_square(matrix: ArrayProtocol) -> bool:
-    """Return whether an array is a square two-dimensional matrix."""
-    return matrix.ndim == 2 and matrix.shape[0] == matrix.shape[1]
+    """Return whether an array is a square matrix or a stack of them.
+
+    The last two dimensions of the array are the rows and the columns of
+    each matrix, and the other dimensions index the matrices of a stack.
+    """
+    return matrix.ndim >= 2 and matrix.shape[-2] == matrix.shape[-1]
 
 
 def require_square(matrix: ArrayProtocol, what: str = "This") -> None:
-    """Raise a [`DomainError`][] unless a matrix is square."""
+    """Raise a [`DomainError`][] unless a matrix is square.
+
+    A stack of matrices passes when its matrices, which span the last two
+    dimensions of the array, are square.
+    """
+    if matrix.ndim < 2:
+        raise DomainError(f"{what} is not defined: it is not a matrix.")
     if not is_square(matrix):
-        rows, cols = matrix.shape
+        rows, cols = matrix.shape[-2:]
         raise DomainError(
             f"{what} is not defined: it maps {cols} axes to {rows} axes."
         )
@@ -319,12 +372,21 @@ def is_principal(linear: ArrayProtocol, return_reason: bool = False):
 
 
 def require_principal(linear: np.ndarray, what: str = "This") -> None:
-    result = is_principal(linear, return_reason=True)
-    if not result:
-        raise DomainError(
-            f"{what} is not defined: it {result}, "
-            f"so it has no principal square root or logarithm."
-        )
+    """Raise a [`DomainError`][] unless a matrix is principal.
+
+    A matrix is principal when it has a real principal square root and
+    logarithm, as tested by [`is_principal`][]. Each matrix of a stack is
+    tested on its own, and the message of the error names the first one
+    that fails.
+    """
+    for index in np.ndindex(*linear.shape[:-2]):
+        result = is_principal(linear[index], return_reason=True)
+        if not result:
+            where = f" at index {index}" if index else ""
+            raise DomainError(
+                f"{what} is not defined{where}: it {result}, "
+                f"so it has no principal square root or logarithm."
+            )
 
 
 # --- backend utils ----------------------------------------------------
