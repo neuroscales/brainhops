@@ -44,9 +44,14 @@ wins.
 A composer may receive operands of the right types and still be unable
 to combine them, for example two subspace transformations whose axes do
 not line up. Such a composer raises [`CompositionError`][], which stops
-the composition. The `compose` function knows nothing of modes. The
-sequence engine decides which adjacent transformations are passed to
-`compose`.
+the composition. A composer, like a pair simplifier, may also return a
+chain, as a [`Sequence`][brainhops.datamodel.transformations.Sequence],
+whose members are cheaper than the pair. The sweep of the sequence
+engine then puts the members of the chain in the place of the pair, so
+that each member meets its new neighbours.
+
+The `compose` function knows nothing of modes. The sequence engine
+decides which adjacent transformations are passed to `compose`.
 """
 
 import typing_extensions as tx

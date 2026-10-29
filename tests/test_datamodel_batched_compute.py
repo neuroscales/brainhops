@@ -682,12 +682,15 @@ def _apply_batch(
 def _reference(
     chain: tx.List[Transformation], points: np.ndarray
 ) -> np.ndarray:
-    # Apply a chain to points, element by element.
+    # Apply a chain to points, element by element. A projection that
+    # does not state its number of axes takes it from the points.
     for t in chain:
         if isinstance(t, BatchedTransformation):
             points = _apply_batch(t, points)
-        else:
-            points = _apply(t, points)
+            continue
+        if isinstance(t, Projection) and t.input is None:
+            t = t.to(input=CoordinateSystem().expand(points.shape[1]))
+        points = _apply(t, points)
     return points
 
 
@@ -907,3 +910,148 @@ def test_a_batch_after_the_creation_of_its_batch_axis_is_selected(
     points = _points(3)
     expected = np.hstack([_apply(batch[2], points), np.full((6, 1), 4.0)])
     assert np.allclose(_apply(product, points), expected)
+
+
+# ----------------------------------------------------------------------
+#   CHAINS
+# ----------------------------------------------------------------------
+
+_TIMES = [0.0, 2.0, 4.0, 6.0]
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_volume_of_a_series_has_the_normal_form_of_one_volume(
+    general: bool,
+) -> None:
+    # The grid of one volume of a series, at index 2, is mapped to world
+    # coordinates and time, through the motion of that volume, and back
+    # to the voxels of the series. The chain reduces to the factors of
+    # the affine of that volume, and a projection that creates the time
+    # axis of the series at the volume index.
+    grid_to_world = np.eye(4, 5)
+    grid_to_world[:3, :3] = np.diag([2.0, 2.0, 3.0])
+    grid_to_world[:3, 4] = [1.0, -2.0, 0.5]
+    grid_to_world[3, 3:] = [2.0, 0.0]
+    world = Affine(grid_to_world)
+    batch = _series_batch("affine", general)
+    chain = Sequence(
+        [
+            CartesianField(shape=(4, 5, 6)),
+            Projection(created=[3], at=[2.0]),
+            world,
+            batch,
+            world.inverse(),
+        ]
+    )
+    nf = chain.compute(mode="affine", factor=True, simplify="numeric")
+    grid, *factors, creation = nf
+    assert isinstance(grid, CartesianField)
+    # The motion of the volume mixes x and y, and leaves z alone, so that
+    # the factor of z is the identity, which the factor pass drops.
+    assert [list(f.input_axes) for f in factors] == [[0, 1]]
+    assert all(isinstance(f, SubspaceTransformation) for f in factors)
+    assert isinstance(creation, Projection)
+    assert list(creation.created) == [3] and list(creation.at) == [2.0]
+    points = _points(3)
+    expected = _reference(chain.transformations[1:], points)
+    assert np.allclose(_reference(nf.transformations[1:], points), expected)
+
+
+def _random_series_element(rng: np.random.Generator) -> Transformation:
+    # Draw an element of (x, y, z, t) that carries t through, or a batch
+    # along t. Matrices have random exact zeros, which the numeric policy
+    # reads.
+    kind = int(rng.integers(6))
+    if kind == 0:
+        matrix = np.eye(4, 5)
+        matrix[:3, :3] += rng.normal(size=(3, 3)) * (rng.random((3, 3)) < 0.5)
+        matrix[:3, 4] = rng.normal(size=3)
+        return Affine(matrix)
+    if kind == 1:
+        return Scaling(np.append(rng.normal(size=3) + 2.0, 1.0))
+    if kind == 2:
+        return Permutation(np.append(rng.permutation(3), 3))
+    if kind == 3:
+        return Affine(np.eye(4, 5) + 0.1 * np.eye(4, 5)).inverse()
+    name = ["affine", "scaling", "permutation", "linear"][int(rng.integers(4))]
+    return _series_batch(
+        name, bool(rng.integers(2)), seed=int(rng.integers(9))
+    )
+
+
+def _random_series_chain(seed: int) -> tx.Tuple[tx.List[Transformation], int]:
+    # Draw a chain of (x, y, z, t), which may be one volume of the series,
+    # between a creation of t at a time and the projection that drops t.
+    rng = np.random.default_rng(seed)
+    chain = [_random_series_element(rng) for _ in range(rng.integers(2, 6))]
+    if rng.random() < 0.5:
+        time = _TIMES[int(rng.integers(4))]
+        chain = [
+            Projection(created=[3], at=[time]),
+            *chain,
+            Projection(dropped=[3]),
+        ]
+        return chain, 3
+    return chain, 4
+
+
+def _chain_points(n_in: int, seed: int = 0) -> np.ndarray:
+    points = _points(n_in, n=8, seed=seed)
+    if n_in == 4:
+        points[:, 3] = np.array(_TIMES * 2)
+    return points
+
+
+def _same_chain_map(a: tx.List, b: tx.List, n_in: int, seed: int) -> bool:
+    points = _chain_points(n_in, seed)
+    left = _reference(_flat(a), points)
+    right = _reference(_flat(b), points)
+    return left.shape == right.shape and np.allclose(
+        left, right, equal_nan=True
+    )
+
+
+def _flat(t: tx.Any) -> tx.List[Transformation]:
+    leaves = t if isinstance(t, list) else [t]
+    out: tx.List[Transformation] = []
+    for leaf in leaves:
+        if isinstance(leaf, Sequence):
+            out.extend(_flat(list(leaf.transformations)))
+        elif isinstance(leaf, Identity):
+            continue
+        else:
+            out.append(leaf)
+    return out
+
+
+def _structure(t: tx.Any) -> tx.List[str]:
+    return [type(leaf).__name__ for leaf in _flat(t)]
+
+
+@pytest.mark.parametrize("policy", ["analytic", "numeric"])
+@pytest.mark.parametrize("seed", range(16))
+def test_random_series_chains_keep_their_map_when_simplified(
+    seed: int, policy: str
+) -> None:
+    chain, n_in = _random_series_chain(seed)
+    simplified = Sequence(chain).simplify(policy)
+    assert len(_flat(simplified)) <= len(chain)
+    assert _same_chain_map(chain, _flat(simplified), n_in, seed)
+    again = Sequence(_flat(simplified) or [Identity()]).simplify(policy)
+    assert _structure(again) == _structure(simplified)
+
+
+@pytest.mark.parametrize("factor", [False, True])
+@pytest.mark.parametrize("policy", ["analytic", "numeric"])
+@pytest.mark.parametrize("seed", range(16))
+def test_compute_is_idempotent_on_random_series_chains(
+    seed: int, policy: str, factor: bool
+) -> None:
+    chain, n_in = _random_series_chain(seed)
+    once = Sequence(chain).compute(simplify=policy, factor=factor)
+    assert _same_chain_map(chain, _flat(once), n_in, seed)
+    twice = Sequence(_flat(once) or [Identity()]).compute(
+        simplify=policy, factor=factor
+    )
+    assert _structure(twice) == _structure(once)
+    assert _same_chain_map(_flat(once), _flat(twice), n_in, seed)

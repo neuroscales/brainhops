@@ -21,9 +21,12 @@ when it does not apply.
 A simplifier never reads values that the policy forbids. It never
 materializes a lazy inverse, because that is the job of
 [`Inverse.compute`][], which the composition mode controls. It also never
-makes a sequence longer or reconciles the coordinate systems of two
-neighbours, which is the job of composition. The note above
-`_collapse_pass` explains why declining such pairs loses nothing.
+reconciles the coordinate systems of two neighbours, which is the job of
+composition, and never makes a sequence longer, except when it selects
+the element of a batch: the batch is then replaced by a chain whose
+members are cheaper than the pair, and these members take the place of
+the pair in the sweep. The note above `_collapse_pass` explains why
+declining the pairs whose systems disagree loses nothing.
 """
 
 import numpy as np
@@ -54,7 +57,7 @@ from ..meta import (
     _same_axes,
 )
 from ..multiscale import MultiscaleField
-from ..sequence import Sequence, _unnest
+from ..sequence import Sequence, _unnest, merge_members
 from .check import is_kind
 from .prune import (
     close_counts,
@@ -767,9 +770,12 @@ def _collapse_pass(
 ) -> tx.List[Transformation]:
     # Collapse adjacent pairs in one sweep. The sweep uses a stack, so that
     # each merged result is tried again against the neighbour that the merge
-    # exposes.
+    # exposes. A rule that gives a chain splices its members into the
+    # sweep, as the composition sweep does (see `merge_members`).
     stack: tx.List[Transformation] = []
-    for nxt in leaves:
+    pending = leaves[::-1]
+    while pending:
+        nxt = pending.pop()
         while stack:
             # An interior grid is dropped here rather than by a pair rule,
             # because the condition depends on its position. A leading or
@@ -779,11 +785,16 @@ def _collapse_pass(
             if len(stack) >= 2 and _droppable_grid(stack[-1], policy):
                 stack.pop()
                 continue
-            merged = _simplify(stack[-1], nxt, policy=policy)
-            if merged is None:
+            first = stack[-1]
+            merged = _simplify(first, nxt, policy=policy)
+            members = (
+                None if merged is None else merge_members(merged, first, nxt)
+            )
+            if members is None:
                 break
             stack.pop()
-            nxt = merged
+            nxt = members[0]
+            pending.extend(members[:0:-1])
         stack.append(nxt)
     return stack
 

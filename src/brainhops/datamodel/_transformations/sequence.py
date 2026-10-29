@@ -722,13 +722,23 @@ def _compose_mode(
     # the sweep that brought them together.
     neighbours = {(id(a), id(b)) for a, b in zip(inputs, inputs[1:])}
     stack: tx.List[Transformation] = []
-    for nxt in inputs:
+    # A merge that gives a chain splices its members into the sweep: the
+    # first one is tried against the top of the stack, and the others
+    # come next.
+    pending = inputs[::-1]
+    while pending:
+        nxt = pending.pop()
         while stack:
-            merged = _merge(stack[-1], nxt, mode, policy, factor, neighbours)
-            if merged is None:
+            first = stack[-1]
+            merged = _merge(first, nxt, mode, policy, factor, neighbours)
+            members = (
+                None if merged is None else merge_members(merged, first, nxt)
+            )
+            if members is None:
                 break
             stack.pop()
-            nxt = merged
+            nxt = members[0]
+            pending.extend(members[:0:-1])
         stack.append(nxt)
 
     if len(stack) == 1:
@@ -776,6 +786,44 @@ def _merge(
     # product that is exactly the identity becomes an `Identity` and
     # merges into its neighbours.
     return _simplify(merged, policy=policy)
+
+
+def merge_members(
+    merged: Transformation, first: Transformation, second: Transformation
+) -> tx.Optional[tx.List[Transformation]]:
+    """Return the transformations that replace two neighbours that merge.
+
+    A sweep over a chain replaces two neighbours by what a pair
+    simplifier or a composer gives for them. This is usually one
+    transformation. It may also be a chain, such as
+    `[piece, element, creation]` when the batch that follows a creation
+    of its batch axis selects its element, and the members of that chain
+    then take the place of the pair in the sweep, so that each of them
+    meets its new neighbours. Only the rules whose members are cheaper
+    than the pair give a chain.
+
+    Parameters
+    ----------
+    merged : Transformation
+        What the merge gives, where `first` is applied before `second`.
+    first : Transformation
+        First neighbour.
+    second : Transformation
+        Second neighbour.
+
+    Returns
+    -------
+    list of Transformation or None
+        The members that replace the pair, or None when they are the two
+        neighbours themselves, which is no merge, so that a sweep never
+        loops on such a pair.
+    """
+    if not isinstance(merged, Sequence) or not merged.transformations:
+        return [merged]
+    members = _unnest(merged.transformations)
+    if len(members) == 2 and members[0] is first and members[1] is second:
+        return None
+    return members
 
 
 def _same_leaves(a: Sequence, b: Sequence) -> bool:
