@@ -16,10 +16,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Inherit, NoRepr, replace
 
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (

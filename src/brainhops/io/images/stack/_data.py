@@ -10,9 +10,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops._core.properties import alias
-from brainhops._core.proxy import StoredProxy
-from brainhops._core.typing import Internal
+from brainhops._core._internal_api import Internal, StoredProxy, alias
 from brainhops.io.base.parsers import ParserContentError
 
 # this format

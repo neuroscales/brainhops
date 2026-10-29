@@ -14,7 +14,7 @@ from bagof.magic import Field, fields
 from brainhops import errors
 
 # core
-from brainhops._core.magic import SharedOptions
+from brainhops._core._internal_api import SharedOptions
 
 
 class DataModelBase(SharedOptions):

@@ -11,11 +11,12 @@ import typing_extensions as tx
 from nibabel.arrayproxy import ArrayProxy as _NibabelArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 
-from brainhops._core.path import is_same_file
-
 # internals
-from brainhops._core.proxy import ArrayProxy
-from brainhops._core.strided import StridedProxy
+from brainhops._core._internal_api import (
+    ArrayProxy,
+    StridedProxy,
+    is_same_file,
+)
 
 
 class _MghProxy(StridedProxy):

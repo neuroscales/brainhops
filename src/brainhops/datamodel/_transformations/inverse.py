@@ -1,9 +1,12 @@
 import typing_extensions as tx
 from bagof.magic import Forget, NotKwOnly
 
-from brainhops._core.compat import PLACEHOLDER, partial
-from brainhops._core.properties import alias
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    PLACEHOLDER,
+    ArrayProtocol,
+    alias,
+    partial,
+)
 
 from .base import Transformation
 from .concrete import (

@@ -2,12 +2,15 @@
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.affines import matmul
-
 # core
-from brainhops._core.backends import _creation_options, array_backend
-from brainhops._core.magic import replace, stores
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    array_backend,
+    creation_options,
+    matmul,
+    replace,
+    stores,
+)
 
 # api
 from brainhops.datamodel._sugar import get_axes
@@ -651,7 +654,7 @@ def _encoded_grid(t: TransformationField) -> ArrayProtocol:
     xp = array_backend(data)
     # The grid is created in the backend of the data, with CuPy chunks when
     # its chunks are CuPy arrays.
-    options = _creation_options(data)
+    options = creation_options(data)
     axes = (xp.arange(s, **options) for s in data.shape[:-1])
     grid = xp.meshgrid(*axes, indexing="ij")
     grid = xp.stack(grid, axis=-1).astype(data.dtype)

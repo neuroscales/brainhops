@@ -27,13 +27,14 @@ from io import BytesIO, TextIOBase
 import typing_extensions as tx
 
 from brainhops._core import path, peek
-from brainhops._core.path import is_local, replace_file
-from brainhops._core.streams import (
+from brainhops._core._internal_api import (
     compression_suffix,
     decompress,
+    is_local,
     open_compressing,
     open_decompressed,
     preserve_position,
+    replace_file,
 )
 from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.errors import (

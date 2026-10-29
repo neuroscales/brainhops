@@ -8,7 +8,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol
 from brainhops.io.base.parsers import (
     WriterNotImplementedError,
 )

@@ -13,9 +13,13 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
-from brainhops._core.properties import lazyproperty, smartproperty
-from brainhops._core.streams import preserve_position
+from brainhops._core._internal_api import (
+    atomic_write_bytes,
+    is_same_file,
+    lazyproperty,
+    preserve_position,
+    smartproperty,
+)
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.metadata import ConversionReport

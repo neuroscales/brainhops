@@ -5,9 +5,12 @@ from abczarr.ome.v0_6.images import Multiscale
 from bagof.magic import Inherit, replace
 
 # core
-from brainhops._core.backends import array_backend
-from brainhops._core.path import is_local, replace_directory
-from brainhops._core.properties import smartproperty
+from brainhops._core._internal_api import (
+    array_backend,
+    is_local,
+    replace_directory,
+    smartproperty,
+)
 
 # datamodel
 from brainhops.datamodel.axes import (

@@ -16,10 +16,9 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core.backends import to_backend
 
 # io
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, to_backend
 
 # datamodel
 from brainhops.datamodel import systems as _systems

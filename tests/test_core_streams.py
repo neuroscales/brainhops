@@ -108,10 +108,10 @@ def test_every_registered_compressor_round_trips() -> None:
 
 def test_gzip_uses_indexed_gzip_when_available() -> None:
     """`indexed_gzip` is preferred when installed; the output is the same."""
-    from brainhops._core.streams import HAS_INDEXED_GZIP, _open_gzip
+    from brainhops._core.streams import HAS_INDEXED_GZIP, open_gzip
 
     stream = io.BytesIO(gzip.compress(PAYLOAD))
-    opened = _open_gzip(stream)
+    opened = open_gzip(stream)
     if HAS_INDEXED_GZIP:
         assert type(opened).__name__ == "IndexedGzipFile"
     else:
@@ -121,10 +121,10 @@ def test_gzip_uses_indexed_gzip_when_available() -> None:
 
 def test_gzip_seeking_works_whichever_backend_is_used() -> None:
     """Random access, the reason to prefer `indexed_gzip`, works either way."""
-    from brainhops._core.streams import _open_gzip
+    from brainhops._core.streams import open_gzip
 
     body = bytes(range(256)) * 64
-    opened = _open_gzip(io.BytesIO(gzip.compress(body)))
+    opened = open_gzip(io.BytesIO(gzip.compress(body)))
     for offset in (0, 100, 5000, 250, len(body) - 8):
         opened.seek(offset)
         assert opened.read(8) == body[offset : offset + 8]
@@ -138,6 +138,6 @@ def test_gzip_falls_back_when_the_accelerator_refuses(monkeypatch) -> None:  # n
         raise RuntimeError("nope")
 
     monkeypatch.setattr(streams, "_IndexedGzipFile", refuse)
-    opened = streams._open_gzip(io.BytesIO(gzip.compress(PAYLOAD)))
+    opened = streams.open_gzip(io.BytesIO(gzip.compress(PAYLOAD)))
     assert isinstance(opened, gzip.GzipFile)
     assert opened.read() == PAYLOAD

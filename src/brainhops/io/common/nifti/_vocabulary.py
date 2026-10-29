@@ -37,7 +37,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core.numeric import float32_repr
+from brainhops._core._internal_api import float32_repr
 from brainhops.datamodel.metadata import ConversionReport, EncodingDirection
 
 # this format

@@ -16,8 +16,7 @@ import math
 import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
-from brainhops._core.compare import differs
-from brainhops._core.errors import UNSET
+from brainhops._core._internal_api import UNSET, differs
 from brainhops.datamodel.metadata import ConversionReport, Metadata
 from brainhops.datamodel.metadata._derive import Indexed, Resampled
 from brainhops.datamodel.metadata._report import (

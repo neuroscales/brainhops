@@ -24,7 +24,7 @@ __all__ = ["held_images", "own_level", "own_levels"]
 
 import typing_extensions as tx
 
-from brainhops._core.properties import cached_value
+from brainhops._core._internal_api import cached_value
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.common._geometry import (

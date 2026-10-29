@@ -15,8 +15,11 @@ from bagof.magic import (
     replace,
 )
 
-from brainhops._core.properties import InvalidatorInAttribute, smartproperty
-from brainhops._core.typing import ArrayLike
+from brainhops._core._internal_api import (
+    ArrayLike,
+    InvalidatorInAttribute,
+    smartproperty,
+)
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.images import Image

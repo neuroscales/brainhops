@@ -1,8 +1,7 @@
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-from brainhops._core.errors import UNSET
-from brainhops._core.properties import smartproperty
+from brainhops._core._internal_api import UNSET, smartproperty
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
 from brainhops.datamodel.base import DataModelBase, _ComparesByIdMixin

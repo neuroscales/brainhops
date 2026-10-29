@@ -44,8 +44,8 @@ from brainhops._core.properties import alias
 from brainhops._core.proxy import (
     ArrayProxy,
     StoredProxy,
-    _permutation,
-    _whole,
+    permutation,
+    whole_selection,
 )
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import DTypeLike
@@ -307,7 +307,7 @@ class StridedProxy(StoredProxy):
         """
         if not self._reads_strided():
             return super().transpose(*axes)
-        perm = _permutation(axes, len(self._shape))
+        perm = permutation(axes, len(self._shape))
         if perm == tuple(range(len(perm))):
             return self
         return self._restrided(
@@ -327,7 +327,7 @@ class StridedProxy(StoredProxy):
         the whole file. Any other reshape gives a
         [`ReshapedProxy`][brainhops._core.proxy.ReshapedProxy].
         """
-        box = _whole(self._shape)
+        box = whole_selection(self._shape)
         reshaped = self._reshaped_box(box, shape)
         if reshaped is None:
             return super()._reshaped(shape)

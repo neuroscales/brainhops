@@ -12,9 +12,11 @@ import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # core
-from brainhops._core.backends import array_backend
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    array_backend,
+    smartproperty,
+)
 
 # datamodel
 from brainhops.datamodel import systems as _systems

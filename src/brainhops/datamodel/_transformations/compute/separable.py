@@ -27,26 +27,26 @@ import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 
-# core
-from brainhops._core.backends import (
-    _creation_options,
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    Clip,
     array_backend,
-    backend,
+    cast_output,
+    clip_mask,
     copy_array,
+    creation_options,
     may_share_memory,
-    resolve_backend,
-    to_backend_of,
-)
-from brainhops._core.bsplines import (
-    _cast_output,
-    _clip_mask,
-    _normalize_clip,
-    _sampling_dtype,
+    normalize_clip,
     pull,
     pull_axes,
+    resolve_backend,
+    sampling_dtype,
     spline_matrix,
+    to_backend_of,
 )
-from brainhops._core.typing import ArrayProtocol, Clip
+
+# core
+from brainhops._core.backends import backend
 
 # api
 from brainhops.datamodel import kinds
@@ -129,7 +129,7 @@ def pull_separable(
     array-like
         Resliced data, with the shape of the output grid.
     """
-    clip = _normalize_clip(clip, data.ndim)
+    clip = normalize_clip(clip, data.ndim)
     opt = dict(degree=degree, bound=bound, coeff=coeff, clip=clip)
     steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
@@ -148,7 +148,7 @@ def pull_separable(
     xp = array_backend(data)
     inp_dtype = np.dtype(data.dtype)
     out_dtype = np.dtype(inp_dtype if dtype is None else dtype)
-    tmp_dtype = _sampling_dtype(inp_dtype, dtype)
+    tmp_dtype = sampling_dtype(inp_dtype, dtype)
     arr = data.astype(tmp_dtype, copy=False)
     # Only the gather steps and the transpose can return a view of `data`,
     # so `fresh` records whether the result is known to be a new array.
@@ -171,7 +171,7 @@ def pull_separable(
     # or boolean output is converted back in the same way as in scipy.
     if arr.dtype != out_dtype:
         fresh = True
-        arr = _cast_output(arr, out_dtype)
+        arr = cast_output(arr, out_dtype)
     return _fresh(arr, data, copy, fresh)
 
 
@@ -467,7 +467,7 @@ def _plan(
     # groups, in which case the monolithic pull is used. A transformation
     # that cannot be computed is also left to the monolithic pull, which
     # reports the malformed input.
-    clip = _normalize_clip(clip, len(data_shape))
+    clip = normalize_clip(clip, len(data_shape))
     try:
         # Resampling reads every value anyway, so the groups are found
         # from the exact zeros of the matrices.
@@ -570,7 +570,7 @@ def _make_gather(
                 result = xp.where(mask, result, cval)
         labels = list(labels)
         labels[axis] = ("grid", g)
-        mask = _clip_mask(coords[..., None], (n_in,), clip)
+        mask = clip_mask(coords[..., None], (n_in,), clip)
         return result, labels, mask
 
     return run
@@ -597,7 +597,7 @@ def _make_matrix(
         # The coordinates are created in the backend of the data, with
         # CuPy chunks when its chunks are CuPy arrays, so that the weights
         # computed from them are there as well.
-        coords = xp.arange(n_out, **_creation_options(arr)) * scale + shift
+        coords = xp.arange(n_out, **creation_options(arr)) * scale + shift
         weights = spline_matrix(n_in, coords, degree, bound, coeff)
         out = xp.moveaxis(
             xp.tensordot(arr, weights, axes=([axis], [1])), -1, axis
@@ -611,7 +611,7 @@ def _make_matrix(
             out = out + correction.reshape(tuple(corr_shape))
         labels = list(labels)
         labels[axis] = ("grid", g)
-        mask = _clip_mask(coords[..., None], (n_in,), clip)
+        mask = clip_mask(coords[..., None], (n_in,), clip)
         return out, labels, mask
 
     return run
@@ -655,7 +655,7 @@ def _make_pull(
         used = set(positions)
         remaining = [labels[i] for i in range(len(labels)) if i not in used]
         labels = remaining + [("grid", g) for g in grid_axes]
-        mask = _clip_mask(coords, [data_shape[d] for d in data_axes], clip)
+        mask = clip_mask(coords, [data_shape[d] for d in data_axes], clip)
         return moved, labels, mask
 
     return run

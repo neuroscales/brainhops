@@ -13,7 +13,7 @@ axes as they need.
 import typing_extensions as tx
 
 # core
-from brainhops._core.backends import to_backend
+from brainhops._core._internal_api import to_backend
 
 # datamodel
 from brainhops.datamodel.axes import Axis

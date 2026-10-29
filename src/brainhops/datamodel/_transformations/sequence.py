@@ -7,9 +7,12 @@ import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
 
 # core
-from brainhops._core.backends import BackendLike, DeviceLike
-from brainhops._core.errors import UNSET
-from brainhops._core.properties import smartproperty
+from brainhops._core._internal_api import (
+    UNSET,
+    BackendLike,
+    DeviceLike,
+    smartproperty,
+)
 
 # datamodel
 from brainhops.datamodel import kinds

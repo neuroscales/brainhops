@@ -23,7 +23,10 @@ from brainhops._core.bsplines import (  # noqa: E402
     pull_field,
     value2coeff,
 )
-from brainhops._core.dask_ndimage import _SPLINE_POLES, _halo  # noqa: E402
+from brainhops._core.dask_ndimage import (  # noqa: E402
+    SPLINE_POLES,
+    prefilter_halo,
+)
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant", 2.5]
 DEGREES = [0, 1, 2, 3, 4, 5]
@@ -147,9 +150,9 @@ def test_the_window_prefilter_is_exact(
 
 
 def test_the_halo_leaves_out_only_negligible_samples() -> None:
-    for degree, pole in _SPLINE_POLES.items():
-        assert pole ** _halo(degree) < 1e-12
-    assert _halo(0) == _halo(1) == 0
+    for degree, pole in SPLINE_POLES.items():
+        assert pole ** prefilter_halo(degree) < 1e-12
+    assert prefilter_halo(0) == prefilter_halo(1) == 0
 
 
 @pytest.fixture
@@ -197,7 +200,7 @@ def test_a_block_reads_a_window_around_its_stencils(
     volume = da.random.default_rng(5).random(LARGE, chunks=100)
     pull(volume, points, degree, bound, False).compute()
     assert reads
-    limit = span + 2 * (_halo(degree) + degree // 2 + 2) + 24
+    limit = span + 2 * (prefilter_halo(degree) + degree // 2 + 2) + 24
     for block in reads:
         for used in block:
             assert used.size <= limit
@@ -250,7 +253,7 @@ def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
         lazy.compute()
     assert len(reads) > 1
     for block in reads:
-        assert max(used.size for used in block) < 64 + 2 * _halo(3)
+        assert max(used.size for used in block) < 64 + 2 * prefilter_halo(3)
 
 
 # ----------------------------------------------------------------------
@@ -300,7 +303,7 @@ def test_dask_coefficients_round_trip(degree: int, bound: str) -> None:
 def test_a_coefficient_chunk_reads_its_neighbours_only() -> None:
     """A coefficient chunk depends only on the input chunks within its halo."""
     size = 25
-    assert size > _halo(3)
+    assert size > prefilter_halo(3)
     lazy = da.from_array(np.zeros((6 * size,) * 3), chunks=size)
     coeff = value2coeff(lazy, 3, "mirror")
     assert coeff.chunks == lazy.chunks

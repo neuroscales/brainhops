@@ -6,9 +6,11 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.dependencies import HAS_TENSORSTORE
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    HAS_TENSORSTORE,
+    ArrayProtocol,
+    smartproperty,
+)
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (

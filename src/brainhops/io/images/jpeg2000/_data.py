@@ -18,12 +18,15 @@ from bagof.magic import NoRepr
 from PIL import Image, ImageFile
 
 from brainhops._core import path
-from brainhops._core.path import is_local, is_same_file
-from brainhops._core.properties import alias
 
 # internals
-from brainhops._core.proxy import StoredProxy
-from brainhops._core.streams import preserve_position
+from brainhops._core._internal_api import (
+    StoredProxy,
+    alias,
+    is_local,
+    is_same_file,
+    preserve_position,
+)
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from brainhops.io.images.pillow._utils import pillow_to_array
 

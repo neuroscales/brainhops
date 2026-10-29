@@ -1,7 +1,7 @@
 import numpy as np
 import typing_extensions as _tx
 
-from brainhops._core.backends import array_backend, ndimage_backend
+from brainhops._core._internal_api import array_backend, ndimage_backend
 
 
 def inverse2d(disp: np.ndarray) -> np.ndarray:

@@ -12,7 +12,7 @@ gives `data` back.
 """
 
 # internals
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol
 
 # this format
 from ._data import _TiffProxy

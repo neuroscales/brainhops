@@ -10,7 +10,7 @@ from abczarr import open as open_node
 
 # core
 from brainhops._core import path
-from brainhops._core.path import is_local
+from brainhops._core._internal_api import is_local
 
 # internals
 from brainhops.datamodel.base import DataModelBase

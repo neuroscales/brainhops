@@ -67,8 +67,7 @@ from bagof.magic import Magic
 
 # core
 from brainhops._core import path
-from brainhops._core.backends import is_lazy
-from brainhops._core.dependencies import tifffile
+from brainhops._core._internal_api import is_lazy, tifffile
 
 # io
 from brainhops.io.base.parsers import ParserContentError

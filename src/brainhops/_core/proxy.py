@@ -64,7 +64,7 @@ _Box: tx.TypeAlias = tx.Tuple[tx.Union[int, slice], ...]
 receives."""
 
 _Item: tx.TypeAlias = tx.Union[None, int, slice, np.ndarray]
-"""An item of an index that [`_normalize_index`][] returns."""
+"""An item of an index that [`normalize_index`][] returns."""
 
 
 @tx.runtime_checkable
@@ -674,7 +674,7 @@ class StoredProxy(ArrayProxy):
         TypeError
             If an element of the index has an unsupported type.
         """
-        return IndexedProxy(self, _whole(self.shape))[index]
+        return IndexedProxy(self, whole_selection(self.shape))[index]
 
     def transpose(self, *axes: tx.Any) -> "StoredProxy":
         """Return the proxy with its axes in another order.
@@ -698,7 +698,7 @@ class StoredProxy(ArrayProxy):
         ValueError
             If the axes are not a permutation of the axes of the proxy.
         """
-        perm = _permutation(axes, self.ndim)
+        perm = permutation(axes, self.ndim)
         if perm == tuple(range(self.ndim)):
             return self
         return PermutedProxy(self, perm)
@@ -714,7 +714,7 @@ class StoredProxy(ArrayProxy):
             If `copy` is `False`, because reading values cannot be done
             without making them.
         """
-        whole = IndexedProxy(self, _whole(self.shape))
+        whole = IndexedProxy(self, whole_selection(self.shape))
         return whole.__array__(dtype=dtype, copy=copy)
 
 
@@ -779,7 +779,7 @@ class PermutedProxy(StoredProxy):
         ValueError
             If the axes are not a permutation of the axes of the proxy.
         """
-        perm = _permutation(axes, self.ndim)
+        perm = permutation(axes, self.ndim)
         return self.base.transpose([self.perm[p] for p in perm])
 
     def _read(self, box: _Box) -> np.ndarray:
@@ -796,7 +796,7 @@ class PermutedProxy(StoredProxy):
         return values.transpose(order)
 
 
-def _whole(shape: tx.Sequence[int]) -> tx.Tuple[slice, ...]:
+def whole_selection(shape: tx.Sequence[int]) -> tx.Tuple[slice, ...]:
     """Return the selection of every value of a stored array, in order."""
     return tuple(slice(0, int(n), 1) for n in shape)
 
@@ -929,7 +929,7 @@ class IndexedProxy(ArrayProxy):
         TypeError
             If an element of the index has an unsupported type.
         """
-        items, front = _normalize_index(index, self.shape)
+        items, front = normalize_index(index, self.shape)
         remaining = iter(items)
         selection = []
         for entry, n, new in self._entries():
@@ -979,7 +979,7 @@ class IndexedProxy(ArrayProxy):
         ValueError
             If the axes are not a permutation of the axes of the proxy.
         """
-        perm = _permutation(axes, self.ndim)
+        perm = permutation(axes, self.ndim)
         # Each entry with the stored axis that it indexes, or None for a
         # new axis.
         tagged = []
@@ -1229,7 +1229,7 @@ class ScaledProxy(ArrayProxy):
         TypeError
             If an element of the index has an unsupported type.
         """
-        items, front = _normalize_index(index, self.shape)
+        items, front = normalize_index(index, self.shape)
         return ScaledProxy(
             self.base[index],
             _index_factor(self.slope, items, self.shape, front),
@@ -1255,7 +1255,7 @@ class ScaledProxy(ArrayProxy):
         ValueError
             If the axes are not a permutation of the axes of the proxy.
         """
-        perm = _permutation(axes, self.ndim)
+        perm = permutation(axes, self.ndim)
         return ScaledProxy(
             self.base.transpose(perm),
             None if self.slope is None else self.slope.transpose(perm),
@@ -1600,7 +1600,7 @@ def _index_factor(
     shape: tx.Sequence[int],
     front: tx.Optional[int],
 ) -> tx.Optional[np.ndarray]:
-    """Index a factor as [`_normalize_index`][] says the values are indexed.
+    """Index a factor as [`normalize_index`][] says the values are indexed.
 
     An axis of length one of the factor stays of length one: an integer
     selects its single value, a slice keeps it unless the slice selects
@@ -1648,7 +1648,7 @@ def _index_factor(
 # ----------------------------------------------------------------------
 
 
-def _normalize_index(
+def normalize_index(
     index: tx.Any, shape: tx.Sequence[int]
 ) -> tx.Tuple[tx.List[_Item], tx.Optional[int]]:
     """Return an index with one item for each axis, and the axis it moves.
@@ -1793,7 +1793,7 @@ def _front(
     return sum(1 for item in items[:array] if not isinstance(item, int))
 
 
-def _permutation(axes: tx.Tuple[tx.Any, ...], ndim: int) -> tx.Tuple[int, ...]:
+def permutation(axes: tx.Tuple[tx.Any, ...], ndim: int) -> tx.Tuple[int, ...]:
     """Return the permutation that the arguments of `transpose` give.
 
     Raises

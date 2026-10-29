@@ -25,7 +25,7 @@ __all__ = [
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr
 
-from brainhops._core.singleton import singleton
+from brainhops._core._internal_api import singleton
 
 from .base import DataModelBase
 from .enums import AnatomicalOrientationValue, OrientationType

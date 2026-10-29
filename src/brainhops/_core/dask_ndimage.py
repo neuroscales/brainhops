@@ -34,7 +34,7 @@ from brainhops._core import backends
 __all__ = ["map_coordinates", "spline_filter", "spline_filter1d"]
 
 
-_SPLINE_POLES = {
+SPLINE_POLES = {
     2: 0.17157287525380990,
     3: 0.26794919243112270,
     4: 0.36134122590022018,
@@ -62,7 +62,7 @@ _LOCAL_MODES = ("nearest", "reflect", "mirror", "grid-wrap", "grid-constant")
 """Modes with which a block of coordinates can be sampled from a window."""
 
 
-def _halo(degree: int) -> int:
+def prefilter_halo(degree: int) -> int:
     """Return the number of samples that a prefilter reads on each side.
 
     Beyond this halo, the weight of a sample is below
@@ -70,7 +70,7 @@ def _halo(degree: int) -> int:
     coefficients as the whole extended array. The halo of an unsupported
     degree is zero.
     """
-    pole = _SPLINE_POLES.get(int(degree))
+    pole = SPLINE_POLES.get(int(degree))
     if pole is None:
         return 0
     return int(math.ceil(math.log(_PREFILTER_TOLERANCE) / math.log(pole)))
@@ -128,7 +128,7 @@ def _axis_plan(
         return _fold(index, n, mode), 0, np.arange(hi - lo)
     pad = _SCIPY_PREPAD.get(mode, 0)
     padded = n + 2 * pad
-    halo = _halo(degree)
+    halo = prefilter_halo(degree)
     index = index + pad
     if pad:
         coeff = _fold(index, padded, mode)
@@ -413,7 +413,7 @@ def _dask_spline_filter1d(
     together with the halo that it reads from its neighbours through
     `map_overlap`, and the extension is finally cut.
     """
-    halo = _halo(degree)
+    halo = prefilter_halo(degree)
     size = int(input.shape[dim])
     index = (slice(None),) * dim
     left = _fold(np.arange(-halo, 0), size, extension)
@@ -495,7 +495,7 @@ def _check_filter(degree: int, output: tx.Any, mode: str) -> None:
     TypeError
         If the output type is not float64.
     """
-    if int(degree) not in _SPLINE_POLES:
+    if int(degree) not in SPLINE_POLES:
         raise RuntimeError("spline order not supported")
     if mode not in _FILTER_EXTENSION:
         raise ValueError(f"Unknown spline boundary mode {mode!r}.")

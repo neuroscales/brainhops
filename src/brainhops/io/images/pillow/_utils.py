@@ -44,7 +44,7 @@ from bagof.magic import Magic
 from PIL import Image, ImageMode, UnidentifiedImageError
 
 from brainhops._core import path
-from brainhops._core.streams import preserve_position
+from brainhops._core._internal_api import preserve_position
 from brainhops.io.base.parsers import ParserContentError, WriterError
 
 EXTENSIONS: tx.Tuple[str, ...] = (

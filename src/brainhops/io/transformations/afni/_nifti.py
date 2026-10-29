@@ -10,9 +10,11 @@ import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
-from brainhops._core.properties import smartproperty
-from brainhops._core.streams import preserve_position
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    preserve_position,
+    smartproperty,
+)
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter

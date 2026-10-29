@@ -15,7 +15,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-from brainhops._core.streams import preserve_position
+from brainhops._core._internal_api import preserve_position
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserContentError
 from brainhops.io.common._arrays import (

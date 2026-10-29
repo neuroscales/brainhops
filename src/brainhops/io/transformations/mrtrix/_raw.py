@@ -9,7 +9,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core.streams import preserve_position
+from brainhops._core._internal_api import preserve_position
 from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     Confidence,

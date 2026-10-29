@@ -6,7 +6,7 @@ from bagof.magic import KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.dependencies import HAS_TENSORSTORE
+from brainhops._core._internal_api import HAS_TENSORSTORE
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (

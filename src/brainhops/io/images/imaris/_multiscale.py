@@ -9,7 +9,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.streams import preserve_position
+from brainhops._core._internal_api import preserve_position
 from brainhops.datamodel.images import MultiScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, SnifferContentError

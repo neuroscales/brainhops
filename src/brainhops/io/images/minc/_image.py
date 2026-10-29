@@ -9,10 +9,12 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.dependencies import HAS_H5PY
-from brainhops._core.path import is_local
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    HAS_H5PY,
+    ArrayProtocol,
+    is_local,
+    smartproperty,
+)
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport

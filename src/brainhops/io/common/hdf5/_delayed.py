@@ -11,9 +11,7 @@ import typing_extensions as tx
 from bagof.magic import NoInit, NoRepr
 
 # core
-from brainhops._core.backends import has_dask
-from brainhops._core.proxy import StoredProxy
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, StoredProxy, has_dask
 
 # this format
 from ._parsers import H5Like

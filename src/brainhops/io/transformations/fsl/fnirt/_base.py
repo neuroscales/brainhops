@@ -8,10 +8,12 @@ import typing_extensions as tx
 from bagof.magic import Alias, Inherit, KwOnly, NoRepr, fields_dict, replace
 
 # core
-from brainhops._core.backends import array_backend
-from brainhops._core.errors import UNSET
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    UNSET,
+    ArrayProtocol,
+    array_backend,
+    smartproperty,
+)
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms

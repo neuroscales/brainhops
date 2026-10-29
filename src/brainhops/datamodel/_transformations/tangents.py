@@ -7,13 +7,21 @@ import typing_extensions as tx
 from bagof.magic import InitVar, replace
 
 # core
-from brainhops._core.affines import expm as affine_expm
-from brainhops._core.affines import logm as affine_logm
-from brainhops._core.affines import to_compact, to_homogeneous
-from brainhops._core.backends import array_backend
-from brainhops._core.linalg import expm, logm, require_positive
-from brainhops._core.properties import alias, lazyproperty
-from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    affine_expm,
+    affine_logm,
+    alias,
+    array_backend,
+    expm,
+    lazyproperty,
+    logm,
+    npmatrix,
+    npvector,
+    require_positive,
+    to_compact,
+    to_homogeneous,
+)
 
 # datamodel
 from brainhops.datamodel import kinds

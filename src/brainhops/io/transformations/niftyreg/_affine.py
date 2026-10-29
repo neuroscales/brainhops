@@ -5,10 +5,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.datamodel._transformations.compute.converters import (

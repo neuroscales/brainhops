@@ -13,7 +13,7 @@ from brainhops._core.proxy import (
     ReshapedProxy,
     ScaledProxy,
     StoredProxy,
-    _normalize_index,
+    normalize_index,
 )
 
 
@@ -298,8 +298,8 @@ def test_numpy_moves_the_axis_of_an_array() -> None:
         assert proxy[index].shape == expected.shape, index
         np.testing.assert_array_equal(np.asarray(proxy[index]), expected)
     # The axis of the array would be the second one of the result.
-    assert _normalize_index((0, slice(None), [1]), (3, 4, 2))[1] == 1
-    assert _normalize_index((0, [1], slice(None)), (3, 4, 2))[1] is None
+    assert normalize_index((0, slice(None), [1]), (3, 4, 2))[1] == 1
+    assert normalize_index((0, [1], slice(None)), (3, 4, 2))[1] is None
 
 
 def test_scaled_proxies_scale_what_they_read() -> None:

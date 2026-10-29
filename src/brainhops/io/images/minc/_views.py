@@ -11,7 +11,7 @@ invert each other, so that `_image_to_model(_image_to_disk(data))` gives
 """
 
 # internals
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol
 
 
 def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:

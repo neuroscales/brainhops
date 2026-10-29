@@ -11,10 +11,13 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local_file
-from brainhops._core.properties import alias
-from brainhops._core.proxy import StoredProxy
-from brainhops._core.streams import open_compressed, preserve_position
+from brainhops._core._internal_api import (
+    StoredProxy,
+    alias,
+    is_local_file,
+    open_compressed,
+    preserve_position,
+)
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
 # this format

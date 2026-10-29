@@ -25,7 +25,7 @@ import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 from numpy import dtype as numpy_dtype
 
-from brainhops._core.typing import Clip
+from brainhops._core._internal_api import Clip
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import ImageSpec, OperationSpec, TransformationSpec

@@ -45,7 +45,7 @@ import numpy as np
 import typing_extensions as tx
 
 # core
-from brainhops._core.backends import array_backend
+from brainhops._core._internal_api import array_backend
 
 # datamodel
 from brainhops.datamodel import systems as _systems

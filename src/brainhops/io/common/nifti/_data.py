@@ -15,8 +15,7 @@ from bagof.magic import KwOnly
 from nibabel.arrayproxy import ArrayProxy as _NibabelArrayProxy
 
 # internals
-from brainhops._core.proxy import ArrayProxy, ScaledProxy
-from brainhops._core.strided import StridedProxy
+from brainhops._core._internal_api import ArrayProxy, ScaledProxy, StridedProxy
 
 _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
 

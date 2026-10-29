@@ -51,8 +51,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
-from brainhops._core.backends import array_backend, is_dask
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, array_backend, is_dask
 
 from ..enums import AxisType, TensorLayout, Valence
 from .base import Axis

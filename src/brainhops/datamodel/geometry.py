@@ -8,7 +8,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, NotKwOnly
 
-from brainhops._core.typing import CartesianIndex, Shape
+from brainhops._core._internal_api import CartesianIndex, Shape
 
 from ._sugar import get_axes
 from .axes import Axis, ChannelAxis, is_component_type

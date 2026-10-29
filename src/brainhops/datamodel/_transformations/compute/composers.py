@@ -12,15 +12,14 @@ that both transformations are fully defined, with no unset parameters.
 import typing_extensions as tx
 from bagof.magic import replace
 
-from brainhops._core.affines import matmul
-
 # core
-from brainhops._core.backends import (
+from brainhops._core._internal_api import (
     array_backend,
+    matmul,
+    pull_field,
     to_backend,
     to_promoted_backend,
 )
-from brainhops._core.bsplines import pull_field
 
 # api
 from brainhops.datamodel._sugar import get_axes

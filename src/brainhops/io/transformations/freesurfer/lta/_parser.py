@@ -5,8 +5,7 @@ from warnings import warn
 import typing_extensions as tx
 from bagof.magic import fields
 
-from brainhops._core.magic import SharedOptions
-from brainhops._core.peek import peekable_lines
+from brainhops._core._internal_api import SharedOptions, peekable_lines
 from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     Confidence,

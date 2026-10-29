@@ -713,15 +713,15 @@ def test_anchor_offset_is_zero_where_knot_spacing_is_one() -> None:
 
 def test_constant_boundary_maps_to_grid_constant() -> None:
     """A constant boundary maps to the grid-constant mode of scipy."""
-    from brainhops._core.bsplines import _scipy_boundary
+    from brainhops._core.bsplines import scipy_boundary
 
-    assert _scipy_boundary("constant") == ("grid-constant", 0.0)
-    assert _scipy_boundary(0.0) == ("grid-constant", 0.0)
+    assert scipy_boundary("constant") == ("grid-constant", 0.0)
+    assert scipy_boundary(0.0) == ("grid-constant", 0.0)
     # A numeric fill value is carried through as the constant.
-    assert _scipy_boundary(3.5) == ("grid-constant", 3.5)
+    assert scipy_boundary(3.5) == ("grid-constant", 3.5)
     # Other named conditions are unchanged.
-    assert _scipy_boundary("nearest") == ("nearest", 0.0)
-    assert _scipy_boundary("mirror") == ("mirror", 0.0)
+    assert scipy_boundary("nearest") == ("nearest", 0.0)
+    assert scipy_boundary("mirror") == ("mirror", 0.0)
 
 
 # ----------------------------------------------------------------------

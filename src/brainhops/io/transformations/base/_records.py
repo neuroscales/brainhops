@@ -24,7 +24,7 @@ __all__ = [
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol
 
 
 def record_of(xform: tx.Any) -> tx.Any:

@@ -15,10 +15,10 @@ from brainhops.datamodel.enums import BoundaryName
 
 # core
 from .backends import (
-    _creation_options,
     array_backend,
     backend,
     copy_array,
+    creation_options,
     ndimage_backend,
     promote_backends,
     to_backend,
@@ -29,7 +29,7 @@ from .dependencies import da, np
 from .typing import Clip
 
 
-def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
+def scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
     """Translate a boundary condition into the `(mode, cval)` of SciPy.
 
     A constant boundary, whether it is given by the name `"constant"` or as
@@ -102,7 +102,7 @@ def _over_batch(
     return output
 
 
-def _normalize_clip(
+def normalize_clip(
     clip: Clip, ndim: int
 ) -> tx.Optional[tx.Tuple[tx.Tuple[float, float], ...]]:
     """Validate margin metadata without inspecting data or coordinates."""
@@ -133,7 +133,7 @@ def _normalize_clip(
     return tuple((float(lower), float(upper)) for lower, upper in pairs)
 
 
-def _clip_mask(
+def clip_mask(
     coords: ArrayProtocol,
     shape: tx.Sequence[int],
     clip: tx.Optional[tx.Sequence[tx.Tuple[float, float]]],
@@ -215,13 +215,13 @@ def pull(
     coords = to_backend(coords, backend)
     if dtype is not None:
         dtype = np.dtype(dtype)
-        input = input.astype(_sampling_dtype(input.dtype, dtype), copy=False)
+        input = input.astype(sampling_dtype(input.dtype, dtype), copy=False)
     ndim = coords.shape[-1]
-    clip = _normalize_clip(clip, ndim)
+    clip = normalize_clip(clip, ndim)
     batch = input.shape[:-ndim]
-    mask = _clip_mask(coords, input.shape[-ndim:], clip)
+    mask = clip_mask(coords, input.shape[-ndim:], clip)
     coords = xp.moveaxis(coords, -1, 0)
-    mode, cval = _scipy_boundary(bound)
+    mode, cval = scipy_boundary(bound)
     degree = int(degree)
     opts = {
         "order": degree,
@@ -242,10 +242,10 @@ def pull(
         if mask is not None
         else output
     )
-    return _cast_output(output, dtype) if dtype is not None else output
+    return cast_output(output, dtype) if dtype is not None else output
 
 
-def _sampling_dtype(
+def sampling_dtype(
     input_dtype: DTypeLike, output_dtype: tx.Optional[DTypeLike]
 ) -> np.dtype:
     """Choose working precision without changing the separable defaults.
@@ -267,7 +267,7 @@ def _sampling_dtype(
     return np.result_type(promoted, np.float32)
 
 
-def _cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
+def cast_output(values: ArrayProtocol, dtype: DTypeLike) -> ArrayProtocol:
     """Convert sampled values using the existing SciPy output convention."""
     dtype = np.dtype(dtype)
     if values.dtype == dtype:
@@ -469,13 +469,13 @@ def coeff2value(
     batch = input.shape[:-ndim]
     # The grid is created in the backend of the input, with CuPy chunks
     # when the chunks of the input are CuPy arrays.
-    options = _creation_options(input)
+    options = creation_options(input)
     grid = xp.meshgrid(
         *(xp.arange(s, **options) for s in input.shape[-ndim:]),
         indexing="ij",
     )
     grid = xp.stack(grid, axis=0)
-    mode, cval = _scipy_boundary(bound)
+    mode, cval = scipy_boundary(bound)
     degree = int(degree)
     opts = {"order": degree, "mode": mode, "cval": cval, "prefilter": False}
     map_coordinates = _map_coordinates_for(xp, xd)
@@ -567,7 +567,7 @@ def value2coeff(
     # the evaluation extends the coefficients beyond the edges in the same
     # way as the prefilter extends the values. In the modes of _SOLVED_MODES,
     # the prefilter is wrong or inexact, so the coefficients are solved for.
-    mode, cval = _scipy_boundary(bound)
+    mode, cval = scipy_boundary(bound)
     if mode in _SOLVED_MODES:
         bound = 0.0 if mode == "grid-constant" else mode
 

@@ -13,8 +13,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core.proxy import ArrayProxy
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, ArrayProxy
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.base import _utils_raster as raster
 

@@ -37,7 +37,7 @@ __all__ = ["relabel", "relabelling", "relabels"]
 
 import typing_extensions as tx
 
-from brainhops._core.magic import replace
+from brainhops._core._internal_api import replace
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.compute.adaptors import bridge
 from brainhops.datamodel._transformations.compute.convert import (

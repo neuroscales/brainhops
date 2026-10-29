@@ -71,7 +71,7 @@ HAS_INDEXED_GZIP = _IndexedGzipFile is not None
 """Whether indexed_gzip can be imported, which speeds up seeking in gzip."""
 
 
-def _open_gzip(file: tx.BinaryIO) -> tx.IO:
+def open_gzip(file: tx.BinaryIO) -> tx.IO:
     """Open a gzip stream, preferably with indexed_gzip.
 
     The standard [`GzipFile`][gzip.GzipFile] seeks by decompressing again
@@ -89,7 +89,7 @@ def _open_gzip(file: tx.BinaryIO) -> tx.IO:
 
 
 COMPRESSORS: tx.List[tx.Tuple[bytes, tx.Callable[[tx.BinaryIO], tx.IO]]] = [
-    (b"\x1f\x8b", _open_gzip),
+    (b"\x1f\x8b", open_gzip),
 ]
 """Decompressors, as pairs of leading magic bytes and an opener.
 

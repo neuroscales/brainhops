@@ -16,8 +16,7 @@ import typing_extensions as tx
 from bagof.magic import KwOnly
 
 from brainhops._core import affines as _affines
-from brainhops._core.backends import array_backend
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, array_backend
 
 # datamodel
 from brainhops.datamodel import systems as _systems
@@ -379,7 +378,7 @@ def homogeneous_matrix(
 # -- deprecated names ----------------------------------------------------
 # The old spellings of the coordinate fields (#547) still import, with a
 # DeprecationWarning, for one release.
-from brainhops._core.deprecation import (  # noqa: E402
+from brainhops._core._internal_api import (  # noqa: E402
     renamed_attributes as _renamed_attributes,
 )
 

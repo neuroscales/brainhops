@@ -10,10 +10,12 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # core
 from brainhops._core import path
-from brainhops._core.backends import array_backend
-from brainhops._core.path import atomic_write_bytes
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    array_backend,
+    atomic_write_bytes,
+    smartproperty,
+)
 
 # datamodel
 from brainhops.datamodel import systems as _systems

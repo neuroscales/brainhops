@@ -8,8 +8,11 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core.properties import InvalidatorInAttribute, smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    InvalidatorInAttribute,
+    smartproperty,
+)
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import Axis

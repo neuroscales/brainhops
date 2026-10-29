@@ -16,8 +16,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import alias
-from brainhops._core.proxy import StoredProxy
+from brainhops._core._internal_api import StoredProxy, alias
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from brainhops.io.common.hdf5 import H5ArrayProxy
 from brainhops.io.common.hdf5._parsers import read_string

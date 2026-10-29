@@ -62,7 +62,7 @@ import threading
 import typing_extensions as tx
 
 from brainhops._core import dependencies as _dependencies
-from brainhops._core.typing import is_instance_or_subclass
+from brainhops._core._internal_api import is_instance_or_subclass
 
 if tx.TYPE_CHECKING:  # pragma: no cover
     import pint

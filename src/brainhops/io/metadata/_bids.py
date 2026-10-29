@@ -27,7 +27,7 @@ from bagof.magic import Field, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core.errors import UNSET
+from brainhops._core._internal_api import UNSET
 from brainhops.datamodel.metadata import (
     ConversionReport,
     DiffusionVocabulary,

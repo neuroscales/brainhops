@@ -1,8 +1,7 @@
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.affines import axis_scales
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, axis_scales
 
 from ..base import Transformation
 from ..concrete import Affine

@@ -9,7 +9,7 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
 # internals
-from brainhops._core.properties import smartproperty
+from brainhops._core._internal_api import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (

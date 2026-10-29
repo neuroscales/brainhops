@@ -15,13 +15,13 @@ need more than the default conversion overrides `to_backend` or
 import typing_extensions as tx
 
 # internals
-from brainhops._core.backends import (
+from brainhops._core._internal_api import (
+    ArrayProtocol,
     BackendLike,
     DeviceLike,
+    smart_replace,
     to_backend,
 )
-from brainhops._core.magic import smart_replace
-from brainhops._core.typing import ArrayProtocol
 
 _T = tx.TypeVar("_T")
 

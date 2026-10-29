@@ -23,12 +23,15 @@ from bagof.magic import NoRepr
 
 # core
 from brainhops._core import path
-from brainhops._core.backends import has_dask, is_lazy
-from brainhops._core.dependencies import openslide
 
 # io
-from brainhops._core.proxy import StoredProxy
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    StoredProxy,
+    has_dask,
+    is_lazy,
+    openslide,
+)
 from brainhops.io.base.parsers import ParserContentError
 
 # this format

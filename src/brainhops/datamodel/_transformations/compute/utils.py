@@ -4,7 +4,7 @@ import contextvars
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core.backends import array_backend
+from brainhops._core._internal_api import array_backend
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import ConversionError, RestrictionError
 

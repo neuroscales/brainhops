@@ -9,7 +9,7 @@ the two functions below are the identity. They invert each other, so that
 """
 
 # internals
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol
 
 # this format
 

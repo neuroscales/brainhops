@@ -16,9 +16,14 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
 # core
-from brainhops._core.affines import inv as _affine_inv
-from brainhops._core.backends import array_backend, to_backend, to_numpy
-from brainhops._core.path import is_local, replace_directory
+from brainhops._core._internal_api import affine_inv as _affine_inv
+from brainhops._core._internal_api import (
+    array_backend,
+    is_local,
+    replace_directory,
+    to_backend,
+    to_numpy,
+)
 
 # datamodel
 from brainhops.datamodel._sugar import vector_axis

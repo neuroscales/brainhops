@@ -19,9 +19,12 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
-from brainhops._core.proxy import ArrayProxy
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    ArrayProxy,
+    atomic_write_bytes,
+    is_same_file,
+)
 from brainhops.io.base.parsers import WriterError
 
 # this format

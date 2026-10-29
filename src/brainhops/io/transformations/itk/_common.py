@@ -8,11 +8,15 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import affines as _affines
-from brainhops._core.backends import array_backend, to_backend
-from brainhops._core.enum import StrEnum
-from brainhops._core.properties import lazyproperty, smartproperty
-from brainhops._core.proxy import ArrayProxy
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    ArrayProxy,
+    StrEnum,
+    array_backend,
+    lazyproperty,
+    smartproperty,
+    to_backend,
+)
 
 # datamodel
 from brainhops.datamodel import systems as _systems

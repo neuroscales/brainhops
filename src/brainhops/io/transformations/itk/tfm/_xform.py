@@ -5,7 +5,7 @@ __all__ = ["TfmTransform"]
 import typing_extensions as tx
 from bagof.magic import Inherit, KwOnly, NoRepr, replace
 
-from brainhops._core.properties import smartproperty
+from brainhops._core._internal_api import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._report import (

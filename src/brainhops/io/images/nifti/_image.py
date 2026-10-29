@@ -9,8 +9,7 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # core
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import ArrayProtocol, smartproperty
 
 # datamodel
 from brainhops.datamodel.images import SingleScaleImage

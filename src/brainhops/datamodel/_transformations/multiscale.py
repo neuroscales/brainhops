@@ -1,10 +1,12 @@
 import typing_extensions as tx
 from bagof.magic import Forget, replace
 
-from brainhops._core.affines import axis_scales
-from brainhops._core.affines import inv as _affine_inv
-from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core._internal_api import (
+    ArrayProtocol,
+    axis_scales,
+    smartproperty,
+)
+from brainhops._core._internal_api import affine_inv as _affine_inv
 from brainhops.datamodel.multiscale import Multiscale
 
 from .base import Transformation
