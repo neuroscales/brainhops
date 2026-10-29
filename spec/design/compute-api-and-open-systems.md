@@ -823,9 +823,11 @@ Decisions 40 to 43 are implemented (#620):
 40. The selection of the elements of a batch at the values of the batch
     axes that its neighbour creates is a pair simplifier, so it applies
     under every mode. The composer of a batch with the transformation
-    before it tries the selection first, under the numeric policy, so
-    that a composing `compute` also selects an element when the creation
-    is a constant row of an affine.
+    before it tries the selection first, under the numeric policy
+    whatever the policy of the caller, so that a composing `compute` also
+    selects an element when the creation is a constant row of an affine.
+    It computes the chain of the selection with the default mode and
+    policy of `compute`, as the composers of a sequence do.
 41. A pair simplifier or a composer may return a chain whose members are
     cheaper than the pair, and the sweeps of `simplify` and `compute`
     put the members in the place of the pair, so that each member meets
@@ -838,7 +840,10 @@ Decisions 40 to 43 are implemented (#620):
     select an element. `simplify` therefore removes a batch axis of
     length 1, or along which the elements do not change, and the axis
     passes through for every coordinate. A point between two positions
-    has no element, and its outputs are NaN.
+    has no element, and its outputs are NaN. Its batch coordinates are
+    carried through, but a later neighbour that is not written for NaN,
+    such as an affine applied to a field of coordinates, spreads the NaN
+    to every output.
 43. A batch belongs to no family, so the simplification policy of a
     batch is resolved against its elements. A table that reads the
     values of matrix transformations only reads the values of a batch of

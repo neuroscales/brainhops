@@ -248,7 +248,10 @@ is computed in floating point, up to a millionth of the smallest spacing
 between two positions. A point whose coordinate lies between two
 positions, or outside their range, has no element, and its other
 outputs are NaN, while its batch coordinates are carried through
-unchanged.
+unchanged. A later neighbour that is not written for NaN may still
+spread the NaN to every output: an affine applied to these points, for
+example, multiplies the NaN by the zero coefficients of its matrix, so
+that its outputs are all NaN, the batch coordinates included.
 
 `compute` and `simplify` know the following rules for batches.
 
@@ -260,13 +263,16 @@ unchanged.
 - `simplify` simplifies the elements of a general batch, converts a
   general batch whose elements share one matrix or vector type to the
   stacked form, and turns a batch of identities that keeps its axes in
-  place into the identity. It
-  removes a batch axis of length 1 and, under the numeric policy, a
-  batch axis along which the elements do not change, and the axis then
-  passes through a `SubspaceTransformation`. These rewrites are exact at
-  the positions of the elements, which are the only coordinates that
-  select one. A general batch cancels with its inverse, but a stacked
-  batch does not, because the inverse of its stack is computed.
+  place into the identity. It removes a batch axis of length 1 and,
+  under the numeric policy, a batch axis along which the elements do not
+  change, and the axis then passes through a `SubspaceTransformation`.
+  These rewrites are exact at the positions of the elements, which are
+  the only coordinates that select one.
+- A general batch cancels with its inverse, because each of its elements
+  cancels with its lazy inverse. A stacked batch does not cancel with
+  its inverse, because the inverse computes a new stack, and the chain
+  of the two is composed instead, into a batch of identities up to
+  rounding.
 - With `mode=True`, a batch composes with a neighbour that carries the
   batch axes through unchanged and acts on the axes of the elements
   only, such as a spatial affine, into one batch. Two batches that meet
