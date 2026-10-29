@@ -8,11 +8,16 @@ package. The rules are explained in `spec/design/internal-api.md`.
 """
 
 __all__ = [
+    "checked_score",
+    "declined",
     "FileBasedModelMixin",
+    "no_options",
     "Raw",
     "register_missing_format",
+    "sniffed_raw",
 ]
 
 from ._base import FileBasedModelMixin
 from ._dispatch import register_missing_format
 from ._raw import Raw
+from ._sniffing import checked_score, declined, no_options, sniffed_raw

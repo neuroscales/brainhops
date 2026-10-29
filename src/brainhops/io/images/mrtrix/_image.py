@@ -33,6 +33,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -48,18 +49,17 @@ from brainhops.io.common._internal_api import (
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
 from brainhops.io.common.mrtrix._internal_api import (
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
     MrtrixProxy,
-    declined,
     dtype_to_mrtrix,
     file_entry,
     keeps_storage,
     merged_keyval,
     mrtrix_bytes,
-    no_options,
     placed_record,
     read_mrtrix,
     reads_from,
-    sniffed_raw,
     split_voxel_to_scanner,
     stored_voxels,
     stores_as_recorded,
@@ -299,9 +299,9 @@ class MrtrixImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = sniffed_raw(file)
+        raw, failure = sniffed_raw(MrtrixRaw.from_fileobj, file)
         if raw is None:
-            return declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -339,7 +339,7 @@ class MrtrixImage(
         ParserContentError
             If the file is not an MRtrix image, or its data is too short.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -384,7 +384,7 @@ class MrtrixImage(
             If the stream is not an MRtrix image, or its header names a
             separate data file and the stream has no name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_mrtrix(file, mmap=False)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 

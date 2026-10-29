@@ -28,6 +28,7 @@ from brainhops.datamodel.metadata._internal_api import (
 
 # io
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -40,16 +41,16 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common._internal_api import ras_conversion
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
 from brainhops.io.common.afni._internal_api import (
+    DECLINE_MESSAGE,
     DICOM_TO_RAS,
+    OPTION_OWNER,
     afni_view,
     afni_world,
     afni_written_files,
     brik_proxy,
-    declined,
-    no_options,
     read_afni,
+    read_validated_header,
     reads_brik,
-    sniffed_raw,
     sniffed_raw_at,
     write_brik,
 )
@@ -208,9 +209,9 @@ class AfniBrikWarp(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = sniffed_raw(file)
+        raw, failure = sniffed_raw(read_validated_header, file)
         if raw is None:
-            return declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -241,7 +242,7 @@ class AfniBrikWarp(
         """
         raw, failure = sniffed_raw_at(filename)
         if raw is None:
-            return declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -277,7 +278,7 @@ class AfniBrikWarp(
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
 

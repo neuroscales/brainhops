@@ -11,12 +11,12 @@ import typing_extensions as tx
 # internals
 from brainhops._core._internal_api import open_compressed, preserve_position
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # this format
@@ -35,6 +35,12 @@ from ._constants import (
     MRTRIX_MAGIC,
     RESERVED,
 )
+
+OPTION_OWNER = "MRtrix reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not an MRtrix image"
+"""The message of the error raised when a sniffer declines a stream."""
 
 # ----------------------------------------------------------------------
 #   RECORD
@@ -372,7 +378,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         ParserContentError
             If the text is not an MRtrix header.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         return cls.from_lines(text.splitlines())
 
     @classmethod
@@ -402,7 +408,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         ParserContentError
             If the stream does not hold an MRtrix header.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             return _read_header(open_compressed(file))
 
@@ -438,10 +444,10 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         SnifferContentError
             If the stream holds no header and `error` is `True`.
         """
-        raw, failure = sniffed_raw(file)
+        raw, failure = sniffed_raw(MrtrixRaw.from_fileobj, file)
         if raw is not None:
             return Confidence.LIKELY
-        return declined(error, failure)
+        return declined(error, DECLINE_MESSAGE, failure)
 
     @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
@@ -598,20 +604,6 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
     __hash__ = None
 
 
-def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(
-            f"Unknown MRtrix reader option(s): {', '.join(kwargs)}"
-        )
-
-
 def _read_header(file: tx.BinaryIO) -> MrtrixRaw:
     """Read a header from a decompressed stream, keeping its bytes.
 
@@ -648,29 +640,3 @@ def _read_header(file: tx.BinaryIO) -> MrtrixRaw:
 def _parsed(stored: bytes) -> MrtrixRaw:
     """Parse the header of stored bytes, which may hold padding."""
     return MrtrixRaw.from_text(stored.decode("utf-8", "replace"))
-
-
-def sniffed_raw(
-    file: tx.IO,
-) -> tx.Tuple[tx.Optional[MrtrixRaw], tx.Optional[Exception]]:
-    """Read the record of a stream for sniffing.
-
-    The position of the stream is restored. The result is the record, or
-    `None` with the error that refused it.
-    """
-    try:
-        return MrtrixRaw.from_fileobj(file), None
-    except Exception as e:  # noqa: BLE001
-        return None, e
-
-
-def declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline a sniffed input, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error("Content is not an MRtrix image") from failure
-    return Confidence.NO

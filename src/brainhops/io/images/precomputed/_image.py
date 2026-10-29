@@ -17,6 +17,7 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -47,7 +48,7 @@ from ._data import (
     stream_location,
 )
 from ._metadata import PrecomputedMetadata
-from ._raw import PrecomputedRaw, no_options
+from ._raw import OPTION_OWNER, PrecomputedRaw
 from ._views import image_to_disk, image_to_model
 
 _UNIT = "nm"
@@ -410,7 +411,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the `info` file breaks the specification, if there is no
             such scale, or if the encoding of the scale cannot be read.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_precomputed(filename)
         metadata = PrecomputedMetadata.from_raw(record)
         return read_scale(cls, location, metadata, level)
@@ -448,7 +449,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         ParserTypeError
             If the stream has no file name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_precomputed(stream_location(file))
         metadata = PrecomputedMetadata.from_raw(record)
         return read_scale(cls, location, metadata, level)

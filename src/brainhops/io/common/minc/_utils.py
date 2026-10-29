@@ -16,7 +16,6 @@ from brainhops.datamodel.axes import Axis
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # this format
@@ -56,17 +55,6 @@ def voxel_axis(name: str) -> Axis:
     """Return the voxel axis that a MINC dimension stands for."""
     axis_name, axis_type = AXES.get(name, (name, None))
     return Axis(axis_name, axis_type, unit="index")
-
-
-def checked_score(
-    score: float, error: tx.Union[bool, tx.Type[Exception]]
-) -> float:
-    """Return a score, or raise if it is zero and the caller asks to."""
-    if score or not error:
-        return score
-    if error is True:
-        error = SnifferContentError
-    raise error("Content is not a MINC file of this version.")
 
 
 def sniff_minc1(head: bytes) -> float:

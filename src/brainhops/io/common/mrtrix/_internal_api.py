@@ -9,18 +9,17 @@ api.md`.
 """
 
 __all__ = [
-    "declined",
+    "DECLINE_MESSAGE",
     "dtype_to_mrtrix",
     "file_entry",
     "keeps_storage",
     "merged_keyval",
     "mrtrix_bytes",
     "MrtrixProxy",
-    "no_options",
+    "OPTION_OWNER",
     "placed_record",
     "read_mrtrix",
     "reads_from",
-    "sniffed_raw",
     "split_voxel_to_scanner",
     "stored_voxels",
     "stores_as_recorded",
@@ -49,4 +48,4 @@ from ._files import (
     written_files,
 )
 from ._geometry import split_voxel_to_scanner, voxel_to_ras
-from ._raw import declined, no_options, sniffed_raw
+from ._raw import DECLINE_MESSAGE, OPTION_OWNER

@@ -31,3 +31,9 @@ AXES = {
     "zspace": ("z", "space"),
     "time": ("t", "time"),
 }
+
+OPTION_OWNER = "MINC reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not a MINC file of this version."
+"""The message of the error raised when a sniffer declines a stream."""

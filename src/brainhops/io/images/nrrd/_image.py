@@ -36,6 +36,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -51,12 +52,13 @@ from brainhops.io.common._internal_api import (
 from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
 from brainhops.io.common.nrrd._internal_api import (
     DATA_EXTENSIONS,
+    DECLINE_MESSAGE,
     ENCODINGS,
+    OPTION_OWNER,
     SPACE_NAMES,
     SPACES,
     NrrdProxy,
     axis_roles,
-    declined,
     decode,
     dtype_to_nrrd,
     encode_data,
@@ -64,9 +66,7 @@ from brainhops.io.common.nrrd._internal_api import (
     format_strings,
     format_vectors,
     image_order,
-    no_options,
     read_nrrd,
-    sniffed_raw,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.metadata._internal_api import (
@@ -541,13 +541,13 @@ class NrrdImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = sniffed_raw(file)
+        raw, failure = sniffed_raw(NrrdRaw.from_fileobj, file)
         if raw is None:
-            return declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         score = cls._score_header(raw)
         if score:
             return score
-        return declined(error, None)
+        return declined(error, DECLINE_MESSAGE, None)
 
     @classmethod
     def from_filename(
@@ -585,7 +585,7 @@ class NrrdImage(
             If the file is not a NRRD image, or a local file of raw
             samples is too short.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_nrrd(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=NrrdMetadata.from_raw(raw))
 
@@ -619,7 +619,7 @@ class NrrdImage(
             If the stream is not a NRRD image, or its header names data
             files and the stream has no name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_nrrd(file, mmap=False)
         return cls(rawdata=proxy, metadata=NrrdMetadata.from_raw(raw))
 

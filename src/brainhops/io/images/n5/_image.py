@@ -16,6 +16,7 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -47,7 +48,7 @@ from ._data import (
     stream_location,
 )
 from ._metadata import N5Metadata
-from ._raw import N5Raw, no_options, score
+from ._raw import DECLINE_MESSAGE, OPTION_OWNER, N5Raw
 from ._spatial import placement
 from ._views import image_to_disk, image_to_model
 
@@ -302,7 +303,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         try:
             _, record = read_node(filename)
         except Exception:  # noqa: BLE001
-            return score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error, DECLINE_MESSAGE)
         if record.levels and level is None:
             return Confidence.LIKELY
         return Confidence.CERTAIN
@@ -404,7 +405,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the node is neither a dataset nor a pyramid, if there is no
             such level, or if the samples cannot be read.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_node(filename)
         return read_dataset(cls, location, N5Metadata.from_raw(record), level)
 
@@ -441,7 +442,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         ParserTypeError
             If the stream has no file name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_node(stream_location(file))
         return read_dataset(cls, location, N5Metadata.from_raw(record), level)
 

@@ -11,12 +11,11 @@ from bagof.magic import Magic, replace
 
 # internals
 from brainhops._core._internal_api import preserve_position
-from brainhops.io.base._internal_api import Raw
+from brainhops.io.base._internal_api import Raw, checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # The conventions below follow the specification of the format at
@@ -68,6 +67,12 @@ _INDEX_ENCODINGS = ("raw", "gzip")
 
 _SNIFF_SIZE = 16 * 1024 * 1024
 """The size above which a stream is not taken for an `info` file."""
+
+OPTION_OWNER = "Neuroglancer precomputed reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not the info file of a precomputed volume."
+"""The message of the error raised when a sniffer declines a stream."""
 
 
 class PrecomputedSharding(Magic, frozen=True):
@@ -255,7 +260,7 @@ class PrecomputedRaw(Raw, BinaryFileReader):
             If the stream is not the `info` file of a precomputed volume,
             or breaks the specification.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             content = file.read()
         return _parse_info(_json(content))
@@ -295,7 +300,7 @@ class PrecomputedRaw(Raw, BinaryFileReader):
             If the content is not the `info` file of a volume and `error`
             is `True`.
         """
-        return checked_score(sniff_info(file), error)
+        return checked_score(sniff_info(file), error, DECLINE_MESSAGE)
 
 
 def sniff_info(file: tx.IO) -> float:
@@ -325,32 +330,6 @@ def sniff_info(file: tx.IO) -> float:
     except Exception:  # noqa: BLE001
         return Confidence.NO
     return Confidence.CERTAIN
-
-
-def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(
-            "Unknown Neuroglancer precomputed reader option(s): "
-            f"{', '.join(kwargs)}"
-        )
-
-
-def checked_score(
-    score: float, error: tx.Union[bool, tx.Type[Exception]]
-) -> float:
-    """Return a score, or raise if it is zero and the caller asks to."""
-    if score or not error:
-        return score
-    if error is True:
-        error = SnifferContentError
-    raise error("Content is not the info file of a precomputed volume.")
 
 
 def _json(content: bytes) -> tx.Any:

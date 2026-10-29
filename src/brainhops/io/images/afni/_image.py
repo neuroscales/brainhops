@@ -37,6 +37,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -52,6 +53,8 @@ from brainhops.io.common._internal_api import (
 from brainhops.io.common.afni import AfniFormat, AfniMetadata, AfniRaw
 from brainhops.io.common.afni._internal_api import (
     AFNI_VIEWS,
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
     BrikProxy,
     afni_cardinal_matrix,
     afni_dataset_files,
@@ -63,15 +66,13 @@ from brainhops.io.common.afni._internal_api import (
     brick_code,
     brick_dtype,
     brik_proxy,
-    declined,
     decode_bricks,
     encode_bricks,
     format_attributes,
     looks_like_head,
-    no_options,
     read_afni,
+    read_validated_header,
     reads_brik,
-    sniffed_raw,
     sniffed_raw_at,
     stores_brik,
     whole_brik,
@@ -390,9 +391,9 @@ class AfniImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = sniffed_raw(file)
+        raw, failure = sniffed_raw(read_validated_header, file)
         if raw is None:
-            return declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -423,7 +424,7 @@ class AfniImage(
         """
         raw, failure = sniffed_raw_at(filename)
         if raw is None:
-            return declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -454,7 +455,7 @@ class AfniImage(
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
 
@@ -499,7 +500,7 @@ class AfniImage(
         ParserContentError
             If the stream has no file name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         name = getattr(file, "name", None)
         named = isinstance(name, (str, bytes, os.PathLike))
         with preserve_position(file):

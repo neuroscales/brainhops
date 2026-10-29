@@ -11,12 +11,11 @@ from bagof.magic import replace
 
 # internals
 from brainhops._core._internal_api import preserve_position
-from brainhops.io.base._internal_api import Raw
+from brainhops.io.base._internal_api import Raw, checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # The conventions below follow the specification of N5 at
@@ -47,6 +46,12 @@ _DATASET_KEYS = ("dimensions", "blockSize", "dataType")
 
 _SNIFF_SIZE = 16 * 1024 * 1024
 """The size above which a stream is not taken for an `attributes.json`."""
+
+OPTION_OWNER = "N5 reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not an N5 dataset or pyramid."
+"""The message of the error raised when a sniffer declines a stream."""
 
 
 class N5Raw(Raw, BinaryFileReader):
@@ -175,7 +180,7 @@ class N5Raw(Raw, BinaryFileReader):
             If the stream does not hold a JSON object, or holds the
             attributes of a dataset that break the specification.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             content = file.read()
         return parse_attributes(json_attributes(content))
@@ -218,7 +223,7 @@ class N5Raw(Raw, BinaryFileReader):
             If the content is not the attributes of a dataset and `error`
             is `True`.
         """
-        return score(sniff_attributes(file), error)
+        return checked_score(sniff_attributes(file), error, DECLINE_MESSAGE)
 
 
 # ----------------------------------------------------------------------
@@ -323,34 +328,6 @@ def with_levels(record: N5Raw, levels: tx.Sequence[N5Raw]) -> N5Raw:
         if not level.is_dataset:
             raise ParserContentError(f"The level s{index} is not a dataset.")
     return replace(record, levels=tuple(levels))
-
-
-def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(f"Unknown N5 reader option(s): {', '.join(kwargs)}")
-
-
-def score(value: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:
-    """Return a score, or raise if it is zero and the caller asks to.
-
-    Raises
-    ------
-    SnifferContentError
-        If the score is zero and `error` is `True`, or the exception
-        class that `error` gives.
-    """
-    if value or not error:
-        return value
-    if error is True:
-        error = SnifferContentError
-    raise error("Content is not an N5 dataset or pyramid.")
 
 
 def json_attributes(content: bytes) -> tx.Any:

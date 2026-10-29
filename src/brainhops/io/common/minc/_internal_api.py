@@ -8,16 +8,17 @@ package. The rules are explained in `spec/design/internal-api.md`.
 """
 
 __all__ = [
-    "checked_score",
+    "DECLINE_MESSAGE",
     "minc_version",
     "MincProxy",
-    "no_options",
+    "OPTION_OWNER",
     "read_minc",
     "sniff_minc",
     "sniff_minc2",
     "voxel_axis",
 ]
 
+from ._constants import DECLINE_MESSAGE, OPTION_OWNER
 from ._data import MincProxy, read_minc
-from ._raw import no_options, sniff_minc
-from ._utils import checked_score, minc_version, sniff_minc2, voxel_axis
+from ._raw import sniff_minc
+from ._utils import minc_version, sniff_minc2, voxel_axis

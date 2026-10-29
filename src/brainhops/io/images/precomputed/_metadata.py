@@ -7,12 +7,13 @@ from bagof.magic import NoRepr
 # internals
 from brainhops._core import path
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import checked_score, no_options
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.metadata import MetadataFormat, MetadataReader
 
 # this format
 from ._data import read_precomputed
-from ._raw import PrecomputedRaw, checked_score, no_options
+from ._raw import DECLINE_MESSAGE, OPTION_OWNER, PrecomputedRaw
 
 
 @register_format
@@ -62,7 +63,7 @@ class PrecomputedMetadata(MetadataReader, MetadataFormat):
         try:
             read_precomputed(filename)
         except Exception:  # noqa: BLE001
-            return checked_score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error, DECLINE_MESSAGE)
         return Confidence.CERTAIN
 
     @classmethod
@@ -96,6 +97,6 @@ class PrecomputedMetadata(MetadataReader, MetadataFormat):
         ParserContentError
             If the `info` file breaks the specification.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         _, record = read_precomputed(filename)
         return cls.from_raw(record)

@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core._internal_api import open_compressed, preserve_position
-from brainhops.io.base._internal_api import Raw
+from brainhops.io.base._internal_api import Raw, checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -16,7 +16,7 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._constants import MINC2_ROOT, SNIFF_SIZE
+from ._constants import DECLINE_MESSAGE, MINC2_ROOT, OPTION_OWNER, SNIFF_SIZE
 from ._dimensions import (
     MincDimension,
     minc1_dimensions,
@@ -24,7 +24,7 @@ from ._dimensions import (
     string,
 )
 from ._netcdf import NetcdfHeader, read_netcdf_header
-from ._utils import checked_score, minc_version, sniff_minc1, sniff_minc2
+from ._utils import minc_version, sniff_minc1, sniff_minc2
 
 _UNSUPPORTED = (
     "Irregularly spaced dimensions, dimensions without a variable (such "
@@ -127,7 +127,7 @@ class MincRaw(Raw, BinaryFileReader):
             If the stream is not a MINC file, or a file that nibabel
             cannot read the voxels of.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             start = file.tell()
             version = minc_version(open_compressed(file).read(8))
@@ -173,7 +173,7 @@ class MincRaw(Raw, BinaryFileReader):
         SnifferContentError
             If the stream is not a MINC file and `error` is `True`.
         """
-        return checked_score(sniff_minc(file, (1, 2)), error)
+        return checked_score(sniff_minc(file, (1, 2)), error, DECLINE_MESSAGE)
 
 
 def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:
@@ -208,18 +208,6 @@ def sniff_minc(file: tx.IO, versions: tx.Collection[int]) -> float:
             return sniff_minc2(file)
     except Exception:  # noqa: BLE001
         return Confidence.NO
-
-
-def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(f"Unknown MINC reader option(s): {', '.join(kwargs)}")
 
 
 def _unsupported(version: int, reason: str) -> ParserContentError:

@@ -29,12 +29,13 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import checked_score, no_options
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
 from brainhops.io.common.minc._internal_api import (
-    checked_score,
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
     minc_version,
-    no_options,
     read_minc,
     sniff_minc,
     sniff_minc2,
@@ -336,7 +337,9 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             with filename.open("rb") as f:
                 version = minc_version(f.read(8))
             if version == 2 and 2 in cls._versions():
-                return checked_score(sniff_minc2(str(filename)), error)
+                return checked_score(
+                    sniff_minc2(str(filename)), error, DECLINE_MESSAGE
+                )
         return super().sniff_filename(filename, error=error, **kwargs)
 
     @classmethod
@@ -369,7 +372,9 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        return checked_score(sniff_minc(file, cls._versions()), error)
+        return checked_score(
+            sniff_minc(file, cls._versions()), error, DECLINE_MESSAGE
+        )
 
     @classmethod
     def from_filename(
@@ -404,7 +409,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the file is not a MINC file of a version that this class
             reads, or nibabel cannot read its voxels.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_minc(filename)
         klass = cls._variant(raw.version)
         return klass(rawdata=proxy, metadata=MincMetadata.from_raw(raw))
@@ -439,7 +444,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the stream is not a MINC file of a version that this class
             reads, or nibabel cannot read its voxels.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_minc(file)
         klass = cls._variant(raw.version)
         return klass(rawdata=proxy, metadata=MincMetadata.from_raw(raw))

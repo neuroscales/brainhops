@@ -13,13 +13,17 @@ from bagof.magic import Factory, NoRepr
 # internals
 from brainhops._core._internal_api import preserve_position
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
-from brainhops.io.base._internal_api import Raw
+from brainhops.io.base._internal_api import (
+    Raw,
+    declined,
+    no_options,
+    sniffed_raw,
+)
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # this format
@@ -41,6 +45,12 @@ from ._constants import (
     SPACE_NAMES,
     SPACES,
 )
+
+OPTION_OWNER = "NRRD reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not a NRRD image"
+"""The message of the error raised when a sniffer declines a stream."""
 
 # ----------------------------------------------------------------------
 #   RECORD
@@ -413,7 +423,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         ParserContentError
             If the stream does not hold a NRRD header.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             return _read_header(file)
 
@@ -449,10 +459,10 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         SnifferContentError
             If the stream holds no header and `error` is `True`.
         """
-        raw, failure = sniffed_raw(file)
+        raw, failure = sniffed_raw(NrrdRaw.from_fileobj, file)
         if raw is not None:
             return Confidence.LIKELY
-        return declined(error, failure)
+        return declined(error, DECLINE_MESSAGE, failure)
 
     @takes_error_policy
     def to_text(self) -> str:
@@ -532,18 +542,6 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
     __hash__ = None
 
 
-def no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(f"Unknown NRRD reader option(s): {', '.join(kwargs)}")
-
-
 def _read_header(file: tx.BinaryIO) -> NrrdRaw:
     """Read a header from a stream positioned at its magic line.
 
@@ -590,32 +588,6 @@ def _read_header(file: tx.BinaryIO) -> NrrdRaw:
 def _parsed(stored: bytes) -> NrrdRaw:
     """Parse the bytes of a header."""
     return _read_header(BytesIO(stored))
-
-
-def sniffed_raw(
-    file: tx.IO,
-) -> tx.Tuple[tx.Optional[NrrdRaw], tx.Optional[Exception]]:
-    """Read the record of a stream for sniffing.
-
-    The position of the stream is restored. The result is the record, or
-    `None` with the error that refused it.
-    """
-    try:
-        return NrrdRaw.from_fileobj(file), None
-    except Exception as e:  # noqa: BLE001
-        return None, e
-
-
-def declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline a sniffed input, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error("Content is not a NRRD image") from failure
-    return Confidence.NO
 
 
 def _data_files(value: str) -> tx.Tuple[tx.List[str], bool]:

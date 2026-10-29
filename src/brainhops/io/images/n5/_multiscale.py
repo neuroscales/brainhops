@@ -9,6 +9,7 @@ from brainhops._core import path
 from brainhops._core._internal_api import HAS_TENSORSTORE
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -22,7 +23,7 @@ from brainhops.io.images.base import ImageFormat
 from ._data import read_node, stream_location
 from ._image import N5Image, read_dataset
 from ._metadata import N5Metadata
-from ._raw import N5Raw, no_options, score
+from ._raw import DECLINE_MESSAGE, OPTION_OWNER, N5Raw
 
 
 class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
@@ -123,7 +124,7 @@ class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         try:
             _, record = read_node(filename)
         except Exception:  # noqa: BLE001
-            return score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error, DECLINE_MESSAGE)
         return _score_record(record)
 
     @classmethod
@@ -160,7 +161,7 @@ class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         try:
             _, record = read_node(stream_location(file))
         except Exception:  # noqa: BLE001
-            return score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error, DECLINE_MESSAGE)
         return _score_record(record)
 
     @classmethod
@@ -225,7 +226,7 @@ class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         ParserContentError
             If the node is not a pyramid, or a level cannot be read.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_node(filename)
         return _read_pyramid(cls, location, record)
 
@@ -256,7 +257,7 @@ class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
         ParserTypeError
             If the stream has no file name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_node(stream_location(file))
         return _read_pyramid(cls, location, record)
 

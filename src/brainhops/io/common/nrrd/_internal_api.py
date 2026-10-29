@@ -10,7 +10,7 @@ package. The rules are explained in `spec/design/internal-api.md`.
 __all__ = [
     "axis_roles",
     "DATA_EXTENSIONS",
-    "declined",
+    "DECLINE_MESSAGE",
     "decode",
     "dtype_to_nrrd",
     "encode_data",
@@ -19,10 +19,9 @@ __all__ = [
     "format_strings",
     "format_vectors",
     "image_order",
-    "no_options",
     "NrrdProxy",
+    "OPTION_OWNER",
     "read_nrrd",
-    "sniffed_raw",
     "SPACE_NAMES",
     "SPACES",
 ]
@@ -36,4 +35,4 @@ from ._codecs import (
 from ._constants import DATA_EXTENSIONS, ENCODINGS, SPACE_NAMES, SPACES
 from ._data import NrrdProxy, decode, encode_data, read_nrrd
 from ._layout import axis_roles, image_order
-from ._raw import declined, no_options, sniffed_raw
+from ._raw import DECLINE_MESSAGE, OPTION_OWNER
