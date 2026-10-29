@@ -3,7 +3,7 @@ import typing_extensions as tx
 from bagof.magic import NotKwOnly
 
 # core
-from brainhops._core._internal_api import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from .base import DataModelBase

@@ -75,7 +75,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-from brainhops._core._internal_api import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (

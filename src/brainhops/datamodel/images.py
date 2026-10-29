@@ -7,19 +7,12 @@ import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 from bagof.magic import Forget, NoRepr, NotKwOnly, replace
 
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    BackendLike,
-    CartesianIndex,
-    Clip,
-    ComparesByIdMixin,
-    DeviceLike,
-    Shape,
-    alias,
-    axis_scales,
-    smart_replace,
-    smartproperty,
-)
+from brainhops._core.affines import axis_scales
+from brainhops._core.backends import BackendLike, DeviceLike
+from brainhops._core.compare import ComparesByIdMixin
+from brainhops._core.magic import smart_replace
+from brainhops._core.properties import alias, smartproperty
+from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
 from brainhops.datamodel.metadata._internal_api import (
     Indexed,
     Reframed,

@@ -7,14 +7,11 @@ from abczarr import ArrayConfig, ZarrArray, ZarrNode
 from bagof.magic import Inherit, NoRepr, replace
 
 # core
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    ArrayProxy,
-    Path,
-    da,
-    replace_directory,
-    smartproperty,
-)
+from brainhops._core.dependencies import da
+from brainhops._core.path import Path, replace_directory
+from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
+from brainhops._core.typing import ArrayProtocol
 
 # internals
 from brainhops.datamodel.images import SingleScaleImage

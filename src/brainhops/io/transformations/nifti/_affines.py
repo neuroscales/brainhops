@@ -9,11 +9,8 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format

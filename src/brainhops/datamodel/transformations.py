@@ -1,7 +1,7 @@
 # -- deprecated names ----------------------------------------------------
 # The old spellings of the coordinate fields (#547) still import, with a
 # DeprecationWarning, for one release.
-from brainhops._core._internal_api import (  # noqa: E402
+from brainhops._core.deprecation import (  # noqa: E402
     renamed_attributes as _renamed_attributes,
 )
 

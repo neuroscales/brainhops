@@ -30,25 +30,25 @@ import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    Clip,
+# core
+from brainhops._core.backends import (
     array_backend,
+    backend,
+    copy_array,
+    may_share_memory,
+    resolve_backend,
+    to_backend_of,
+)
+from brainhops._core.bsplines import (
     cast_output,
     clip_mask,
-    copy_array,
     interpol_boundary,
-    may_share_memory,
     normalize_clip,
     pull,
     pull_axes,
-    resolve_backend,
     sampling_dtype,
-    to_backend_of,
 )
-
-# core
-from brainhops._core.backends import backend
+from brainhops._core.typing import ArrayProtocol, Clip
 from brainhops._ext import interpol
 
 # api

@@ -12,12 +12,10 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    ArrayProxy,
-    is_same_file,
-    smartproperty,
-)
+from brainhops._core.path import is_same_file
+from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport

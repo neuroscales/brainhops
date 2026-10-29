@@ -13,11 +13,8 @@ from nibabel.volumeutils import array_to_file
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    open_compressed,
-    preserve_position,
-)
+from brainhops._core.streams import open_compressed, preserve_position
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (

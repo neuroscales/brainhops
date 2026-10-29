@@ -14,11 +14,9 @@ fields.
 import typing_extensions as tx
 
 # core
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    array_backend,
-    to_homogeneous,
-)
+from brainhops._core.affines import to_homogeneous
+from brainhops._core.backends import array_backend
+from brainhops._core.typing import ArrayProtocol
 from brainhops.errors import ParserContentError, WriterError
 
 # ----------------------------------------------------------------------

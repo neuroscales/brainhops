@@ -16,13 +16,8 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    Shape,
-    array_backend,
-    resolve_backend,
-)
-from brainhops._core.backends import backend
+from brainhops._core.backends import array_backend, backend, resolve_backend
+from brainhops._core.typing import ArrayProtocol, Shape
 
 from ._axes.components import batched, inv, is_component_type
 from ._sugar import get_axes

@@ -11,7 +11,7 @@ from bagof.magic import NoRepr, replace
 from PIL import Image
 
 # internals
-from brainhops._core._internal_api import preserve_position
+from brainhops._core.streams import preserve_position
 from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,

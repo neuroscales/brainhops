@@ -6,7 +6,7 @@
 import nibabel as nb
 import typing_extensions as tx
 
-from brainhops._core._internal_api import open_compressed
+from brainhops._core.streams import open_compressed
 
 # ----------------------------------------------------------------------
 #   RECOGNISING AND WRITING STREAMS

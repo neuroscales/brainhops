@@ -10,11 +10,8 @@ import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
-from brainhops._core._internal_api import (
-    open_compressed,
-    preserve_position,
-    replace,
-)
+from brainhops._core.magic import replace
+from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (

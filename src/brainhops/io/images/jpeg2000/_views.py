@@ -11,7 +11,8 @@ that `image_to_model(image_to_disk(data))` gives `data` back.
 """
 
 # core
-from brainhops._core._internal_api import ArrayProtocol, array_backend
+from brainhops._core.backends import array_backend
+from brainhops._core.typing import ArrayProtocol
 
 
 def image_to_model(raw: ArrayProtocol) -> ArrayProtocol:

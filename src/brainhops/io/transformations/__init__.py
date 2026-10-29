@@ -24,7 +24,7 @@ __all__ = [
     "trakem2",
 ]
 
-from brainhops._core._internal_api import has_abczarr_driver
+from brainhops._core.dependencies import has_abczarr_driver
 
 from . import (
     afni,

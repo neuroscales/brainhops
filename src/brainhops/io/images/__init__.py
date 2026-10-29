@@ -10,7 +10,7 @@ __all__ = [
     "sniff",
 ]
 
-from brainhops._core._internal_api import (
+from brainhops._core.dependencies import (
     HAS_H5PY,
     HAS_NIBABEL,
     HAS_OPENSLIDE,

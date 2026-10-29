@@ -33,7 +33,8 @@ from functools import lru_cache, wraps
 import typing_extensions as tx
 
 # core
-from brainhops._core._internal_api import ArrayProtocol, array_backend
+from brainhops._core.backends import array_backend
+from brainhops._core.typing import ArrayProtocol
 
 # api
 from brainhops.datamodel import kinds

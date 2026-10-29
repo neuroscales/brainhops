@@ -10,13 +10,10 @@ from bagof.magic import KwOnly, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProxy,
-    ScaledProxy,
-    StridedProxy,
-    alias,
-    open_compressed,
-)
+from brainhops._core.properties import alias
+from brainhops._core.proxy import ArrayProxy, ScaledProxy
+from brainhops._core.streams import open_compressed
+from brainhops._core.strided import StridedProxy
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,

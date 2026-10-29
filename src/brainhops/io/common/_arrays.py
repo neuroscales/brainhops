@@ -52,7 +52,8 @@ import numpy as np
 import typing_extensions as tx
 
 from brainhops._core import path
-from brainhops._core._internal_api import peekable_lines, preserve_position
+from brainhops._core.peek import peekable_lines
+from brainhops._core.streams import preserve_position
 from brainhops.io.base._internal_api import not_text
 from brainhops.io.base.parsers import (
     BinaryFileReader,

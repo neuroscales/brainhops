@@ -20,30 +20,34 @@ import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
 # core
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    InvalidatorInAttribute,
-    affine_inv,
-    affine_sqrtm,
-    alias,
-    array_backend,
-    coeff2value_field,
-    creation_options,
-    field_default,
-    lazyproperty,
-    npmatrix,
-    npvector,
-    require_positive,
-    resolve_backend,
-    smartproperty,
-    sqrtm,
-    to_backend,
+from brainhops._core.affines import (
+    inv as affine_inv,
+)
+from brainhops._core.affines import (
+    sqrtm as affine_sqrtm,
+)
+from brainhops._core.affines import (
     to_compact,
     to_homogeneous,
-    value2coeff_field,
 )
-from brainhops._core._internal_api import inv as invm
-from brainhops._core.backends import backend
+from brainhops._core.backends import (
+    array_backend,
+    backend,
+    creation_options,
+    resolve_backend,
+    to_backend,
+)
+from brainhops._core.bsplines import coeff2value_field, value2coeff_field
+from brainhops._core.linalg import inv as invm
+from brainhops._core.linalg import require_positive, sqrtm
+from brainhops._core.magic import field_default
+from brainhops._core.properties import (
+    InvalidatorInAttribute,
+    alias,
+    lazyproperty,
+    smartproperty,
+)
+from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
 from brainhops._ext.invfield._internal_api import inverse as inverse_disp
 
 # datamodel

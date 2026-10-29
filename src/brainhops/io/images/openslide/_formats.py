@@ -42,7 +42,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import smartproperty
+from brainhops._core.properties import smartproperty
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence

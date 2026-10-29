@@ -11,7 +11,7 @@ from bagof.magic import NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import shortest_decimal
+from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._base import register_format

@@ -7,7 +7,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops._core._internal_api import open_compressed, preserve_position
+from brainhops._core.streams import open_compressed, preserve_position
 from brainhops.io.base._internal_api import Raw, checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,

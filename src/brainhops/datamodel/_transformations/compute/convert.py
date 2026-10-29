@@ -24,7 +24,7 @@ from functools import partial
 import typing_extensions as tx
 from bagof.dispatchers import AmbiguousMethodError, Function, NoMethodError
 
-from brainhops._core._internal_api import field_default
+from brainhops._core.magic import field_default
 from brainhops.errors import ConversionError
 
 if tx.TYPE_CHECKING:

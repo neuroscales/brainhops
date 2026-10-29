@@ -31,7 +31,7 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, Field, fields
 
 # internals
-from brainhops._core._internal_api import StrEnum
+from brainhops._core.compat import StrEnum
 
 from ..base import DataModelBase
 from ..enums import (

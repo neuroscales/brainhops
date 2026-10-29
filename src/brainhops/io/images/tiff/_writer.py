@@ -20,7 +20,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import replace_file
+from brainhops._core.path import replace_file
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base.parsers import WriterError

@@ -14,7 +14,7 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
-from brainhops._core._internal_api import (
+from brainhops._core.errors import (
     UNSET,
     apply_error_policy,
     error_policy,

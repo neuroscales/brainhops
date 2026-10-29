@@ -25,11 +25,11 @@ import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
-from brainhops._core._internal_api import (
+from brainhops._core.deprecation import external_stacklevel
+from brainhops._core.errors import (
     UNSET,
     apply_error_policy,
     error_policy,
-    external_stacklevel,
     policy_action,
 )
 from brainhops.errors import (

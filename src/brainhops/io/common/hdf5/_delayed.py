@@ -11,7 +11,9 @@ from bagof.magic import ConvertTo, NoInit, NoRepr
 
 # core
 from brainhops._core import path
-from brainhops._core._internal_api import ArrayProtocol, StoredProxy, has_dask
+from brainhops._core.backends import has_dask
+from brainhops._core.proxy import StoredProxy
+from brainhops._core.typing import ArrayProtocol
 
 # this format
 from ._parsers import H5Like

@@ -14,13 +14,10 @@ from bagof.magic import ConvertTo, NoRepr
 from brainhops._core import backends, path
 
 # internals
-from brainhops._core._internal_api import (
-    ArrayProxy,
-    StoredProxy,
-    alias,
-    da,
-    is_same_file,
-)
+from brainhops._core.dependencies import da
+from brainhops._core.path import is_same_file
+from brainhops._core.properties import alias
+from brainhops._core.proxy import ArrayProxy, StoredProxy
 
 # this format
 from ._raw import ZarrRaw, document_keys, same_storage

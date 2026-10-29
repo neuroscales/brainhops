@@ -15,16 +15,10 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
-from brainhops._core._internal_api import (
-    Path,
-    array_backend,
-    replace_directory,
-    to_backend,
-    to_numpy,
-)
-
 # core
-from brainhops._core._internal_api import affine_inv as _affine_inv
+from brainhops._core.affines import inv as _affine_inv
+from brainhops._core.backends import array_backend, to_backend, to_numpy
+from brainhops._core.path import Path, replace_directory
 
 # datamodel
 from brainhops.datamodel._internal_api import vector_axis

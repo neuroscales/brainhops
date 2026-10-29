@@ -13,7 +13,7 @@ from bagof.magic import ConvertTo, Inherit, KwOnly, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry

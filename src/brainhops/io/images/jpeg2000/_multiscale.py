@@ -6,12 +6,9 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    ArrayProxy,
-    cached_value,
-    smartproperty,
-)
+from brainhops._core.properties import cached_value, smartproperty
+from brainhops._core.proxy import ArrayProxy
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.datamodel.transformations import Transformation

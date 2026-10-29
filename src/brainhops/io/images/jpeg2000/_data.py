@@ -19,12 +19,10 @@ from PIL import Image, ImageFile
 from brainhops._core import path
 
 # internals
-from brainhops._core._internal_api import (
-    StoredProxy,
-    alias,
-    is_same_file,
-    preserve_position,
-)
+from brainhops._core.path import is_same_file
+from brainhops._core.properties import alias
+from brainhops._core.proxy import StoredProxy
+from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from brainhops.io.images.pillow._internal_api import pillow_to_array
 

@@ -12,7 +12,8 @@ from bagof.magic import NoRepr
 
 # brainhops
 from brainhops._core import path
-from brainhops._core._internal_api import preserve_position, replace
+from brainhops._core.magic import replace
+from brainhops._core.streams import preserve_position
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._internal_api import (
     Raw,

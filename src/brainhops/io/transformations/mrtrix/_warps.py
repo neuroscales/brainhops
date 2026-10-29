@@ -22,11 +22,9 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 # internals
 from brainhops._core import affines as _affines
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProxy,
-    preserve_position,
-    smartproperty,
-)
+from brainhops._core.properties import smartproperty
+from brainhops._core.proxy import ArrayProxy
+from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition

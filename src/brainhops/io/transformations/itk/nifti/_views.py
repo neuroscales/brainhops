@@ -13,7 +13,8 @@ holds them with shapes (X, Y, 2) and (X, Y, Z, 3).
 """
 
 # internals
-from brainhops._core._internal_api import ArrayProtocol, array_backend
+from brainhops._core.backends import array_backend
+from brainhops._core.typing import ArrayProtocol
 
 
 def itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:

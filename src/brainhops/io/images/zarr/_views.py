@@ -7,7 +7,7 @@ other, so that `image_to_model(image_to_disk(data))` gives `data` back.
 """
 
 # internals
-from brainhops._core._internal_api import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol
 
 
 def image_to_model(raw: ArrayProtocol) -> ArrayProtocol:

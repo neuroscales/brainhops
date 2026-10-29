@@ -10,7 +10,7 @@ import typing_extensions as tx
 from bagof.magic import Magic, replace
 
 # internals
-from brainhops._core._internal_api import preserve_position
+from brainhops._core.streams import preserve_position
 from brainhops.io.base._internal_api import Raw, checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,

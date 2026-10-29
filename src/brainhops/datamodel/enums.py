@@ -55,7 +55,8 @@ __all__ = [
 
 import typing_extensions as tx
 
-from brainhops._core._internal_api import IntEnum, StrEnum
+from brainhops._core.compat import StrEnum
+from brainhops._core.enum import IntEnum
 
 
 # ruff: disable[E501]

@@ -18,12 +18,8 @@ from bagof.magic import replace
 
 # core
 from brainhops._core import affines as _affines
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    array_backend,
-    to_backend,
-    to_numpy,
-)
+from brainhops._core.backends import array_backend, to_backend, to_numpy
+from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.datamodel import systems as _systems

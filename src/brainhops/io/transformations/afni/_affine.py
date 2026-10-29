@@ -6,7 +6,7 @@ import typing_extensions as tx
 from bagof.magic import Alias, Inherit, NoRepr, replace
 
 # internals
-from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport

@@ -93,7 +93,8 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # core
-from brainhops._core._internal_api import ArrayProtocol, array_backend
+from brainhops._core.backends import array_backend
+from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms

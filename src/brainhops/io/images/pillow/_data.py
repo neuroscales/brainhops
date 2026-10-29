@@ -12,12 +12,9 @@ from bagof.magic import ConvertTo, NoRepr
 from brainhops._core import path
 
 # internals
-from brainhops._core._internal_api import (
-    ArrayProxy,
-    StoredProxy,
-    is_same_file,
-    preserve_position,
-)
+from brainhops._core.path import is_same_file
+from brainhops._core.proxy import ArrayProxy, StoredProxy
+from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
 # this format

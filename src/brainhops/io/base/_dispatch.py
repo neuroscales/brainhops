@@ -19,7 +19,7 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops._core import path
-from brainhops._core._internal_api import compression_suffix
+from brainhops._core.streams import compression_suffix
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,

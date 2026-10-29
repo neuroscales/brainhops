@@ -6,7 +6,7 @@ __all__ = ["Geometry"]
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, NotKwOnly
 
-from brainhops._core._internal_api import CartesianIndex, Shape
+from brainhops._core.typing import CartesianIndex, Shape
 
 from ._indexing import index2transform
 from .base import DataModelBase

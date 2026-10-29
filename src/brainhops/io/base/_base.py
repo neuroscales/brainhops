@@ -8,7 +8,7 @@ import typing_extensions as tx
 from bagof.magic import Field, fields, replace
 
 from brainhops._core import backends, path
-from brainhops._core._internal_api import UNSET
+from brainhops._core.errors import UNSET
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata._internal_api import (

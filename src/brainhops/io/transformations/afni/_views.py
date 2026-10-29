@@ -10,7 +10,7 @@ functions are pure and invert each other, so that
 """
 
 # internals
-from brainhops._core._internal_api import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol
 
 
 def warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:

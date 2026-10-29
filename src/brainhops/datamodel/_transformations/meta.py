@@ -4,7 +4,8 @@ from numbers import Integral, Real
 import typing_extensions as tx
 from bagof.magic import NotKwOnly, replace
 
-from brainhops._core._internal_api import npvector, smartproperty
+from brainhops._core.properties import smartproperty
+from brainhops._core.typing import npvector
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import MetaBackendMixin
 from brainhops.datamodel._sugar import get_axes

@@ -22,7 +22,7 @@ from abczarr.ome.v0_6.transformations import CoordinateTransformation
 from bagof.magic import replace
 
 # core
-from brainhops._core._internal_api import array_backend
+from brainhops._core.backends import array_backend
 
 # datamodel
 from brainhops.datamodel.axes import Axis

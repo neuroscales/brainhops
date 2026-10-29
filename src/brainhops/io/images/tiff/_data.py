@@ -6,7 +6,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops._core._internal_api import StoredProxy
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.images.base import _utils_raster as raster
 
 # this format

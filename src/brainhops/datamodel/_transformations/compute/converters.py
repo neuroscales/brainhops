@@ -3,14 +3,10 @@ import numpy as np
 import typing_extensions as tx
 
 # core
-from brainhops._core._internal_api import (
-    ArrayProtocol,
-    array_backend,
-    creation_options,
-    matmul,
-    replace,
-    stores,
-)
+from brainhops._core.affines import matmul
+from brainhops._core.backends import array_backend, creation_options
+from brainhops._core.magic import replace, stores
+from brainhops._core.typing import ArrayProtocol
 
 # api
 from brainhops.datamodel._sugar import get_axes

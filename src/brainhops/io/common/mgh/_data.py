@@ -12,12 +12,9 @@ from nibabel.arrayproxy import ArrayProxy as _NibabelArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
-from brainhops._core._internal_api import (
-    ArrayProxy,
-    Path,
-    StridedProxy,
-    is_same_file,
-)
+from brainhops._core.path import Path, is_same_file
+from brainhops._core.proxy import ArrayProxy
+from brainhops._core.strided import StridedProxy
 
 
 class MghProxy(StridedProxy):

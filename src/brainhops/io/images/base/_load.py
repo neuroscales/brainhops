@@ -1,6 +1,6 @@
 import typing_extensions as tx
 
-from brainhops._core._internal_api import FileOrContentLike
+from brainhops._core.path import FileOrContentLike
 from brainhops.io.base.specs import ImageSpec
 
 from ._base import ImageFormat

@@ -12,7 +12,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import FIELDS

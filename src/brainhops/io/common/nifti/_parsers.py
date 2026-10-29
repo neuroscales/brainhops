@@ -9,12 +9,9 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    ArrayProxy,
-    is_same_file,
-    is_seekable,
-    preserve_position,
-)
+from brainhops._core.path import is_same_file
+from brainhops._core.proxy import ArrayProxy
+from brainhops._core.streams import is_seekable, preserve_position
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 
 # io

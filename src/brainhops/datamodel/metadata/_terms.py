@@ -18,7 +18,7 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
-from brainhops._core._internal_api import ArrayLike, DTypeLike
+from brainhops._core.typing import ArrayLike, DTypeLike
 
 from ..base import DataModelBase
 from ..enums import SpaceEnum

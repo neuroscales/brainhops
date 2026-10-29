@@ -11,7 +11,7 @@ lazy array. The functions invert each other, so that
 """
 
 # internals
-from brainhops._core._internal_api import ArrayProtocol
+from brainhops._core.typing import ArrayProtocol
 
 # this format
 

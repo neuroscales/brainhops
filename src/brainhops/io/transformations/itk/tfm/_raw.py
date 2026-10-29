@@ -9,7 +9,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-from brainhops._core._internal_api import peekable_lines
+from brainhops._core.peek import peekable_lines
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (

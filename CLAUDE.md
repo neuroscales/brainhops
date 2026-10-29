@@ -148,6 +148,10 @@ A test may import an internal name directly from the module that
 defines it, so an `_internal_api.py` module never re-exports a name
 that only tests use.
 
+The package `_core` holds internal names that any module of
+`brainhops` may import from the module of `_core` that defines them,
+and it has no `_internal_api.py` module.
+
 When another module needs a private name, promote the name to internal
 or public instead of importing it with its underscore. The test
 `tests/test_visibility.py` checks these rules on every import of

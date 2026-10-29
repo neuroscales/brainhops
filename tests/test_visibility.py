@@ -8,7 +8,9 @@ importing the modules, and check the rules of that memo:
 - no module imports a private name (a name that starts with an
   underscore) from another module;
 - a module imports an internal name of another package only from the
-  `_internal_api.py` module of that package;
+  `_internal_api.py` module of that package, except for the internal
+  names of `brainhops._core`, which any module imports from the module
+  that defines them;
 - no module imports the `_internal_api.py` module of its own package;
 - an `_internal_api.py` module only re-exports internal names of its
   package that other packages import.
@@ -33,6 +35,9 @@ import typing_extensions as tx
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 TESTS = ROOT / "tests"
+
+CORE = "brainhops._core"
+"""The package whose internal names any module imports without an API."""
 
 
 def _module_name(path: Path, base: Path, prefix: str = "") -> str:
@@ -336,15 +341,31 @@ def _where(module: str, node: ast.stmt) -> str:
     return f"{MODULES[module].relative_to(ROOT)}:{node.lineno}"
 
 
+def _is_private_name(name: str) -> bool:
+    """Tell whether a name is private, that is, starts with an underscore.
+
+    Dunder names, such as `__version__`, are not private.
+
+    Parameters
+    ----------
+    name : str
+        The name.
+
+    Returns
+    -------
+    bool
+        Whether the name is private.
+    """
+    return name.startswith("_") and not name.startswith("__")
+
+
 def test_no_private_names_are_imported() -> None:
     """No module of `src/` or `tests/` imports a private name of another."""
     errors = []
     for module in MODULES:
         for node, source, alias in _imports(module):
-            name = alias.name
-            if not name.startswith("_") or name.startswith("__"):
-                continue
-            errors.append(f"{_where(module, node)}: {source}.{name}")
+            if _is_private_name(alias.name):
+                errors.append(f"{_where(module, node)}: {source}.{alias.name}")
     assert not errors, "Private names are imported:\n" + "\n".join(errors)
 
 
@@ -374,20 +395,53 @@ def _internal_imports() -> tx.Iterator[tx.Tuple[str, ast.stmt, str, str]]:
             yield module, node, source, name
 
 
+def _expected_source(module: str, source: str, name: str) -> tx.Optional[str]:
+    """Return where a module should import an internal name from.
+
+    The modules of a package import its internal names from the modules
+    that define them. A module of another package imports them from the
+    `_internal_api.py` module of the package, except for the internal
+    names of `brainhops._core`, which any module imports from the module
+    of `_core` that defines them.
+
+    Parameters
+    ----------
+    module : str
+        The importing module.
+    source : str
+        The module that the name is imported from.
+    name : str
+        The internal name.
+
+    Returns
+    -------
+    str or None
+        The module to import the name from, or `None` when `source` is
+        right.
+    """
+    if _package(module) == _package(source):
+        return None
+    owner = _origin(source, name)[0]
+    if _package(owner) == CORE:
+        return None if source == owner else owner
+    api = _package(owner) + "._internal_api"
+    return None if source == api else api
+
+
 def test_internal_names_of_other_packages_come_from_internal_api() -> None:
     """A module imports the internal names of another package from its API.
 
     The API of a package is its `_internal_api.py` module. The modules of
-    the package import the internal names directly from the modules that
-    define them.
+    the package, and every module for the names of `brainhops._core`,
+    import the internal names directly from the modules that define them.
     """
     errors = []
     for module, node, source, name in _internal_imports():
-        if _package(module) == _package(source):
-            continue
-        api = _package(_origin(source, name)[0]) + "._internal_api"
-        if source != api:
-            errors.append(f"{_where(module, node)}: {source}.{name} ({api})")
+        expected = _expected_source(module, source, name)
+        if expected is not None:
+            errors.append(
+                f"{_where(module, node)}: {source}.{name} ({expected})"
+            )
     assert not errors, (
         "Internal names of other packages are imported without their "
         "_internal_api module:\n" + "\n".join(errors)
@@ -408,6 +462,61 @@ def test_no_package_imports_its_own_internal_api() -> None:
                 ):
                     errors.append(_where(module, node))
     assert not errors, "\n".join(errors)
+
+
+@pytest.mark.parametrize(
+    ("module", "source", "name", "expected"),
+    [
+        # A module of another package imports an internal name of _core
+        # from the module that defines it.
+        (
+            "brainhops.io.base._parsers",
+            "brainhops._core.streams",
+            "preserve_position",
+            None,
+        ),
+        # The internal names of other packages go through their API.
+        (
+            "brainhops.io.images.nifti._image",
+            "brainhops.io.common.nifti._header",
+            "header_of",
+            "brainhops.io.common.nifti._internal_api",
+        ),
+        (
+            "brainhops.io.images.nifti._image",
+            "brainhops.io.common.nifti._internal_api",
+            "header_of",
+            None,
+        ),
+    ],
+)
+def test_the_rules_of_internal_imports(
+    module: str, source: str, name: str, expected: tx.Optional[str]
+) -> None:
+    """The rules accept the imports of `_core` names from their modules.
+
+    Parameters
+    ----------
+    module : str
+        The importing module.
+    source : str
+        The module that the name is imported from.
+    name : str
+        The internal name.
+    expected : str, optional
+        The module that the rules ask for, or `None` when `source` is
+        right.
+    """
+    assert _expected_source(module, source, name) == expected
+
+
+def test_a_private_name_of_core_is_still_private() -> None:
+    """A private name of `_core` cannot be imported by another module."""
+    assert "_IndexedGzipFile" in _definitions("brainhops._core.streams") | set(
+        _bindings("brainhops._core.streams")
+    )
+    assert _is_private_name("_IndexedGzipFile")
+    assert not _is_private_name("preserve_position")
 
 
 API_MODULES = sorted(m for m in SOURCES if m.endswith("._internal_api"))

@@ -7,7 +7,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 # internals
-from brainhops._core._internal_api import preserve_position
+from brainhops._core.streams import preserve_position
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     BinaryFileReader,

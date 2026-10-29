@@ -1,7 +1,7 @@
 import numpy as np
 import typing_extensions as tx
 
-from brainhops._core._internal_api import enum_name
+from brainhops._core.enum import enum_name
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry

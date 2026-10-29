@@ -180,7 +180,8 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # core
-from brainhops._core._internal_api import PLACEHOLDER, SharedOptions, partial
+from brainhops._core.compat import PLACEHOLDER, partial
+from brainhops._core.magic import SharedOptions
 
 # --- API helpers ------------------------------------------------------
 

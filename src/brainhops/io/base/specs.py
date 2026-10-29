@@ -21,7 +21,7 @@ import typing_extensions as tx
 from bagof.core.magic import get_from_registry
 from bagof.magic import ConvertTo, Factory, Magic, NotKwOnly, replace
 
-from brainhops._core._internal_api import Path
+from brainhops._core.path import Path
 
 
 class Parser(Magic, frozen=True):

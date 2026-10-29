@@ -33,7 +33,8 @@ import numpy as np
 import typing_extensions as tx
 
 # core
-from brainhops._core._internal_api import array_backend, cached_value
+from brainhops._core.backends import array_backend
+from brainhops._core.properties import cached_value
 
 # datamodel
 from brainhops.datamodel._internal_api import get_axes

@@ -10,7 +10,9 @@ from bagof.magic import NoInit, NoRepr
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import StoredProxy, alias, ts
+from brainhops._core.dependencies import ts
+from brainhops._core.properties import alias
+from brainhops._core.proxy import StoredProxy
 from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,

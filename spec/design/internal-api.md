@@ -69,6 +69,10 @@ contract between packages is written in one place. The name says that
 the module is an interface, which `_internal` alone would not, and
 that it is not public.
 
+The package `_core` is the exception: it holds internal names that any
+module of `brainhops` may import from the module of `_core` that
+defines them, and it has no `_internal_api.py` module.
+
 A package is a directory that holds an `__init__.py` file, and two
 sibling subpackages, such as `io/common/nifti` and `io/images/nifti`,
 are different packages. A subpackage whose name starts with an
@@ -83,10 +87,7 @@ that only tests use.
 V4. A package has an `_internal_api.py` module only when another
 package imports its internal names. The modules of a package never
 import from their own `_internal_api.py`, which only re-exports, so the
-module cannot create a circular import inside its package. The
-`_internal_api.py` module of `_core` imports `bsplines` after its other
-modules, because `bsplines` imports `brainhops.datamodel.enums`, which
-imports names of `_core` through that module.
+module cannot create a circular import inside its package.
 
 V5. The helpers that were copied in several packages under `io/common/`
 are merged into one internal function in `io/base` and offered through
@@ -126,8 +127,9 @@ V6. The test `tests/test_visibility.py` reads the import statements of
 every module of `src/` and `tests/` with `ast`. It rejects an import of
 a private name from another module, an import by a module of `src/` of
 an internal name of another package from any module but that package's
-`_internal_api.py`, an import of the `_internal_api.py` module of the
-importing package, and an `_internal_api.py` module that re-exports a
+`_internal_api.py`, or of an internal name of `_core` from any module
+but the one that defines it, an import of the `_internal_api.py` module
+of the importing package, and an `_internal_api.py` module that re-exports a
 name that no module of another package imports. The rules are also
 stated in `CLAUDE.md`.
 
@@ -140,7 +142,7 @@ internal level allows.
 
 ## 5. Implementation
 
-The packages that have an `_internal_api.py` module are `_core`,
+The 27 packages that have an `_internal_api.py` module are
 `_ext/invfield`, `datamodel`, `datamodel/metadata`, `io/base`,
 `io/metadata`, `io/common`, and its subpackages `afni`, `bdv`,
 `freesurfer`, `hdf5`, `mgh`, `minc`, `mrtrix`, `nifti`, `nrrd` and
@@ -149,11 +151,6 @@ The packages that have an `_internal_api.py` module are `_core`,
 `io/transformations/freesurfer`, `io/transformations/freesurfer/lta`,
 `io/transformations/fsl`, `io/transformations/itk`,
 `io/transformations/nifti` and `io/transformations/zarr`.
-
-The `_internal_api.py` module of `_core` re-exports the affine versions
-of `inv`, `expm`, `logm` and `sqrtm` of `_core/affines.py` as
-`affine_inv`, `affine_expm`, `affine_logm` and `affine_sqrtm`, because
-`_core/linalg.py` defines matrix functions with the same names.
 
 When the plain spelling of a promoted name was already used by the
 module or by one that imports it, the name says what the object is
