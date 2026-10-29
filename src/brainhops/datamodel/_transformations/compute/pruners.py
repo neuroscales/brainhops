@@ -16,6 +16,12 @@ block, in which the outputs read only the inputs, and it keeps the type
 of `t` when that type can represent the block. Both kinds of rule
 receive a transformation that states its numbers of axes.
 
+A batch of transformations, whose elements depend on its batch axes,
+reads as the union of the patterns of its elements. Each output of the
+elements also reads the batch axes, and each batch output reads only
+its own batch input. Its restrictor cuts every element down to the
+block when the block keeps every batch axis, and declines otherwise.
+
 A field reads as fully coupled and its restrictor declines, because a
 field cannot yet hold a number of components that differs from the
 dimension of its grid. A field inside a [`SubspaceTransformation`][]
@@ -37,11 +43,13 @@ and no lazy block is exact.
 import numpy as np
 import typing_extensions as tx
 
+from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.systems import CoordinateSystem
 
 from ..base import Transformation
+from ..batched import BatchedTransformation
 from ..concrete import (
     Affine,
     Identity,
@@ -242,6 +250,20 @@ def _(t: Inverse, policy: SimplifyTable) -> tx.Any:
     if pattern.shape[0] != pattern.shape[1]:
         return UNREADABLE
     return _closure(pattern)
+
+
+@pattern_reader
+def _(t: BatchedTransformation, policy: SimplifyTable) -> tx.Any:
+    # Each batch output reads only its own batch input, and the outputs
+    # of the elements read the inputs and the batch axes that the
+    # elements read.
+    n_in, n_out = t.counts
+    block, reads_batch = t.element_pattern(policy)
+    pattern = np.zeros((n_out, n_in), dtype=bool)
+    pattern[np.ix_(t.output_axes, t.input_axes)] = block
+    pattern[np.ix_(t.output_axes, t.batch_input_axes)] = reads_batch
+    pattern[t.batch_output_axes, t.batch_input_axes] = True
+    return pattern
 
 
 # ======================================================================
@@ -524,6 +546,52 @@ def _(
         # analytic policy never computes it, so the rule declines.
         return restrict_block(t._materialize(), inputs, outputs, policy)
     return None
+
+
+@block_restrictor
+def _(
+    t: BatchedTransformation,
+    inputs: _Axes,
+    outputs: _Axes,
+    policy: SimplifyTable,
+) -> tx.Optional[Transformation]:
+    # A block that keeps every batch axis cuts each element down to the
+    # axes of the block that it holds. A block without some batch axis
+    # is declined, because the outputs of the elements read every batch
+    # axis that the pattern does not prove unread, and the simplifier
+    # removes such an axis instead.
+    if not outputs:
+        return _empty(inputs)
+    n_in, n_out = t.counts
+    if inputs == list(range(n_in)) and outputs == list(range(n_out)):
+        return t
+    if not set(t.batch_input_axes) <= set(inputs):
+        return None
+    if not set(t.batch_output_axes) <= set(outputs):
+        return None
+    inner_in = [j for j, a in enumerate(t.input_axes) if a in inputs]
+    inner_out = [j for j, a in enumerate(t.output_axes) if a in outputs]
+    new_in = [inputs.index(t.input_axes[j]) for j in inner_in]
+    new_out = [outputs.index(t.output_axes[j]) for j in inner_out]
+    if not inner_out:
+        # Only the batch axes are kept, and they pass through in order.
+        return Identity() if not inner_in else None
+    piece = t.restrict_elements(
+        inner_in,
+        inner_out,
+        policy,
+        input_axes=new_in,
+        output_axes=new_out,
+        positions=t.positions,
+        input=_restricted_system(t.input, inputs),
+        output=_restricted_system(t.output, outputs),
+    )
+    if piece is None:
+        return None
+    numeric = policy.resolve(t) is NUMERIC
+    if new_in == new_out and piece.elements_are(kinds.Identity, numeric):
+        return Identity()
+    return piece
 
 
 # ======================================================================

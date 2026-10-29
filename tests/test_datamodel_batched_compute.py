@@ -14,6 +14,10 @@ from brainhops.datamodel._transformations.batched import (
     match_positions,
     result_type,
 )
+from brainhops.datamodel._transformations.compute.prune import (
+    read_pattern,
+    restrict_block,
+)
 from brainhops.datamodel._transformations.compute.simplify import (
     SimplifyTable,
 )
@@ -22,12 +26,16 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     BatchedTransformation,
+    CartesianField,
     CoordinateField,
+    Identity,
     Linear,
     Permutation,
+    Projection,
     Rotation,
     Scaling,
     Sequence,
+    SubspaceTransformation,
     Transformation,
     Translation,
 )
@@ -120,6 +128,8 @@ def _points(n_in: int, n: int = 6, seed: int = 0) -> np.ndarray:
 def _apply(t: Transformation, points: np.ndarray) -> np.ndarray:
     # Apply a transformation to points, through its affine matrix when it
     # has one, and through the composers otherwise.
+    if isinstance(t, Identity):
+        return points
     try:
         matrix = np.asarray(t.to(Affine).matrix)
     except ConversionError:
@@ -372,3 +382,121 @@ def test_a_stack_applies_to_points_as_its_elements_do(name: str) -> None:
     assert np.isnan(values[6]).all()
     expected = _apply(stacked[3], points[3:4])
     assert np.allclose(values[3], expected[0])
+
+
+# ----------------------------------------------------------------------
+#   PRUNING
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_the_pattern_of_a_batch_places_its_batch_axis(general: bool) -> None:
+    batch = _stacked("scaling")
+    batch = _general(batch) if general else batch
+    # Only the scale of x changes from one element to the next, which a
+    # stack reads row by row, and the general form element by element.
+    expected = np.eye(4, dtype=bool)
+    expected[0, 3] = True
+    if general:
+        expected[:3, 3] = True
+    assert np.array_equal(read_pattern(batch, NUMERIC), expected)
+    expected[:3, 3] = True
+    assert np.array_equal(read_pattern(batch, ANALYTIC), expected)
+
+
+def test_a_batch_axis_along_which_the_elements_are_equal_is_not_read() -> None:
+    batch = Affine.batch(
+        np.tile(np.eye(3, 4), (5, 1, 1)), input_axes=[1, 2, 3]
+    )
+    pattern = read_pattern(batch, NUMERIC)
+    assert not pattern[1:, 0].any()
+    assert pattern[1:, 0].sum() == 0 and pattern[0, 0]
+
+
+_CUTS = [([0, 1, 3], [0, 1, 3]), ([0, 3], [0, 3]), ([2, 3], [2, 3])]
+
+
+@pytest.mark.parametrize("block", _CUTS, ids=str)
+@pytest.mark.parametrize("general", [False, True])
+@pytest.mark.parametrize("name", ["affine", "scaling", "permutation"])
+def test_the_cut_of_a_batch_is_the_batch_of_the_cuts(
+    name: str, general: bool, block: tx.Tuple[tx.List[int], tx.List[int]]
+) -> None:
+    batch = _stacked(name)
+    batch = _general(batch) if general else batch
+    inputs, outputs = block
+    others = [i for i in range(4) if i not in inputs]
+    if read_pattern(batch, NUMERIC)[np.ix_(outputs, others)].any():
+        # The block is not closed, so no restrictor is asked for it.
+        return
+    cut = restrict_block(batch, inputs, outputs, NUMERIC)
+    inner = [i for i in inputs if i != 3]
+    for k, element in enumerate(batch):
+        expected = restrict_block(element, inner, inner, NUMERIC)
+        if expected is None:
+            assert cut is None
+            continue
+        points = _points(len(inner))
+        if isinstance(cut, Identity):
+            # A block in which every element is the identity is cut into
+            # the identity.
+            assert np.allclose(_apply(expected, points), points)
+            continue
+        assert cut.batch_input_axes == [len(inner)]
+        assert np.allclose(_apply(cut[k], points), _apply(expected, points))
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_the_cut_of_a_batch_declines_a_free_batch_axis(general: bool) -> None:
+    batch = _stacked("scaling")
+    batch = _general(batch) if general else batch
+    assert restrict_block(batch, [1, 2], [1, 2], NUMERIC) is None
+    assert restrict_block(batch, [1, 2, 3], [1, 2], NUMERIC) is None
+
+
+def test_a_batch_of_identity_pieces_is_cut_into_the_identity() -> None:
+    batch = _stacked("scaling")
+    cut = restrict_block(batch, [1, 2, 3], [1, 2, 3], NUMERIC)
+    assert isinstance(cut, BatchedTransformation)
+    batch = Permutation.batch(np.array([[1, 0, 2], [0, 1, 2]]))
+    cut = restrict_block(batch, [0, 3], [0, 3], NUMERIC)
+    assert isinstance(cut, Identity)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_simplify_drops_an_axis_that_nothing_reads_through_a_batch(
+    general: bool,
+) -> None:
+    batch = _stacked("scaling")
+    batch = _general(batch) if general else batch
+    chain = Sequence([batch, Projection(dropped=[2])])
+    pruned = chain.simplify("numeric")
+    first, second = pruned.transformations
+    assert isinstance(first, Projection) and list(first.dropped) == [2]
+    assert isinstance(second, BatchedTransformation)
+    assert second.counts == (3, 3)
+    for k in range(batch.batch_shape[0]):
+        assert np.allclose(second[k].to(Affine).matrix[0, 0], 1.0 + k)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_the_factor_pass_keeps_a_batch_whole(general: bool) -> None:
+    batch = _stacked("affine")
+    batch = _general(batch) if general else batch
+    system = CoordinateSystem().expand(5)
+    chain = Sequence(
+        [
+            CartesianField(shape=(2, 3, 4, 4, 5)),
+            SubspaceTransformation(
+                batch, [0, 1, 2, 3], [0, 1, 2, 3], input=system, output=system
+            ),
+            SubspaceTransformation(
+                Scaling([2.0]), [4], [4], input=system, output=system
+            ),
+        ]
+    )
+    nf = chain.factor("numeric")
+    grid, first, second = nf.transformations
+    assert first.transformation is batch
+    assert list(first.input_axes) == [0, 1, 2, 3]
+    assert list(second.input_axes) == [4]
