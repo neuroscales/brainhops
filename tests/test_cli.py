@@ -12,10 +12,10 @@ from brainhops.cli._io import (
     load_transform,
 )
 from brainhops.cli._reslice import (
-    _load_push_transform,
-    _split_image_spec,
-    _split_transform_spec,
+    load_push_transform,
     reslice_image,
+    split_image_spec,
+    split_transform_spec,
 )
 from brainhops.datamodel import transformations as xforms
 from brainhops.datamodel.images import Image
@@ -71,7 +71,7 @@ def test_reslice_image_accepts_specs_for_input_and_reference(
 
 
 def test_split_image_spec_extracts_format_hint_and_options() -> None:
-    spec = _split_image_spec("image.dat|nifti|mmap:false")
+    spec = split_image_spec("image.dat|nifti|mmap:false")
 
     assert spec == ImageSpec(
         path="image.dat", hints=("nifti",), options={"mmap": "false"}
@@ -151,26 +151,26 @@ class _FakeTransform:
 
 
 def test_split_transform_spec_extracts_format_hint_and_operators() -> None:
-    spec = _split_transform_spec("affine.mat|flirt|inv")
+    spec = split_transform_spec("affine.mat|flirt|inv")
     assert str(spec.path) == "affine.mat"
     assert spec.hints == ("flirt",)
     assert [operation.name for operation in spec.operations] == ["inv"]
 
-    spec = _split_transform_spec("affine.mat|inv|hint:flirt,fnirt|inv")
+    spec = split_transform_spec("affine.mat|inv|hint:flirt,fnirt|inv")
     assert str(spec.path) == "affine.mat"
     assert spec.hints == ("flirt", "fnirt")
     assert [operation.name for operation in spec.operations] == ["inv", "inv"]
 
 
 def test_split_transform_spec_decodes_a_literal_pipe_in_source() -> None:
-    spec = _split_transform_spec("s3://bucket/a%7Cb/file.mat|flirt")
+    spec = split_transform_spec("s3://bucket/a%7Cb/file.mat|flirt")
     assert str(spec.path) == "s3://bucket/a|b/file.mat"
     assert spec.hints == ("flirt",)
 
 
 def test_split_transform_spec_refuses_duplicate_options() -> None:
     with pytest.raises(CliError, match="Duplicate source option"):
-        _split_transform_spec("affine.mat|moving:a.nii|moving:b.nii")
+        split_transform_spec("affine.mat|moving:a.nii|moving:b.nii")
 
 
 def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa: ANN001
@@ -182,7 +182,7 @@ def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa:
 
     monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
 
-    transform = _load_push_transform("warp.nii.gz")
+    transform = load_push_transform("warp.nii.gz")
 
     assert seen["path"] == TransformationSpec(path="warp.nii.gz")
     assert transform.inverted is False
@@ -197,7 +197,7 @@ def test_inv_operator_inverts_the_loaded_transform(monkeypatch) -> None:  # noqa
 
     monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
 
-    transform = _load_push_transform("warp.nii.gz|inv")
+    transform = load_push_transform("warp.nii.gz|inv")
 
     # The loader receives the path with the operator removed.
     assert str(seen["path"].path) == "warp.nii.gz"
@@ -213,7 +213,7 @@ def test_format_hint_is_passed_to_the_transform_loader(monkeypatch) -> None:  # 
         return _FakeTransform()
 
     monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
-    transform = _load_push_transform("affine.mat|flirt|inv")
+    transform = load_push_transform("affine.mat|flirt|inv")
 
     assert str(seen["path"].path) == "affine.mat"
     assert seen["path"].hints == ("flirt",)
@@ -265,7 +265,7 @@ def test_flirt_options_load_nested_images_without_a_top_level_hint(
     reference = _write_nifti(tmp_path / "reference.nii.gz")
     moving = _write_nifti(tmp_path / "moving.nii.gz")
 
-    transform = _load_push_transform(
+    transform = load_push_transform(
         f"{matrix}|ref:[{reference}|nifti]|mov:[{moving}]"
     )
 
@@ -287,7 +287,7 @@ def test_unimplemented_operator_points_at_the_issue(monkeypatch) -> None:  # noq
     )
 
     with pytest.raises(CliError) as excinfo:
-        _load_push_transform("warp.nii.gz|sqrt")
+        load_push_transform("warp.nii.gz|sqrt")
 
     message = str(excinfo.value)
     assert "sqrt" in message
@@ -395,7 +395,7 @@ def test_convert_reports_a_missing_input(capsys) -> None:  # noqa: ANN001
 
 
 def test_split_transform_spec_expands_svf() -> None:
-    spec = _split_transform_spec("warp.nii.gz|svf|steps:6")
+    spec = split_transform_spec("warp.nii.gz|svf|steps:6")
     assert spec.hints == ("displacements",)
     assert spec.options == {"steps": "6", "log": "true"}
 
@@ -412,7 +412,7 @@ def test_a_velocity_loads_through_the_cli(tmp_path, suffix, log) -> None:  # noq
     image.header.set_intent(1006)
     path = tmp_path / "warp.nii.gz"
     nb.save(image, str(path))
-    field = load_transform(_split_transform_spec(f"{path}{suffix}"))
+    field = load_transform(split_transform_spec(f"{path}{suffix}"))
     assert field.log is log
     expected = (
         xforms.StationaryVelocityField if log else xforms.DisplacementField
