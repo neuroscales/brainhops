@@ -1,10 +1,14 @@
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-from brainhops._core._internal_api import UNSET, smartproperty
+from brainhops._core._internal_api import (
+    UNSET,
+    ComparesByIdMixin,
+    smartproperty,
+)
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import BackendsMixin
-from brainhops.datamodel.base import DataModelBase, _ComparesByIdMixin
+from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.metadata._internal_api import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
@@ -27,7 +31,7 @@ if tx.TYPE_CHECKING:
 @nocycles.register_transformation
 class Transformation(
     BackendsMixin,
-    _ComparesByIdMixin,
+    ComparesByIdMixin,
     DataModelBase,
     reverse=True,
     eq=False,

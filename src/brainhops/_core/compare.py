@@ -1,6 +1,6 @@
-"""Comparison of values that may be arrays."""
+"""Comparison of values that may be arrays, and of objects by identity."""
 
-__all__ = ["differs"]
+__all__ = ["ComparesByIdMixin", "differs"]
 
 import typing_extensions as tx
 
@@ -19,3 +19,22 @@ def differs(a: tx.Any, b: tx.Any) -> bool:
         return bool(a != b)
     except Exception:
         return True
+
+
+class ComparesByIdMixin:
+    """Mixin that makes a class and all its subclasses compare by identity.
+
+    Equality never raises, and instances are hashable. Identity comparison
+    is restored on every subclass, because a subclass that also derives
+    from another data model may otherwise receive a value-based `__eq__`
+    and `__hash__`.
+    """
+
+    __eq__ = object.__eq__
+    __ne__ = object.__ne__
+    __hash__ = object.__hash__
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for name in ("__eq__", "__ne__", "__hash__"):
+            setattr(cls, name, getattr(object, name))

@@ -26,6 +26,7 @@ __all__ = [
     "Clip",
     "clip_mask",
     "coeff2value_field",
+    "ComparesByIdMixin",
     "compression_suffix",
     "copy_array",
     "creation_options",
@@ -146,7 +147,7 @@ from .backends import (
     to_numpy,
     to_promoted_backend,
 )
-from .compare import differs
+from .compare import ComparesByIdMixin, differs
 from .compat import PLACEHOLDER, StrEnum, partial
 from .dependencies import (
     HAS_H5PY,

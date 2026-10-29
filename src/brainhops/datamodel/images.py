@@ -12,6 +12,7 @@ from brainhops._core._internal_api import (
     BackendLike,
     CartesianIndex,
     Clip,
+    ComparesByIdMixin,
     DeviceLike,
     Shape,
     alias,
@@ -51,7 +52,7 @@ from ._transformations.compute.multiscale import (
 )
 from ._transformations.compute.separable import pull_separable
 from .axes import AxisSequence, TensorAxis
-from .base import DataModelBase, _ComparesByIdMixin
+from .base import DataModelBase
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry, _index2transform
 from .metadata import Metadata
@@ -67,7 +68,7 @@ from .transformations import (
 
 class Image(
     BackendsMixin,
-    _ComparesByIdMixin,
+    ComparesByIdMixin,
     DataModelBase,
     eq=False,
     kw_only=True,

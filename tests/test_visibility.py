@@ -40,7 +40,6 @@ PENDING_PRIVATE = frozenset(
         # removing the underscore would not make them internal. They
         # wait for a decision on whether to move them into a private
         # module or to make them public.
-        "brainhops.datamodel.base._ComparesByIdMixin",
         "brainhops.datamodel.geometry._index2transform",
         "brainhops.datamodel.images._match_resolution",
         "brainhops.io.base.parsers._FileNamesMixin",
