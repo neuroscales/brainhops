@@ -1353,7 +1353,7 @@ def _copy_map(
     carried over untouched, so that a tangent is not exponentiated and then
     turned back into a tangent with a logarithm.
     """
-    out_tangent = bool(kwargs.get("log", _is_tangent(cls)))
+    out_tangent = bool(kwargs.get("log", is_tangent(cls)))
     # The map is read only when the caller did not give it, because reading
     # it may decode a whole file.
     if out_tangent == bool(getattr(other, "log", False)):
@@ -1376,12 +1376,22 @@ def _copy_map(
         kwargs.setdefault("log", out_tangent)
 
 
-def _is_tangent(cls: tx.Type[Transformation]) -> bool:
+def is_tangent(cls: tx.Type[Transformation]) -> bool:
     """Return whether `cls` holds the tangent of its map.
 
     A tangent class declares `True` as the default of its `_log` field. The
     default is read from the field table, because a default overridden in a
     subclass is not bound as a class attribute.
+
+    Parameters
+    ----------
+    cls : type
+        A transformation class.
+
+    Returns
+    -------
+    bool
+        Whether the `data` of an instance holds the tangent of its map.
     """
     return bool(field_default(cls, "_log", False))
 
@@ -1509,7 +1519,7 @@ def _refuse_log(
     TypeError
         If `log` is true and the class does not hold a tangent.
     """
-    if not log or _is_tangent(type(xform)):
+    if not log or is_tangent(type(xform)):
         return
     raise TypeError(
         f"A {type(xform).__name__} holds the map, not its tangent about the "

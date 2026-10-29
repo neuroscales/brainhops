@@ -31,8 +31,8 @@ from ..concrete import (
     Scaling,
     TransformationField,
     Translation,
-    _is_tangent,
     _values2data,
+    is_tangent,
 )
 from ..meta import (
     Projection,
@@ -140,7 +140,7 @@ def _convert_withlog(
     # exponentiated parameter is transferred instead of `data`, because
     # `data` means different things in the two encodings. Families without
     # a `log` flag have no tangent, so for them nothing is transferred.
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     crossing = getattr(t, "log", False) != out_log
     # Keep stored parameters in their existing encoding when only the class
     # changes: reading matrix/field could exponentiate a tangent or integrate
@@ -230,7 +230,7 @@ def _(t: Affine, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
 
 @converter
 def _(t: AffineExponential, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, AffineExponential):
         cls = Affine
     return _convert_withlog(t, cls, "matrix", **kwargs)
@@ -243,7 +243,7 @@ def _(t: Linear, cls: tx.Type[LINEAR], **kwargs) -> LINEAR:
 
 @converter
 def _(t: LinearExponential, cls: tx.Type[LINEAR], **kwargs) -> LINEAR:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, LinearExponential):
         cls = Linear
     return _convert_withlog(t, cls, "matrix", **kwargs)
@@ -256,7 +256,7 @@ def _(t: Rotation, cls: tx.Type[ROTATION], **kwargs) -> ROTATION:
 
 @converter
 def _(t: RotationExponential, cls: tx.Type[ROTATION], **kwargs) -> ROTATION:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, RotationExponential):
         cls = Rotation
     return _convert_withlog(t, cls, "matrix", **kwargs)
@@ -269,7 +269,7 @@ def _(t: Scaling, cls: tx.Type[SCALING], **kwargs) -> SCALING:
 
 @converter
 def _(t: ScalingExponential, cls: tx.Type[SCALING], **kwargs) -> SCALING:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, ScalingExponential):
         cls = Scaling
     return _convert_withlog(t, cls, "scale", **kwargs)
@@ -296,7 +296,7 @@ def _(t: DisplacementField, cls: tx.Type[SVF], **kwargs) -> SVF:
 @converter(StationaryVelocityField, SVF)
 @converter
 def _(t: StationaryVelocityField, cls: tx.Type[DISP], **kwargs) -> DISP:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, StationaryVelocityField):
         cls = DisplacementField
     return _convert_withsplines(t, cls, **kwargs)

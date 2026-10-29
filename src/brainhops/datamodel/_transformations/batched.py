@@ -58,8 +58,7 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
-    _CompactTransformation,
-    _is_tangent,
+    is_tangent,
 )
 from .modes import ModeLike
 
@@ -622,7 +621,7 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
                 f"A batch of {self.element_type.__name__} needs the data "
                 f"of its elements."
             )
-        ndim = self.element_type._element_ndim
+        ndim = self.element_type.element_ndim
         if np.ndim(self._data) <= ndim:
             raise ValueError(
                 f"The data of a batch of {self.element_type.__name__} must "
@@ -634,7 +633,7 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
     @property
     def batch_shape(self) -> tx.Tuple[int, ...]:
         """Number of elements along each batch axis."""
-        ndim = int(np.ndim(self.data)) - self.element_type._element_ndim
+        ndim = int(np.ndim(self.data)) - self.element_type.element_ndim
         return tuple(int(n) for n in np.shape(self.data)[:ndim])
 
     @property
@@ -739,13 +738,13 @@ class BatchedAffine(
     @property
     def matrix(self) -> ArrayProtocol:
         """Matrices of the elements, of shape `(*batch, No, Ni+1)`."""
-        if _is_tangent(self.element_type):
+        if is_tangent(self.element_type):
             return affine_expm(self.data)
         return self.data
 
     @matrix.setter
     def matrix(self, value: ArrayProtocol) -> None:
-        tangent = _is_tangent(self.element_type)
+        tangent = is_tangent(self.element_type)
         self._data = affine_logm(value) if tangent else value
 
     @property
@@ -764,7 +763,7 @@ class BatchedAffine(
         return int(shape[-1]) - 1, int(shape[-2])
 
     def _inverse_storage(self) -> ArrayProtocol:
-        if _is_tangent(self.element_type):
+        if is_tangent(self.element_type):
             return -self.data
         return affine_inv(self.data)
 
@@ -792,20 +791,20 @@ class BatchedLinear(
     @property
     def matrix(self) -> ArrayProtocol:
         """Matrices of the elements, of shape `(*batch, No, Ni)`."""
-        if _is_tangent(self.element_type):
+        if is_tangent(self.element_type):
             return expm(self.data)
         return self.data
 
     @matrix.setter
     def matrix(self, value: ArrayProtocol) -> None:
-        tangent = _is_tangent(self.element_type)
+        tangent = is_tangent(self.element_type)
         self._data = logm(value) if tangent else value
 
     def _element_counts(self, shape: tx.Tuple[int, ...]) -> tx.Tuple[int, int]:
         return int(shape[-1]), int(shape[-2])
 
     def _inverse_storage(self) -> ArrayProtocol:
-        if _is_tangent(self.element_type):
+        if is_tangent(self.element_type):
             return -self.data
         if issubclass(self.element_type, Rotation):
             return array_backend(self.data).swapaxes(self.data, -1, -2)
@@ -835,17 +834,17 @@ class BatchedScaling(
     @property
     def scale(self) -> ArrayProtocol:
         """Factors of the elements, of shape `(*batch, N)`."""
-        if _is_tangent(self.element_type):
+        if is_tangent(self.element_type):
             return array_backend(self.data).exp(self.data)
         return self.data
 
     @scale.setter
     def scale(self, value: ArrayProtocol) -> None:
-        tangent = _is_tangent(self.element_type)
+        tangent = is_tangent(self.element_type)
         self._data = array_backend(value).log(value) if tangent else value
 
     def _inverse_storage(self) -> ArrayProtocol:
-        if _is_tangent(self.element_type):
+        if is_tangent(self.element_type):
             return -self.data
         return 1 / self.data
 
@@ -954,7 +953,7 @@ def _object_array(elements: tx.Any) -> np.ndarray:
     return array
 
 
-def _element_type(element_type: tx.Any) -> tx.Type[_CompactTransformation]:
+def _element_type(element_type: tx.Any) -> tx.Type[Transformation]:
     """Return the data-model class of the elements of a stacked batch.
 
     The elements of a stacked batch are matrix or vector types, which
@@ -970,10 +969,11 @@ def _element_type(element_type: tx.Any) -> tx.Type[_CompactTransformation]:
             f"{element_type!r}."
         )
     model = element_type._data_model()
-    ndim = getattr(model, "_element_ndim", None)
+    # Only the matrix and vector types state the number of dimensions of
+    # the data of one element.
+    ndim = getattr(model, "element_ndim", None)
     wrapper = getattr(model, "_operator", None) is not None
-    compact = issubclass(model, _CompactTransformation)
-    if not compact or ndim is None or wrapper:
+    if not issubclass(model, Transformation) or ndim is None or wrapper:
         raise TypeError(
             f"A stacked batch holds matrix or vector transformations, such "
             f"as Affine or Scaling, not {element_type.__name__}."
