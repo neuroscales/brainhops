@@ -110,33 +110,92 @@ SimplifyPolicyLike: tx.TypeAlias = tx.Union[SimplifyPolicy, SimplifyPolicyName]
 class BoundaryCondition(StrEnum):
     """Boundary conditions for interpolation and resampling.
 
-    The following table lists every member with its value, its aliases and
-    the padding pattern that it produces around the values `a b c d`.
+    A boundary condition says how an array continues beyond its edges,
+    which matters wherever an interpolation reads samples outside the
+    array. With splines of degree 2 or more, the condition applies to
+    the spline coefficients, which the prefilter computes so that the
+    spline passes through the values. The following table lists every
+    member with its value, its aliases and the extension that it gives
+    to the values `a b c d`.
 
-    | Name       | Value         | Aliases                        | Description                                          |
-    |------------|---------------|--------------------------------|------------------------------------------------------|
-    | `nearest`  | `"nearest"`   | `edge`, `border`               | <code>(a a a a &vert; a b c d &vert; d d d d)</code> |
-    | `reflect`  | `"reflect"`   | `symmetric`, `dct2`            | <code>(d c b a &vert; a b c d &vert; d c b a)</code> |
-    | `mirror`   | `"mirror"`    | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
-    | `gridwrap` | `"grid-wrap"` | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
-    | `wrap`     | `"wrap"`      |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
-    | `constant` | `"constant"`  | `zero`, `zeros`                | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code> |
+    | Name          | Value           | Aliases                                 | Description                                                  |
+    |---------------|-----------------|-----------------------------------------|--------------------------------------------------------------|
+    | `nearest`     | `"nearest"`     | `edge`, `border`, `replicate`           | <code>(a a a a &vert; a b c d &vert; d d d d)</code>         |
+    | `reflect`     | `"reflect"`     | `symmetric`, `dct2`, `grid-mirror`      | <code>(d c b a &vert; a b c d &vert; d c b a)</code>         |
+    | `mirror`      | `"mirror"`      | `dct1`                                  | <code>  (d c b &vert; a b c d &vert; c b a)  </code>         |
+    | `gridwrap`    | `"grid-wrap"`   | `wrap`, `circular`, `circulant`, `dft`  | <code>(a b c d &vert; a b c d &vert; a b c d)</code>         |
+    | `constant`    | `"constant"`    | `zero`, `zeros`, `grid-constant`        | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code>         |
+    | `antimirror`  | `"antimirror"`  | `dst1`                                  | <code>(-c -b -a 0 &vert; a b c d &vert; 0 -d -c -b)</code>   |
+    | `antireflect` | `"antireflect"` | `dst2`                                  | <code>(-d -c -b -a &vert; a b c d &vert; -d -c -b -a)</code> |
+
+    The names come from SciPy (`grid-constant`, `nearest`, `mirror`,
+    `reflect`, `grid-mirror` and `grid-wrap`), from torch-interpol
+    (`zero`, `replicate`, `dct1`, `dct2`, `dst1`, `dst2` and `dft`),
+    and from NumPy, MATLAB and PyTorch (`edge`, `symmetric`,
+    `circular` and `border`). A
+    name that means different conditions in different libraries keeps
+    the meaning of SciPy, except `wrap`. The `wrap` mode of SciPy
+    extends the array periodically with a shift of one sample, which
+    brainhops does not implement, so `wrap` is the periodic condition,
+    as in NumPy and torch-interpol. The `constant` mode of SciPy
+    returns the fill value as soon as a coordinate lies beyond the
+    centre of an edge sample, whereas `constant` here is the
+    `grid-constant` mode of SciPy, which interpolates the fill value
+    with the samples near the edges.
+
+    An alias that contains a hyphen is a member name without its hyphen,
+    such as `BoundaryCondition.gridconstant`. The text of any alias
+    converts to its member, for example `BoundaryCondition("grid-mirror")`
+    gives `BoundaryCondition.reflect`.
     """
 
-    nearest = edge = border = "nearest"
-    reflect = symmetric = dct2 = "reflect"
+    nearest = edge = border = replicate = "nearest"
+    reflect = symmetric = dct2 = gridmirror = "reflect"
     mirror = dct1 = "mirror"
-    gridwrap = circular = circulant = dft = "grid-wrap"
-    wrap = "wrap"
-    constant = zero = zeros = "constant"
+    gridwrap = wrap = circular = circulant = dft = "grid-wrap"
+    constant = zero = zeros = gridconstant = "constant"
+    antimirror = dst1 = "antimirror"
+    antireflect = dst2 = "antireflect"
+
+    @classmethod
+    def _missing_(cls, value: object) -> tx.Optional["BoundaryCondition"]:
+        # A value that is not the value of a member is read as the name
+        # of a member or of an alias, without case, hyphens or
+        # underscores, so that "grid-constant" gives `constant`.
+        if not isinstance(value, str):
+            return None
+        key = value.lower().replace("-", "").replace("_", "")
+        return cls.__members__.get(key)
 # fmt: on
 # ruff: enable[E501]
 
 
 BoundaryName: tx.TypeAlias = tx.Literal[
-    "nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant"
+    "nearest",
+    "edge",
+    "border",
+    "replicate",
+    "reflect",
+    "symmetric",
+    "dct2",
+    "grid-mirror",
+    "mirror",
+    "dct1",
+    "grid-wrap",
+    "wrap",
+    "circular",
+    "circulant",
+    "dft",
+    "constant",
+    "zero",
+    "zeros",
+    "grid-constant",
+    "antimirror",
+    "dst1",
+    "antireflect",
+    "dst2",
 ]
-"""Acceptable names of boundary conditions."""
+"""Acceptable names of boundary conditions, with their aliases."""
 
 BoundaryLike: tx.TypeAlias = tx.Union[BoundaryCondition, BoundaryName, float]
 """
@@ -186,6 +245,8 @@ class InterpolationOrder(IntEnum):
     | `third`       | `cubic`     | 3     | Cubic interpolation.            |
     | `fourth`      |             | 4     | Fourth-order interpolation.     |
     | `fifth`       |             | 5     | Fifth-order interpolation.      |
+    | `sixth`       |             | 6     | Sixth-order interpolation.      |
+    | `seventh`     |             | 7     | Seventh-order interpolation.    |
     | `barycentric` |             | -1    | Barycentric interpolation.      |
     | `fourier`     |             | -2    | Fourier interpolation.          |
     """
@@ -196,6 +257,8 @@ class InterpolationOrder(IntEnum):
     third = cubic = 3
     fourth = 4
     fifth = 5
+    sixth = 6
+    seventh = 7
     barycentric = -1
     fourier = -2
 
@@ -211,12 +274,14 @@ InterpolationName: tx.TypeAlias = tx.Literal[
     "cubic",
     "fourth",
     "fifth",
+    "sixth",
+    "seventh",
     "barycentric",
     "fourier",
 ]
 """Interpolation order names."""
 
-InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5]
+InterpolationValue: tx.TypeAlias = tx.Literal[-2, -1, 0, 1, 2, 3, 4, 5, 6, 7]
 """Interpolation order values."""
 
 InterpolationLike: tx.TypeAlias = tx.Union[

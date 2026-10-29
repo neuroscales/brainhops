@@ -9,7 +9,7 @@ from types import ModuleType
 import typing_extensions as tx
 
 # internals
-from .dependencies import cp, cpndi, da, dkndi, np, npndi
+from .dependencies import cp, cpndi, da, np, npndi
 from .typing import (
     ArrayLike,
     ArrayProtocol,
@@ -61,18 +61,18 @@ A value that defines a device:
 the name of a device, an integer, a CudaDevice, or None.
 """
 
-# A backend needs both its array package and its ndimage package.
+# The array package of each backend. Interpolation runs with
+# `brainhops._ext.interpol`, which only needs the array package.
 _MODULES = {
-    "numpy": (np, npndi),
-    "cupy": (cp, cpndi),
-    "dask": (da, dkndi),
+    "numpy": np,
+    "cupy": cp,
+    "dask": da,
 }
 
-# Distribution that provides each ndimage package, for error messages.
-_NDIMAGE_PACKAGE = {
-    "numpy": "scipy",
-    "cupy": "cupy",
-    "dask": "dask",
+# The ndimage package of each eager backend, which some filters use.
+_NDIMAGE = {
+    "numpy": npndi,
+    "cupy": cpndi,
 }
 
 # When computing on arrays spread across multiple backends, move them
@@ -106,16 +106,11 @@ _THRESHOLD: int = 64 * 2**20
 def backends() -> tx.Tuple[ArrayBackend, ...]:
     """Return the names of the installed backends, most preferred first.
 
-    A backend counts as installed when both its array package and its
-    ndimage package are installed. The ndimage package of dask is
-    [`brainhops._core.dask_ndimage`][], which ships with brainhops, so dask
-    needs nothing else.
+    A backend counts as installed when its array package is installed.
+    Interpolation runs with [`brainhops._ext.interpol`][], which needs
+    nothing else.
     """
-    return tuple(
-        name
-        for name in _PRIORITY
-        if all(module is not None for module in _MODULES[name])
-    )
+    return tuple(name for name in _PRIORITY if _MODULES[name] is not None)
 
 
 # ----------------------------------------------------------------------
@@ -229,10 +224,8 @@ def _array_backend_name(
             raise ValueError(f"Unsupported backend: {backend}")
         return backend
     module = array_backend(backend)
-    for name, (array, image) in _MODULES.items():
+    for name, array in _MODULES.items():
         if module is array:
-            return name
-        if module is image:
             return name
     raise ValueError(f"Unsupported backend: {backend}")
 
@@ -279,14 +272,8 @@ def _check_dependencies(backend: tx.Optional[Backend]) -> None:
         "dask+cupy": ("dask", "cupy"),
     }.get(backend, ())
     for name in needed:
-        array, image = _MODULES[name]
-        if array is None:
+        if _MODULES[name] is None:
             raise ImportError(f"The {name} backend is not installed")
-        if image is None:
-            raise ImportError(
-                f"The {name} backend needs {_NDIMAGE_PACKAGE[name]}, "
-                "which is not installed, so it cannot interpolate"
-            )
 
 
 # ----------------------------------------------------------------------
@@ -950,13 +937,6 @@ def array_backend(
         if x is da:
             return da
 
-        if x is npndi:
-            return np
-        if x is cpndi:
-            return cp
-        if x is dkndi:
-            return da
-
         raise TypeError(f"Unknown module: {x}")
 
     if np and isinstance(x, np.ndarray):
@@ -1013,75 +993,41 @@ def copy_array(x: ArrayProtocol) -> ArrayProtocol:
     return np.array(x, copy=True)
 
 
-def _ndimage_of(name: str) -> ModuleType:
-    """Return the ndimage package of a backend name, or raise.
-
-    A missing package is never replaced by another one, because scipy, for
-    example, would load a lazy dask volume into memory.
-    """
-    array, image = _MODULES[name]
-    if array is None:
-        raise ImportError(f"The {name} backend is not installed")
-    if image is None:
-        raise ImportError(
-            f"The {name} backend needs {_NDIMAGE_PACKAGE[name]}, which is "
-            "not installed, so it cannot interpolate"
-        )
-    return image
-
-
 def ndimage_backend(
     x: tx.Optional[tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
     """Return the ndimage package of an array, module or setting.
 
-    The result is `scipy.ndimage`, `cupyx.scipy.ndimage` or
-    [`brainhops._core.dask_ndimage`][]. `None`, or an object of no known
-    backend, gives the package of the backend in which the current setting
-    creates new arrays.
+    The result is `scipy.ndimage` for NumPy and `cupyx.scipy.ndimage`
+    for CuPy. Dask has no such package, since interpolation runs with
+    [`brainhops._ext.interpol`][] on every backend. `None`, or an object
+    of no known backend, gives the package of the backend in which the
+    current setting creates new arrays.
+
+    Parameters
+    ----------
+    x : array or module or str, optional
+        An array, an array package, or the name of a backend or of a
+        setting.
+
+    Returns
+    -------
+    module
+        The ndimage package.
 
     Raises
     ------
     ImportError
-        If the ndimage package of the backend is not installed.
     TypeError
-        If the argument is a module that belongs to no known backend.
     ValueError
-        If the argument is a string that names no setting.
     """
-    if x is None:
-        x = _TO_ARRAY_BACKEND[_BACKEND]
-
-    if isinstance(x, str):
-        if x not in _MODULES:
-            x = _TO_ARRAY_BACKEND[_backend_name(x)]
-        return _ndimage_of(x)
-
-    if isinstance(x, ModuleType):
-        if x is npndi:
-            return npndi
-        if x is cpndi:
-            return cpndi
-        if x is dkndi:
-            return dkndi
-
-        if x is np:
-            return _ndimage_of("numpy")
-        if x is cp:
-            return _ndimage_of("cupy")
-        if x is da:
-            return _ndimage_of("dask")
-
-        raise TypeError(f"Unknown module: {x}")
-
-    if is_cupy(x):
-        return _ndimage_of("cupy")
-    if is_numpy(x):
-        return _ndimage_of("numpy")
-    if is_dask(x):
-        return _ndimage_of("dask")
-
-    return ndimage_backend()
+    name = _array_backend_name(array_backend(x))
+    if name not in _NDIMAGE:
+        raise TypeError(f"The {name} backend has no ndimage package")
+    module = _NDIMAGE[name]
+    if module is None:
+        raise ImportError(f"The ndimage package of {name} is not installed")
+    return module
 
 
 # ----------------------------------------------------------------------

@@ -248,7 +248,7 @@ def test_a_4d_reslice_is_separable_with_time_on_its_own(
 
     resliced = img.reslice(geometry.geometry)
 
-    assert plans == [{(0, 1): "pull", (2,): "matrix", (3,): "gather"}]
+    assert plans == [{(0, 1): "pull", (2,): "pull1d", (3,): "gather"}]
     expected, inside = _expected(data, source, target)
     got = np.asarray(resliced)
     assert np.allclose(got[inside], expected[inside], atol=1e-5)

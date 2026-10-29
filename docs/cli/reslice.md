@@ -98,7 +98,9 @@ For example, `--bound nearest --clip 0.5` extends edge values up to the outer
 edges of the border voxels, then returns zero beyond them. `--clip 0` cuts at
 border voxel centres; `--clip -0.5` cuts at their inner edges. Both endpoints
 are included: the accepted interval on an axis of length `n` is
-`[-clip, n - 1 + clip]`. Coordinates are never clamped by this option.
+`[-clip, n - 1 + clip]`, widened by 1e-5 voxel on each side so that a
+coordinate that rounding errors put just beyond a limit is still kept.
+Coordinates are never clamped by this option.
 
 In Python, the same option is available as
 `image.reslice(reference, bound="nearest", clip=0.5)` and on the spline
