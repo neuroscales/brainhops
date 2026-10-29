@@ -9,7 +9,7 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core.path import is_local, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import is_seekable, preserve_position
 from brainhops.datamodel.metadata._report import takes_error_policy
@@ -164,18 +164,16 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         """
         mmap = _mmap_option(kwargs)
         filename = path.Path(filename)
-        if not path.exists(filename):
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
-        if not is_local(filename):
+        if not filename.is_local():
             # The lazy array keeps the stream that it reads, and a stream
             # opened here would be closed when this method returns, so a
             # remote file is read into memory.
             return cls.from_bytes(filename.read_bytes(), **kwargs)
         with filename.open("rb") as stream:
             record = NiftiRaw.from_fileobj(stream)
-        proxy = _NiftiProxy.from_header(
-            str(filename), record.header, mmap=mmap
-        )
+        proxy = _NiftiProxy.from_header(filename, record.header, mmap=mmap)
         return cls(rawdata=proxy, metadata=NiftiMetadata.from_raw(record))
 
     @classmethod
@@ -313,10 +311,13 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
         WriterError
             If the object cannot be encoded.
         """
+        filename = path.Path(filename)
         raw = self.rawdata
         root = raw.root if isinstance(raw, ArrayProxy) else raw
-        reading = isinstance(root, _NiftiProxy) and is_same_file(
-            root.source, filename
+        reading = (
+            isinstance(root, _NiftiProxy)
+            and isinstance(root.source, path.Path)
+            and is_same_file(root.source, filename)
         )
         if not reading:
             super().to_filename(filename, **kwargs)

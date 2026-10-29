@@ -12,7 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -847,8 +847,7 @@ class NrrdImage(
         TypeError
             If an unknown option is given.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         options = _options(kwargs)
         name = filename.name
         attached = data_file is None and not name.lower().endswith(".nhdr")
@@ -859,7 +858,7 @@ class NrrdImage(
         if attached:
             written = [filename]
         else:
-            written = [filename, path.Path(filename).parent / data_file]
+            written = [filename, filename.parent / data_file]
         reading = _reads_from(self.rawdata, written)
         if reading:
             mmap = self.rawdata.root.mmap
@@ -868,14 +867,15 @@ class NrrdImage(
             image = self.consolidate(**options)
         if attached:
             record = _nrrd_written(image, ())
-            atomic_write_bytes(
-                filename, record.to_bytes() + _payload(image, record)
+            filename.write_bytes(
+                record.to_bytes() + _payload(image, record),
+                atomic=filename.is_local(),
             )
         else:
             record = _nrrd_written(image, (data_file,))
             header, data = record.to_bytes(), _payload(image, record)
-            atomic_write_bytes(written[1], data)
-            atomic_write_bytes(filename, header)
+            written[1].write_bytes(data, atomic=written[1].is_local())
+            filename.write_bytes(header, atomic=filename.is_local())
         if reading:
             # The image holds what the files hold, and its lazy array reads
             # the new files, since the lazy array of the old files describes
@@ -1375,13 +1375,13 @@ def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
     return record
 
 
-def _reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
+def _reads_from(raw: tx.Any, written: tx.Sequence[path.Path]) -> bool:
     """Tell whether a lazy array reads one of the files just written."""
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _NrrdProxy):
         return False
     return any(
-        is_same_file(read, file)
+        isinstance(read, path.Path) and is_same_file(read, file)
         for read in (raw.source, *raw.files)
         for file in written
     )

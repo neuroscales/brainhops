@@ -19,7 +19,6 @@ __all__ = ["BidsSidecar", "from_bids", "to_bids"]
 
 # stdlib
 import json
-import os
 
 # externals
 import typing_extensions as tx
@@ -375,8 +374,9 @@ def _read(source: tx.Any) -> tx.Dict[str, tx.Any]:
         return dict(source)
     if isinstance(source, str) and source.lstrip().startswith("{"):
         return json.loads(source)
-    if isinstance(source, (str, os.PathLike, path.PathLike)):
-        with path.Path(source).open("r") as f:
+    source = path.as_path_or_stream(source)
+    if isinstance(source, path.Path):
+        with source.open("r") as f:
             return json.load(f)
     if hasattr(source, "read"):
         return json.load(source)

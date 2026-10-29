@@ -8,7 +8,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # core
 from brainhops._core.dependencies import da
-from brainhops._core.path import is_local, replace_directory
+from brainhops._core.path import Path, replace_directory
 from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -524,7 +524,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             self.to_node(node, **kwargs)
             return
         location = absolute_location(location)
-        local = is_local(location)
+        local = Path(location).is_local()
         if not reads_store(self.rawdata, location):
             copy = self.consolidate(**kwargs)
             record, raw = copy.metadata.raw, copy.rawdata

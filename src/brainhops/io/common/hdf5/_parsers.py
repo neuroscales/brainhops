@@ -13,7 +13,7 @@ import typing_extensions as tx
 from brainhops._core import path
 
 # io
-from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import replace_file
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
@@ -142,7 +142,8 @@ class Hdf5Reader(BinaryFileReader):
         """
         if isinstance(file, h5py.File):
             return cls.sniff_h5(file, error=error)
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return cls.sniff_filename(file, error=error, **kwargs)
         return cls.sniff_fileobj(file, error=error, **kwargs)
 
@@ -179,9 +180,8 @@ class Hdf5Reader(BinaryFileReader):
         SnifferContentError
             If the file is not of this format and `error` is `True`.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.exists(filename):
+        filename = path.Path(filename)
+        if not filename.exists():
             return _raise_or(
                 error, SnifferExistsError, f"No such file: {filename}"
             )
@@ -267,7 +267,8 @@ class Hdf5Reader(BinaryFileReader):
         """
         if isinstance(file, h5py.File):
             return cls.from_h5(file, **kwargs)
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return cls.from_filename(file, **kwargs)
         return cls.from_fileobj(file, **kwargs)
 
@@ -297,10 +298,10 @@ class Hdf5Reader(BinaryFileReader):
         ParserExistsError
             If the path does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.exists(filename):
+        filename = path.Path(filename)
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
+        # h5py opens a file by its name, given as text.
         with h5py.File(str(filename), "r") as f:
             return cls.from_h5(f, **kwargs)
 
@@ -401,7 +402,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             with h5py.File(name, "w-") as f:
                 writer(f)
 
-        if is_local(filename):
+        if path.Path(filename).is_local():
             replace_file(filename, write)
         else:
             with h5py.File(str(filename), "w") as f:

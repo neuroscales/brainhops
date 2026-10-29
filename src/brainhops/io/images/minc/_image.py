@@ -10,7 +10,6 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import HAS_H5PY
-from brainhops._core.path import is_local
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
@@ -331,9 +330,8 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if is_local(filename) and path.exists(filename):
+        filename = path.Path(filename)
+        if filename.is_local() and filename.exists():
             with filename.open("rb") as f:
                 version = minc_version(f.read(8))
             if version == 2 and 2 in cls._versions():

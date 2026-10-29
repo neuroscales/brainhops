@@ -436,7 +436,7 @@ def test_open_file(svs: Path) -> None:
     with open(svs, "rb") as f:
         image = load(f)
     assert isinstance(image, bos.AperioMultiScaleImage)
-    assert image.rawdata[0].slide.filename == str(svs)
+    assert image.rawdata[0].slide.filename == svs
     assert image.images[0].rawdata.slide is image.rawdata[0].slide
 
 

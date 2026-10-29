@@ -13,7 +13,6 @@ from nibabel.volumeutils import array_from_file, array_to_file
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
@@ -315,9 +314,8 @@ class MghImage(
         ParserExistsError
             If the path does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        if not path.exists(filename):
+        filename = path.Path(filename)
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         raw, proxy = read_mgh(filename, **kwargs)
         return cls(rawdata=proxy, metadata=MghMetadata.from_raw(raw))
@@ -626,16 +624,19 @@ class MghImage(
             Arguments of [`to_bytes`][], which are `compress` and the
             options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         compress = kwargs.pop("compress", _compressed_name(filename))
         if not _reads_file(self.rawdata, filename):
-            atomic_write_bytes(
-                filename, self.to_bytes(compress=compress, **kwargs)
+            filename.write_bytes(
+                self.to_bytes(compress=compress, **kwargs),
+                atomic=filename.is_local(),
             )
             return
         self.consolidate(inplace=True, **kwargs)
         content = encode_mgh(*_mgh_written(self))
-        atomic_write_bytes(
-            filename, gzip.compress(content) if compress else content
+        filename.write_bytes(
+            gzip.compress(content) if compress else content,
+            atomic=filename.is_local(),
         )
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file describes how that
@@ -1090,7 +1091,7 @@ def _mgh_written(image: MghImage) -> tx.Tuple[MghRaw, ArrayProtocol]:
     return image.metadata.raw, image.rawdata
 
 
-def _reads_file(raw: tx.Any, file: tx.Any) -> bool:
+def _reads_file(raw: tx.Any, file: path.Path) -> bool:
     """Tell whether a lazy array of voxels reads a file by its name."""
     return reads_mgh(raw, file)
 

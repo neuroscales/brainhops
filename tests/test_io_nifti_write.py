@@ -15,6 +15,7 @@ from brainhops.io.base.parsers import FileWriter
 nb = pytest.importorskip("nibabel")
 
 from bagof.magic import replace  # noqa: E402
+from bagof.paths import Path  # noqa: E402
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
@@ -1181,7 +1182,7 @@ def test_a_nibabel_image_becomes_a_proxy_and_a_record(tmp_path) -> None:  # noqa
     image = NiftiImage.from_nibabel(nifti)
     # The proxy of nibabel is replaced by the lazy array of the same file.
     assert isinstance(image.rawdata, _NiftiProxy)
-    assert image.rawdata.source == str(source)
+    assert image.rawdata.source == Path(source)
     assert np.array_equal(np.asarray(image.rawdata), nifti.dataobj)
     assert image.metadata.raw.header is not nifti.header
     assert np.allclose(image.to_nibabel().affine, nifti.affine)

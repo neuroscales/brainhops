@@ -538,8 +538,7 @@ class TiffMultiScaleImage(
         )
         metadata_to_write(self.metadata, TiffMetadata, fields, report)
         apply_loss_policy(report, stacklevel=2)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         kwargs.setdefault("name", path.base_name(filename))
         options, encoding = split_options(kwargs)
         raws = self.rawdata or ()
@@ -548,6 +547,7 @@ class TiffMultiScaleImage(
             for raw in raws
             if isinstance(raw, ArrayProxy)
             and isinstance(raw.root, _TiffProxy)
+            and raw.root.source.filename is not None
             and is_same_file(raw.root.source.filename, filename)
         ]
         if not encoding and self._copies_source(**options):

@@ -14,7 +14,6 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes
 from brainhops._core.properties import (
     smartproperty,
 )
@@ -743,8 +742,7 @@ class AfniImage(
             raise TypeError(
                 f"Unknown AFNI writer option(s): {', '.join(unknown)}"
             )
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
@@ -759,7 +757,7 @@ class AfniImage(
             image = self.consolidate(**options)
         record, data = _afni_written(image)
         write_brik(record, data, brik)
-        atomic_write_bytes(head, record.to_bytes())
+        head.write_bytes(record.to_bytes(), atomic=head.is_local())
         for sibling in stale:
             sibling.unlink()
         if reading:
