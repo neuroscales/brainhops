@@ -46,22 +46,22 @@ from ._frames import (
     squeeze_axis,
     with_components,
 )
+from ._indexing import index2transform
+from ._resolution import match_resolution
 from ._transformations.compute.multiscale import (
-    nearest_level,
     nearest_resolution_index,
 )
 from ._transformations.compute.separable import pull_separable
 from .axes import AxisSequence, TensorAxis
 from .base import DataModelBase
 from .enums import BoundaryLike, InterpolationLike
-from .geometry import Geometry, _index2transform
+from .geometry import Geometry
 from .metadata import Metadata
 from .multiscale import Multiscale
 from .systems import CoordinateSystem
 from .transformations import (
     CartesianField,
     Identity,
-    Sequence,
     Transformation,
 )
 
@@ -531,7 +531,7 @@ class SingleScaleImage(Image):
         # Replace each multiscale transformation field by the level that
         # best matches the output grid.
         transformation = self.transformation
-        transformation = _match_resolution(transformation, geometry)
+        transformation = match_resolution(transformation, geometry)
 
         # Build the voxel-to-voxel transformation, and reslice
         vox2vox = transformation.inverse() @ geometry.transformation
@@ -830,7 +830,7 @@ class SingleScaleImage(Image):
             )
         frames = ()
         if component_axes(self._array_axes()):
-            sub2full, shape = _index2transform(index, self.shape, grid.input)
+            sub2full, shape = index2transform(index, self.shape, grid.input)
             frames = compose_frames(
                 self.frames,
                 _source_axes(sub2full),
@@ -1194,29 +1194,3 @@ def _single_multi_swap(other: Image, cls: tx.Type[Image]) -> bool:
         isinstance(other, MultiScaleImage)
         and issubclass(cls, SingleScaleImage)
     )
-
-
-def _match_resolution(
-    transformation: Transformation, voxel2world: Transformation
-) -> Transformation:
-    """
-    Replace every multiscale field inside the transformation by its
-    scale that best matches the grid of `voxel2world`, the voxel-to-world t
-    ransformation of the grid an image is resliced onto.
-
-    This functions is applied recursively to sequences.
-    A transformation without a multiscale field is returned unchanged.
-    """
-    if isinstance(voxel2world, Geometry):
-        voxel2world = voxel2world.transformation
-    if isinstance(transformation, Multiscale):
-        return transformation.to_singlescale(
-            nearest_level(transformation, voxel2world)
-        )
-    if isinstance(transformation, Sequence):
-        parts = transformation.transformations or []
-        resolved = [_match_resolution(part, voxel2world) for part in parts]
-        if any(new is not old for new, old in zip(resolved, parts)):
-            return replace(transformation, transformations=resolved)
-        return transformation
-    return transformation

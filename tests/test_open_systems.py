@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops.datamodel._indexing import index2transform
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel._transformations.compute.adaptors import (
     adapt,
@@ -24,7 +25,6 @@ from brainhops.datamodel._transformations.compute.utils import (
     systems_disagree,
 )
 from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis
-from brainhops.datamodel.geometry import _index2transform
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     LPSCoordinateSystem,
@@ -498,7 +498,7 @@ def test_the_separable_discrete_check_reads_an_open_system() -> None:
 
 
 def test_indexing_closes_an_open_system_from_the_shape() -> None:
-    affine, shape = _index2transform(
+    affine, shape = index2transform(
         (0, slice(None), slice(None)), (3, 4, 5), CS(axes=[..., Y, Z])
     )
     assert shape == (4, 5)
@@ -508,5 +508,5 @@ def test_indexing_closes_an_open_system_from_the_shape() -> None:
 def test_indexing_an_unknown_system_names_no_axis(
     unknown: tx.Optional[CS],
 ) -> None:
-    affine, _ = _index2transform((0, slice(None)), (3, 4), unknown)
+    affine, _ = index2transform((0, slice(None)), (3, 4), unknown)
     assert affine.input is None

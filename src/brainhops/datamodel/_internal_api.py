@@ -15,10 +15,12 @@ __all__ = [
     "converter",
     "find_converter",
     "get_axes",
+    "index2transform",
     "smart_replace",
     "vector_axis",
 ]
 
+from ._indexing import index2transform
 from ._sugar import get_axes, vector_axis
 from ._transformations.compute.adaptors import bridge
 from ._transformations.compute.convert import (

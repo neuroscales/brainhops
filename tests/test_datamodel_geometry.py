@@ -8,8 +8,9 @@ import numpy as np
 import pytest
 
 from brainhops._core.backends import backend
+from brainhops.datamodel._indexing import index2transform
 from brainhops.datamodel.axes import SpaceAxis
-from brainhops.datamodel.geometry import Geometry, _index2transform
+from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import (
     CoordinateSystem,
@@ -119,14 +120,14 @@ def test_nesting_a_geometry_in_a_sequence_computes_to_a_field() -> None:
 
 
 # ----------------------------------------------------------------------
-#   SUB-ARRAY INDEXING (_index2transform)
+#   SUB-ARRAY INDEXING (index2transform)
 # ----------------------------------------------------------------------
 
 
 def test_index2transform_dropped_axis_is_a_pure_translation() -> None:
     # An integer index drops an axis, which becomes a constant offset in its
     # row, without the diagonal 1 of the identity.
-    transform, shape = _index2transform(
+    transform, shape = index2transform(
         (slice(None), 2, slice(None)), (4, 5, 6)
     )
     expected = np.asarray(
@@ -143,7 +144,7 @@ def test_index2transform_dropped_axis_is_a_pure_translation() -> None:
 def test_index2transform_inserted_axis_has_no_spurious_diagonal() -> None:
     # A None index inserts an axis, and later rows must not get a stray
     # diagonal 1 in the inserted column.
-    transform, shape = _index2transform(
+    transform, shape = index2transform(
         (slice(None), None, slice(None), slice(None)), (4, 5, 6)
     )
     expected = np.asarray(
@@ -264,9 +265,9 @@ def test_single_scale_image_getitem_rejects_invalid_index(
 
 def test_index2transform_returns_affine_and_shape() -> None:
     # The return annotation names the pair that is returned.
-    affine, shape = _index2transform((slice(None), 1, slice(None)), (4, 5, 6))
+    affine, shape = index2transform((slice(None), 1, slice(None)), (4, 5, 6))
     assert isinstance(affine, Affine)
     assert shape == (4, 6)
-    annotation = _index2transform.__annotations__["return"]
+    annotation = index2transform.__annotations__["return"]
     assert annotation.__origin__ is tuple
     assert annotation.__args__[0] is Affine
