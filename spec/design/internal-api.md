@@ -1,7 +1,6 @@
 # Design: public, internal and private names
 
-Status: implemented (#591, and #592 for the merge of copied helpers),
-except for the private names of four public modules (see section 5).
+Status: implemented (#591, and #592 for the merge of copied helpers).
 This memo records which names of `brainhops` other code may import, and
 from where. It defines three levels of visibility, a module named
 `_internal_api.py` through which a package offers its internal names to
@@ -162,16 +161,24 @@ instead, for example `header_of` for `_header` in `io/common/nifti`,
 `parse_float` for `_float` in `io/common/nrrd`, and `TwoAxes` and
 `ThreeAxes` for the type aliases `_2Axes` and `_3Axes`.
 
-The private names of four public modules are still imported by other
-modules, because removing their underscore would not make them
-internal, since their modules are public. They wait for a decision on
-whether to move them into a private module or to make them public, and
-the test lists them in `PENDING_PRIVATE`:
+Public modules used to define private names that other modules
+imported, which removing the underscore would not have made internal.
+These names moved into private modules:
 
-- `_ComparesByIdMixin` of `datamodel/base.py`, which its `__all__`
-  lists;
-- `_index2transform` of `datamodel/geometry.py`, and
-  `_match_resolution` of `datamodel/images.py`;
-- the mixins and helpers of `io/base/parsers.py`;
-- `_VOXEL`, `_RAS`, `_LPS`, `_check_endpoint` and `_compatible` of
-  `io/transformations/base/affines.py`.
+- `ComparesByIdMixin`, which `datamodel/base.py` listed in its
+  `__all__`, is in `_core/compare.py`, since it does not depend on
+  `datamodel`;
+- `index2transform`, from `datamodel/geometry.py`, is in
+  `datamodel/_indexing.py`, and `match_resolution`, from
+  `datamodel/images.py`, is in `datamodel/_resolution.py`;
+- the implementation of `io/base/parsers.py` is in `io/base/_parsers.py`,
+  where its mixins and the helpers that mark how a `from_fileobj` reads
+  its stream are internal, and `parsers.py` only re-exports the public
+  classes of its `__all__` and the errors that they raise;
+- `check_endpoint` and `compatible`, from
+  `io/transformations/base/affines.py`, are in
+  `io/transformations/base/_endpoints.py`. The constants `_VOXEL`,
+  `_RAS` and `_LPS` are gone, and each use builds the system that it
+  needs, since these systems compare by value.
+
+The test therefore checks the rules without exceptions.
