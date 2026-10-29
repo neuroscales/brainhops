@@ -102,9 +102,12 @@ def test_pull_matches_scipy(ndim, order, bound, options) -> None:  # noqa: ANN00
     np.testing.assert_allclose(
         pull(x, grid, order, bound, **options), expected, atol=1e-12
     )
-    # SciPy prefilters correctly for these modes only, and its
-    # coefficients near the edges are wrong for the others (#250).
-    if mode in ("mirror", "reflect", "grid-wrap"):
+    # SciPy prefilters exactly for these modes only. Its coefficients
+    # near the edges are wrong for `nearest` and `grid-constant` (#250),
+    # and older versions only approximate them for `reflect` on short
+    # axes. The other modes are compared through the coefficients of the
+    # port, which `test_spline_coeff_is_exact` checks on their own.
+    if mode in ("mirror", "grid-wrap"):
         expected = _scipy_pull(x, grid, order, mode, True)
     else:
         coeff = spline_coeff(x, order, bound)
@@ -414,8 +417,11 @@ def test_names_and_errors() -> None:
 
 @pytest.mark.parametrize("ndim", [1, 2, 3])
 @pytest.mark.parametrize("order", [2, 3, 4, 5])
-@pytest.mark.parametrize("mode", ["mirror", "reflect", "grid-wrap"])
+@pytest.mark.parametrize("mode", ["mirror", "grid-wrap"])
 def test_spline_coeff_matches_scipy(ndim, order, mode) -> None:  # noqa: ANN001
+    # SciPy is exact in these modes only. In `reflect`, older versions
+    # approximate the coefficients near the edges of short axes, so the
+    # coefficients of `reflect` are checked by `test_spline_coeff_is_exact`.
     x = np.random.default_rng(order).standard_normal(SHAPES[ndim])
     expected = ndi.spline_filter(x, order, mode=mode)
     np.testing.assert_allclose(
