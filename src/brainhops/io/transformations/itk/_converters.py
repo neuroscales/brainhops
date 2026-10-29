@@ -55,10 +55,7 @@ from brainhops._core._internal_api import array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.errors import ConversionError
 
 # io

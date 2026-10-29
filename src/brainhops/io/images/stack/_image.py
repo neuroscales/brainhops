@@ -17,12 +17,12 @@ from brainhops._core._internal_api import (
 )
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    MetadataLossError,
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._report import MetadataLossError
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (

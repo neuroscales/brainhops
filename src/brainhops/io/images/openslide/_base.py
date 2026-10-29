@@ -20,9 +20,7 @@ from brainhops._core._internal_api import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base.parsers import (
     BinaryFileReader,

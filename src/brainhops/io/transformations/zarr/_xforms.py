@@ -26,7 +26,7 @@ from brainhops._core._internal_api import (
 )
 
 # datamodel
-from brainhops.datamodel._sugar import vector_axis
+from brainhops.datamodel._internal_api import vector_axis
 from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,

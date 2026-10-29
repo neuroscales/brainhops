@@ -9,8 +9,10 @@ from bagof.magic import NoRepr
 
 # internals
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.datamodel.metadata._vocabulary import VOCABULARY
+from brainhops.datamodel.metadata._internal_api import (
+    VOCABULARY,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
 from brainhops.io.metadata import MetadataFormat

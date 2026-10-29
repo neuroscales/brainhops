@@ -19,9 +19,7 @@ from bagof.magic import HIDE_IF_NONE, Inherit, NoRepr, replace
 from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,

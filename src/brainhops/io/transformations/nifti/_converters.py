@@ -62,10 +62,10 @@ import typing_extensions as tx
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-    _convert_withsplines,
+from brainhops.datamodel._internal_api import (
+    convert_withlog,
+    convert_withsplines,
+    converter,
     smart_replace,
 )
 from brainhops.errors import ConversionError
@@ -166,7 +166,7 @@ def _(
 ) -> NiftiVoxelToRAS:
     # Within its own format, an affine is changed by the rules of any
     # affine (a new `matrix=`, say), which keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -254,7 +254,7 @@ def _(
 ) -> NiftiRASCoordinateField:
     # Within its own format, a field is changed by the rules of any field
     # of coordinates (a new `field=`, say), which keep its type.
-    return _convert_withsplines(t, cls, **kwargs)
+    return convert_withsplines(t, cls, **kwargs)
 
 
 # ----------------------------------------------------------------------

@@ -37,15 +37,15 @@ from ..concrete import (
     Rotation,
     Scaling,
     Translation,
-    _grid_like,
+    grid_like,
 )
 from ..meta import (
     Projection,
     SubspaceTransformation,
-    _close_projection,
-    _close_subspace,
+    close_projection,
+    close_subspace,
 )
-from ..sequence import Sequence, _interpolates
+from ..sequence import Sequence, interpolates
 from .compose import compose, composer
 from .utils import axis_counts
 
@@ -250,7 +250,7 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
     field, scale = to_promoted_backend(Ti.field, To.scale)
-    grid = _grid_like(field)
+    grid = grid_like(field)
     field = scale * field + (scale - 1) * grid
     return DisplacementField(
         field=field,
@@ -266,7 +266,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute()
     field = to_backend(Ti.field)
-    grid = _grid_like(field)
+    grid = grid_like(field)
     field = (grid + field)[..., To.permutation] - grid
     return DisplacementField(
         field=field,
@@ -297,7 +297,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
     field, matrix = to_promoted_backend(Ti.field, To.matrix)
-    grid = _grid_like(field)
+    grid = grid_like(field)
     field = (grid + field) @ matrix.T - grid
     return DisplacementField(
         field=field,
@@ -314,7 +314,7 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     _check_square(To)
     Ti = Ti.compute()
     field, matrix = to_promoted_backend(Ti.field, To.matrix)
-    grid = _grid_like(field)
+    grid = grid_like(field)
     field = (grid + field) @ matrix[:, :-1].T + matrix[:, -1] - grid
     return DisplacementField(
         field=field,
@@ -436,7 +436,7 @@ def _(To: SubspaceTransformation, Ti: CoordinateField) -> CoordinateField:
             return replace(Ti, output=To.output)
         acted = x[..., in_axes]
     else:
-        if _interpolates(To.transformation):
+        if interpolates(To.transformation):
             # Looking up the axes by position reads the axes that the input
             # system declares, even when the system is open.
             axes = get_axes(To.input)
@@ -497,7 +497,7 @@ def _(To: SubspaceTransformation, Ti: CoordinateField) -> CoordinateField:
 def _(To: _AffineIsh, Ti: SubspaceTransformation) -> Affine:
     # A subspace that wraps a field cannot be reduced to an affine. Such a
     # subspace is applied by composing it with a sampling domain instead.
-    if _interpolates(Ti):
+    if interpolates(Ti):
         raise CompositionError(
             "A subspace transform that wraps a field is not embedded into an "
             "affine; it stays a wrapper and is applied by composing it with a "
@@ -506,20 +506,20 @@ def _(To: _AffineIsh, Ti: SubspaceTransformation) -> Affine:
     # The output space of the subspace is the input space of the affine. When
     # the systems of the subspace do not state how many axes the full space
     # has, the input axis count of the affine supplies that number.
-    Ti = _close_subspace(Ti, n_out=axis_counts(To)[0])
+    Ti = close_subspace(Ti, n_out=axis_counts(To)[0])
     return compose(To, Ti.to(Affine))
 
 
 @composer
 def _(To: SubspaceTransformation, Ti: _AffineIsh) -> Affine:
     # This composer mirrors the one above, with the subspace on the left.
-    if _interpolates(To):
+    if interpolates(To):
         raise CompositionError(
             "A subspace transform that wraps a field is not embedded into an "
             "affine; it stays a wrapper and is applied by composing it with a "
             "sampling domain."
         )
-    To = _close_subspace(To, n_in=axis_counts(Ti)[1])
+    To = close_subspace(To, n_in=axis_counts(Ti)[1])
     return compose(To.to(Affine), Ti)
 
 
@@ -545,13 +545,13 @@ def _projection_matrix(t: Projection) -> Affine:
 
 @composer
 def _(To: Projection, Ti: _AffineIsh) -> Affine:
-    To = _close_projection(To, n_in=axis_counts(Ti)[1])
+    To = close_projection(To, n_in=axis_counts(Ti)[1])
     return compose(_projection_matrix(To), Ti)
 
 
 @composer
 def _(To: _AffineIsh, Ti: Projection) -> Affine:
-    Ti = _close_projection(Ti, n_out=axis_counts(To)[0])
+    Ti = close_projection(Ti, n_out=axis_counts(To)[0])
     return compose(To, _projection_matrix(Ti))
 
 
@@ -559,13 +559,13 @@ def _(To: _AffineIsh, Ti: Projection) -> Affine:
 def _(To: Projection, Ti: SubspaceTransformation) -> Transformation:
     # The subspace composer that receives the matrix of the projection
     # refuses a subspace that wraps a field, and closes an open subspace.
-    To = _close_projection(To, n_in=axis_counts(Ti)[1])
+    To = close_projection(To, n_in=axis_counts(Ti)[1])
     return compose(_projection_matrix(To), Ti)
 
 
 @composer
 def _(To: SubspaceTransformation, Ti: Projection) -> Transformation:
-    Ti = _close_projection(Ti, n_out=axis_counts(To)[0])
+    Ti = close_projection(Ti, n_out=axis_counts(To)[0])
     return compose(To, _projection_matrix(Ti))
 
 
@@ -615,7 +615,7 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
     # the grid again.
     Ti = Ti.compute()
     y = compose(To, Ti.to(CoordinateField))
-    field = y.field - _grid_like(y.field)
+    field = y.field - grid_like(y.field)
     return DisplacementField(
         field=field,
         input=Ti.input,

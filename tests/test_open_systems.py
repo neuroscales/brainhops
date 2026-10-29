@@ -11,10 +11,10 @@ import typing_extensions as tx
 
 from brainhops.datamodel._transformations.compute import separable as sep
 from brainhops.datamodel._transformations.compute.adaptors import (
-    _grid_extents,
     adapt,
     bridge,
     embed,
+    grid_extents,
 )
 from brainhops.datamodel._transformations.compute.check import is_family
 from brainhops.datamodel._transformations.compute.compose import compose
@@ -450,7 +450,7 @@ def test_grid_extents_close_an_open_grid_system_from_its_shape() -> None:
     ):
         system = CS(axes=axes)
         grid = CartesianField(shape=(3, 4, 5), input=system, output=system)
-        assert _grid_extents(grid, at_output=True) == expected
+        assert grid_extents(grid, at_output=True) == expected
 
 
 # ----------------------------------------------------------------------

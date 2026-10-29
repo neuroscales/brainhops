@@ -27,10 +27,7 @@ converted affine can be read and compared but not written.
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
+from brainhops.datamodel._internal_api import convert_withlog, converter
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,
     affine_between,
@@ -89,4 +86,4 @@ def _(
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)

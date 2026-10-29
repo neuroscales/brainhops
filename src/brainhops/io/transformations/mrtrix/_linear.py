@@ -18,7 +18,7 @@ from bagof.magic import Inherit, NoRepr, replace
 # internals
 from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )

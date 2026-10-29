@@ -41,7 +41,7 @@ from brainhops.datamodel.metadata import (
 )
 
 # internals
-from brainhops.datamodel.metadata._vocabulary import BIDS_KEYS
+from brainhops.datamodel.metadata._internal_api import BIDS_KEYS
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.units import Unit
 

@@ -19,7 +19,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )

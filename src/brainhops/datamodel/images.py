@@ -19,8 +19,13 @@ from brainhops._core._internal_api import (
     smart_replace,
     smartproperty,
 )
+from brainhops.datamodel.metadata._internal_api import (
+    Indexed,
+    Reframed,
+    Resampled,
+)
 
-from ._backends import _BackendsMixin, as_backend
+from ._backends import BackendsMixin, as_backend
 from ._frames import (
     FrameSlot,
     FrameTargets,
@@ -41,8 +46,8 @@ from ._frames import (
     with_components,
 )
 from ._transformations.compute.multiscale import (
-    _nearest_resolution_index,
     nearest_level,
+    nearest_resolution_index,
 )
 from ._transformations.compute.separable import pull_separable
 from .axes import AxisSequence, TensorAxis
@@ -50,7 +55,6 @@ from .base import DataModelBase, _ComparesByIdMixin
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry, _index2transform
 from .metadata import Metadata
-from .metadata._derive import Indexed, Reframed, Resampled
 from .multiscale import Multiscale
 from .systems import CoordinateSystem
 from .transformations import (
@@ -62,7 +66,7 @@ from .transformations import (
 
 
 class Image(
-    _BackendsMixin,
+    BackendsMixin,
     _ComparesByIdMixin,
     DataModelBase,
     eq=False,
@@ -375,7 +379,7 @@ class SingleScaleImage(Image):
         device: tx.Optional[DeviceLike] = None,
         inplace: bool = False,
     ) -> tx.Self:
-        # Overrides _BackendsMixin to convert transformations and frames as
+        # Overrides BackendsMixin to convert transformations and frames as
         # well.
         opt = dict(backend=backend, device=device, inplace=inplace)
         obj = super().as_backend(**opt)
@@ -881,7 +885,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         device: tx.Optional[DeviceLike] = None,
         inplace: bool = False,
     ) -> tx.Self:
-        # Overrides _BackendsMixin to convert transformations as well.
+        # Overrides BackendsMixin to convert transformations as well.
         changes = {}
         for name in ("images", "transformations"):
             value = getattr(self, name)
@@ -1012,7 +1016,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             reframe=reframe,
             frame=frame,
         )
-        level = _nearest_resolution_index(
+        level = nearest_resolution_index(
             _level_voxel_sizes(self),
             _get_voxel2world(self, geometry).to_affine(
                 include="affine", on_error=None

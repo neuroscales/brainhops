@@ -15,7 +15,7 @@ from brainhops._core import path
 from brainhops._core._internal_api import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._internal_api import FIELDS
 from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,

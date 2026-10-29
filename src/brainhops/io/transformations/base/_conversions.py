@@ -97,11 +97,7 @@ from brainhops._core._internal_api import ArrayProtocol, array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.adaptors import bridge
-from brainhops.datamodel._transformations.compute.convert import (
-    convert,
-    converter,
-)
+from brainhops.datamodel._internal_api import bridge, convert, converter
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.systems import CoordinateSystem, VoxelCoordinateSystem
 from brainhops.errors import (

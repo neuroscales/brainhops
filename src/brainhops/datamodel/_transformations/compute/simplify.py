@@ -58,8 +58,8 @@ from .. import nocycles
 from ..modes import (
     Family,
     FamilyLike,
-    _is_family_like,
     is_family,
+    is_family_like,
     normalize_family,
 )
 from .utils import boundary_disagrees
@@ -473,7 +473,7 @@ class SimplifyTable(dict):
         # A (kind, ndim) pair is both family-like and iterable, so the single-
         # key test comes first.
         keys = [value]
-        if not _is_family_like(value):
+        if not is_family_like(value):
             if isinstance(value, str) or not isinstance(value, tx.Iterable):
                 raise ValueError(f"invalid simplify policy: {value!r}")
             keys = list(value)

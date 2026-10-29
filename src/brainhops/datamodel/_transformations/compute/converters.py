@@ -34,13 +34,13 @@ from ..concrete import (
     Scaling,
     TransformationField,
     Translation,
-    _is_tangent,
-    _values2data,
+    is_tangent,
+    values2data,
 )
 from ..meta import (
     Projection,
     SubspaceTransformation,
-    _close_subspace,
+    close_subspace,
 )
 from ..sequence import Sequence
 from ..tangents import (
@@ -136,14 +136,14 @@ def _convert_withdata(
     return smart_replace(t, cls, **kwargs)
 
 
-def _convert_withlog(
+def convert_withlog(
     t: Transformation, cls: tx.Type[TRANSFORMATION], _fallback: str, **kwargs
 ) -> TRANSFORMATION:
     # When the conversion crosses between the log and exp encodings, the
     # exponentiated parameter is transferred instead of `data`, because
     # `data` means different things in the two encodings. Families without
     # a `log` flag have no tangent, so for them nothing is transferred.
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     crossing = getattr(t, "log", False) != out_log
     # Keep stored parameters in their existing encoding when only the class
     # changes: reading matrix/field could exponentiate a tangent or integrate
@@ -185,7 +185,7 @@ def _convert_withlog(
 _SPLINE_FLAGS = ("degree", "bound", "store")
 
 
-def _convert_withsplines(
+def convert_withsplines(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
     # A spline flag is written back into `kwargs` only if it differs from
@@ -203,7 +203,7 @@ def _convert_withsplines(
 
     # Move to the requested log or exp domain first.
     logkwargs = {"log": kwargs.pop("log")} if "log" in kwargs else {}
-    t = _convert_withlog(t, cls, "field", **logkwargs)
+    t = convert_withlog(t, cls, "field", **logkwargs)
     cls = type(t)
 
     # When the spline flags change, the values are transferred instead of
@@ -228,59 +228,59 @@ def _(t: Permutation, cls: tx.Type[PERMUTATION], **kwargs) -> PERMUTATION:
 
 @converter
 def _(t: Affine, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 @converter
 def _(t: AffineExponential, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, AffineExponential):
         cls = Affine
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 @converter
 def _(t: Linear, cls: tx.Type[LINEAR], **kwargs) -> LINEAR:
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 @converter
 def _(t: LinearExponential, cls: tx.Type[LINEAR], **kwargs) -> LINEAR:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, LinearExponential):
         cls = Linear
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 @converter
 def _(t: Rotation, cls: tx.Type[ROTATION], **kwargs) -> ROTATION:
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 @converter
 def _(t: RotationExponential, cls: tx.Type[ROTATION], **kwargs) -> ROTATION:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, RotationExponential):
         cls = Rotation
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 @converter
 def _(t: Scaling, cls: tx.Type[SCALING], **kwargs) -> SCALING:
-    return _convert_withlog(t, cls, "scale", **kwargs)
+    return convert_withlog(t, cls, "scale", **kwargs)
 
 
 @converter
 def _(t: ScalingExponential, cls: tx.Type[SCALING], **kwargs) -> SCALING:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, ScalingExponential):
         cls = Scaling
-    return _convert_withlog(t, cls, "scale", **kwargs)
+    return convert_withlog(t, cls, "scale", **kwargs)
 
 
 @converter
 def _(t: DisplacementField, cls: tx.Type[DISP], **kwargs) -> DISP:
-    return _convert_withsplines(t, cls, **kwargs)
+    return convert_withsplines(t, cls, **kwargs)
 
 
 @converter
@@ -299,15 +299,15 @@ def _(t: DisplacementField, cls: tx.Type[SVF], **kwargs) -> SVF:
 @converter(StationaryVelocityField, SVF)
 @converter
 def _(t: StationaryVelocityField, cls: tx.Type[DISP], **kwargs) -> DISP:
-    out_log = kwargs.get("log", _is_tangent(cls))
+    out_log = kwargs.get("log", is_tangent(cls))
     if not out_log and issubclass(cls, StationaryVelocityField):
         cls = DisplacementField
-    return _convert_withsplines(t, cls, **kwargs)
+    return convert_withsplines(t, cls, **kwargs)
 
 
 @converter
 def _(t: CoordinateField, cls: tx.Type[COORD], **kwargs) -> COORD:
-    return _convert_withsplines(t, cls, **kwargs)
+    return convert_withsplines(t, cls, **kwargs)
 
 
 @converter
@@ -316,7 +316,7 @@ def _(t: CartesianField, cls: tx.Type[COORD], **kwargs) -> COORD:
     # storing them. A class that stores coordinates must therefore receive
     # them as `values`, which it encodes under its own spline flags.
     kwargs.setdefault("values", t.values)
-    return _convert_withsplines(t, cls, **kwargs)
+    return convert_withsplines(t, cls, **kwargs)
 
 
 @converter
@@ -595,7 +595,7 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
             )
         last = i == len(pieces) - 1
         try:
-            piece = _close_subspace(piece, n, n_end if last else None)
+            piece = close_subspace(piece, n, n_end if last else None)
         except CompositionError as error:
             raise ConversionError(str(error)) from error
         n = get_axes(piece.output).ndim
@@ -658,7 +658,7 @@ def _encoded_grid(t: TransformationField) -> ArrayProtocol:
     axes = (xp.arange(s, **options) for s in data.shape[:-1])
     grid = xp.meshgrid(*axes, indexing="ij")
     grid = xp.stack(grid, axis=-1).astype(data.dtype)
-    return _values2data(grid, t.store, t.degree, t.bound)
+    return values2data(grid, t.store, t.degree, t.bound)
 
 
 # ----------------------------------------------------------------------

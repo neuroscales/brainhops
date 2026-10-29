@@ -7,12 +7,9 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core import path
 from brainhops._core._internal_api import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
+from brainhops.datamodel._internal_api import convert_withlog, converter
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
@@ -417,7 +414,7 @@ def _(
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 # ----------------------------------------------------------------------

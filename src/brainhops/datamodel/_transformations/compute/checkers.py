@@ -647,7 +647,7 @@ def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
 # ======================================================================
 
 
-def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
+def matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
     """Return the dimensions `(ni, no)` of a matrix transformation, or None.
 
     The dimensions are read from the shape of the stored matrix, which is
@@ -698,7 +698,7 @@ def _matrix_rank(linear: ArrayProtocol) -> int:
 
 @identity_from("matrix")
 def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
-    dims = _matrix_dims(t)
+    dims = matrix_dims(t)
     if dims is None:
         return False
     ni, no = dims
@@ -714,7 +714,7 @@ def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
 
 @identity_from("matrix")
 def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
-    dims = _matrix_dims(t)
+    dims = matrix_dims(t)
     if dims is None:
         return False
     ni, no = dims
@@ -728,7 +728,7 @@ def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
 
 @identity_from("matrix")
 def _matrix_injective(t: Transformation, kind: type, compute: bool) -> bool:
-    dims = _matrix_dims(t)
+    dims = matrix_dims(t)
     if dims is None:
         return False
     ni, no = dims
@@ -810,7 +810,7 @@ def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _embed_targets(node: type) -> tx.Tuple[type, ...]:
+def embed_targets(node: type) -> tx.Tuple[type, ...]:
     # The block-diagonal map blockdiag(inner, I) belongs to `node` if and only
     # if `inner` belongs to one of the returned sets. The result is `node`
     # itself when `node` is embeddable, and otherwise the largest embeddable
@@ -831,7 +831,7 @@ def _embed_targets(node: type) -> tx.Tuple[type, ...]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
+def permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
     # For a permutation P of the coordinates with the given parity, the map
     # P @ blockdiag(...) belongs to `node` if and only if the embedded map
     # belongs to one of the returned sets. The result is `node` itself when
@@ -854,7 +854,7 @@ def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _bijective_targets(node: type) -> tx.Tuple[type, ...]:
+def bijective_targets(node: type) -> tx.Tuple[type, ...]:
     # The inverse inv(T) belongs to `node` if and only if T belongs to one of
     # the returned sets. The result is `node` itself when `node` contains only
     # bijections, since such sets are closed under inversion, and otherwise the
@@ -931,13 +931,13 @@ def _subspace_member(
     )
     if same:
         return any(
-            _inner_member(inner, m, compute) for m in _embed_targets(node)
+            _inner_member(inner, m, compute) for m in embed_targets(node)
         )
     even = _reindex_is_even(sub.input_axes, sub.output_axes)
     return any(
         _inner_member(inner, m, compute)
-        for target in _permute_targets(node, even)
-        for m in _embed_targets(target)
+        for target in permute_targets(node, even)
+        for m in embed_targets(target)
     )
 
 
@@ -984,7 +984,7 @@ def _inverse_member(inv: Inverse, node: type, compute: bool) -> bool:
     if inv.forward is None:
         return issubclass(kinds.Identity, node)
     return any(
-        is_kind(inv.forward, m, compute) for m in _bijective_targets(node)
+        is_kind(inv.forward, m, compute) for m in bijective_targets(node)
     )
 
 

@@ -90,7 +90,7 @@ def normalize_modes(mode: ModeLike) -> tx.List[Family]:
         return [TransformationFamily(TransformationSet, None)]
     if mode is False:
         return []
-    if _is_family_like(mode):
+    if is_family_like(mode):
         mode = [mode]
     return list(map(normalize_family, mode))
 
@@ -125,7 +125,7 @@ def _is_kind_like(kind: tx.Any) -> bool:
     return isinstance(kind, type) and issubclass(kind, TransformationSet)
 
 
-def _is_family_like(mode: tx.Any) -> bool:
+def is_family_like(mode: tx.Any) -> bool:
     if isinstance(mode, TransformationFamily):
         return True
     if _is_kind_like(mode):

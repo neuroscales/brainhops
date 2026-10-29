@@ -3,10 +3,10 @@ from bagof.magic import NoRepr
 
 from brainhops._core._internal_api import UNSET, smartproperty
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _BackendsMixin
+from brainhops.datamodel._backends import BackendsMixin
 from brainhops.datamodel.base import DataModelBase, _ComparesByIdMixin
 from brainhops.datamodel.metadata import Metadata
-from brainhops.datamodel.metadata._report import call_under_policy
+from brainhops.datamodel.metadata._internal_api import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import ConversionError, ErrorAction, ErrorPolicy
 
@@ -26,7 +26,7 @@ if tx.TYPE_CHECKING:
 @kinds.Transformation.register
 @nocycles.register_transformation
 class Transformation(
-    _BackendsMixin,
+    BackendsMixin,
     _ComparesByIdMixin,
     DataModelBase,
     reverse=True,
@@ -511,7 +511,7 @@ class Transformation(
 
         def convert_to() -> Transformation:
             target = cls or self._target_class(kwargs)
-            return _copied(self, convert(self, target, **kwargs), copy)
+            return copied(self, convert(self, target, **kwargs), copy)
 
         return call_under_policy(
             convert_to, on_error, on_loss=on_loss, scope=(ConversionError,)
@@ -1170,7 +1170,7 @@ def _mutually_exclusive(
     )
 
 
-def _copied(
+def copied(
     original: Transformation, result: Transformation, copy: bool
 ) -> Transformation:
     """Return `result`, or a copy of it when it is `original` and `copy`."""

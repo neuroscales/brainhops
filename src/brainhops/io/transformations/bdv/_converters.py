@@ -31,10 +31,7 @@ family is.
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.io.common.bdv._geometry import global_system, voxel_system
 from brainhops.io.transformations.base._conversions import (
     AFFINE_SOURCES,

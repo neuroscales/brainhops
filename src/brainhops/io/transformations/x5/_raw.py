@@ -21,7 +21,7 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic, replace
 
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,

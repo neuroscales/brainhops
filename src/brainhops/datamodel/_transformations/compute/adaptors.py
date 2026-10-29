@@ -46,7 +46,7 @@ from ..concrete import (
 )
 from ..meta import SubspaceTransformation
 from ..nocycles import register_adapt
-from ..sequence import Sequence, _interpolates
+from ..sequence import Sequence, interpolates
 from .utils import systems_disagree
 
 Extents = tx.Union[tx.Sequence[tx.Optional[int]], tx.Mapping[tx.Any, int]]
@@ -153,7 +153,7 @@ def bridge(
         )
 
     # --- matching -----------------------------------------------------
-    match, positional_warning = _match_axes(
+    match, positional_warning = match_axes(
         source_axes,
         target_axes,
         allow_positional,
@@ -243,7 +243,7 @@ def bridge(
     return Sequence(transformations=elements, input=source, output=target)
 
 
-def _match_axes(
+def match_axes(
     source_axes: tx.List[Axis],
     target_axes: tx.List[Axis],
     allow_positional: bool,
@@ -507,8 +507,8 @@ def adapt(
 
     # --- compute extents for grid coordinate systems ------------------
     if extents is None:
-        extents = _grid_extents(first, at_output=True)
-        extents.update(_grid_extents(second, at_output=False))
+        extents = grid_extents(first, at_output=True)
+        extents.update(grid_extents(second, at_output=False))
     extents = extents or None
 
     # An embedding replaces one transformation with a wrapper in the fuller
@@ -654,7 +654,7 @@ def embed(
     # --- discrete check -----------------------------------------------
     # An interpolating transformation reads values between samples, which a
     # discrete axis does not have.
-    if _interpolates(transform):
+    if interpolates(transform):
         for position in positions:
             axis = full_axes[position]
             if axis.discrete:
@@ -729,7 +729,7 @@ def _subset_positions(
     # axes of a single type to be embedded, in the same way that an implicit
     # bridge pairs such axes. The warning belongs to the bridge built over the
     # subset, so it is discarded here.
-    match, _ = _match_axes(
+    match, _ = match_axes(
         full_axes,
         sub_axes,
         allow_positional=False,
@@ -981,7 +981,7 @@ def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:
     return int(value)
 
 
-def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
+def grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
     """Return the sample counts of a grid at the boundary of a transformation.
 
     A [`CartesianField`][] next to the boundary carries the extents as its
@@ -1003,7 +1003,7 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
         return extents
     if isinstance(t, Sequence) and t.transformations:
         edge = t.transformations[-1] if at_output else t.transformations[0]
-        return _grid_extents(edge, at_output)
+        return grid_extents(edge, at_output)
     return {}
 
 

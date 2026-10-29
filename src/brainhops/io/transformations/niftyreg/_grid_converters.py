@@ -51,10 +51,7 @@ import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,

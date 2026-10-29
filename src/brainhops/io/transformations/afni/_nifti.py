@@ -17,15 +17,10 @@ from brainhops._core._internal_api import (
 )
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,

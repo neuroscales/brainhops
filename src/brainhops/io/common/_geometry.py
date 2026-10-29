@@ -36,7 +36,7 @@ import typing_extensions as tx
 from brainhops._core._internal_api import array_backend, cached_value
 
 # datamodel
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._internal_api import get_axes
 from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import CoordinateSystem

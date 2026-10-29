@@ -12,7 +12,7 @@ from bagof.magic import Factory, KwOnly
 
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import systems as _systems
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._internal_api import get_axes
 from brainhops.datamodel.geometry import Geometry
 from brainhops.io.base.parsers import UnrepresentableTransformationError
 from brainhops.io.common._geometry import (

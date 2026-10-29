@@ -25,7 +25,7 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     call_under_policy,
 )

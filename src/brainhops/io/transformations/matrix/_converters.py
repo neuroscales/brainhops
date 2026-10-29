@@ -18,10 +18,7 @@ another.
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
+from brainhops.datamodel._internal_api import convert_withlog, converter
 from brainhops.io.transformations.base._converters import relabelling
 
 from ._xform import (
@@ -71,4 +68,4 @@ def _(t: MatrixAffine, cls: tx.Type[MatrixAffine], **kwargs) -> MatrixAffine:
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type and its record.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)

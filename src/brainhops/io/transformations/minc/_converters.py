@@ -47,9 +47,9 @@ import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
+from brainhops.datamodel._internal_api import (
+    convert_withlog,
+    converter,
     smart_replace,
 )
 from brainhops.errors import LossyConversionError
@@ -89,7 +89,7 @@ def _(t: XfmAffine, cls: tx.Type[XfmAffine], **kwargs) -> XfmAffine:
     # An affine that is already in this format is changed by the rules of
     # any affine, for example when it is given a new `matrix=`, and these
     # rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 # ----------------------------------------------------------------------

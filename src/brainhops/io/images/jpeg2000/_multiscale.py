@@ -17,7 +17,7 @@ from brainhops._core._internal_api import (
     smartproperty,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (

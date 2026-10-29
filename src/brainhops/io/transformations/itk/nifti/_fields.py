@@ -25,9 +25,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.errors import (
     ParserContentError,
     WriterError,

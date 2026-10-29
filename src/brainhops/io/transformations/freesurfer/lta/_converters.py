@@ -53,9 +53,9 @@ import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
+from brainhops.datamodel._internal_api import (
+    convert_withlog,
+    converter,
     smart_replace,
 )
 from brainhops.datamodel.geometry import Geometry
@@ -128,7 +128,7 @@ def _(
     # the record of `t`, when it has one, in its own systems. A matrix of
     # its own is converted as the matrix of any affine.
     if type(t) is cls:
-        return _convert_withlog(t, cls, "matrix", **kwargs)
+        return convert_withlog(t, cls, "matrix", **kwargs)
     if t._data is None:
         return _view(t, cls, **kwargs)
     plain = _xforms.Affine(matrix=t.matrix, input=t.input, output=t.output)

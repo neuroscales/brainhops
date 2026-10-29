@@ -36,7 +36,7 @@ from brainhops._core._internal_api import (
     preserve_position,
     replace_file,
 )
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.errors import (
     AmbiguousFormatError,  # noqa: F401
     ParserContentError,  # noqa: F401

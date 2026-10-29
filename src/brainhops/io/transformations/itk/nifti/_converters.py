@@ -49,9 +49,7 @@ from bagof.magic import replace
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import smart_replace
 from brainhops.io.transformations.base._conversions import (
     FIELD_SOURCES,
     coordinate_parts,

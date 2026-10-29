@@ -12,7 +12,7 @@ from brainhops._core import path
 from brainhops._core._internal_api import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport, Metadata
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )

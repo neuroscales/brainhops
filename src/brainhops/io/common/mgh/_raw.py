@@ -20,7 +20,7 @@ from brainhops._core._internal_api import (
     open_compressed,
     preserve_position,
 )
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,

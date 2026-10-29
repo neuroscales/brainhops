@@ -9,7 +9,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._internal_api import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.images.base import _utils_raster as raster

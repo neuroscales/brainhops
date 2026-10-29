@@ -21,8 +21,10 @@ from brainhops._core._internal_api import (
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
+    takes_error_policy,
+)
 
 # io
 from brainhops.io.base._base import register_format

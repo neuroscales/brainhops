@@ -24,7 +24,7 @@ from .array_finite import (
     FArrayCoordinateSystem2D,
     FArrayCoordinateSystem3D,
 )
-from .base import CoordinateSystem, _VariadicAxes
+from .base import CoordinateSystem, VariadicAxes
 from .dispatch import is_spatial
 from .factories import SpaceArrayAxesFactory, SpaceAxesFactory
 from .finite import CoordinateSystem2D, CoordinateSystem3D
@@ -47,7 +47,7 @@ class SpatialCoordinateSystem(CoordinateSystem, on={"axes": is_spatial}):
         The name of the system, if any.
     """
 
-    axes: Inherit[tx.Optional[_VariadicAxes[SpaceAxis]]] = None
+    axes: Inherit[tx.Optional[VariadicAxes[SpaceAxis]]] = None
 
 
 # A spatial system whose axes count samples is both spatial and an array,

@@ -6,7 +6,7 @@ from bagof.magic import NotKwOnly, replace
 
 from brainhops._core._internal_api import npvector, smartproperty
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _MetaBackendMixin
+from brainhops.datamodel._backends import MetaBackendMixin
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError
@@ -27,7 +27,7 @@ TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 _FieldNames = tx.ClassVar[tx.Tuple[str, ...]]
 
 
-class MetaTransformation(_MetaBackendMixin, Transformation):
+class MetaTransformation(MetaBackendMixin, Transformation):
     """Base class of the transformations defined in terms of others.
 
     The subclasses are [`SubspaceTransformation`][], [`Projection`][] and
@@ -145,7 +145,7 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
         # whose principal root is blockdiag(sqrt(inner), I), so the root acts
         # on the inner transformation alone and keeps its axes.
         require_endomorphism(self, "square root")
-        if not _same_axes(self):
+        if not has_same_axes(self):
             raise NotImplementedError(
                 "The square root of a subspace transformation that "
                 "reindexes its axes is not implemented."
@@ -387,7 +387,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return obj.compute(**kwargs) if compute else obj
 
 
-def _same_axes(t: SubspaceTransformation) -> bool:
+def has_same_axes(t: SubspaceTransformation) -> bool:
     # Return whether the subspace reads and writes the same axes in the same
     # order, that is, whether it embeds the inner transformation without
     # reindexing its axes.
@@ -427,7 +427,7 @@ def _subsystem(
     return replace(embedded, name=name)
 
 
-def _close_subspace(
+def close_subspace(
     t: SubspaceTransformation,
     n_in: tx.Optional[int] = None,
     n_out: tx.Optional[int] = None,
@@ -518,7 +518,7 @@ def _projected_system(
     return system.restrict(kept).embed(positions, ndim=ndim)
 
 
-def _close_projection(
+def close_projection(
     t: Projection,
     n_in: tx.Optional[int] = None,
     n_out: tx.Optional[int] = None,
@@ -526,7 +526,7 @@ def _close_projection(
     """Fix the number of axes in the systems of a projection, when known.
 
     A neighbour in a composition may say how many axes the space between
-    them has, as for [`_close_subspace`][]. The number on one side gives
+    them has, as for [`close_subspace`][]. The number on one side gives
     the number on the other, because a projection removes `len(dropped)`
     axes and adds `len(created)` axes. A number that `t` states itself is
     never overridden. If no number is known, `t` is returned unchanged.
@@ -576,6 +576,6 @@ def _close_projection(
     return t.to(**changes) if changes else t
 
 
-def _has_free_axes(t: Projection) -> bool:
+def has_free_axes(t: Projection) -> bool:
     """Return whether a projection creates an axis whose value is NaN."""
     return any(math.isnan(value) for value in t.at)

@@ -31,7 +31,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )

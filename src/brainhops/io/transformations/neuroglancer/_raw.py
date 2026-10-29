@@ -10,7 +10,7 @@ import json
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 
 # internals
 from brainhops.io.base._raw import Raw

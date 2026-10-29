@@ -18,13 +18,14 @@ from bagof.magic import NoRepr, replace
 
 from brainhops._core._internal_api import UNSET, differs
 from brainhops.datamodel.metadata import ConversionReport, Metadata
-from brainhops.datamodel.metadata._derive import Indexed, Resampled
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
+    Indexed,
+    Resampled,
     apply_loss_policy,
     call_under_policy,
     short,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._base import (
     FileFormat,

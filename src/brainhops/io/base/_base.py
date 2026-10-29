@@ -11,12 +11,12 @@ from brainhops._core import backends, path
 from brainhops._core._internal_api import UNSET
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
-from brainhops.datamodel.metadata._report import (
-    ConversionReport,
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     call_under_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._report import ConversionReport
 from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (

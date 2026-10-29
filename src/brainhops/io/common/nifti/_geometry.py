@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core._internal_api import ArrayProtocol
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._internal_api import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Transformation

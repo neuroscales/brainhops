@@ -49,10 +49,10 @@ from ..meta import (
     Bijection,
     Projection,
     SubspaceTransformation,
-    _same_axes,
+    has_same_axes,
 )
 from ..multiscale import MultiscaleField
-from ..sequence import Sequence, _unnest
+from ..sequence import Sequence, unnest
 from .check import is_kind
 from .prune import may_prune, prune_chain
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
@@ -183,7 +183,7 @@ def _(t: SubspaceTransformation, policy: SimplifyTable) -> Transformation:
     resolved = policy.resolve(t)
     if resolved is NONE:
         return t
-    same = _same_axes(t)
+    same = has_same_axes(t)
     inner = t.transformation
     if inner is None:
         return Identity(input=t.input, output=t.output) if same else t
@@ -257,14 +257,14 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
     """
     if policy.is_noop():
         return t
-    leaves = _settle(_unnest(t.transformations), policy)
+    leaves = settle(unnest(t.transformations), policy)
     for _ in range(_PRUNING_ROUNDS):
         if len(leaves) < 2 or not may_prune(leaves, policy):
             break
         pruned = prune_chain(leaves, policy)
         if pruned is None:
             break
-        leaves = _settle(pruned, policy)
+        leaves = settle(pruned, policy)
     return _rebuild(t, leaves)
 
 
@@ -275,7 +275,7 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
 _PRUNING_ROUNDS = 4
 
 
-def _settle(
+def settle(
     leaves: tx.List[Transformation], policy: SimplifyTable
 ) -> tx.List[Transformation]:
     # Collapse and downcast in rounds until a round changes nothing.
@@ -346,7 +346,7 @@ def _(
 def _(
     first: Projection, second: Projection, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    merged = _merge_projections(first, second)
+    merged = merge_projections(first, second)
     if merged is None:
         return None
     dropped, created, at = merged
@@ -361,7 +361,7 @@ def _(
     )
 
 
-def _merge_projections(
+def merge_projections(
     first: Projection, second: Projection
 ) -> tx.Optional[tx.Tuple[tx.List[int], tx.List[int], tx.List[float]]]:
     """Return what two consecutive projections drop and create, and where.

@@ -5,7 +5,7 @@ __all__ = ["MetadataReader", "MetadataWriter"]
 import typing_extensions as tx
 
 from brainhops._core import path
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base.parsers import (
     FileReader,
     FileWriter,
