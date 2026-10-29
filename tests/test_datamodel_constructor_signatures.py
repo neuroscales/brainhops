@@ -72,6 +72,14 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "InverseStationaryVelocityField": ("forward",),
         "InverseTranslation": ("forward",),
     },
+    "brainhops.datamodel._transformations.batched": {
+        "BatchedAffine": (),
+        "BatchedLinear": (),
+        "BatchedPermutation": (),
+        "BatchedScaling": (),
+        "BatchedTransformation": ("elements",),
+        "BatchedTranslation": (),
+    },
     "brainhops.datamodel._transformations.meta": {
         "Bijection": ("forward", "backward"),
         "MetaTransformation": (),

@@ -174,4 +174,73 @@ forward transformation in a `Sequence`. `sqrt()` halves the tangent, so a
 velocity is integrated with one squaring step fewer, and `square()` doubles
 it.
 
+## Batches of transformations
+
+Some transformations are a family of transformations, one for each
+element of a batch axis. Motion correction, for example, estimates one
+affine per volume of a time series. A `BatchedTransformation` holds such
+a family. It carries its batch axes through unchanged, and its other
+outputs are those of the element that sits at the coordinate of the
+point along the batch axes.
+
+A batch has two forms. The general form holds an array of
+transformations, one per element. The elements may be of any type, such
+as chains of affines of different lengths, as long as they all have the
+same numbers of input and output axes. The stacked form holds elements
+of one matrix or vector type, and stores their data in one array whose
+leading dimensions index the elements. It creates an element only when
+one is asked for, as a view of the stack.
+
+```python
+import numpy as np
+
+from brainhops.datamodel.transformations import (
+    Affine,
+    BatchedTransformation,
+    Scaling,
+    Sequence,
+)
+
+# stacked form: one affine per volume of a series (x, y, z, t)
+matrices = np.stack([np.eye(3, 4)] * 10)
+batch = Affine.batch(matrices, input_axes=[0, 1, 2])
+volume = batch[4]  # the affine of volume 4, a view of the stack
+
+# general form: chains that no single array can hold
+chains = [
+    Sequence([Scaling([1.0, 2.0, 3.0])]),
+    Sequence([Scaling([2.0, 2.0, 2.0]), Affine(np.eye(3, 4))]),
+]
+general = BatchedTransformation(chains, input_axes=[0, 1, 2])
+```
+
+`input_axes` and `output_axes` give the positions of the axes of the
+elements, and every other axis is a batch axis. When neither is given,
+the batch axes come first, so that the space is
+`(*batch_axes, *element_axes)`. `positions` gives the coordinate of each
+element along each batch axis, and each element sits at its index by
+default. The class method `batch` exists on every matrix and vector
+type, and it takes the encoding of the elements, such as `log`, and a
+view of the data, such as `homogeneous_matrix`, as keywords.
+`BatchedTransformation.stack` builds a general batch from
+transformations that already exist.
+
+Building a stacked batch returns the subclass that matches its elements:
+
+| Element type         | Batch class          | `data` holds                     | Views                          |
+|----------------------|----------------------|----------------------------------|--------------------------------|
+| `Affine`             | `BatchedAffine`      | the `(*batch, No, Ni + 1)` stack | `matrix`, `homogeneous_matrix` |
+| `Linear`, `Rotation` | `BatchedLinear`      | the `(*batch, No, Ni)` stack     | `matrix`                       |
+| `Scaling`            | `BatchedScaling`     | the `(*batch, N)` factors        | `scale`                        |
+| `Translation`        | `BatchedTranslation` | the `(*batch, N)` translations   | `translation`                  |
+| `Permutation`        | `BatchedPermutation` | the `(*batch, N)` permutations   | `permutation`                  |
+
+A batch is not registered as any kind, because a batch of affines is not
+an affine map of its inputs: its other outputs depend on the batch axes.
+For the same reason, the matrix and vector types accept only data with
+the number of dimensions of one element. `inverse()` returns the batch
+of the inverses, which a stacked batch computes on its whole stack.
+Stacked batches of fields, and the rules that let `compute` compose and
+resample batches, are not implemented yet.
+
 # ::: brainhops.datamodel.transformations

@@ -32,6 +32,12 @@ __all__ = [
     "InverseStationaryVelocityField",
     "Sqrt",
     "Bijection",
+    "BatchedTransformation",
+    "BatchedAffine",
+    "BatchedLinear",
+    "BatchedScaling",
+    "BatchedTranslation",
+    "BatchedPermutation",
     "SubspaceTransformation",
     "Projection",
     "Sequence",
@@ -59,6 +65,14 @@ from brainhops._core.deprecation import (  # noqa: E402
 )
 
 from .base import Transformation
+from .batched import (
+    BatchedAffine,
+    BatchedLinear,
+    BatchedPermutation,
+    BatchedScaling,
+    BatchedTransformation,
+    BatchedTranslation,
+)
 
 # Imported for their side effect: each of these modules registers its
 # implementations with the corresponding dispatcher.
