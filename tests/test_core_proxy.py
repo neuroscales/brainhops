@@ -17,7 +17,7 @@ from brainhops._core.proxy import (
 )
 
 
-class _Recording(StoredProxy):
+class RecordingProxy(StoredProxy):
     """A proxy over an array in memory that records the boxes it reads."""
 
     def __init__(self, array: np.ndarray, chunks: tuple = None) -> None:
@@ -57,7 +57,7 @@ def _array(shape: tuple = (5, 6, 7)) -> np.ndarray:
 
 def test_satisfies_the_protocol() -> None:
     # A proxy, a NumPy array and a view all satisfy the protocol.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert isinstance(proxy, ArrayProxyProtocol)
     assert isinstance(proxy[1:], ArrayProxyProtocol)
     assert isinstance(np.zeros(3), ArrayProxyProtocol)
@@ -66,7 +66,7 @@ def test_satisfies_the_protocol() -> None:
 def test_indexing_reads_nothing() -> None:
     # Indexing and transposing return proxies without reading, and the
     # attributes of the result describe the selection.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     view = proxy[1:4, None, ::-2].T[0]
     assert isinstance(view, IndexedProxy)
     assert proxy.reads == []
@@ -104,7 +104,7 @@ def test_indexing_reads_nothing() -> None:
 def test_views_match_numpy(indices: list) -> None:
     # A chain of indexes reads what NumPy gives for the same chain.
     array = _array()
-    proxy = _Recording(array)
+    proxy = RecordingProxy(array)
     expected = array
     for index in indices:
         proxy = proxy[index]
@@ -118,7 +118,7 @@ def test_random_chains_match_numpy() -> None:
     rng = np.random.default_rng(0)
     array = _array((4, 5, 6))
     for _ in range(300):
-        proxy = _Recording(array)
+        proxy = RecordingProxy(array)
         expected = array
         for _ in range(rng.integers(1, 4)):
             if rng.random() < 0.2:
@@ -154,14 +154,14 @@ def test_random_chains_match_numpy() -> None:
 def test_reads_the_bounding_box() -> None:
     # A view reads the smallest box with a positive step that holds its
     # values, once.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     np.asarray(proxy[4:0:-2, 3, [5, 1]])
     assert proxy.reads == [(slice(2, 5, 2), 3, slice(1, 6, 1))]
 
 
 def test_empty_selection_reads_nothing() -> None:
     # An empty view is answered without reading.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     values = np.asarray(proxy[2:2])
     assert values.shape == (0, 6, 7)
     assert values.dtype == np.float32
@@ -171,7 +171,7 @@ def test_empty_selection_reads_nothing() -> None:
 def test_points_are_refused() -> None:
     # Several arrays and boolean masks select points, which a proxy
     # refuses to describe.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     with pytest.raises(IndexError):
         proxy[[0, 1], [0, 1]]
     with pytest.raises(IndexError):
@@ -189,7 +189,7 @@ def test_points_are_refused() -> None:
 def test_array_conversion_options() -> None:
     # `dtype` converts the values, and `copy=False` is refused because
     # values cannot be read without making them.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert np.asarray(proxy, dtype=np.int64).dtype == np.int64
     assert np.array(proxy, copy=True).shape == proxy.shape
     with pytest.raises(ValueError):
@@ -198,18 +198,18 @@ def test_array_conversion_options() -> None:
 
 def test_chunks_follow_the_view() -> None:
     # The preferred blocks are carried through a view.
-    proxy = _Recording(_array((8, 6, 4)), chunks=(4, 3, 4))
+    proxy = RecordingProxy(_array((8, 6, 4)), chunks=(4, 3, 4))
     assert proxy.chunks == (4, 3, 4)
     assert proxy[::2, None, 1:2].chunks == (2, 1, 1, 4)
     assert proxy.T.chunks == (4, 3, 4)
-    assert _Recording(_array()).chunks is None
+    assert RecordingProxy(_array()).chunks is None
 
 
 def test_to_dask_reads_each_block_once() -> None:
     # Dask reads the proxy block by block, without probing it.
     da = pytest.importorskip("dask.array")
     array = _array((8, 6, 4))
-    proxy = _Recording(array, chunks=(4, 3, 4))
+    proxy = RecordingProxy(array, chunks=(4, 3, 4))
     lazy = proxy.to_dask()
     assert isinstance(lazy, da.Array)
     assert proxy.reads == []
@@ -222,7 +222,7 @@ def test_to_dask_reads_each_block_once() -> None:
 def test_views_pickle() -> None:
     # An indexed proxy keeps its selection when it is pickled, and so
     # does a scaled proxy keep its factors.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     scaled = ScaledProxy(proxy, np.arange(7.0), 1.0)[1:, None, [0, 2]].T
     copied = pickle.loads(pickle.dumps(scaled))
     np.testing.assert_array_equal(np.asarray(copied), np.asarray(scaled))
@@ -234,7 +234,7 @@ def test_views_pickle() -> None:
 def test_transpose_arguments() -> None:
     # `transpose` accepts integers or one sequence, and refuses axes that
     # are not a permutation.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert proxy.transpose(2, 0, 1).shape == (7, 5, 6)
     assert proxy.transpose([2, 0, 1]).shape == (7, 5, 6)
     assert proxy.transpose(-1, 0, 1).shape == (7, 5, 6)
@@ -247,7 +247,7 @@ def test_transpose_arguments() -> None:
 def test_layers_stay_flat() -> None:
     # An index of an indexed proxy holds the same stored proxy, a
     # transpose holds a permuted proxy of it, and permutations compose.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     view = proxy[1:][::2, None][:, :, [0, 2]]
     assert isinstance(view, IndexedProxy)
     assert view.base is proxy
@@ -262,7 +262,7 @@ def test_layers_stay_flat() -> None:
 def test_a_whole_index_gives_the_stored_proxy() -> None:
     # An index that selects every value in order returns the stored
     # proxy itself, so that a writer can copy its bytes.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert proxy[...] is proxy
     assert proxy[:, ::1, -100:100] is proxy
     assert proxy[None][0] is proxy
@@ -273,7 +273,7 @@ def test_a_whole_index_gives_the_stored_proxy() -> None:
 def test_new_axes_are_kept_in_the_selection() -> None:
     # A new axis is an entry of the selection, which a later index can
     # keep, remove or repeat.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     view = proxy[None, 1:3]
     assert view.selection[0] == NewAxis()
     assert view[[0, 0, 0]].shape == (3, 2, 6, 7)
@@ -285,7 +285,7 @@ def test_numpy_moves_the_axis_of_an_array() -> None:
     # the integers of the index are not next to each other, even when an
     # ellipsis between them stands for no axis.
     array = _array((3, 4, 2, 2))
-    proxy = _Recording(array)
+    proxy = RecordingProxy(array)
     for index in [
         (0, slice(None), [1, 0]),
         (0, None, [1, 0]),
@@ -310,7 +310,7 @@ def test_scaled_proxies_scale_what_they_read() -> None:
     array = _array((5, 6, 7, 4)).astype(np.int16)
     slope = rng.random((1, 1, 1, 4)).astype(np.float32) + 0.5
     inter = rng.random((6, 1, 1)).astype(np.float32)
-    proxy = _Recording(array)
+    proxy = RecordingProxy(array)
     scaled = ScaledProxy(proxy, slope, inter)
     expected = (array * slope + inter).astype(np.float32)
     assert scaled.dtype == np.float32
@@ -345,7 +345,7 @@ def test_the_stored_type_decides_the_scaled_type() -> None:
         (np.int32, np.float64),
         (np.float64, np.float64),
     ]:
-        proxy = _Recording(values.astype(stored))
+        proxy = RecordingProxy(values.astype(stored))
         slope = np.array([[1.5, 2.0, 2.5, 3.0]], dtype=np.float64)
         scaled = ScaledProxy(proxy, slope, np.float64(0.25))
         assert scaled.dtype == expected
@@ -366,7 +366,7 @@ def test_scaling_leaves_what_it_reads_unchanged(tmp_path) -> None:  # noqa: ANN0
 
     values = _array((3, 4))
     kept = values.copy()
-    scaled = ScaledProxy(_Recording(values), 2.0, 1.0)
+    scaled = ScaledProxy(RecordingProxy(values), 2.0, 1.0)
     np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
     np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
     np.testing.assert_array_equal(values, kept)
@@ -377,11 +377,11 @@ def test_scaling_leaves_what_it_reads_unchanged(tmp_path) -> None:  # noqa: ANN0
     scaled = ScaledProxy(mapped, 2.0, 1.0)
     np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
     np.testing.assert_array_equal(np.asarray(mapped), kept)
-    integers = _Recording(values.astype(np.int16))
+    integers = RecordingProxy(values.astype(np.int16))
     scaled = ScaledProxy(integers, 2.0, 1.0)
     np.testing.assert_array_equal(np.asarray(scaled), kept * 2 + 1)
     np.testing.assert_array_equal(integers.array, kept)
-    zero = ScaledProxy(_Recording(np.array(3.0, np.float32)), 2.0, 1.0)
+    zero = ScaledProxy(RecordingProxy(np.array(3.0, np.float32)), 2.0, 1.0)
     assert np.asarray(zero).shape == ()
     assert float(np.asarray(zero)) == 7.0
 
@@ -389,13 +389,13 @@ def test_scaling_leaves_what_it_reads_unchanged(tmp_path) -> None:  # noqa: ANN0
 def test_scaled_proxies_refuse_large_factors() -> None:
     # A factor with more dimensions than the values cannot broadcast.
     with pytest.raises(ValueError):
-        ScaledProxy(_Recording(_array((2, 3))), np.ones((1, 2, 3)))
+        ScaledProxy(RecordingProxy(_array((2, 3))), np.ones((1, 2, 3)))
 
 
 def test_the_root_is_below_every_layer() -> None:
     # Each layer keeps the proxy below it as its base, and the root of
     # every layer is the stored proxy that a reader built.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert proxy.root is proxy
     assert proxy[1:].T.root is proxy
     assert proxy.T.root is proxy
@@ -408,14 +408,14 @@ def test_the_root_is_below_every_layer() -> None:
 def test_views_read_through_the_original_proxy() -> None:
     # An indexed proxy reads through the proxy that it was made from, so
     # that a handle opened by a read is shared by every index of it.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     np.asarray(proxy[1:][::2].T)
     assert proxy.reads == [(slice(1, 4, 2), slice(0, 6, 1), slice(0, 7, 1))]
 
 
 def test_to_numpy_reads_the_view() -> None:
     # to_numpy reads the values of a view.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     values = proxy[1:3].to_numpy()
     assert isinstance(values, np.ndarray)
     np.testing.assert_array_equal(values, _array()[1:3])
@@ -427,7 +427,7 @@ def test_to_backend_follows_the_setting() -> None:
     da = pytest.importorskip("dask.array")
     from brainhops._core.backends import backend
 
-    proxy = _Recording(_array(), chunks=(2, 3, 7))
+    proxy = RecordingProxy(_array(), chunks=(2, 3, 7))
     assert isinstance(proxy.to_backend(), np.ndarray)
     with backend(threshold=8):
         lazy = proxy.to_backend()
@@ -446,7 +446,7 @@ def test_gpu_conversions_need_cupy() -> None:
         pass
     else:
         pytest.skip("CuPy is installed")
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     with pytest.raises(ImportError):
         proxy.to_cupy()
     with pytest.raises(ImportError):
@@ -458,7 +458,7 @@ def test_gpu_conversions_need_cupy() -> None:
 def test_describing_a_proxy_reads_nothing() -> None:
     # The shape, the type, the transposition and the names of the methods
     # are had without reading, through the proxy or through NumPy.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert np.shape(proxy) == (5, 6, 7)
     assert np.ndim(proxy) == 3
     assert proxy.itemsize == 4
@@ -491,7 +491,7 @@ def test_describing_a_proxy_reads_nothing() -> None:
 def test_computations_read_the_values(compute) -> None:  # noqa: ANN001
     # Operators, functions of NumPy and methods of NumPy arrays give what
     # they give for the values.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     expected = compute(_array())
     result = compute(proxy)
     assert not isinstance(result, StoredProxy)
@@ -502,19 +502,19 @@ def test_computations_read_the_values(compute) -> None:  # noqa: ANN001
 def test_a_computation_reads_only_its_selection() -> None:
     # A computation on a part of a proxy reads that part, and a second
     # computation reads it again.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert float(proxy[1].sum()) == float(_array()[1].sum())
     assert float(proxy[1].sum()) == float(_array()[1].sum())
     assert proxy.reads == [(1, slice(0, 6, 1), slice(0, 7, 1))] * 2
 
 
 def test_scalar_conversions_read_the_value() -> None:
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     assert float(proxy[0, 0, 1]) == 1.0
     assert int(proxy[0, 0, 2]) == 2
     assert complex(proxy[0, 0, 3]) == 3.0
     assert not bool(proxy[0, 0, 0])
-    assert [10, 11, 12][_Recording(np.array(1))] == 11
+    assert [10, 11, 12][RecordingProxy(np.array(1))] == 11
     with pytest.raises(ValueError):
         bool(proxy)
 
@@ -523,7 +523,7 @@ def test_a_proxy_is_read_only() -> None:
     # Values cannot be assigned into a proxy, a proxy cannot receive the
     # result of a computation, and the methods that change an array in
     # place, or that describe its memory, are not given.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     with pytest.raises(TypeError):
         proxy[0] = 1
     with pytest.raises(TypeError):
@@ -541,7 +541,7 @@ def test_a_proxy_is_read_only() -> None:
 
 def test_an_output_array_decides_the_backend() -> None:
     # A computation that writes into an array runs in its backend.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     out = np.zeros(_array().shape, dtype=np.float32)
     np.add(proxy, 1, out=out)
     np.testing.assert_array_equal(out, _array() + 1)
@@ -558,7 +558,7 @@ def test_an_unknown_operand_is_given_the_computation() -> None:
         def __radd__(self, other: object) -> str:
             return "other"
 
-    assert _Recording(_array()) + Other() == "other"
+    assert RecordingProxy(_array()) + Other() == "other"
 
 
 def test_a_dask_operand_keeps_the_computation_lazy() -> None:
@@ -566,7 +566,7 @@ def test_a_dask_operand_keeps_the_computation_lazy() -> None:
     # blocks when the result is computed.
     da = pytest.importorskip("dask.array")
     array = _array()
-    proxy = _Recording(array, chunks=(5, 3, 7))
+    proxy = RecordingProxy(array, chunks=(5, 3, 7))
     lazy = da.ones(array.shape, chunks=3)
     for result, expected in [
         (lazy * proxy, array),
@@ -588,7 +588,7 @@ def test_a_computation_follows_an_explicit_setting() -> None:
     da = pytest.importorskip("dask.array")
     from brainhops.backends import backend
 
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     with backend("dask"):
         total = proxy.sum()
         shifted = proxy + 1
@@ -617,9 +617,9 @@ def test_reshape_reads_nothing_and_matches_numpy() -> None:
     rng = np.random.default_rng(3)
     array = _array((4, 6, 5))
     sources = [
-        (_Recording(array), array),
+        (RecordingProxy(array), array),
         (
-            ScaledProxy(_Recording(array), np.arange(5.0) + 1, 2.0),
+            ScaledProxy(RecordingProxy(array), np.arange(5.0) + 1, 2.0),
             array * (np.arange(5.0) + 1) + 2,
         ),
     ]
@@ -652,7 +652,7 @@ def test_reshape_reads_nothing_and_matches_numpy() -> None:
 
 
 def test_a_reshape_of_axes_of_length_one_is_an_index() -> None:
-    proxy = _Recording(_array((5, 1, 7)))
+    proxy = RecordingProxy(_array((5, 1, 7)))
     for shape in [(5, 7), (1, 5, 1, 1, 7), (5, 7, 1)]:
         reshaped = proxy.reshape(shape)
         assert isinstance(reshaped, IndexedProxy)
@@ -663,7 +663,7 @@ def test_a_reshape_of_axes_of_length_one_is_an_index() -> None:
 
 
 def test_reshaped_proxies_do_not_nest() -> None:
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     once = proxy.reshape(10, 21)
     assert isinstance(once, ReshapedProxy)
     twice = once.reshape(35, 6)
@@ -677,7 +677,7 @@ def test_a_reshaped_read_gets_the_rows_that_it_needs() -> None:
     # A selection of merged axes reads the rows that hold it, a selection
     # of split axes reads the range that holds it, and an axis that the
     # reshape keeps reads only what it selects.
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     merged = proxy.reshape(30, 7)
     np.testing.assert_array_equal(
         merged[8:14, 2], _array().reshape(30, 7)[8:14, 2]
@@ -695,7 +695,7 @@ def test_a_reshaped_read_gets_the_rows_that_it_needs() -> None:
 
 
 def test_np_reshape_is_lazy() -> None:
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     reshaped = np.reshape(proxy, (-1, 7))
     assert isinstance(reshaped, ReshapedProxy)
     assert reshaped.shape == (30, 7)
@@ -703,7 +703,7 @@ def test_np_reshape_is_lazy() -> None:
 
 
 def test_a_wrong_shape_is_refused() -> None:
-    proxy = _Recording(_array())
+    proxy = RecordingProxy(_array())
     with pytest.raises(ValueError):
         proxy.reshape(4, 7)
     with pytest.raises(ValueError):
@@ -720,7 +720,7 @@ def test_a_scaled_reshape_reshapes_its_factors() -> None:
     # spread is kept under a reshaped proxy.
     array = _array()
     slope = np.arange(7.0) + 1
-    proxy = ScaledProxy(_Recording(array), slope, None)
+    proxy = ScaledProxy(RecordingProxy(array), slope, None)
     split = proxy.reshape(30, 7)
     assert isinstance(split, ScaledProxy)
     assert split.slope.shape == (1, 7)

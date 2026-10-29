@@ -485,19 +485,19 @@ def test_a_dense_field_is_written_as_an_itk_displacement_field(
     pytest.importorskip("h5py")
     from test_io_convert_formats import (
         VOX2WORLD,
-        _apply,
-        _ras_displacement_chain,
-        _voxels,
+        grid_points,
+        map_points,
+        ras_field_chain,
     )
 
-    chain = _ras_displacement_chain()
+    chain = ras_field_chain()
     io.save(chain, tmp_path / name)
     back = io.transformations.load(tmp_path / name)
-    inside = _voxels()[:6]
+    inside = grid_points()[:6]
     ras = inside @ VOX2WORLD[:3, :3].T + VOX2WORLD[:3, 3]
     flip = np.array([-1.0, -1.0, 1.0])
     np.testing.assert_allclose(
-        _apply(back, ras * flip) * flip, _apply(chain, ras), atol=1e-8
+        map_points(back, ras * flip) * flip, map_points(chain, ras), atol=1e-8
     )
 
 

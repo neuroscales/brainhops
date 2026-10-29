@@ -42,7 +42,7 @@ from brainhops.io.transformations.zarr import (  # noqa: E402
 from brainhops.io.transformations.zarr._axes import to_axis  # noqa: E402
 
 
-def _write_field_store(
+def write_field_store(
     tmp_path: Path,
     field: np.ndarray,
     axes: list,
@@ -93,7 +93,7 @@ def _write_field_store(
 def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 1.0
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         field,
         [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
@@ -119,7 +119,7 @@ def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
 
 def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
     field = np.zeros((4, 5, 6, 3), dtype="float32")
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         field,
         [
@@ -166,7 +166,7 @@ def test_load_discovers_the_field_format(tmp_path: Path) -> None:
 
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 1.0
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         field,
         [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
@@ -185,7 +185,7 @@ def test_from_filename_reads_a_field_store(tmp_path: Path) -> None:
     # file. The dispatcher calls `from_filename` by name.
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 5.0
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         field,
         [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
@@ -211,7 +211,7 @@ def test_from_filename_reads_a_field_store(tmp_path: Path) -> None:
 def test_coordinate_field_round_trips_through_a_store(tmp_path: Path) -> None:
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 7.0
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         field,
         [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
@@ -237,7 +237,7 @@ def test_displacement_field_round_trips_through_a_store(
 ) -> None:
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 1] = 3.0
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         field,
         [
@@ -422,7 +422,7 @@ def test_the_generic_load_reads_a_field_rather_than_an_image(
 ) -> None:
     import brainhops.io as io
 
-    path = _write_field_store(
+    path = write_field_store(
         tmp_path,
         np.zeros((4, 5, 6, 3), dtype="float32"),
         [

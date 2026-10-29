@@ -46,7 +46,7 @@ class _Computations(Callback):
         self.count += 1
 
 
-def _target() -> SingleScaleImage:
+def rotated_target() -> SingleScaleImage:
     # A grid rotated with respect to the voxels of VOLUME, so that the
     # reslice samples every voxel with coordinates.
     return SingleScaleImage(np.zeros_like(VOLUME), [Affine(ROTATION)])
@@ -92,7 +92,7 @@ def test_coordinates_are_created_in_the_promoted_backend(
         return original(input, coords, *args, **kwargs)
 
     monkeypatch.setattr(bsplines, "pull", pull)
-    SingleScaleImage(da.from_array(VOLUME, chunks=6)).reslice(_target())
+    SingleScaleImage(da.from_array(VOLUME, chunks=6)).reslice(rotated_target())
     assert seen
     assert all(issubclass(kind, da.Array) for kind in seen)
 
@@ -100,10 +100,10 @@ def test_coordinates_are_created_in_the_promoted_backend(
 def test_a_lazy_reslice_computes_nothing() -> None:
     # A Dask image is resliced into a Dask image, without running any
     # graph, and its values are those of the NumPy reslice.
-    expected = SingleScaleImage(VOLUME).reslice(_target()).data
+    expected = SingleScaleImage(VOLUME).reslice(rotated_target()).data
     image = SingleScaleImage(da.from_array(VOLUME, chunks=6))
     with _Computations() as computations:
-        moved = image.reslice(_target())
+        moved = image.reslice(rotated_target())
     assert isinstance(moved.data, da.Array)
     assert computations.count == 0
     np.testing.assert_allclose(np.asarray(moved.data), expected, atol=1e-5)
@@ -113,7 +113,7 @@ def test_a_reslice_follows_an_explicit_setting() -> None:
     # Under the Dask setting, a NumPy image is resliced lazily.
     image = SingleScaleImage(VOLUME)
     with backend("dask"):
-        moved = image.reslice(_target())
+        moved = image.reslice(rotated_target())
     assert isinstance(moved.data, da.Array)
     assert image.data is VOLUME
 
@@ -191,8 +191,8 @@ def test_only_the_moved_array_goes_to_the_gpu() -> None:
 def test_a_cupy_image_is_resliced_on_the_gpu() -> None:
     # The coordinates and the matrices meet the voxels on the GPU.
     cp = pytest.importorskip("cupy")
-    expected = SingleScaleImage(VOLUME).reslice(_target()).data
-    moved = SingleScaleImage(VOLUME).as_cupy().reslice(_target())
+    expected = SingleScaleImage(VOLUME).reslice(rotated_target()).data
+    moved = SingleScaleImage(VOLUME).as_cupy().reslice(rotated_target())
     assert isinstance(moved.data, cp.ndarray)
     np.testing.assert_allclose(moved.data.get(), expected, atol=1e-5)
 

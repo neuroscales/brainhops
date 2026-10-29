@@ -83,7 +83,7 @@ def _displacements(seed: int = 0) -> np.ndarray:
     return np.random.default_rng(seed).normal(size=(*SHAPE, 3))
 
 
-def _voxels() -> np.ndarray:
+def grid_points() -> np.ndarray:
     """Points of the grid: on its nodes, between them, and outside it."""
     return np.array(
         [
@@ -100,11 +100,11 @@ def _voxels() -> np.ndarray:
 
 
 def _world(vox2world: np.ndarray = VOX2WORLD) -> np.ndarray:
-    """The points of `_voxels`, in the world of the grid."""
-    return _voxels() @ vox2world[:3, :3].T + vox2world[:3, 3]
+    """The points of `grid_points`, in the world of the grid."""
+    return grid_points() @ vox2world[:3, :3].T + vox2world[:3, 3]
 
 
-def _apply(xform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
+def map_points(xform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
     """Map points through a transformation."""
     points = xforms.CoordinateField(field=points[:, None, None, :])
     out = xforms.Sequence(transformations=[points, xform]).compute()
@@ -134,7 +134,7 @@ def _lps_displacement_chain(degree: int = 1) -> xforms.Sequence:
     )
 
 
-def _ras_displacement_chain() -> xforms.Sequence:
+def ras_field_chain() -> xforms.Sequence:
     """A RAS-to-RAS field of displacements."""
     return xforms.Sequence(
         transformations=[
@@ -202,9 +202,9 @@ def test_an_affine_to_lps_is_bridged_into_ras(tmp_path) -> None:  # noqa: ANN001
     back = io.transformations.load(tmp_path / "affine.nii.gz")
     assert isinstance(back, NiftiVoxelToRAS)
     np.testing.assert_array_equal(back.matrix, expected)
-    points = _voxels()
+    points = grid_points()
     np.testing.assert_array_equal(
-        _apply(back, points), _flip(_apply(affine, points))
+        map_points(back, points), _flip(map_points(affine, points))
     )
 
 
@@ -267,24 +267,27 @@ def test_a_chain_with_a_field_is_not_an_affine() -> None:
 
 def test_a_displacement_field_of_unknown_systems_is_held() -> None:
     field = xforms.DisplacementField(field=_displacements())
-    points = _voxels()
+    points = grid_points()
     for nifti in _conversions(field, NiftiRASDisplacementField):
         assert type(nifti) is NiftiRASDisplacementField
         np.testing.assert_allclose(
-            _apply(nifti, points), _apply(field, points), rtol=0, atol=1e-12
+            map_points(nifti, points),
+            map_points(field, points),
+            rtol=0,
+            atol=1e-12,
         )
 
 
 def test_a_ras_displacement_chain_is_held(tmp_path) -> None:  # noqa: ANN001
-    chain = _ras_displacement_chain()
+    chain = ras_field_chain()
     nifti = chain.to(NiftiRASDisplacementField)
     points = _world()
-    expected = _apply(chain, points)
-    np.testing.assert_allclose(_apply(nifti, points), expected, atol=1e-12)
+    expected = map_points(chain, points)
+    np.testing.assert_allclose(map_points(nifti, points), expected, atol=1e-12)
     io.save(chain, tmp_path / "warp.nii.gz")
     back = io.transformations.load(tmp_path / "warp.nii.gz")
     assert isinstance(back, NiftiRASDisplacementField)
-    np.testing.assert_allclose(_apply(back, points), expected, atol=1e-10)
+    np.testing.assert_allclose(map_points(back, points), expected, atol=1e-10)
 
 
 def test_an_lps_displacement_chain_is_bridged_into_ras(tmp_path) -> None:  # noqa: ANN001
@@ -292,12 +295,16 @@ def test_an_lps_displacement_chain_is_bridged_into_ras(tmp_path) -> None:  # noq
     chain = _lps_displacement_chain()
     nifti = NiftiRASDisplacementField.from_any(chain)
     lps = _flip(_world())
-    expected = _flip(_apply(chain, lps))
-    np.testing.assert_allclose(_apply(nifti, _flip(lps)), expected, atol=1e-12)
+    expected = _flip(map_points(chain, lps))
+    np.testing.assert_allclose(
+        map_points(nifti, _flip(lps)), expected, atol=1e-12
+    )
     io.save(nifti, tmp_path / "warp.nii.gz")
     back = io.transformations.load(tmp_path / "warp.nii.gz")
     assert isinstance(back, NiftiRASDisplacementField)
-    np.testing.assert_allclose(_apply(back, _flip(lps)), expected, atol=1e-10)
+    np.testing.assert_allclose(
+        map_points(back, _flip(lps)), expected, atol=1e-10
+    )
 
 
 def test_an_lps_displacement_chain_is_saved_as_an_itk_field(tmp_path) -> None:  # noqa: ANN001
@@ -313,12 +320,12 @@ def test_an_lps_displacement_chain_is_saved_as_an_itk_field(tmp_path) -> None:  
     back = io.transformations.load(tmp_path / "warp.nii.gz", hint="itk")
     assert isinstance(back, ItkNiftiDisplacementField)
     np.testing.assert_allclose(
-        _apply(back, lps), _apply(chain, lps), atol=1e-10
+        map_points(back, lps), map_points(chain, lps), atol=1e-10
     )
 
 
 def test_a_velocity_is_held_and_written_as_its_displacement(tmp_path) -> None:  # noqa: ANN001
-    chain = list(_ras_displacement_chain())
+    chain = list(ras_field_chain())
     chain[1] = xforms.DisplacementField(
         data=0.1 * _displacements(), input=VOXEL, output=VOXEL, log=True
     )
@@ -326,11 +333,11 @@ def test_a_velocity_is_held_and_written_as_its_displacement(tmp_path) -> None:  
     nifti = chain.to(NiftiRASDisplacementField)
     assert not nifti.log
     points = _world()
-    expected = _apply(chain, points)
-    np.testing.assert_allclose(_apply(nifti, points), expected, atol=1e-12)
+    expected = map_points(chain, points)
+    np.testing.assert_allclose(map_points(nifti, points), expected, atol=1e-12)
     io.save(chain, tmp_path / "warp.nii.gz")
     back = io.transformations.load(tmp_path / "warp.nii.gz")
-    np.testing.assert_allclose(_apply(back, points), expected, atol=1e-10)
+    np.testing.assert_allclose(map_points(back, points), expected, atol=1e-10)
 
 
 def test_a_cubic_displacement_field_is_lossy() -> None:
@@ -342,14 +349,16 @@ def test_a_cubic_displacement_field_is_lossy() -> None:
     nifti = chain.to(NiftiRASDisplacementField, on_loss="ignore")
     # The values at the nodes are kept.
     lps = LPS2RAS @ VOX2WORLD
-    nodes = _voxels()[:3] @ lps[:3, :3].T + lps[:3, 3]
+    nodes = grid_points()[:3] @ lps[:3, :3].T + lps[:3, 3]
     np.testing.assert_allclose(
-        _flip(_apply(nifti, _flip(nodes))), _apply(chain, nodes), atol=1e-10
+        _flip(map_points(nifti, _flip(nodes))),
+        map_points(chain, nodes),
+        atol=1e-10,
     )
 
 
 def test_ends_that_do_not_undo_each_other_are_carried_into_the_field() -> None:
-    chain = list(_ras_displacement_chain())
+    chain = list(ras_field_chain())
     chain[2] = VoxelToRAS(matrix=(2 * VOX2WORLD)[:-1])
     chain = xforms.Sequence(transformations=chain)
     nifti = chain.to(NiftiRASDisplacementField)
@@ -357,7 +366,7 @@ def test_ends_that_do_not_undo_each_other_are_carried_into_the_field() -> None:
     # extended differently.
     points = _world()[:-2]
     np.testing.assert_allclose(
-        _apply(nifti, points), _apply(chain, points), atol=1e-10
+        map_points(nifti, points), map_points(chain, points), atol=1e-10
     )
 
 
@@ -383,12 +392,12 @@ def test_coordinates_and_displacements_convert_into_each_other() -> None:
     displacement = chain.to(NiftiRASDisplacementField)
     points = _world()[:-2]
     np.testing.assert_allclose(
-        _apply(displacement, points), _apply(chain, points), atol=1e-10
+        map_points(displacement, points), map_points(chain, points), atol=1e-10
     )
-    nifti = _ras_displacement_chain().to(SpmCoordinateField)
+    nifti = ras_field_chain().to(SpmCoordinateField)
     np.testing.assert_allclose(
-        _apply(nifti, points),
-        _apply(_ras_displacement_chain(), points),
+        map_points(nifti, points),
+        map_points(ras_field_chain(), points),
         atol=1e-10,
     )
 
@@ -402,16 +411,18 @@ def test_a_field_of_lps_coordinates_is_bridged_into_ras(tmp_path) -> None:  # no
     field = xforms.CoordinateField(
         field=_flip(_coordinates()), input=VOXEL, output=LPSmm()
     )
-    points = _voxels()
-    expected = _flip(_apply(field, points))
+    points = grid_points()
+    expected = _flip(map_points(field, points))
     for nifti in _conversions(field, NiftiRASCoordinateField):
         assert type(nifti) is NiftiRASCoordinateField
         np.testing.assert_array_equal(np.asarray(nifti.field), _coordinates())
-        np.testing.assert_allclose(_apply(nifti, points), expected, atol=1e-12)
+        np.testing.assert_allclose(
+            map_points(nifti, points), expected, atol=1e-12
+        )
     io.save(field, tmp_path / "coordinates.nii.gz")
     back = io.transformations.load(tmp_path / "coordinates.nii.gz")
     assert isinstance(back, NiftiRASCoordinateField)
-    np.testing.assert_allclose(_apply(back, points), expected, atol=1e-10)
+    np.testing.assert_allclose(map_points(back, points), expected, atol=1e-10)
 
 
 def test_an_affine_after_the_coordinates_is_applied_to_them() -> None:
@@ -423,9 +434,9 @@ def test_an_affine_after_the_coordinates_is_applied_to_them() -> None:
     )
     chain = xforms.Sequence(transformations=[field, scale])
     nifti = chain.to(NiftiRASCoordinateField)
-    points = _voxels()
+    points = grid_points()
     np.testing.assert_allclose(
-        _apply(nifti, points), _apply(chain, points), atol=1e-12
+        map_points(nifti, points), map_points(chain, points), atol=1e-12
     )
 
 
@@ -448,16 +459,18 @@ def test_an_affine_before_the_coordinates_is_refused() -> None:
 def test_an_lps_deformation_is_written_as_spm(tmp_path) -> None:  # noqa: ANN001
     chain = _lps_spm_chain()
     lps = _flip(_world())
-    expected = _flip(_apply(chain, lps))
+    expected = _flip(map_points(chain, lps))
     for spm in _conversions(chain, SpmCoordinateField):
         assert type(spm) is SpmCoordinateField
         np.testing.assert_allclose(
-            _apply(spm, _flip(lps)), expected, atol=1e-10
+            map_points(spm, _flip(lps)), expected, atol=1e-10
         )
     io.save(chain, tmp_path / "y_deformation.nii")
     back = io.transformations.load(tmp_path / "y_deformation.nii")
     assert isinstance(back, SpmCoordinateField)
-    np.testing.assert_allclose(_apply(back, _flip(lps)), expected, atol=1e-10)
+    np.testing.assert_allclose(
+        map_points(back, _flip(lps)), expected, atol=1e-10
+    )
     np.testing.assert_array_equal(
         back.metadata.raw.header.get_best_affine(), VOX2WORLD
     )
@@ -485,7 +498,7 @@ def test_an_spm_file_round_trips(tmp_path) -> None:  # noqa: ANN001
 def test_a_map_from_ras_is_not_a_nifti_field_of_coordinates() -> None:
     # A NIfTI field of coordinates maps the voxels of its grid.
     with pytest.raises(ConversionError, match="SPM deformation"):
-        _ras_displacement_chain().to(NiftiRASCoordinateField)
+        ras_field_chain().to(NiftiRASCoordinateField)
 
 
 # ----------------------------------------------------------------------
@@ -511,7 +524,7 @@ def test_a_map_from_ras_is_not_a_nifti_field_of_coordinates() -> None:
             "coordinates.nii.gz",
             NiftiRASCoordinateField,
         ),
-        (_ras_displacement_chain(), "warp.nii.gz", NiftiRASDisplacementField),
+        (ras_field_chain(), "warp.nii.gz", NiftiRASDisplacementField),
         (_lps_spm_chain(), "y_deformation.nii.gz", SpmCoordinateField),
     ],
     ids=["affine", "displacements", "coordinates", "chain", "spm"],
@@ -526,9 +539,9 @@ def test_a_general_transformation_is_saved_in_the_format_it_converts_to(
     back = io.transformations.load(tmp_path / name)
     assert type(back) is cls
     converted = obj.to(cls)
-    for points in (_voxels(), _world()):
+    for points in (grid_points(), _world()):
         np.testing.assert_allclose(
-            _apply(back, points), _apply(converted, points), atol=1e-10
+            map_points(back, points), map_points(converted, points), atol=1e-10
         )
 
 
@@ -568,7 +581,7 @@ def test_a_fnirt_warp_is_written(tmp_path) -> None:  # noqa: ANN001
     assert isinstance(back, NiftiRASDisplacementField)
     points = _world()
     np.testing.assert_allclose(
-        _apply(back, points), _apply(warp, points), atol=1e-6
+        map_points(back, points), map_points(warp, points), atol=1e-6
     )
 
 
@@ -590,7 +603,7 @@ def test_a_conversion_does_not_replace_the_map() -> None:
     affine = xforms.Affine(VOX2WORLD[:-1])
     with pytest.raises(ConversionError, match="matrix= cannot be overridden"):
         NiftiVoxelToRAS.from_any(affine, matrix=np.eye(4)[:-1])
-    chain = _ras_displacement_chain()
+    chain = ras_field_chain()
     with pytest.raises(ConversionError, match="transformations= cannot"):
         chain.to(NiftiRASDisplacementField, transformations=())
 
