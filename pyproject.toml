@@ -14,9 +14,8 @@ dependencies = [
     # its hint with the rules of NumPy broadcasting, which the hints
     # `npvector` and `npmatrix` of `_core/typing.py` rely on. The
     # validators and factories of the same releases, which bagof-magic
-    # uses, read the shapes of array hints in the same way, and all of
-    # them need bagof-hints 0.1.1.
-    "bagof-hints ~= 0.1.1",
+    # uses, read the shapes of array hints in the same way.
+    "bagof-hints ~= 0.1",
     "bagof-converters ~= 0.3",
     "bagof-validators ~= 0.2",
     "bagof-factories ~= 0.2",
