@@ -987,6 +987,9 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
 
 
 # --- one element per matrix or vector type ----------------------------
+# The converter of the `npmatrix` and `npvector` annotations fits the
+# data to one element. bagof reports the failure of an optional field as
+# a `TypeConversionError`, which is a `TypeError`.
 
 _STACKED = [
     (Affine, np.zeros((2, 3, 4))),
@@ -1001,7 +1004,7 @@ _STACKED = [
 def test_matrix_and_vector_types_refuse_a_stack(
     cls: tx.Type[Transformation], stack: np.ndarray
 ) -> None:
-    with pytest.raises(ValueError, match="stack of transformations"):
+    with pytest.raises(TypeError, match="could not convert"):
         cls(stack)
 
 
@@ -1010,25 +1013,28 @@ def test_matrix_and_vector_types_refuse_a_stack_on_assignment(
     cls: tx.Type[Transformation], stack: np.ndarray
 ) -> None:
     t = cls(stack[0])
-    with pytest.raises(ValueError, match="stack of transformations"):
+    with pytest.raises(TypeError, match="could not convert"):
         t.data = stack
     np.testing.assert_array_equal(t.data, stack[0])
 
 
 def test_a_view_of_an_affine_refuses_a_stack() -> None:
     t = Affine(np.eye(3, 4))
-    with pytest.raises(ValueError, match="stack of transformations"):
+    with pytest.raises(TypeError, match="could not convert"):
         t.matrix = np.zeros((2, 3, 4))
 
 
 def test_a_tangent_type_refuses_a_stack() -> None:
-    with pytest.raises(ValueError, match="stack of transformations"):
+    with pytest.raises(TypeError, match="could not convert"):
         Affine(np.zeros((2, 3, 4)), log=True)
 
 
-@pytest.mark.parametrize("cls", [Scaling, Translation, Permutation, Affine])
-def test_matrix_and_vector_types_refuse_too_few_dimensions(
+@pytest.mark.parametrize("cls", [Scaling, Translation, Permutation])
+def test_a_scalar_becomes_a_vector_of_one_element(
     cls: tx.Type[Transformation],
 ) -> None:
-    with pytest.raises(ValueError, match="must have"):
-        cls(np.array(2))
+    assert cls(np.array(2)).data.shape == (1,)
+
+
+def test_a_vector_becomes_a_matrix_of_one_row() -> None:
+    assert Linear([1.0, 2.0]).data.shape == (1, 2)
