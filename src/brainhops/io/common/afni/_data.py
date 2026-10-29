@@ -18,8 +18,6 @@ from brainhops._core._internal_api import (
     ScaledProxy,
     StridedProxy,
     alias,
-    is_local,
-    is_local_file,
     is_same_file,
     open_compressed,
     replace_file,
@@ -409,7 +407,7 @@ def read_afni(
         that cannot be read or is too short.
     """
     head, brik, _ = afni_dataset_files(filename)
-    if not path.exists(head):
+    if not head.exists():
         raise ParserExistsError(f"No such file: {head}")
     record = AfniRaw.from_filename(head).validate()
     return record, brik_proxy(record, brik, mmap)
@@ -430,7 +428,7 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> BrikProxy:
         If the BRIK is compressed in a way that cannot be read, or is too
         short.
     """
-    if not path.exists(brik):
+    if not brik.exists():
         raise ParserExistsError(
             f"No such file: {brik} (the BRIK of the AFNI dataset). A "
             f"dataset without a BRIK (a 'warp-on-demand' dataset) cannot "
@@ -443,7 +441,7 @@ def brik_proxy(record: AfniRaw, brik: path.Path, mmap: bool) -> BrikProxy:
             f"cannot be read here. Decompress it, or recompress it with "
             f"gzip."
         )
-    if is_local_file(brik) and not suffix:
+    if brik.is_local() and not suffix:
         size = brik.stat().st_size
         if size < record.nbytes:
             raise ParserContentError(
@@ -459,7 +457,7 @@ def _read_bricks(header: AfniRaw, brik: path.Path, mmap: bool) -> np.ndarray:
     local, uncompressed, of a single type, and `mmap` is true.
     """
     nbytes = header.nbytes
-    local = is_local_file(brik)
+    local = brik.is_local()
     with brik.open("rb") as f:
         stream = open_compressed(f)
         compressed = stream is not f
@@ -520,11 +518,11 @@ def write_brik(header: AfniRaw, data: tx.Any, brik: path.Path) -> None:
             if out is not f:
                 out.close()
 
-    def write_named(name: str) -> None:
-        with open(name, "xb") as f:
+    def write_named(name: path.Path) -> None:
+        with name.open("xb") as f:
             write(f)
 
-    if is_local(brik):
+    if brik.is_local():
         replace_file(brik, write_named)
         return
     whole = whole_brik(data)
@@ -593,14 +591,14 @@ def whole_brik(raw: tx.Any) -> tx.Optional[BrikProxy]:
     return proxy
 
 
-def reads_brik(raw: tx.Any, brik: tx.Any) -> bool:
+def reads_brik(raw: tx.Any, brik: path.Path) -> bool:
     """Tell whether an array is a lazy array of a BRIK file.
 
     Parameters
     ----------
     raw : array
         The `rawdata` array of an object.
-    brik : path-like
+    brik : Path
         The BRIK file.
 
     Returns

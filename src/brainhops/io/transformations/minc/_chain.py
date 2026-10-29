@@ -12,11 +12,7 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import (
-    atomic_write_bytes,
-    is_same_file,
-    smartproperty,
-)
+from brainhops._core._internal_api import is_same_file, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
@@ -88,7 +84,7 @@ def _grid_number(record: XfmRaw, index: int) -> int:
 
 
 def _read_volumes(
-    record: XfmRaw, location: tx.Optional[path.FilenameLike]
+    record: XfmRaw, location: tx.Optional[path.Path]
 ) -> _Volumes:
     """Read the displacement volumes of the grid transforms of a record.
 
@@ -488,6 +484,8 @@ class XfmTransform(
             If a displacement volume is not a MINC file that brainhops
             reads.
         """
+        if location is not None:
+            location = path.Path(location)
         volumes = _read_volumes(raw, location)
         return cls(
             metadata=XfmMetadata.from_raw(raw), rawdata=volumes, **kwargs
@@ -586,8 +584,9 @@ class XfmTransform(
             raw = XfmRaw.from_text(content)
         else:
             raw = XfmRaw.from_bytes(content, kwargs.pop("encoding", "utf-8"))
-        name = getattr(file, "name", None)
-        location = name if isinstance(name, (str, os.PathLike)) else None
+        location = path.as_path_or_stream(getattr(file, "name", None))
+        if not isinstance(location, path.Path):
+            location = None
         return cls.from_raw(raw, location=location, **kwargs)
 
     @classmethod
@@ -784,13 +783,12 @@ class XfmTransform(
             changed.
         """
         fields, kwargs = metadata_options(kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         copy = self.consolidate(**fields)
         record = _named(_record(copy), copy.rawdata, filename)
         content = record.to_bytes(**kwargs)
         _place_volumes(record, copy.rawdata, filename)
-        atomic_write_bytes(filename, content)
+        filename.write_bytes(content, atomic=filename.is_local())
 
     @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -980,16 +978,14 @@ def _pending(xform: XfmGridTransform) -> PendingVolume:
     return PendingVolume(vectors, vox2ras)
 
 
-def _named(
-    record: XfmRaw, volumes: _Volumes, filename: path.FilenameLike
-) -> XfmRaw:
+def _named(record: XfmRaw, volumes: _Volumes, filename: path.Path) -> XfmRaw:
     """Name the new displacement volumes after the transform file.
 
     libminc names the volume of grid transform `n` of `<name>.xfm` as
     `<name>_grid_<n>.mnc`, beside the file, and so does this writer for
     a volume that it writes.
     """
-    stem = os.path.basename(str(filename))
+    stem = filename.name
     if stem.lower().endswith(".xfm"):
         stem = stem[: -len(".xfm")]
     blocks = list(record.transforms)
@@ -1048,7 +1044,7 @@ def _encode_linear(xform: _xforms.Transformation) -> tx.List[XfmRaw.Linear]:
 # ----------------------------------------------------------------------
 
 
-def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
+def _volume_source(volume: tx.Any) -> tx.Optional[path.Path]:
     """Return the path of the file that a displacement volume was read from.
 
     `None` is returned for a volume that was not read from a path, and for
@@ -1060,9 +1056,7 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
     if volume is None or volume._data is not None:
         return None
     proxy = volume.rawdata
-    if isinstance(proxy, MincProxy) and isinstance(
-        proxy.source, (str, os.PathLike)
-    ):
+    if isinstance(proxy, MincProxy) and isinstance(proxy.source, path.Path):
         return proxy.source
     return None
 
@@ -1072,7 +1066,7 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
 
 
 def _place_volumes(
-    record: XfmRaw, volumes: _Volumes, filename: path.FilenameLike
+    record: XfmRaw, volumes: _Volumes, filename: path.Path
 ) -> None:
     """Copy the displacement volumes where a new transform file names them.
 
@@ -1091,7 +1085,7 @@ def _place_volumes(
     for number, block in enumerate(grids):
         if os.path.isabs(block.volume):
             continue
-        target = path.Path(filename).parent / block.volume
+        target = filename.parent / block.volume
         volume = None if volumes is None else volumes[number]
         if isinstance(volume, PendingVolume):
             write_volume(target, volume)
@@ -1107,10 +1101,7 @@ def _place_volumes(
             )
         if is_same_file(source, target):
             continue
-        with path.Path(source).open("rb") as file:
-            content = file.read()
-        if path.exists(target):
-            with path.Path(target).open("rb") as file:
-                if file.read() == content:
-                    continue
-        atomic_write_bytes(target, content)
+        content = source.read_bytes()
+        if target.exists() and target.read_bytes() == content:
+            continue
+        target.write_bytes(content, atomic=target.is_local())

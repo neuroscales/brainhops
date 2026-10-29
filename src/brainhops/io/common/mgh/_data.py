@@ -14,6 +14,7 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core._internal_api import (
     ArrayProxy,
+    Path,
     StridedProxy,
     is_same_file,
 )
@@ -106,7 +107,7 @@ class MghProxy(StridedProxy):
         )
 
 
-def reads_mgh(raw: tx.Any, file: tx.Any) -> bool:
+def reads_mgh(raw: tx.Any, file: Path) -> bool:
     """Tell whether a lazy array reads the voxels of an MGH file.
 
     The array reads the file when the proxy below its index, permutation
@@ -116,7 +117,7 @@ def reads_mgh(raw: tx.Any, file: tx.Any) -> bool:
     ----------
     raw : array
         The `rawdata` array of an object.
-    file : path-like
+    file : Path
         The file that a writer writes.
 
     Returns
@@ -125,4 +126,8 @@ def reads_mgh(raw: tx.Any, file: tx.Any) -> bool:
         Whether `raw` reads `file`.
     """
     root = raw.root if isinstance(raw, ArrayProxy) else raw
-    return isinstance(root, MghProxy) and is_same_file(root.source, file)
+    return (
+        isinstance(root, MghProxy)
+        and isinstance(root.source, Path)
+        and is_same_file(root.source, file)
+    )

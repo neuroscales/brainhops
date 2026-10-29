@@ -15,15 +15,16 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 from bagof.magic import Forget, KwOnly
 
-# core
-from brainhops._core._internal_api import affine_inv as _affine_inv
 from brainhops._core._internal_api import (
+    Path,
     array_backend,
-    is_local,
     replace_directory,
     to_backend,
     to_numpy,
 )
+
+# core
+from brainhops._core._internal_api import affine_inv as _affine_inv
 
 # datamodel
 from brainhops.datamodel._internal_api import vector_axis
@@ -364,7 +365,7 @@ class OmeZarrField(
         ):
             self.to_node(abczarr.open_group(location, mode="w"), **kwargs)
             return
-        if not is_local(location):
+        if not Path(location).is_local():
             raise WriterError(
                 "This field reads the remote store that it would be written "
                 f"to, {location}, and a remote store cannot be replaced in "

@@ -8,7 +8,7 @@ import shutil
 import numpy as np
 import typing_extensions as tx
 from abczarr import create
-from bagof.magic import NoRepr
+from bagof.magic import ConvertTo, NoRepr
 
 # core
 from brainhops._core import backends, path
@@ -19,7 +19,6 @@ from brainhops._core._internal_api import (
     StoredProxy,
     alias,
     da,
-    is_local,
     is_same_file,
 )
 
@@ -52,9 +51,15 @@ class ZarrProxy(StoredProxy):
     node: NoRepr[tx.Any]
     """The opened array."""
 
-    location: tx.Any
+    location: tx.Annotated[
+        tx.Optional[tx.Union[path.Path, tx.Any]],
+        ConvertTo(path.as_path_or_stream),
+    ]
     """
     The location of the store of the array, or `None` when it is not known.
+    A location given as a string or a path-like object is converted to a
+    [`Path`][brainhops._core.path.Path], and a store object that is not
+    a path is kept as it is.
     """
 
     perm: tx.Optional[tx.Tuple[int, ...]] = None
@@ -128,18 +133,24 @@ def store_location(node: tx.Any) -> tx.Any:
 def reads_store(raw: tx.Any, location: tx.Any) -> bool:
     """Tell whether an array is the lazy array of a store at a location.
 
-    A local location is compared once its symbolic links are resolved,
-    and a remote location is compared by its URL.
+    Two paths are compared as [`Path`][brainhops._core.path.Path]
+    objects, so that two spellings of the same remote location, such as
+    a trailing slash or a scheme alias, compare equal. A local location
+    is compared once its symbolic links are resolved. A store object
+    that is not a path is compared by its text.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, ZarrProxy) or raw.location is None:
         return False
     source = raw.location
-    if _local(source) and _local(location):
-        return is_same_file(_fspath(source), _fspath(location))
-    if _local(source) or _local(location):
+    location = path.as_path_or_stream(location)
+    if not (isinstance(source, path.Path) and isinstance(location, path.Path)):
+        return _text(source) == _text(location)
+    if source.is_local() != location.is_local():
         return False
-    return str(source).rstrip("/") == str(location).rstrip("/")
+    if source.is_local():
+        return is_same_file(source, location)
+    return source == location
 
 
 def reads_inside(raw: tx.Any, location: tx.Any) -> bool:
@@ -148,23 +159,24 @@ def reads_inside(raw: tx.Any, location: tx.Any) -> bool:
     The store of the array lies inside the location when it is the
     location itself or one of its members, such as a level of a group.
     A writer that replaces the group at the location must then read the
-    array before the old group is removed. A local location is compared
-    once its symbolic links are resolved, and a remote location is
-    compared by its URL.
+    array before the old group is removed. Two paths are compared as
+    [`Path`][brainhops._core.path.Path] objects, and a local location is
+    compared once its symbolic links are resolved. A store object that
+    is not a path is compared by its text.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, ZarrProxy) or raw.location is None:
         return False
     source = raw.location
-    if _local(source) and _local(location):
-        source = os.path.realpath(_fspath(source))
-        target = os.path.realpath(_fspath(location))
-        return source == target or source.startswith(target + os.sep)
-    if _local(source) or _local(location):
+    location = path.as_path_or_stream(location)
+    if not (isinstance(source, path.Path) and isinstance(location, path.Path)):
+        source, target = _text(source), _text(location)
+        return source == target or source.startswith(target + "/")
+    if source.is_local() != location.is_local():
         return False
-    source = str(source).rstrip("/")
-    target = str(location).rstrip("/")
-    return source == target or source.startswith(target + "/")
+    if source.is_local():
+        source, location = source.resolve(), location.resolve()
+    return source == location or location in source.parents
 
 
 # ----------------------------------------------------------------------
@@ -202,10 +214,11 @@ def write_array(
         The abczarr driver that creates the array, or `None` to let
         abczarr choose one.
     """
+    location = path.as_path_or_stream(location)
     documents = record.documents()
     local = _local(location)
     if local and _copies_chunks(raw, record):
-        _copy_chunks(_fspath(raw.location), _fspath(location))
+        _copy_chunks(raw.location, location)
     else:
         options = {"overwrite": True}
         if driver is not None:
@@ -213,18 +226,11 @@ def write_array(
         node = create(location, record.document, **options)
         _store(node, raw)
     if local:
-        directory = _fspath(location)
         for key in _all_document_keys():
-            name = os.path.join(directory, key)
-            if key not in documents and os.path.exists(name):
-                os.remove(name)
-        for key, content in documents.items():
-            with open(os.path.join(directory, key), "wb") as file:
-                file.write(content)
-        return
-    root = path.Path(location) if isinstance(location, str) else location
+            if key not in documents:
+                (location / key).unlink(missing_ok=True)
     for key, content in documents.items():
-        (root / key).write_bytes(content)
+        (location / key).write_bytes(content)
 
 
 def write_into(node: tx.Any, raw: tx.Any) -> None:
@@ -271,15 +277,12 @@ def _copies_chunks(raw: tx.Any, record: ZarrRaw) -> bool:
         return False
     if raw.perm is not None:
         return False
-    if raw.location is None or not _local(raw.location):
-        return False
-    source = _fspath(raw.location)
-    if not os.path.isdir(source):
+    if not _local(raw.location) or not raw.location.is_dir():
         return False
     return same_storage(raw.node.metadata, record.document)
 
 
-def _copy_chunks(source: str, target: str) -> None:
+def _copy_chunks(source: path.Path, target: path.Path) -> None:
     """Copy every file of a store but its documents, keeping their bytes."""
     documents = set(_all_document_keys())
     for root, _, names in os.walk(source):
@@ -301,12 +304,9 @@ def _all_document_keys() -> tx.Tuple[str, ...]:
 
 def _local(location: tx.Any) -> bool:
     """Tell whether a store location is a path on the local file system."""
-    try:
-        return is_local(location)
-    except Exception:  # noqa: BLE001
-        return False
+    return isinstance(location, path.Path) and location.is_local()
 
 
-def _fspath(location: tx.Any) -> str:
-    """Return a local store location as a string."""
-    return os.fspath(location)
+def _text(location: tx.Any) -> str:
+    """Return the text of a store location, without a trailing slash."""
+    return str(location).rstrip("/")

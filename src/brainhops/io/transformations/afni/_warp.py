@@ -13,7 +13,6 @@ from brainhops._core import path
 from brainhops._core._internal_api import (
     ArrayProtocol,
     array_backend,
-    atomic_write_bytes,
     smartproperty,
 )
 
@@ -548,8 +547,7 @@ class AfniBrikWarp(
             raise TypeError(
                 f"Unknown AFNI writer option(s): {', '.join(unknown)}"
             )
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
@@ -568,7 +566,7 @@ class AfniBrikWarp(
             )
         record = xform.metadata.raw
         write_brik(record, xform.rawdata, brik)
-        atomic_write_bytes(head, record.to_bytes())
+        head.write_bytes(record.to_bytes(), atomic=head.is_local())
         for sibling in stale:
             sibling.unlink()
         if reading:

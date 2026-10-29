@@ -36,8 +36,8 @@ class TiffProxy(StoredProxy):
 
     # --- magic attributes ----
 
-    source: tx.Any
-    """The file name or the bytes of the file."""
+    source: backend.TiffSource
+    """Where the file lies: the path of a local file, or its bytes."""
 
     record: NoRepr[TiffRaw]
     """The record of the series that the level belongs to."""
@@ -142,5 +142,4 @@ class TiffProxy(StoredProxy):
         """
         if self.source.content is not None:
             return self.source.content
-        with open(self.source.filename, "rb") as file:
-            return file.read()
+        return self.source.filename.read_bytes()

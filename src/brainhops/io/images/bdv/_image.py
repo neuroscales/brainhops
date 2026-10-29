@@ -494,9 +494,8 @@ def sniff_path(
     filename: path.FilenameLike, error: tx.Union[bool, tx.Type[Exception]]
 ) -> float:
     """Score the XML file at a path as a dataset stored in HDF5."""
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if not path.exists(filename):
+    filename = path.Path(filename)
+    if not filename.exists():
         return _score(False, error)
     with filename.open("rb") as file:
         return sniff_stream(file, error)

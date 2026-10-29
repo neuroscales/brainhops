@@ -20,7 +20,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core._internal_api import is_local, replace_file
+from brainhops._core._internal_api import replace_file
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base.parsers import WriterError
@@ -449,9 +449,8 @@ def write_target(filename: tx.Any, write: tx.Callable[[tx.Any], None]) -> None:
         The function that writes the file, given a local name or a
         stream.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if is_local(filename):
+    filename = path.Path(filename)
+    if filename.is_local():
         replace_file(filename, write)
         return
     buffer = io.BytesIO()
@@ -477,8 +476,7 @@ def copy_source(source: backend.TiffSource, target: tx.Any) -> None:
     if source.content is not None:
         content = source.content
     else:
-        with open(source.filename, "rb") as file:
-            content = file.read()
+        content = source.filename.read_bytes()
     if stream:
         target.write(content)
     else:

@@ -1,8 +1,5 @@
 """The JPEG 2000 image format: every resolution level of a file."""
 
-# stdlib
-import os
-
 # dependencies
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
@@ -12,7 +9,6 @@ from brainhops._core import path
 from brainhops._core._internal_api import (
     ArrayProtocol,
     ArrayProxy,
-    atomic_write_bytes,
     cached_value,
     smartproperty,
 )
@@ -466,15 +462,18 @@ class Jpeg2000MultiScaleImage(
         **kwargs : Any
             The options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         if kwargs.get("container") is None:
             kwargs["container"] = container_for_name(filename)
         if not reads_file(self.rawdata, filename):
-            atomic_write_bytes(filename, self.to_bytes(**kwargs))
+            filename.write_bytes(
+                self.to_bytes(**kwargs), atomic=filename.is_local()
+            )
             return
         self.consolidate(inplace=True, **kwargs)
-        atomic_write_bytes(filename, written(self))
+        filename.write_bytes(written(self), atomic=filename.is_local())
         self.rawdata = Jpeg2000Proxy(
-            Jpeg2000Source(filename=os.fspath(filename)),
+            Jpeg2000Source(filename=filename),
             self.metadata.raw,
             0,
         )

@@ -1,12 +1,23 @@
-"""Type hints for files and paths, and helpers that find and replace files.
+"""Type hints for files and paths, and helpers to name and replace files.
 
 The type hints describe the files, paths and contents that the readers
-and writers accept. The helpers work on any path that [`Path`][] wraps,
-local or remote. A writer replaces a local file at once with
-[`atomic_write_bytes`][] or [`replace_file`][], so that a lazy array
-that reads the old file is never left reading a file that is half
-written. A writer replaces a local directory, such as the store of a
-pyramid, with [`replace_directory`][] for the same reason.
+and writers accept. A reader or a writer converts a file name to a
+[`Path`][] once, where it receives it, with [`as_path_or_stream`][],
+and keeps the [`Path`][] from then on. The helpers work on any path
+that [`Path`][] wraps, local or remote, and cover what [`Path`][] does
+not do by itself. A reader asks [`Path`][] directly whether a file
+exists, with its method `exists`, and whether a path names a file on
+the local file system, with its method `is_local`. A writer that
+holds the whole content of a local file replaces the file at once
+with the method `write_bytes` of [`Path`][] and its option
+`atomic=True`, so that a lazy array that reads the old file is never
+left reading a file that is half written. A remote file cannot be
+replaced in one step, so it is written in place, which the writer
+asks for with `atomic=filename.is_local()`. A writer whose library
+writes a file by name uses [`replace_file`][] for the same reason,
+and a writer replaces a local directory, such as the store of a
+pyramid, with [`replace_directory`][]. Both helpers are built on the
+method `staged` of [`Path`][].
 
 !!! warning "Internal module"
     `brainhops._core.path` is an internal module. It is documented to
@@ -30,25 +41,27 @@ __all__ = [
     "FileOrContentLike",
     "TextFileOrContentLike",
     "BinaryFileOrContentLike",
-    "exists",
-    "LOCAL_PROTOCOLS",
-    "is_local",
+    "as_path_or_stream",
     "base_name",
-    "is_local_file",
     "replace_directory",
     "replace_file",
     "is_same_file",
-    "atomic_write_bytes",
 ]
 
 import errno
-import uuid
+import os
 from os import PathLike
 from pathlib import Path as LocalPath
-from urllib.parse import urlsplit
 
 import typing_extensions as tx
-from bagof.paths import Path, PurePath, UnsupportedPathOperation
+from bagof.paths import (
+    CommitError,
+    Path,
+    PurePath,
+    UnsupportedPathOperation,
+)
+
+_T = tx.TypeVar("_T")
 
 FilenameLike = tx.Union[PathLike, str]
 """Name of a file, given as a string or a path-like object."""
@@ -81,42 +94,46 @@ BinaryFileOrContentLike = tx.Union[BinaryFileLike, BinaryContentLike]
 """Name of a file, binary file object, or binary content."""
 
 
-def exists(filename: FilenameLike) -> bool:
-    """Return whether a file exists.
-
-    A name that is too long for the operating system (`ENAMETOOLONG`) is
-    reported as not existing instead of raising an error. Such a name is
-    usually file content that was passed where a path was expected. Other
-    errors raised by the file system are propagated.
-    """
-    if isinstance(filename, str):
-        filename = Path(filename)
-    try:
-        return filename.exists()
-    except OSError as e:
-        if e.errno == errno.ENAMETOOLONG:
-            return False
-        raise
-
-
 # ----------------------------------------------------------------------
 #   LOCAL AND REMOTE PATHS
 # ----------------------------------------------------------------------
 
 
-LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
-"""The protocols of paths on the local file system."""
+@tx.overload
+def as_path_or_stream(other: FilenameLike) -> Path: ...
 
 
-def is_local(file: FilenameLike) -> bool:
-    """Return whether a path names a file on the local file system.
+@tx.overload
+def as_path_or_stream(other: _T) -> _T: ...
 
-    Raises
-    ------
-    TypeError
-        If `file` is not a path, for example an open file.
+
+def as_path_or_stream(other: tx.Any) -> tx.Any:
+    """Return a file name as a [`Path`][], and any other value unchanged.
+
+    A reader or a writer that accepts either the name of a file or an
+    open file calls this function once, where it receives its argument,
+    and keeps the result. A string or a path-like object becomes a
+    [`Path`][], and a [`Path`][] is returned as it is. Any other value,
+    such as an open file, bytes or `None`, is returned unchanged, so
+    that the caller can tell a path from a stream with `isinstance(x,
+    Path)`. The function reads only its argument and never touches
+    storage.
+
+    Parameters
+    ----------
+    other : Any
+        The name of a file, or any other value.
+
+    Returns
+    -------
+    Any
+        The name as a [`Path`][], or `other` itself.
     """
-    return Path(file).protocol.lower() in LOCAL_PROTOCOLS
+    if isinstance(other, Path):
+        return other
+    if isinstance(other, (str, PathLike)):
+        return Path(other)
+    return other
 
 
 def base_name(other: tx.Any) -> tx.Optional[str]:
@@ -125,57 +142,40 @@ def base_name(other: tx.Any) -> tx.Optional[str]:
     A format reads the extension of a file from this name, and an open
     file is named by its `name` attribute. The name is read from the
     text of the path with [`PurePath`][], without touching storage. The
-    query and the fragment of a URL are not part of the name, so
-    `https://host/x.nii.gz?token=...` names `x.nii.gz`. For an fsspec
-    chain such as `simplecache::s3://...`, the name comes from the last
-    link.
+    query of a URL is not part of the name, and neither is the fragment
+    of an HTTP URL, so `https://host/x.nii.gz?token=...` names
+    `x.nii.gz`. For an fsspec chain such as `simplecache::s3://...`, the
+    name comes from the last link. For content, such as bytes, or for an
+    open file without a name, the function returns `None`.
+
+    A name given as text is not converted with [`as_path_or_stream`][],
+    because building a [`Path`][] chooses a driver for the scheme of a
+    URL, and fails when no installed driver reads that scheme, while the
+    name can still be read from the text.
     """
     if not isinstance(other, (str, PathLike)):
         other = getattr(other, "name", None)
         if not isinstance(other, str):
             return None
     try:
-        file = PurePath(other)
-        name = file.name
+        return PurePath(other).name
     except UnsupportedPathOperation:
         # A path object that no driver knows is read from its text.
-        file = PurePath(str(other))
-        name = file.name
-    if file.protocol not in LOCAL_PROTOCOLS:
-        url = urlsplit(str(file))
-        name = PurePath(url._replace(query="", fragment="").geturl()).name
-    return name
+        return PurePath(str(other)).name
 
 
-def is_local_file(file: tx.Any) -> bool:
-    """Return whether a path names an existing regular file on this machine.
-
-    A library that opens a file by name only, or a memory map, needs a
-    file on the local file system. A remote path, a missing file, a
-    directory and an open file, which is not a path, are not local files.
-    """
-    if not isinstance(file, (str, PathLike)):
-        return False
-    file = Path(file)
-    return is_local(file) and file.is_file()
-
-
-def is_same_file(first: tx.Any, second: tx.Any) -> bool:
+def is_same_file(first: Path, second: Path) -> bool:
     """Return whether two local paths name the same file.
 
-    The paths are compared once their symbolic links are resolved, so the
-    files do not need to exist. A remote path, an open file, `None` or
-    any other object that is not a path is never the same file.
+    A writer asks this question before it replaces a file, to learn
+    whether a lazy array reads the file that it is about to write. The
+    files do not need to exist. The answer comes from the method
+    `samefile` of [`Path`][] with `strict=False`, which resolves
+    symbolic links and `..`, and counts a hard link to an existing file
+    as the same file. A remote path is never the same file as another
+    path, even an equal one.
     """
-    files = []
-    for file in (first, second):
-        if not isinstance(file, (str, PathLike)):
-            return False
-        file = Path(file)
-        if not is_local(file):
-            return False
-        files.append(file.resolve())
-    return files[0] == files[1]
+    return first.is_local() and first.samefile(second, strict=False)
 
 
 # ----------------------------------------------------------------------
@@ -188,40 +188,77 @@ def replace_file(
 ) -> None:
     """Write a local file next to its target, then move it over the target.
 
-    The function `write` receives the path of a new file in the directory
-    of the target, whose name ends like the name of the target, so that a
+    A format whose library writes a file by name, such as h5py or
+    tifffile, writes it with this function, so that a lazy array that
+    reads the old file never reads a file that is half written. The
+    function `write` receives a path in a hidden staging directory
+    beside the target, with the same name as the target, so that a
     library that chooses its encoding from the extension, as nibabel
     does, chooses the same. Once the file is written, it replaces the
-    target at once, following a symbolic link to the file that it names.
+    target at once, following a symbolic link to the file that it
+    names. The staging is done by the method `staged` of [`Path`][].
 
-    A writer that reads the old file while it writes the new one, such as
-    nibabel copying the voxels of a lazy image, therefore reads the old
-    content, and a memory map of the old file keeps it. A lazy array that
-    opens the file by name reads the new file. The new file gets the
-    permissions that the umask gives a new file.
+    A writer that reads the old file while it writes the new one
+    therefore reads the old content, and a memory map of the old file
+    keeps it. A lazy array that opens the file by name reads the new
+    file. The new file keeps the permissions of the file that it
+    replaces. If `write` fails, or if the file cannot be moved, the
+    target is left as it was and the staging directory is removed.
+
+    The function adds three rules to the method `staged`. The target
+    must not be a directory. The function `write` must create the file,
+    because a writer that writes nothing has failed. An error names the
+    target rather than the staged file, which the caller never sees.
+
+    Parameters
+    ----------
+    filename : str or PathLike
+        The local path of the file to write.
+    write : callable
+        The function that writes the new file, given its path.
 
     Raises
     ------
+    IsADirectoryError
+        If the target is a directory.
+    FileNotFoundError
+        If `write` did not create the file, or if the directory of the
+        target does not exist.
     OSError
         If the file cannot be written, with the name of the target.
     """
-    target = Path(filename).resolve()
-    temporary = target.with_name(f".{uuid.uuid4().hex}.{target.name}")
+    target = Path(filename)
+    staged = None
     try:
-        write(temporary)
-        temporary.replace(target)
+        with target.staged() as staged:
+            write(staged)
+            if not staged.exists():
+                code = errno.ENOENT
+                raise FileNotFoundError(code, os.strerror(code), str(target))
     except OSError as error:
-        if error.filename is not None and str(error.filename) == str(
-            temporary
-        ):
-            raise type(error)(
-                error.errno, error.strerror, str(target)
-            ) from None
+        # A failed commit chains the error of the move, which names the
+        # staged file, or the target when the target is a directory.
+        cause = error.__cause__ if isinstance(error, CommitError) else error
+        if isinstance(cause, OSError):
+            named = _naming_target(cause, staged, target)
+            if named is not error:
+                raise named from None
         raise
-    finally:
-        # The new file is gone once it replaced the target, and is
-        # removed if the write failed.
-        temporary.unlink(missing_ok=True)
+
+
+def _naming_target(
+    error: OSError, staged: tx.Optional[Path], target: Path
+) -> OSError:
+    """Return the error with the target in place of the staged file."""
+    if staged is None or error.errno is None:
+        return error
+    directory = str(staged.parent)
+    name = error.filename
+    if not isinstance(name, str) or not (
+        name == directory or name.startswith(directory + os.sep)
+    ):
+        return error
+    return type(error)(error.errno, error.strerror, str(target))
 
 
 def replace_directory(
@@ -234,11 +271,12 @@ def replace_directory(
     reads the files of the old directory never reads a directory that is
     half written, and so that a failed write leaves the old directory as
     it was. The function `write` receives the path of a new, empty
-    directory beside the target, whose name ends like the name of the
-    target, as for [`replace_file`][], and fills it. Once it is filled,
-    the target, if it exists, is moved aside, the new directory is moved
-    to the name of the target, following a symbolic link to the
-    directory that it names, and the old directory is removed.
+    directory in a hidden staging directory beside the target, with the
+    same name as the target, and fills it. Once it is filled, the
+    target, if it exists, is moved aside, the new directory is moved to
+    the name of the target, following a symbolic link to the directory
+    that it names, and the old directory is removed. The staging and the
+    moves are done by the method `staged` of [`Path`][].
 
     A writer may therefore read the files of the old directory while it
     fills the new one, for example to copy the files of the levels that
@@ -246,11 +284,19 @@ def replace_directory(
     the file of the same name in the new directory. The directory cannot
     be swapped in a single step, so a reader that opens the target
     between the two moves finds no directory, but never a half-written
-    one. If the second move fails, the old directory is moved back.
+    one. If `write` fails, the target is left as it was and the new
+    directory is removed. If the second move fails, the old directory is
+    moved back. If even that fails, nothing is removed: the old directory
+    stays in a hidden directory beside the target, and the error, a
+    [`CommitError`][], names it in its attribute `previous`.
 
-    Only a local path is accepted. A remote store cannot be renamed, so
-    a writer of a remote store writes in place, and such a save is not
-    atomic.
+    The function adds three rules to the method `staged`. Only a local
+    path is accepted, because a remote store cannot be renamed, so a
+    writer of a remote store writes in place, and such a save is not
+    atomic. A directory never replaces a file, and the function refuses
+    it before `write` is called rather than after. The new directory
+    exists, empty, when `write` receives it, because the writers of a
+    store expect it.
 
     Parameters
     ----------
@@ -263,65 +309,19 @@ def replace_directory(
     ------
     ValueError
         If `dirname` is not a local path.
+    NotADirectoryError
+        If the target exists and is not a directory.
     OSError
         If the directory cannot be written or moved.
     """
-    if not is_local(dirname):
+    target = Path(dirname)
+    if not target.is_local():
         raise ValueError(f"Only a local directory can be replaced: {dirname}")
-    target = Path(dirname).resolve()
-    token = uuid.uuid4().hex
-    temporary = target.with_name(f".{token}.{target.name}")
-    old = target.with_name(f".{token}.old.{target.name}")
-    temporary.mkdir()
-    try:
-        write(temporary)
-    except BaseException:
-        _remove_tree(temporary)
-        raise
-    if not (target.is_symlink() or target.exists()):
-        temporary.replace(target)
-        return
-    target.replace(old)
-    try:
-        temporary.replace(target)
-    except BaseException:
-        old.replace(target)
-        _remove_tree(temporary)
-        raise
-    if old.is_dir() and not old.is_symlink():
-        old.rmtree()
-    else:
-        old.unlink()
-
-
-def _remove_tree(directory: Path) -> None:
-    """Remove a directory that a failed write left, ignoring errors."""
-    try:
-        directory.rmtree()
-    except OSError:
-        pass
-
-
-def atomic_write_bytes(filename: FilenameLike, content: bytes) -> None:
-    """Write the bytes of a file, replacing a local file at once.
-
-    A local file is written with [`replace_file`][], so that a lazy array
-    or a memory map that reads the old file is not disturbed while the
-    new file is written. A remote file cannot be replaced in one step,
-    so it is written in place, once the whole content is known.
-
-    Raises
-    ------
-    OSError
-        If the file cannot be written, with the name of the target.
-    """
-    filename = Path(filename)
-    if not is_local(filename):
-        filename.write_bytes(content)
-        return
-
-    def write(name: Path) -> None:
-        with name.open("xb") as f:
-            f.write(content)
-
-    replace_file(filename, write)
+    # A file may still appear while the directory is written, and the
+    # method `staged` then refuses to replace it.
+    if target.exists() and not target.is_dir():
+        code = errno.ENOTDIR
+        raise NotADirectoryError(code, os.strerror(code), str(dirname))
+    with target.staged() as staged:
+        staged.mkdir()
+        write(staged)

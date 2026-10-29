@@ -1,8 +1,5 @@
 """The JPEG 2000 image format: one resolution level of a file."""
 
-# stdlib
-import os
-
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -13,7 +10,6 @@ from brainhops._core import path
 from brainhops._core._internal_api import (
     ArrayProtocol,
     ArrayProxy,
-    atomic_write_bytes,
     smartproperty,
 )
 from brainhops.datamodel.images import SingleScaleImage
@@ -589,18 +585,21 @@ class Jpeg2000Image(
         **kwargs : Any
             The options of [`consolidate`][].
         """
+        filename = path.Path(filename)
         if kwargs.get("container") is None:
             kwargs["container"] = container_for_name(filename)
         if not reads_file(self.rawdata, filename):
-            atomic_write_bytes(filename, self.to_bytes(**kwargs))
+            filename.write_bytes(
+                self.to_bytes(**kwargs), atomic=filename.is_local()
+            )
             return
         self.consolidate(inplace=True, **kwargs)
-        atomic_write_bytes(filename, written(self))
+        filename.write_bytes(written(self), atomic=filename.is_local())
         # The image holds what the file holds, and its lazy array reads the
         # new file, since the lazy array of the old file may be another
         # level, or decode another coded image.
         self.rawdata = Jpeg2000Proxy(
-            Jpeg2000Source(filename=os.fspath(filename)),
+            Jpeg2000Source(filename=filename),
             self.metadata.raw,
             0,
         )
@@ -902,7 +901,7 @@ def written(image: Jpeg2000Image) -> bytes:
     return image.rawdata.source.read()
 
 
-def reads_file(raw: tx.Any, file: tx.Any) -> bool:
+def reads_file(raw: tx.Any, file: path.Path) -> bool:
     """Tell whether a lazy array of samples reads a local file by name."""
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     return isinstance(raw, Jpeg2000Proxy) and raw.source.is_file(file)

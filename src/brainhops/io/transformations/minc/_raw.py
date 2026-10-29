@@ -583,12 +583,10 @@ def decode(content: bytes, encoding: str) -> str:
 
 def read_bytes(filename: path.FilenameLike) -> tx.Optional[bytes]:
     """Return the bytes of a file, or `None` if it does not exist."""
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if not path.exists(filename):
+    filename = path.Path(filename)
+    if not filename.exists():
         return None
-    with path.Path(filename).open("rb") as file:
-        return file.read()
+    return filename.read_bytes()
 
 
 def score(

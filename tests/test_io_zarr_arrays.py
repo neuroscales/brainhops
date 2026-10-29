@@ -247,7 +247,13 @@ def test_a_store_taken_as_remote_is_written_in_place(
     # remote, so that the writer follows the branch of remote stores.
     from brainhops.io.images.zarr import _image as zarr_image
 
-    monkeypatch.setattr(zarr_image, "is_local", lambda location: False)
+    class RemotePath(zarr_image.Path):
+        __slots__ = ()
+
+        def is_local(self) -> bool:
+            return False
+
+    monkeypatch.setattr(zarr_image, "Path", RemotePath)
     monkeypatch.setattr(zarr_data, "_local", lambda location: False)
     path = str(tmp_path / "own.zarr")
     ZarrImage(data=DATA).save(path)

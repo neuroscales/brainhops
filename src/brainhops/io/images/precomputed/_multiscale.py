@@ -288,7 +288,7 @@ if HAS_TENSORSTORE:
 
 
 def _read_pyramid(
-    cls: type, location: str, record: PrecomputedRaw
+    cls: type, location: path.Path, record: PrecomputedRaw
 ) -> PrecomputedMultiScaleImage:
     """Build the pyramid of every scale of a volume.
 

@@ -367,7 +367,9 @@ class BdvRaw(Raw, BinaryFileReader, BinaryFileWriter):
             base = path.Path(xml_filename).parent / self.base_path
         else:
             base = path.Path(self.base_path)
-        return path.Path(os.path.normpath(os.fspath(base / self.hdf5)))
+        # A Path keeps the `..` segments of a name, which
+        # `os.path.normpath` removes from its text.
+        return path.Path(os.path.normpath(base / self.hdf5))
 
     # --- encoding -----------------------------------------------------
 

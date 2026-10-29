@@ -476,7 +476,7 @@ if HAS_TENSORSTORE:
 
 def read_scale(
     cls: type,
-    location: str,
+    location: path.Path,
     metadata: PrecomputedMetadata,
     level: tx.Optional[int],
 ) -> PrecomputedImage:

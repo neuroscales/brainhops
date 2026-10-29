@@ -66,8 +66,8 @@ def require_openslide() -> tx.Any:
 # ----------------------------------------------------------------------
 
 
-def local_path(file: tx.Any) -> tx.Optional[str]:
-    """Return the local file name of a path or of an open file.
+def local_path(file: tx.Any) -> tx.Optional[path.Path]:
+    """Return the local file of a path or of an open file.
 
     OpenSlide opens slides by name only. A path names a local file when its
     protocol is local, and an open file does when its `name` attribute
@@ -80,18 +80,20 @@ def local_path(file: tx.Any) -> tx.Optional[str]:
 
     Returns
     -------
-    str or None
-        The name of the local file, or `None` when OpenSlide cannot open
+    Path or None
+        The path of the local file, or `None` when OpenSlide cannot open
         the file by name.
     """
-    if not isinstance(file, (str, path.PathLike)):
-        file = getattr(file, "name", None)
-        if not isinstance(file, str):
+    file = path.as_path_or_stream(file)
+    if not isinstance(file, path.Path):
+        name = getattr(file, "name", None)
+        if not isinstance(name, str):
             return None
-    return str(path.Path(file)) if path.is_local_file(file) else None
+        file = path.Path(name)
+    return file if file.is_local() and file.is_file() else None
 
 
-def detect(filename: str) -> tx.Tuple[str, int]:
+def detect(filename: path.Path) -> tx.Tuple[str, int]:
     """Return the vendor and the number of levels of a local file.
 
     Every format class of the package sniffs the same file, so the result
@@ -100,8 +102,8 @@ def detect(filename: str) -> tx.Tuple[str, int]:
 
     Parameters
     ----------
-    filename : str
-        The name of a local file.
+    filename : Path
+        The path of a local file.
 
     Returns
     -------
@@ -112,7 +114,9 @@ def detect(filename: str) -> tx.Tuple[str, int]:
     """
     if openslide is None:
         return "", 0
-    stat = os.stat(filename)
+    stat = filename.stat()
+    # OpenSlide opens a file by its name, which is also the key of the
+    # cache.
     return _detect(os.path.abspath(filename), stat.st_mtime_ns, stat.st_size)
 
 
@@ -127,10 +131,10 @@ class Slide:
     """
 
     def __init__(
-        self, filename: str, tempdir: tx.Optional[str] = None
+        self, filename: path.Path, tempdir: tx.Optional[str] = None
     ) -> None:
         self.filename = filename
-        """The name of the local file that OpenSlide opens."""
+        """The path of the local file that OpenSlide opens."""
         self._state: tx.Dict[str, tx.Any] = {"tempdir": tempdir}
         weakref.finalize(self, _release, self._state)
 
@@ -161,9 +165,8 @@ class Slide:
             garbage-collected.
         """
         tempdir = tempfile.mkdtemp(prefix="brainhops-openslide-")
-        filename = os.path.join(tempdir, "slide" + _extension(name))
-        with open(filename, "wb") as f:
-            f.write(content)
+        filename = path.Path(tempdir) / ("slide" + _extension(name))
+        filename.write_bytes(content)
         return cls(filename, tempdir)
 
     @property
@@ -182,13 +185,13 @@ class Slide:
         return handle
 
 
-def open_handle(filename: str) -> tx.Any:
+def open_handle(filename: path.Path) -> tx.Any:
     """Open a local file with OpenSlide.
 
     Parameters
     ----------
-    filename : str
-        The name of a local file.
+    filename : Path
+        The path of a local file.
 
     Returns
     -------
@@ -204,7 +207,8 @@ def open_handle(filename: str) -> tx.Any:
     """
     module = require_openslide()
     try:
-        return module.OpenSlide(filename)
+        # OpenSlide opens a file by its name, given as a string.
+        return module.OpenSlide(os.fspath(filename))
     except Exception as e:
         raise ParserContentError(
             f"OpenSlide cannot read this file: {e}"

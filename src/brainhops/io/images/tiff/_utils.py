@@ -655,23 +655,28 @@ class TiffSource:
 
     def __init__(
         self,
-        filename: tx.Optional[str] = None,
+        filename: tx.Optional[path.FilenameLike] = None,
         content: tx.Optional[bytes] = None,
     ) -> None:
         if (filename is None) == (content is None):
             raise ValueError("Give either a filename or the content.")
-        self.filename = filename
+        self.filename: tx.Optional[path.Path] = (
+            None if filename is None else path.Path(filename)
+        )
+        """The path of a local file, or `None`."""
         self.content = content
+        """The bytes of the file, or `None` for a local file."""
 
     @classmethod
     def from_file(cls, file: tx.Any) -> "TiffSource":
         """Return the source of a path, a file object or bytes."""
+        file = path.as_path_or_stream(file)
         if isinstance(file, (bytes, bytearray, memoryview)):
             return cls(content=bytes(file))
-        if isinstance(file, (str, path.PathLike)):
-            if path.is_local(file):
-                return cls(filename=str(path.Path(file)))
-            with path.Path(file).open("rb") as f:
+        if isinstance(file, path.Path):
+            if file.is_local():
+                return cls(filename=file)
+            with file.open("rb") as f:
                 return cls(content=f.read())
         if hasattr(file, "read"):
             return cls(content=file.read())

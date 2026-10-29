@@ -10,6 +10,9 @@ import re
 import numpy as np
 import typing_extensions as tx
 
+# core
+from brainhops._core import path
+
 # internals
 from brainhops.datamodel.systems import LPSmm
 from brainhops.datamodel.transformations import Transformation
@@ -169,14 +172,13 @@ def afni_view(name: tx.Any) -> tx.Optional[str]:
 
     The name may be a view (`"tlrc"`), a world-space name (`"mni"` stands
     for `"tlrc"`, `"orig-cardinal"` for `"orig"`), or a dataset file name
-    (`"anat+tlrc.HEAD"`).
+    (`"anat+tlrc.HEAD"`). The base name of a file name is read from the
+    text of the path, so that a remote path is never made local.
     """
     if not isinstance(name, (str, os.PathLike)):
         return None
-    text = os.fspath(name)
-    if isinstance(text, bytes):
-        text = os.fsdecode(text)
-    base = text.replace("\\", "/").rsplit("/", 1)[-1]
+    base = (path.base_name(name) or "").replace("\\", "/")
+    base = base.rsplit("/", 1)[-1]
     match = re.search(r"\+(orig|acpc|tlrc)(\.|$)", base)
     if match:
         return match.group(1)

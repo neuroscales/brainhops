@@ -16,6 +16,8 @@ import pytest
 
 nb = pytest.importorskip("nibabel")
 
+from bagof.paths import Path  # noqa: E402
+
 from brainhops._core.proxy import ScaledProxy  # noqa: E402
 from brainhops.io.common.mgh._data import MghProxy  # noqa: E402
 from brainhops.io.common.mgh._raw import read_mgh  # noqa: E402
@@ -370,7 +372,7 @@ def test_an_mgh_stream_and_a_misnamed_file_are_read(tmp_path) -> None:  # noqa: 
     misnamed = tmp_path / "volume.mgh"
     shutil.copy(path, misnamed)
     _, proxy = read_mgh(misnamed)
-    assert proxy.source == str(misnamed)
+    assert proxy.source == Path(misnamed)
     _check(proxy, reference.dataobj)
 
 

@@ -1,8 +1,5 @@
 """The image stack format."""
 
-# stdlib
-import os
-
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -582,9 +579,7 @@ class StackImage(
             spacing=spacing,
             unit=unit,
         )
-        if isinstance(filename, str):
-            filename = path.Path(filename)
-        folder = os.path.abspath(os.fspath(filename))
+        folder = path.Path(filename).absolute()
         return cls(
             rawdata=StackProxy(folder, record, fill),
             metadata=StackMetadata.from_raw(record),

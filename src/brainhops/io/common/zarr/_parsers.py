@@ -1,8 +1,5 @@
 """The Zarr store adapters of the parser base."""
 
-# stdlib
-import os
-
 # dependencies
 import typing_extensions as tx
 from abczarr import ZarrNode
@@ -10,7 +7,6 @@ from abczarr import open as open_node
 
 # core
 from brainhops._core import path
-from brainhops._core._internal_api import is_local
 
 # internals
 from brainhops.datamodel.base import DataModelBase
@@ -271,10 +267,9 @@ class ZarrReaderWriter(ZarrReader, BinaryFileWriter):
 
     @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
-        if isinstance(file, str):
-            file = path.Path(file)
+        file = path.as_path_or_stream(file)
 
-        if isinstance(file, path.PathLike):
+        if isinstance(file, path.Path):
             return self.to_store(file, **kwargs)
 
         if hasattr(file, "write") or hasattr(file, "writelines"):
@@ -340,10 +335,9 @@ def absolute_location(location: tx.Any) -> tx.Any:
     relative path the store path `.`, so a local path is made absolute
     before it is opened. A remote path is returned as it is.
     """
-    if isinstance(location, str):
-        location = path.Path(location)
-    if isinstance(location, path.PathLike) and is_local(location):
-        return path.Path(os.path.abspath(os.fspath(location)))
+    location = path.as_path_or_stream(location)
+    if isinstance(location, path.Path) and location.is_local():
+        return location.absolute()
     return location
 
 

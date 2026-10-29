@@ -2,15 +2,15 @@
 
 # stdlib
 import os.path as op
-from os import PathLike
 
 # dependencies
 import h5py
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoInit, NoRepr
+from bagof.magic import ConvertTo, NoInit, NoRepr
 
 # core
+from brainhops._core import path
 from brainhops._core._internal_api import ArrayProtocol, StoredProxy, has_dask
 
 # this format
@@ -33,8 +33,14 @@ class H5ArrayProxy(StoredProxy):
     keeps open is used by every index of it.
     """
 
-    file: tx.Any
-    """The HDF5 file, by its path, as an open file, or as bytes."""
+    file: tx.Annotated[
+        tx.Union[path.Path, h5py.File], ConvertTo(path.as_path_or_stream)
+    ]
+    """
+    The HDF5 file, by its path or as an open file. A file name given as
+    a string or a path-like object is converted to a
+    [`Path`][brainhops._core.path.Path].
+    """
 
     path: str
     """The path of the dataset in the file."""
@@ -76,10 +82,11 @@ class H5ArrayProxy(StoredProxy):
         if file is None:
             return self.to_dataset(self.file, keep_open=keep_open)
 
+        file = path.as_path_or_stream(file)
         if self._handle is not None:
             file = self._handle
 
-        if isinstance(file, (str, PathLike)):
+        if isinstance(file, path.Path):
             if not keep_open:
                 with h5py.File(file, "r") as f:
                     return self.to_dataset(f)
@@ -104,7 +111,7 @@ class H5ArrayProxy(StoredProxy):
         handle while another is reading.
         """
         file = self._handle if self._handle is not None else self.file
-        if isinstance(file, (str, PathLike)):
+        if isinstance(file, path.Path):
             with h5py.File(file, "r") as f:
                 return f[self.path][index]
         return self.to_dataset(file)[index]

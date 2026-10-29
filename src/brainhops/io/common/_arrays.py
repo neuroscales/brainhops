@@ -46,7 +46,6 @@ __all__ = [
 
 import functools
 import io
-import os
 import re
 
 import numpy as np
@@ -464,8 +463,11 @@ class ArrayReader(FileReader):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        if isinstance(filename, (str, os.PathLike)) and os.path.isdir(
-            os.fspath(filename)
+        filename = path.as_path_or_stream(filename)
+        if (
+            isinstance(filename, path.Path)
+            and filename.is_local()
+            and filename.is_dir()
         ):
             return _reject(error, f"Not a file: {filename}")
         return super().sniff_filename(filename, error=error, **kwargs)

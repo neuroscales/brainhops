@@ -6,8 +6,8 @@ from bagof.magic import Inherit, replace
 
 # core
 from brainhops._core._internal_api import (
+    Path,
     array_backend,
-    is_local,
     replace_directory,
     smartproperty,
 )
@@ -592,7 +592,7 @@ class OmeZarrImage(
             node = open_group(location, mode="w")
             self.to_node(node, chunks=chunks, version=version, **kwargs)
             return
-        if not is_local(location):
+        if not Path(location).is_local():
             raise WriterError(
                 "This image reads the remote store that it would be written "
                 f"to, {location}, and a remote store cannot be replaced in "

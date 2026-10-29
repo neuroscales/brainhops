@@ -5,9 +5,6 @@ This module needs h5py, so only the image readers import it. The layout
 of the file is described in [`brainhops.io.common.bdv`][].
 """
 
-# stdlib
-import os
-
 # dependencies
 import h5py
 import numpy as np
@@ -126,9 +123,8 @@ def read_dataset(
         If the dataset is not stored in HDF5, if the view does not exist or
         is missing, or if the HDF5 file does not hold it.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if not path.exists(filename):
+    filename = path.Path(filename)
+    if not filename.exists():
         raise ParserExistsError(f"No such file: {filename}")
     with filename.open("rb") as file:
         raw = BdvRaw.from_bytes(file.read())
@@ -145,12 +141,12 @@ def read_dataset(
             f"listed as missing in this BigDataViewer dataset."
         )
     hdf5 = raw.hdf5_filename(filename)
-    if not path.exists(hdf5):
+    if not hdf5.exists():
         raise ParserExistsError(
             f"No such file: {hdf5}, which the BigDataViewer dataset "
             f"{filename} names."
         )
-    hdf5 = os.path.abspath(os.fspath(hdf5))
+    hdf5 = hdf5.absolute()
     with h5py.File(hdf5, "r") as h5file:
         pyramids = _pyramids(h5file, raw)
         raw = replace(raw, pyramids=pyramids)
@@ -184,13 +180,12 @@ def level_count(
         The number of levels.
     """
     try:
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         with filename.open("rb") as file:
             raw = BdvRaw.from_bytes(file.read())
         setup, _ = raw.view(setup, None)
         hdf5 = raw.hdf5_filename(filename)
-        with h5py.File(os.fspath(hdf5), "r") as h5file:
+        with h5py.File(hdf5, "r") as h5file:
             return len(_resolutions(h5file, setup))
     except Exception:  # noqa: BLE001
         return None
@@ -263,7 +258,7 @@ def _resolutions(h5file: h5py.File, setup: int) -> tx.Tuple[tx.Any, ...]:
 
 def _level(
     h5file: h5py.File,
-    hdf5: str,
+    hdf5: path.Path,
     pyramid: BdvRaw.Pyramid,
     timepoint: int,
     level: int,
