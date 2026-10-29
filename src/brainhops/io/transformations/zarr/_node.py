@@ -22,7 +22,7 @@ from brainhops.datamodel.axes import Axis
 from brainhops.io.common.zarr._internal_api import ZarrProxy, store_location
 
 # this format
-from ._axes import _to_axis
+from ._axes import to_axis
 
 # These axis types carry the components of a field's vectors.
 _VECTOR_TYPES = ("displacement", "coordinate")
@@ -68,7 +68,7 @@ def typed_axes(field_node: tx.Any, ndim: int) -> tx.Optional[tx.List[Axis]]:
     """
     fallback = None  # type: tx.Optional[tx.List[Axis]]
     for system in coordinate_systems(field_node):
-        axes = [_to_axis(axis.to_json()) for axis in system.axes]
+        axes = [to_axis(axis.to_json()) for axis in system.axes]
         if len(axes) != ndim:
             continue
         if any(axis.type in _VECTOR_TYPES for axis in axes):

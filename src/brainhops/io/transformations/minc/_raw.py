@@ -158,7 +158,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
         float
             The confidence, between 0 and 1.
         """
-        return _score(sniff_transforms(text) is not None, text, error)
+        return score(sniff_transforms(text) is not None, text, error)
 
     @classmethod
     def sniff_lines(
@@ -216,7 +216,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
         float
             The confidence, between 0 and 1.
         """
-        text = _decode(content, kwargs.get("encoding", "utf-8"))
+        text = decode(content, kwargs.get("encoding", "utf-8"))
         return cls.sniff_text(text, error=error)
 
     @classmethod
@@ -246,7 +246,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
         float
             The confidence, between 0 and 1.
         """
-        content = _read_bytes(filename)
+        content = read_bytes(filename)
         if content is None:
             return super().sniff_filename(filename, error=error, **kwargs)
         return cls.sniff_bytes(content, error=error, **kwargs)
@@ -326,7 +326,7 @@ class XfmRaw(Raw, TextFileReader, TextFileWriter):
         XfmRaw
             The record.
         """
-        return cls.from_text(_decode(content, encoding), **kwargs)
+        return cls.from_text(decode(content, encoding), **kwargs)
 
     @classmethod
     def from_filename(cls, filename: path.FilenameLike, **kwargs) -> "XfmRaw":
@@ -488,7 +488,7 @@ def read_file(filename: path.FilenameLike) -> bytes:
     ParserExistsError
         If the file does not exist.
     """
-    content = _read_bytes(filename)
+    content = read_bytes(filename)
     if content is None:
         raise ParserExistsError(f"No such file: {filename}")
     return content
@@ -576,12 +576,12 @@ def _rows(values: tx.Sequence[float], width: int) -> _Rows:
     )
 
 
-def _decode(content: bytes, encoding: str) -> str:
+def decode(content: bytes, encoding: str) -> str:
     """Decode the bytes of a file, keeping the bytes that do not decode."""
     return bytes(content).decode(encoding, "surrogateescape")
 
 
-def _read_bytes(filename: path.FilenameLike) -> tx.Optional[bytes]:
+def read_bytes(filename: path.FilenameLike) -> tx.Optional[bytes]:
     """Return the bytes of a file, or `None` if it does not exist."""
     if isinstance(filename, str):
         filename = path.Path(filename)
@@ -591,7 +591,7 @@ def _read_bytes(filename: path.FilenameLike) -> tx.Optional[bytes]:
         return file.read()
 
 
-def _score(
+def score(
     valid: bool, text: str, error: tx.Union[bool, tx.Type[Exception]]
 ) -> float:
     """Return the score of a text that libminc reads, or of its header."""

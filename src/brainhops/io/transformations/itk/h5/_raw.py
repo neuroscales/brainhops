@@ -20,15 +20,16 @@ from brainhops.io.base.parsers import (
 # io
 from brainhops.io.common.hdf5 import H5ArrayProxy, Hdf5ReaderWriter
 from brainhops.io.common.hdf5._internal_api import read_string
-
-from .._chains import _check_composite, _is_composite, _read_only, _type_name
-from .._common import (
-    _TRANSFORM_TYPE_RE,
-    ItkPrecision,
-    ItkStruct,
-    ItkTransformClass,
-    _type_fields,
+from brainhops.io.transformations.itk._internal_api import (
+    TRANSFORM_TYPE_RE,
+    check_composite,
+    is_composite,
+    read_only,
+    type_fields,
+    type_name,
 )
+
+from .._common import ItkPrecision, ItkStruct, ItkTransformClass
 
 TRANSFORM_GROUP = "TransformGroup"
 
@@ -168,7 +169,7 @@ class H5Raw(Raw, Hdf5ReaderWriter):
             _read_block(groups[name], source)
             for name in sorted(groups, key=_group_number)
         ]
-        _check_composite(blocks)
+        check_composite(blocks)
         return cls(header=header, blocks=tuple(blocks))
 
     # --- to -----------------------------------------------------------
@@ -260,10 +261,10 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
     `TranformFixedParameters`, and both spellings are read.
     """
     kind = read_string(group["TransformType"])
-    match = _TRANSFORM_TYPE_RE.match(kind)
+    match = TRANSFORM_TYPE_RE.match(kind)
     if not match:
         raise ParserContentError(f"Malformed ITK transform type: {kind!r}.")
-    fields = _type_fields(match)
+    fields = type_fields(match)
     kind = fields["type"]
     parameters = _dataset(group, "TransformParameters", "TranformParameters")
     fixed_parameters = _dataset(
@@ -281,8 +282,8 @@ def _read_block(group: h5py.Group, source: tx.Optional[str]) -> ItkStruct:
         fixed_parameters = fixed_parameters[()]
     return ItkStruct(
         **fields,
-        parameters=_read_only(parameters),
-        fixed_parameters=_read_only(fixed_parameters),
+        parameters=read_only(parameters),
+        fixed_parameters=read_only(fixed_parameters),
     )
 
 
@@ -298,8 +299,8 @@ def _group_content(
     The vectors are read into memory, in the precision that ITK writes
     them in. A composite header has no vectors.
     """
-    kind = _type_name(block)
-    if _is_composite(block):
+    kind = type_name(block)
+    if is_composite(block):
         return kind, None, None
     float32 = ItkPrecision(block.precision) == ItkPrecision.Float
     dtype = np.float32 if float32 else np.float64

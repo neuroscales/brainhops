@@ -117,7 +117,7 @@ class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
 # ----------------------------------------------------------------------
 
 
-def _nibabel_parts(
+def nibabel_parts(
     nifti: NiftiObject,
 ) -> tx.Tuple[tx.Optional[ArrayProtocol], _NiftiHeader]:
     """Return the array and the header of a nibabel image or header.
@@ -138,7 +138,7 @@ def _nibabel_parts(
     raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
 
 
-def _consolidated_metadata(
+def consolidated_metadata(
     xform: NiftiBasedTransformation, record: NiftiRaw
 ) -> NiftiMetadata:
     """Return the metadata that holds the record of a consolidation.

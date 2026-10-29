@@ -43,16 +43,21 @@ from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
-from brainhops.io.transformations.base._records import (
+from brainhops.io.transformations.base._internal_api import (
     matrix_to_disk,
     matrix_to_model,
     read_only,
 )
 
 # this format
-from .._formats import FreesurferTransformationFormat
+from brainhops.io.transformations.freesurfer._internal_api import (
+    FreesurferTransformationFormat,
+)
+from brainhops.io.transformations.freesurfer.lta._internal_api import (
+    volume_geometry,
+)
+
 from ..lta import LtaRaw
-from ..lta._matrix_utils import _volume_geometry
 from ._metadata import RegisterDatMetadata
 from ._raw import RegisterDatRaw
 
@@ -83,12 +88,12 @@ def _record(xform: "RegisterDatTransformation") -> tx.Optional[RegisterDatRaw]:
 # Python 3.14 evaluates its annotations when the class is built.
 
 
-def _as_reference_geometry(value: tx.Any) -> tx.Optional[Geometry]:
+def as_reference_geometry(value: tx.Any) -> tx.Optional[Geometry]:
     """Return the geometry of the reference volume, see `_as_geometry`."""
     return _as_geometry(value, "the reference volume")
 
 
-def _as_moving_geometry(value: tx.Any) -> tx.Optional[Geometry]:
+def as_moving_geometry(value: tx.Any) -> tx.Optional[Geometry]:
     """Return the geometry of the movable volume, see `_as_geometry`."""
     return _as_geometry(value, "the movable volume")
 
@@ -180,18 +185,18 @@ class RegisterDatTransformation(
     )
 
     # A geometry that is given, or assigned, is converted to a `Geometry`
-    # and checked by `_as_reference_geometry` or `_as_moving_geometry`.
+    # and checked by `as_reference_geometry` or `as_moving_geometry`.
     _reference: KwOnly[
         tx.Annotated[
             tx.Optional[Geometry],
-            ConvertTo(_as_reference_geometry),
+            ConvertTo(as_reference_geometry),
         ]
     ] = None
 
     _moving: KwOnly[
         tx.Annotated[
             tx.Optional[Geometry],
-            ConvertTo(_as_moving_geometry),
+            ConvertTo(as_moving_geometry),
         ]
     ] = None
 
@@ -579,7 +584,7 @@ class RegisterDatTransformationRASToRAS(RegisterDatTransformation):
             return None
         reference, moving = _geometries(self)
         tkr = np.asarray(record.matrix, dtype=np.float64)
-        return read_only(_tkr_to_scanner(tkr, reference, moving)[:-1])
+        return read_only(tkr_matrix_to_scanner(tkr, reference, moving)[:-1])
 
 
 # ----------------------------------------------------------------------
@@ -608,7 +613,7 @@ def _geometries(
     return xform.reference, xform.moving
 
 
-def _tkr_to_scanner(
+def tkr_matrix_to_scanner(
     matrix: np.ndarray, reference: Geometry, moving: Geometry
 ) -> np.ndarray:
     """Return the scanner RAS matrix of a tkregister RAS matrix.
@@ -621,7 +626,7 @@ def _tkr_to_scanner(
     return mov_tkr2ras @ matrix @ np.linalg.inv(ref_tkr2ras)
 
 
-def _scanner_to_tkr(
+def scanner_to_tkr(
     matrix: np.ndarray, reference: Geometry, moving: Geometry
 ) -> np.ndarray:
     """Return the tkregister RAS matrix of a scanner RAS matrix.
@@ -664,7 +669,7 @@ def _build_raw(xform: RegisterDatTransformation) -> RegisterDatRaw:
             reference, moving = _geometries(xform)
         except ValueError as e:
             raise UnrepresentableTransformationError(str(e)) from None
-        matrix = _scanner_to_tkr(homogeneous, reference, moving)
+        matrix = scanner_to_tkr(homogeneous, reference, moving)
     else:
 
         def name(system: tx.Any) -> str:
@@ -752,7 +757,7 @@ def _as_geometry(value: tx.Any, what: str) -> tx.Optional[Geometry]:
     if isinstance(value, Image):
         value = value.geometry
     elif isinstance(value, LtaRaw.VolumeInfo):
-        value = _volume_geometry(value)
+        value = volume_geometry(value)
     elif not isinstance(value, Geometry):
         raise TypeError(
             f"The geometry of {what} is a Geometry, an image or an "

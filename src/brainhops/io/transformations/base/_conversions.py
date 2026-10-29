@@ -337,11 +337,11 @@ def affine_between(
         chain that holds one).
     """
     chain = [
-        _bridge(input, t.input, t, cls),
+        bridge_systems(input, t.input, t, cls),
         t,
-        _bridge(t.output, output, t, cls),
+        bridge_systems(t.output, output, t, cls),
     ]
-    return _matrix(chain, t, cls)
+    return chain_matrix(chain, t, cls)
 
 
 def split_field_chain(
@@ -374,11 +374,11 @@ def split_field_chain(
         or what is on either side of it is not an affine.
     """
     leaves = [
-        _bridge(input, t.input, t, cls),
-        *_leaves(t),
-        _bridge(t.output, output, t, cls),
+        bridge_systems(input, t.input, t, cls),
+        *chain_leaves(t),
+        bridge_systems(t.output, output, t, cls),
     ]
-    found = [i for i, leaf in enumerate(leaves) if _is_field(leaf)]
+    found = [i for i, leaf in enumerate(leaves) if is_field(leaf)]
     if len(found) != 1:
         raise unrepresentable(
             t,
@@ -388,16 +388,19 @@ def split_field_chain(
         )
     i = found[0]
     field = leaves[i]
-    before = [*leaves[:i], _bridge(leaves[i - 1].output, field.input, t, cls)]
+    before = [
+        *leaves[:i],
+        bridge_systems(leaves[i - 1].output, field.input, t, cls),
+    ]
     after = [
-        _bridge(field.output, leaves[i + 1].input, t, cls),
+        bridge_systems(field.output, leaves[i + 1].input, t, cls),
         *leaves[i + 1 :],
     ]
     ndim = _field_ndim(field)
     return (
-        _matrix(before, t, cls, ndim),
+        chain_matrix(before, t, cls, ndim),
         field,
-        _matrix(after, t, cls, ndim),
+        chain_matrix(after, t, cls, ndim),
     )
 
 
@@ -448,7 +451,7 @@ def apply_affine(matrix: np.ndarray, values: ArrayProtocol) -> ArrayProtocol:
 # ----------------------------------------------------------------------
 
 
-def _bridge(
+def bridge_systems(
     source: tx.Optional[CoordinateSystem],
     target: tx.Optional[CoordinateSystem],
     t: _xforms.Transformation,
@@ -485,16 +488,18 @@ def _bridge(
         raise unrepresentable(t, cls, str(error)) from error
 
 
-def _leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
+def chain_leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
     # The transformations a chain is made of, nested chains unrolled.
     if not isinstance(t, _xforms.Sequence):
         return [t]
     return [
-        leaf for piece in t.transformations or () for leaf in _leaves(piece)
+        leaf
+        for piece in t.transformations or ()
+        for leaf in chain_leaves(piece)
     ]
 
 
-def _is_field(t: _xforms.Transformation) -> bool:
+def is_field(t: _xforms.Transformation) -> bool:
     return isinstance(t, (_xforms.DisplacementField, _xforms.CoordinateField))
 
 
@@ -504,7 +509,7 @@ def _field_ndim(field: _Field) -> tx.Optional[int]:
     return None if data is None else int(data.shape[-1])
 
 
-def _matrix(
+def chain_matrix(
     chain: tx.List[_xforms.Transformation],
     t: _xforms.Transformation,
     cls: type,
@@ -961,9 +966,9 @@ def sample_on_grid(
     points = apply_affine(grid2world, nodes)
     chain = [
         _xforms.CoordinateField(field=points, input=_VOXEL, output=input),
-        _bridge(input, t.input, t, cls),
+        bridge_systems(input, t.input, t, cls),
         t,
-        _bridge(t.output, output, t, cls),
+        bridge_systems(t.output, output, t, cls),
     ]
     try:
         mapped = _xforms.Sequence(transformations=chain).compute()
@@ -1105,8 +1110,8 @@ def world_pieces(
         If a bridge does not exist, or what lies between the fields is
         not an affine.
     """
-    leaves = _leaves(t)
-    fields = [i for i, leaf in enumerate(leaves) if _is_field(leaf)]
+    leaves = chain_leaves(t)
+    fields = [i for i, leaf in enumerate(leaves) if is_field(leaf)]
     ndim = next(
         (
             _field_ndim(leaves[i])
@@ -1124,21 +1129,21 @@ def world_pieces(
         # spaces, for example, are made of pieces without systems.
         chain = []
         if lo == 0:
-            chain.append(_bridge(world, t.input, t, cls))
+            chain.append(bridge_systems(world, t.input, t, cls))
             source = t.input
         else:
             source = leaves[lo - 1].output
         for leaf in leaves[lo:hi]:
-            chain += [_bridge(source, leaf.input, t, cls), leaf]
+            chain += [bridge_systems(source, leaf.input, t, cls), leaf]
             source = leaf.output
         if hi == len(leaves):
             chain += [
-                _bridge(source, t.output, t, cls),
-                _bridge(t.output, world, t, cls),
+                bridge_systems(source, t.output, t, cls),
+                bridge_systems(t.output, world, t, cls),
             ]
         else:
-            chain.append(_bridge(source, leaves[hi].input, t, cls))
-        return _matrix(chain, t, cls, ndim)
+            chain.append(bridge_systems(source, leaves[hi].input, t, cls))
+        return chain_matrix(chain, t, cls, ndim)
 
     def affine(
         matrix: np.ndarray,
@@ -1155,15 +1160,18 @@ def world_pieces(
         # the leaf just before the field when that leaf is an affine from
         # a world system, or `None`. This keeps the field on the grid that
         # it was placed on.
-        if i - 1 < lo or _is_field(leaves[i - 1]):
+        if i - 1 < lo or is_field(leaves[i - 1]):
             return None
         leaf = leaves[i - 1]
         to_leaf = _world_bridge(world, leaf.input, ndim)
         if to_leaf is None:
             return None
         try:
-            chain = [leaf, _bridge(leaf.output, leaves[i].input, t, cls)]
-            return _matrix(chain, t, cls, ndim) @ to_leaf
+            chain = [
+                leaf,
+                bridge_systems(leaf.output, leaves[i].input, t, cls),
+            ]
+            return chain_matrix(chain, t, cls, ndim) @ to_leaf
         except ConversionError:
             return None
 

@@ -144,7 +144,7 @@ class C3dAffine(
         record = _record(self)
         if record is None:
             return None
-        return _read_only(_matrix_to_model(record.matrix))
+        return _read_only(matrix_to_model(record.matrix))
 
     # --- sniff --------------------------------------------------------
 
@@ -468,7 +468,7 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
     return matrix
 
 
-def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
+def matrix_to_model(matrix: tx.Any) -> np.ndarray:
     """Return the data of a transformation from the matrix of a record.
 
     The record stores the homogeneous matrix, whose last row is dropped.
@@ -476,7 +476,7 @@ def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
     return np.asarray(matrix, dtype=np.float64)[:-1]
 
 
-def _matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
+def matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
     """Return the matrix that a record stores for the data of a model.
 
     The record stores the homogeneous matrix as a tuple of rows of floats.
@@ -535,7 +535,7 @@ def _build_raw(
             f"but the matrix has shape {shape}."
         )
     return C3dAffineRaw(
-        matrix=_matrix_to_disk(data),
+        matrix=matrix_to_disk(data),
         row_end="" if old is None else old.row_end,
     )
 

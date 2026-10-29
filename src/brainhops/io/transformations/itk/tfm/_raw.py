@@ -18,16 +18,18 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
 )
-
-from .._chains import _check_composite, _is_composite, _read_only, _type_name
-from .._common import (
-    _TRANSFORM_TYPE_RE,
-    ItkPrecision,
-    ItkStruct,
-    _type_fields,
+from brainhops.io.transformations.itk._internal_api import (
+    TRANSFORM_TYPE_RE,
+    check_composite,
+    is_composite,
+    read_only,
+    type_fields,
+    type_name,
 )
 
-_TRANSFORM_RE = re.compile(r"^Transform:\s*" + _TRANSFORM_TYPE_RE.pattern[1:])
+from .._common import ItkPrecision, ItkStruct
+
+_TRANSFORM_RE = re.compile(r"^Transform:\s*" + TRANSFORM_TYPE_RE.pattern[1:])
 _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
@@ -167,12 +169,12 @@ class TfmRaw(Raw, TextFileReader, TextFileWriter):
                 lines.next()
             blocks.append(
                 ItkStruct(
-                    **_type_fields(transform),
+                    **type_fields(transform),
                     parameters=_read_vector(parameters),
                     fixed_parameters=_read_vector(fixed_parameters),
                 )
             )
-        _check_composite(blocks)
+        check_composite(blocks)
         return cls(blocks=tuple(blocks), lines=tuple(text))
 
     # --- to -----------------------------------------------------------
@@ -250,7 +252,7 @@ def _read_vector(match: tx.Optional[re.Match]) -> np.ndarray:
     """Return the values of a parameter line, or an empty vector."""
     text = None if match is None else match.group("values")
     values = list(map(float, text.split())) if text else []
-    return _read_only(np.array(values))
+    return read_only(np.array(values))
 
 
 def _still_holds(record: TfmRaw) -> bool:
@@ -263,7 +265,7 @@ def _still_holds(record: TfmRaw) -> bool:
 
 def _same_block(first: ItkStruct, second: ItkStruct) -> bool:
     """Tell whether two blocks store the same values."""
-    return _type_name(first) == _type_name(second) and all(
+    return type_name(first) == type_name(second) and all(
         np.array_equal(
             np.asarray(getattr(first, name), dtype=np.float64),
             np.asarray(getattr(second, name), dtype=np.float64),
@@ -277,8 +279,8 @@ def _lines(blocks: tx.Sequence[ItkStruct]) -> tx.Iterator[str]:
     yield "#Insight Transform File V1.0"
     for index, block in enumerate(blocks):
         yield f"#Transform {index}"
-        yield f"Transform: {_type_name(block)}"
-        if _is_composite(block):
+        yield f"Transform: {type_name(block)}"
+        if is_composite(block):
             continue
         precision = ItkPrecision(block.precision)
         yield _vector_line("Parameters:", block.parameters, precision)

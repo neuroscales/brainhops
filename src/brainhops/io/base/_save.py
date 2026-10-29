@@ -362,10 +362,10 @@ def _convert(
     """
     # The transformation formats import this package, so their helpers are
     # imported when they are used.
-    from brainhops.io.transformations.base._conversions import (
+    from brainhops.io.transformations.base._internal_api import (
         UnusedOptionError,
+        relabels,
     )
-    from brainhops.io.transformations.base._converters import relabels
 
     if not own and relabels(obj, fmt):
         raise ConversionError(

@@ -47,13 +47,13 @@ class ScaledMmToScaledMm(_xforms.Affine):
 # ----------------------------------------------------------------------
 
 
-def _best_affine(obj: tx.Any) -> np.ndarray:
+def best_affine(obj: tx.Any) -> np.ndarray:
     """Return the voxel-to-world (RAS) affine of a nibabel image or header."""
     if hasattr(obj, "get_best_affine"):
         return np.asarray(obj.get_best_affine(), dtype=np.float64)
     header = header_of(obj)
     if header is not None:
-        return _best_affine(header)
+        return best_affine(header)
     if getattr(obj, "affine", None) is not None:
         return np.asarray(obj.affine, dtype=np.float64)
     raise ValueError(
@@ -62,7 +62,7 @@ def _best_affine(obj: tx.Any) -> np.ndarray:
     )
 
 
-def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
+def spatial_shape(obj: tx.Any) -> tx.Tuple[int, ...]:
     """Return the spatial shape of a nibabel image or header."""
     if hasattr(obj, "get_data_shape"):
         return tuple(int(s) for s in obj.get_data_shape())
@@ -70,7 +70,7 @@ def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
         return tuple(int(s) for s in obj.shape)
     header = header_of(obj)
     if header is not None:
-        return _shape(header)
+        return spatial_shape(header)
     raise ValueError("Cannot determine the shape of the image.")
 
 
@@ -93,7 +93,7 @@ def _pixdim(obj: tx.Any) -> np.ndarray:
     return pixdim
 
 
-class _ImageGeometry:
+class ImageGeometry:
     """Affines that place one image in the FSL coordinate systems.
 
     Built from a nibabel image or header, the geometry holds the affines
@@ -103,8 +103,8 @@ class _ImageGeometry:
     """
 
     def __init__(self, image: tx.Any) -> None:
-        vox2ras = _best_affine(image)
-        shape = _shape(image)
+        vox2ras = best_affine(image)
+        shape = spatial_shape(image)
         pixdim = _pixdim(image)
 
         # A header with a missing or degenerate sform can give a non-finite

@@ -8,8 +8,8 @@ import pytest
 from brainhops import io
 from brainhops.datamodel import transformations as xforms
 from brainhops.io.transformations.itk._common import (
-    _TRANSFORM_TYPE_RE,
-    _type_fields,
+    TRANSFORM_TYPE_RE,
+    type_fields,
 )
 
 
@@ -117,4 +117,4 @@ def test_order_suffix_is_only_valid_for_bspline() -> None:
     from brainhops.io.base.parsers import ParserContentError
 
     with pytest.raises(ParserContentError, match="Only B-spline"):
-        _type_fields(_TRANSFORM_TYPE_RE.match("AffineTransform_double_3_3_2"))
+        type_fields(TRANSFORM_TYPE_RE.match("AffineTransform_double_3_3_2"))

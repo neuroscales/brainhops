@@ -5,7 +5,7 @@ import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import converter, smart_replace
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     FieldParts,
     coordinate_parts,
@@ -17,7 +17,7 @@ from brainhops.io.transformations.base._conversions import (
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import RASCoordinateField
-from brainhops.io.transformations.nifti._converters import RAS
+from brainhops.io.transformations.nifti._internal_api import RAS
 
 from ._fields import SpmCoordinateField
 

@@ -12,7 +12,7 @@ from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import orientations as _orientation
 from brainhops.datamodel import systems as _systems
 
-from ._matrix_utils import _get_orient
+from ._matrix_utils import get_orient
 from ._raw import LtaRaw
 
 # The axes are an `AxisTuple`, as in every coordinate system. A plain tuple
@@ -39,7 +39,7 @@ def _make_axes(
     )
 
 
-def _name(raw: LtaRaw.VolumeInfo) -> tx.Dict[str, str]:
+def name_keywords(raw: LtaRaw.VolumeInfo) -> tx.Dict[str, str]:
     """Return the name that a volume gives its system, as keyword arguments.
 
     The name is the file name of the volume, or else its role (`"src"` or
@@ -104,8 +104,8 @@ class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
             The system, named after the file of the volume or its role.
         """
         return cls(
-            **_name(raw),
-            axes=_make_axes(names, unit=_INDEX, orientation=_get_orient(raw)),
+            **name_keywords(raw),
+            axes=_make_axes(names, unit=_INDEX, orientation=get_orient(raw)),
             raw=raw,
         )
 
@@ -139,8 +139,8 @@ class LtaScaledSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
             The system, named after the file of the volume or its role.
         """
         return cls(
-            **_name(raw),
-            axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
+            **name_keywords(raw),
+            axes=_make_axes(names, unit=_MM, orientation=get_orient(raw)),
             raw=raw,
         )
 
@@ -178,7 +178,7 @@ class LtaPhysicalSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
             The system, named after the file of the volume or its role.
         """
         return cls(
-            **_name(raw),
-            axes=_make_axes(names, unit=_MM, orientation=_get_orient(raw)),
+            **name_keywords(raw),
+            axes=_make_axes(names, unit=_MM, orientation=get_orient(raw)),
             raw=raw,
         )

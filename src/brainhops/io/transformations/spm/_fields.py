@@ -41,11 +41,11 @@ from brainhops.io.transformations.nifti import (
     NiftiRASCoordinateField,
     NiftiRASToVoxel,
 )
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import (
-    _check_single_field,
-    _field_to_disk,
-    _field_to_model,
+from brainhops.io.transformations.nifti._internal_api import (
+    check_single_field,
+    consolidated_metadata,
+    field_to_disk,
+    field_to_model,
 )
 
 
@@ -120,7 +120,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -274,7 +274,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -283,7 +283,7 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         raw, record = stored_parts(
             _spm_encoded(self, like, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -322,11 +322,11 @@ def _spm_encoded(
         for each of several volumes.
     """
     if field._data is not None:
-        stored = _field_to_disk(field._data)
+        stored = field_to_disk(field._data)
     else:
         stored = field.rawdata
     if stored is not None and field._transformations is None:
-        _check_single_field(stored, WriterError)
+        check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
         image = record_image(stored, record, overrides=overrides)
     else:
@@ -340,7 +340,7 @@ def _spm_encoded(
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        coordinates = _field_to_disk(coordinates)
+        coordinates = field_to_disk(coordinates)
         record = None if base is None else base.copy()
         image = record_image(coordinates, record, vox2ras, overrides)
     set_coordinates_intent(image.header)

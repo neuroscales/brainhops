@@ -66,12 +66,15 @@ from brainhops.io.transformations.base.fields import (
     DISPLACEMENT_HINTS,
     LPSCoordinateField,
 )
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
 # this_format
-from .._systems import _make_system
-from ._views import _itk_field_to_disk, _itk_field_to_model
+from brainhops.io.transformations.itk._internal_api import make_system
+from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._internal_api import (
+    consolidated_metadata,
+)
+
+from ._views import itk_field_to_disk, itk_field_to_model
 
 _NDIMS = (2, 3)
 """
@@ -216,7 +219,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         """
         if self.rawdata is None:
             return None
-        return _itk_field_to_model(self.rawdata)
+        return itk_field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -261,13 +264,13 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The ITK physical space that the field maps from."""
         ndim = self._ndim()
-        return None if ndim is None else _make_system(ndim)
+        return None if ndim is None else make_system(ndim)
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The ITK physical space that the field maps to."""
         ndim = self._ndim()
-        return None if ndim is None else _make_system(ndim)
+        return None if ndim is None else make_system(ndim)
 
     # --- decoding -----------------------------------------------------
 
@@ -322,7 +325,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     def _spaces(
         ndim: int,
     ) -> tx.Tuple[_systems.CoordinateSystem, _systems.CoordinateSystem]:
-        return _make_system(ndim), _voxel_system(ndim)
+        return make_system(ndim), _voxel_system(ndim)
 
     # --- slots --------------------------------------------------------
 
@@ -412,7 +415,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         )
         image = keep_given_fields(source._encoded(like, **overrides), fields)
         raw, record = stored_parts(image)
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -466,7 +469,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         was assigned.
         """
         if self._data is not None:
-            stored = _itk_field_to_disk(self._data)
+            stored = itk_field_to_disk(self._data)
         else:
             stored = self.rawdata
         if self.metadata is None or stored is None:
@@ -510,7 +513,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
                 f"is {vox2lps.shape[0] - 1}x{vox2lps.shape[1] - 1}."
             )
         vox2ras = _RAS_LPS @ embed_nifti_affine(vox2lps)
-        vectors = _itk_field_to_disk(vectors)
+        vectors = itk_field_to_disk(vectors)
         image = record_image(vectors, self._record(), vox2ras, overrides)
         image.header.set_intent(NIFTI_INTENT_VECTOR, name=self.INTENT_NAME)
         scode, qcode = self._xform_codes()

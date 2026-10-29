@@ -71,7 +71,7 @@ from brainhops.datamodel._internal_api import (
 from brainhops.errors import ConversionError
 
 # io
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FieldParts,
     affine_between,
     coordinate_parts,

@@ -46,7 +46,7 @@ from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
-from brainhops.io.transformations.base._records import read_only
+from brainhops.io.transformations.base._internal_api import read_only
 
 from . import _conventions
 from ._metadata import (

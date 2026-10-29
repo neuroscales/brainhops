@@ -142,10 +142,10 @@ from brainhops.io.transformations.afni import (
     AfniBrikWarp,
 )
 from brainhops.io.transformations.afni._views import (
-    _warp_to_disk as _afni_warp_to_disk,
+    warp_to_disk as _afni_warp_to_disk,
 )
 from brainhops.io.transformations.afni._views import (
-    _warp_to_model as _afni_warp_to_model,
+    warp_to_model as _afni_warp_to_model,
 )
 from brainhops.io.transformations.base._records import (
     matrix_to_disk,
@@ -155,17 +155,17 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinateField
 from brainhops.io.transformations.bdv import BdvViewRegistration
 from brainhops.io.transformations.bdv._xform import (
-    _matrix_to_disk as _bdv_matrix_to_disk,
+    matrix_to_disk as _bdv_matrix_to_disk,
 )
 from brainhops.io.transformations.bdv._xform import (
-    _matrix_to_model as _bdv_matrix_to_model,
+    matrix_to_model as _bdv_matrix_to_model,
 )
 from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
 from brainhops.io.transformations.c3d._affine import (
-    _matrix_to_disk as _c3d_to_disk,
+    matrix_to_disk as _c3d_to_disk,
 )
 from brainhops.io.transformations.c3d._affine import (
-    _matrix_to_model as _c3d_to_model,
+    matrix_to_model as _c3d_to_model,
 )
 from brainhops.io.transformations.elastix import (
     ElastixMetadata,
@@ -173,9 +173,9 @@ from brainhops.io.transformations.elastix import (
     ElastixTomlTransform,
 )
 from brainhops.io.transformations.elastix._blocks import (
-    _ElastixBSplineStruct,
-    _read_only,
-    _struct,
+    ElastixBSplineStruct,
+    itk_struct,
+    read_only,
 )
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
@@ -192,8 +192,8 @@ from brainhops.io.transformations.freesurfer.m3z import (
     M3zMorph,
 )
 from brainhops.io.transformations.freesurfer.m3z._xform import (
-    _positions_to_disk,
-    _positions_to_model,
+    positions_to_disk,
+    positions_to_model,
 )
 from brainhops.io.transformations.freesurfer.regdat import (
     RegisterDatMetadata,
@@ -228,10 +228,10 @@ from brainhops.io.transformations.minc import (
     XfmTransform,
 )
 from brainhops.io.transformations.minc._affine import (
-    _matrix_to_disk as _xfm_matrix_to_disk,
+    matrix_to_disk as _xfm_matrix_to_disk,
 )
 from brainhops.io.transformations.minc._affine import (
-    _matrix_to_model as _xfm_matrix_to_model,
+    matrix_to_model as _xfm_matrix_to_model,
 )
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinateField,
@@ -241,8 +241,8 @@ from brainhops.io.transformations.mrtrix import (
     MrtrixWarpFull,
 )
 from brainhops.io.transformations.mrtrix._views import (
-    _warp_to_disk,
-    _warp_to_model,
+    warp_to_disk,
+    warp_to_model,
 )
 from brainhops.io.transformations.neuroglancer import (
     NeuroglancerTransform,
@@ -258,10 +258,10 @@ from brainhops.io.transformations.trakem2 import (
     TrakEM2Raw,
 )
 from brainhops.io.transformations.trakem2._xform import (
-    _matrix_to_disk as _trakem2_matrix_to_disk,
+    matrix_to_disk as _trakem2_matrix_to_disk,
 )
 from brainhops.io.transformations.trakem2._xform import (
-    _matrix_to_model as _trakem2_matrix_to_model,
+    matrix_to_model as _trakem2_matrix_to_model,
 )
 
 try:
@@ -293,8 +293,8 @@ try:
         ItkNiftiDisplacementField,
     )
     from brainhops.io.transformations.itk.nifti._views import (
-        _itk_field_to_disk,
-        _itk_field_to_model,
+        itk_field_to_disk,
+        itk_field_to_model,
     )
     from brainhops.io.transformations.nifti import (
         NiftiRASCoordinateField,
@@ -303,10 +303,10 @@ try:
         NiftiVoxelToRAS,
     )
     from brainhops.io.transformations.nifti._views import (
-        _affine_to_disk,
-        _affine_to_model,
-        _field_to_disk,
-        _field_to_model,
+        affine_to_disk,
+        affine_to_model,
+        field_to_disk,
+        field_to_model,
     )
     from brainhops.io.transformations.niftyreg import (
         NiftyRegControlPointGrid,
@@ -468,13 +468,13 @@ try:
         X5Transform,
     )
     from brainhops.io.transformations.x5._blocks import (
-        _KINDS as _X5_KINDS,
+        KINDS as _X5_KINDS,
     )
     from brainhops.io.transformations.x5._blocks import (
-        _field_to_disk as _x5_field_to_disk,
+        field_to_disk as _x5_field_to_disk,
     )
     from brainhops.io.transformations.x5._blocks import (
-        _field_to_model as _x5_field_to_model,
+        field_to_model as _x5_field_to_model,
     )
 except ImportError:
     h5py = None
@@ -2146,8 +2146,8 @@ if nb is not None:
         vocabulary={"description": "a vocabulary edit"},
     )
     _NIFTI_FIELD = _NIFTI._replace(
-        to_model=_field_to_model,
-        to_disk=_field_to_disk,
+        to_model=field_to_model,
+        to_disk=field_to_disk,
         sample=_vectors,
         geometry=_chain_geometry,
         change_geometry=_chain_change_geometry,
@@ -2156,7 +2156,7 @@ if nb is not None:
     )
     _NIFTYREG = _NIFTI_FIELD
     _ITK = _NIFTI_FIELD._replace(
-        to_model=_itk_field_to_model, to_disk=_itk_field_to_disk
+        to_model=itk_field_to_model, to_disk=itk_field_to_disk
     )
 
     EXEMPLARS[NiftiImage] = _NIFTI._replace(
@@ -2169,8 +2169,8 @@ if nb is not None:
         # The matrix of an affine lives in the header, so a read affine has
         # no array, and its stored matrix is decoded from the header.
         proxies=(np.ndarray,),
-        to_model=_affine_to_model,
-        to_disk=_affine_to_disk,
+        to_model=affine_to_model,
+        to_disk=affine_to_disk,
         sample=lambda: _VOXEL_TO_RAS,
         geometry=_matrix_geometry,
         change_geometry=_matrix_change_geometry,
@@ -2186,13 +2186,13 @@ if nb is not None:
     )
     EXEMPLARS[NiftiRASDisplacementField] = _NIFTI_FIELD._replace(
         build=lambda data: NiftiRASDisplacementField(
-            rawdata=_field_to_disk(data)
+            rawdata=field_to_disk(data)
         ),
         foreign=_ras_displacements,
         options=frozenset({"log", "steps"}),
     )
     EXEMPLARS[SpmCoordinateField] = _NIFTI_FIELD._replace(
-        build=lambda data: SpmCoordinateField(rawdata=_field_to_disk(data)),
+        build=lambda data: SpmCoordinateField(rawdata=field_to_disk(data)),
         foreign=_spm_coordinates,
         prefix="y_",
     )
@@ -2204,11 +2204,11 @@ if nb is not None:
         NiftyRegVelocityGrid,
     ):
         EXEMPLARS[_cls] = _NIFTYREG._replace(
-            build=lambda data, cls=_cls: cls(rawdata=_field_to_disk(data))
+            build=lambda data, cls=_cls: cls(rawdata=field_to_disk(data))
         )
     for _cls in (ItkNiftiCoordinateField, ItkNiftiDisplacementField):
         EXEMPLARS[_cls] = _ITK._replace(
-            build=lambda data, cls=_cls: cls(rawdata=_itk_field_to_disk(data))
+            build=lambda data, cls=_cls: cls(rawdata=itk_field_to_disk(data))
         )
     _FNIRT = _NIFTI._replace(
         sample=_vectors,
@@ -2637,8 +2637,8 @@ _M3Z = Exemplar(
     # A morph is parsed in one pass and has no lazy data, so the positions
     # are an array of the record just after a read.
     proxies=(np.ndarray,),
-    to_model=_positions_to_model,
-    to_disk=_positions_to_disk,
+    to_model=positions_to_model,
+    to_disk=positions_to_disk,
     sample=_vectors,
     edit_record=_m3z_edit_record,
     record_edited=lambda raw: raw.exp_k == 7.5,
@@ -2815,7 +2815,7 @@ EXEMPLARS[Mat73MatrixAffine] = _MATRIX._replace(
 def _elastix_affine(
     data: tx.Any, center: tx.Sequence[float] = (0.0, 0.0, 0.0)
 ) -> tx.Any:
-    return _struct("AffineTransform", 3, data, center)
+    return itk_struct("AffineTransform", 3, data, center)
 
 
 def _elastix_bspline(
@@ -2826,8 +2826,8 @@ def _elastix_bspline(
     grid = np.concatenate(
         [[2, 3, 4], origin, [1.0, 1.0, 1.0], np.eye(3).ravel()]
     )
-    return _struct(
-        "BSplineTransform", 3, data, grid, cls=_ElastixBSplineStruct
+    return itk_struct(
+        "BSplineTransform", 3, data, grid, cls=ElastixBSplineStruct
     )
 
 
@@ -2880,7 +2880,7 @@ def _elastix_exemplar(cls: type, suffix: str) -> Exemplar:
         # the transform parameters are an array of the record just after
         # a read.
         proxies=(np.ndarray,),
-        to_model=_read_only,
+        to_model=read_only,
         to_disk=lambda data: np.asarray(data, dtype=np.float64),
         sample=lambda: np.arange(12.0),
         edit_record=_elastix_edit_record,
@@ -3170,8 +3170,8 @@ def _warpfull_change_geometry(xform: tx.Any) -> None:
 
 
 _MRTRIX_WARP = _MRTRIX._replace(
-    to_model=_warp_to_model,
-    to_disk=_warp_to_disk,
+    to_model=warp_to_model,
+    to_disk=warp_to_disk,
     sample=_vectors,
     geometry=_chain_geometry,
     change_geometry=_chain_change_geometry,

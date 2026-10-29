@@ -55,19 +55,22 @@ from brainhops.io.metadata._internal_api import (
     requested_fields,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import (
-    _check_single_field,
-    _field_to_model,
-)
 
 # this format
-from .._affines import _ImageGeometry
-from .._fields import RASToWarpField, WarpFieldToRAS
-from .._formats import FslTransformationFormat
-from .._keywords import pop_aliased
-from .._repr import stored_repr
+from brainhops.io.transformations.fsl._internal_api import (
+    FslTransformationFormat,
+    ImageGeometry,
+    RASToWarpField,
+    WarpFieldToRAS,
+    pop_aliased,
+    stored_repr,
+)
+from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._internal_api import (
+    check_single_field,
+    consolidated_metadata,
+    field_to_model,
+)
 
 # Intent codes of FSL, which its own copy of `nifti1.h` defines, as
 # listed in `fsl/data/constants.py` of fslpy 3.29.1.
@@ -261,8 +264,8 @@ class FnirtWarpField(
     def _pop_images(
         cls, kwargs: tx.Dict[str, tx.Any]
     ) -> tx.Tuple[tx.Optional[_ImageLike], tx.Optional[_ImageLike]]:
-        moving = _read_image(pop_aliased(cls, kwargs, "moving"))
-        reference = _read_image(pop_aliased(cls, kwargs, "reference"))
+        moving = read_image(pop_aliased(cls, kwargs, "moving"))
+        reference = read_image(pop_aliased(cls, kwargs, "reference"))
         return moving, reference
 
     @classmethod
@@ -401,7 +404,7 @@ class FnirtWarpField(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -410,7 +413,7 @@ class FnirtWarpField(
         raw, record = stored_parts(
             _fnirt_encoded(self, like, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -564,7 +567,7 @@ class FnirtWarpField(
         )
         return bool(np.all(np.isfinite(sizes) & (sizes > 0)))
 
-    def _ref_to_field(self, ref: _ImageGeometry) -> np.ndarray:
+    def _ref_to_field(self, ref: ImageGeometry) -> np.ndarray:
         """Affine from reference voxels to the coordinates of the warp grid.
 
         A dense field uses the voxel-to-world geometry in its own header.
@@ -596,11 +599,11 @@ class FnirtWarpField(
         # from the stored voxels instead, which differs from FSL when the
         # reference has a positive determinant (item 220 of the memo).
         if not self._is_coeff():
-            grid = _ImageGeometry(header_of(self))
+            grid = ImageGeometry(header_of(self))
             return grid.ras2vox @ ref.vox2ras
         knot_mm = self._reference_pixdim() * self._stored_knot_spacing()
         grid = np.diag(np.concatenate([1.0 / knot_mm, [1.0]])) @ ref.vox2fsl
-        grid[:3, 3] += _anchor_offsets(
+        grid[:3, 3] += anchor_offsets(
             self._degree(), self._stored_knot_spacing()
         )
         return grid
@@ -623,7 +626,7 @@ class FnirtWarpField(
             return np.eye(4, dtype=np.float64)
         return np.linalg.inv(sform)
 
-    def _reference_geometry(self) -> _ImageGeometry:
+    def _reference_geometry(self) -> ImageGeometry:
         reference = self.reference
         if reference is None:
             if self._is_coeff():
@@ -635,16 +638,16 @@ class FnirtWarpField(
                     "transformation."
                 )
             reference = header_of(self)
-        return _ImageGeometry(reference)
+        return ImageGeometry(reference)
 
     def _raw_field(self) -> tx.Any:
         # A 5-D vector field in the layout of the NIfTI standard is
         # collapsed to `(*grid, 3)`. A field per volume, whose fourth
         # axis is longer than one, is refused with `ParserContentError`
         # because batched transformations are not supported yet (#576).
-        return _field_to_model(self.data)
+        return field_to_model(self.data)
 
-    def _field_array(self, ref: _ImageGeometry) -> tx.Any:
+    def _field_array(self, ref: ImageGeometry) -> tx.Any:
         """The field on its own grid, as scaled millimetre displacements.
 
         Coefficients are returned unchanged and absolute deformations are made
@@ -657,11 +660,11 @@ class FnirtWarpField(
 
         shape = tuple(int(s) for s in field.shape[:3])
         grid_to_scaled = ref.vox2fsl @ np.linalg.inv(self._ref_to_field(ref))
-        ref_scaled = _voxel_grid_in_scaled_mm(shape, grid_to_scaled, xp)
+        ref_scaled = voxel_grid_in_scaled_mm(shape, grid_to_scaled, xp)
 
         deformation_type = self.deformation_type
         if deformation_type is None:
-            deformation_type = _detect_deformation_type(field, ref_scaled)
+            deformation_type = detect_deformation_type(field, ref_scaled)
         if deformation_type == "absolute":
             return field - ref_scaled
         if deformation_type == "relative":
@@ -701,7 +704,7 @@ class FnirtWarpField(
                 "when loading, or set it on the transformation."
             )
         ref = self._reference_geometry()
-        mov = _ImageGeometry(self.moving)
+        mov = ImageGeometry(self.moving)
         if not self._has_spline_parameters():
             raise ValueError(
                 "A FNIRT coefficient field stores its knot spacing in the "
@@ -823,7 +826,7 @@ def _fnirt_encoded(
         stored = field.rawdata
     if stored is None:
         raise WriterError("A FNIRT file needs its field data to be written.")
-    _check_single_field(stored, WriterError)
+    check_single_field(stored, WriterError)
     record = None if base is None else base.copy()
     image = record_image(stored, record, overrides=overrides)
     if header_of(field) is None:
@@ -845,8 +848,8 @@ def _warp_chain(
     store: tx.Any,
     bound: tx.Union[str, float],
     ref_to_field: np.ndarray,
-    ref: _ImageGeometry,
-    mov: _ImageGeometry,
+    ref: ImageGeometry,
+    mov: ImageGeometry,
     ref_to_source: np.ndarray,
 ) -> tx.Tuple[_xforms.Transformation, ...]:
     """Build the lazy reference-RAS to moving-RAS chain of a warp field.
@@ -901,7 +904,7 @@ def _warp_chain(
 # ----------------------------------------------------------------------
 
 
-def _read_image(image: tx.Any) -> tx.Any:
+def read_image(image: tx.Any) -> tx.Any:
     """Return an image, with a path read as a NIfTI header."""
     if isinstance(image, (str, os.PathLike)):
         return nb.load(os.fspath(image)).header
@@ -939,9 +942,9 @@ def _with_geometry(
             if value is not None and getattr(warp, name) is None:
                 given[name] = value
     if "moving" in given:
-        given["moving"] = _read_image(given["moving"])
+        given["moving"] = read_image(given["moving"])
     if "reference" in given:
-        given["reference"] = _read_image(given["reference"])
+        given["reference"] = read_image(given["reference"])
     return replace(warp, **given) if given else warp
 
 
@@ -1046,7 +1049,7 @@ def _through_deformation(
     )
 
 
-def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
+def anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
     """Return the shift of the knots of FSL on each axis, in knots.
 
     FSL centres coefficient `c` at `(c - degree // 2) * ksp`, and at `c`
@@ -1062,14 +1065,14 @@ def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
     return np.where(spacing == 1.0, 0.0, step).astype(np.float64)
 
 
-def _voxel_grid_in_scaled_mm(
+def voxel_grid_in_scaled_mm(
     shape: tx.Tuple[int, ...], vox2fsl: np.ndarray, backend: tx.Any
 ) -> tx.Any:
     """Scaled millimetre coordinates of every voxel of a grid."""
     return voxel_grid_coordinates(shape, vox2fsl, backend)
 
 
-def _detect_deformation_type(field: tx.Any, ref_scaled: tx.Any) -> str:
+def detect_deformation_type(field: tx.Any, ref_scaled: tx.Any) -> str:
     """Infer whether a deformation field stores positions or displacements.
 
     Positions grow with the voxel position and spread widely. The field is

@@ -44,7 +44,7 @@ from brainhops._core._internal_api import (
 )
 from brainhops._core._internal_api import inv as invm
 from brainhops._core.backends import backend
-from brainhops._ext.invfield import inverse as inverse_disp
+from brainhops._ext.invfield._internal_api import inverse as inverse_disp
 
 # datamodel
 from brainhops.datamodel import kinds

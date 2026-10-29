@@ -51,7 +51,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import smart_replace
 from brainhops.datamodel.enums import StoreEnum
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
     coordinate_parts,

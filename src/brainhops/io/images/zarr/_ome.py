@@ -41,7 +41,7 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
-from brainhops.io.transformations.zarr._axes import _to_axis
+from brainhops.io.transformations.zarr._internal_api import to_axis
 
 # Spline degree of each OME interpolation name.
 _INTERPOLATION_DEGREE = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
@@ -204,7 +204,7 @@ def _output_system(multiscale: Multiscale) -> tx.Any:
 def multiscale_axes(multiscale: Multiscale) -> tx.List[Axis]:
     """Return the axes of a multiscale as brainhops axes, in stored order."""
     system = _output_system(multiscale)
-    return [_to_axis(axis.to_json()) for axis in system.axes]
+    return [to_axis(axis.to_json()) for axis in system.axes]
 
 
 def intrinsic_name(multiscale: Multiscale) -> tx.Optional[str]:
@@ -226,7 +226,7 @@ def system_axes(multiscale: Multiscale) -> tx.Dict[str, tx.List[Axis]]:
     for system in multiscale.coordinateSystems:
         name = getattr(system, "name", None)
         if isinstance(name, str):
-            axes[name] = [_to_axis(axis.to_json()) for axis in system.axes]
+            axes[name] = [to_axis(axis.to_json()) for axis in system.axes]
     return axes
 
 

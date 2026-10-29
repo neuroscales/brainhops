@@ -50,7 +50,7 @@ def _record(xform: "BdvViewRegistration") -> tx.Optional[BdvRaw]:
     return None if metadata is None else metadata.raw
 
 
-def _matrix_to_model(values: tx.Sequence[float]) -> np.ndarray:
+def matrix_to_model(values: tx.Sequence[float]) -> np.ndarray:
     """Return the `(3, 4)` matrix of the twelve values of a transform.
 
     The values are the first three rows of the matrix, row after row
@@ -64,7 +64,7 @@ def _matrix_to_model(values: tx.Sequence[float]) -> np.ndarray:
     return matrix
 
 
-def _matrix_to_disk(data: ArrayProtocol) -> tx.Tuple[float, ...]:
+def matrix_to_disk(data: ArrayProtocol) -> tx.Tuple[float, ...]:
     """Return the twelve values that a transform stores for a matrix.
 
     The matrix is a `(3, 4)` matrix, or a `(4, 4)` homogeneous one.
@@ -107,7 +107,7 @@ def _decode(registration: BdvRaw.Registration, index: int) -> _xforms.Affine:
         )
     last = len(registration.transforms) - 1
     return _xforms.Affine(
-        matrix=_matrix_to_model(item.affine),
+        matrix=matrix_to_model(item.affine),
         input=voxel_system() if index == last else None,
         output=global_system() if index == 0 else None,
     )
@@ -659,7 +659,7 @@ def _encode(
                 f"BigDataViewer stores affine transforms, and a "
                 f"{type(item).__name__} is not one."
             ) from error
-        listed.append(BdvRaw.Transform(affine=_matrix_to_disk(matrix)))
+        listed.append(BdvRaw.Transform(affine=matrix_to_disk(matrix)))
     if record is None:
         record = BdvRaw()
     return record.with_registration(timepoint, setup, listed)

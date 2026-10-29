@@ -54,7 +54,7 @@ from brainhops.datamodel._internal_api import (
 )
 
 # io
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     FieldParts,
     affine_between,

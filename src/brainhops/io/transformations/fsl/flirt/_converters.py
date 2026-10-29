@@ -33,7 +33,7 @@ import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import convert_withlog, converter
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
     format_options,
@@ -41,8 +41,8 @@ from brainhops.io.transformations.base._conversions import (
     unrepresentable,
 )
 from brainhops.io.transformations.base.affines import _RAS
+from brainhops.io.transformations.fsl._internal_api import ImageGeometry
 
-from .._affines import _ImageGeometry
 from ._xform import FlirtTransform
 
 OPTIONS = ("reference", "moving")
@@ -79,8 +79,8 @@ def _(
             f"{len(world) - 1} dimensions.",
         )
     try:
-        reference = _ImageGeometry(options["reference"])
-        moving = _ImageGeometry(options["moving"])
+        reference = ImageGeometry(options["reference"])
+        moving = ImageGeometry(options["moving"])
         flirt = reference.ras2fsl @ np.linalg.inv(world) @ moving.fsl2ras
     except (ValueError, TypeError, np.linalg.LinAlgError) as error:
         raise unrepresentable(

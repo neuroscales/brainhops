@@ -30,11 +30,9 @@ from brainhops.io.metadata._internal_api import (
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
     format_options,
-)
-from brainhops.io.transformations.base._records import (
     matrix_to_disk,
     matrix_to_model,
     read_only,

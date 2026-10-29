@@ -86,7 +86,7 @@ from brainhops.io.transformations.base.fields import (
 
 # this format
 from ._formats import MrtrixTransformationFormat
-from ._views import _warp_to_disk, _warp_to_model
+from ._views import warp_to_disk, warp_to_model
 
 _NDIM = 3
 """The number of spatial dimensions of an MRtrix warp."""
@@ -475,7 +475,7 @@ class MrtrixCoordinateField(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
         "metadata", default=None
@@ -764,7 +764,7 @@ class MrtrixDisplacementField(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
         "metadata", default=None
@@ -1061,7 +1061,7 @@ class MrtrixWarpFull(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
         "metadata", default=None
@@ -1787,7 +1787,7 @@ def _stored(xform: MrtrixWarp) -> ArrayProtocol:
         If the warp has no values.
     """
     if xform._data is not None:
-        return _warp_to_disk(xform._data)
+        return warp_to_disk(xform._data)
     if xform.rawdata is None:
         raise WriterError(
             "This warp has no values, so there is nothing to write."

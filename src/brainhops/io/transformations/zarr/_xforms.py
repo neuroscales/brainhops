@@ -239,7 +239,7 @@ class OmeZarrField(
             ]
         else:
             spatial = list(range(spatial_ndim))
-        placements = [_dataset_placement(ds, spatial, ndim) for ds in datasets]
+        placements = [dataset_placement(ds, spatial, ndim) for ds in datasets]
         voxel2world = placements[0]
         world2voxel = voxel2world.inverse()
         level_transforms = [
@@ -397,7 +397,7 @@ class OmeZarrField(
     def _level_voxel2world(self, index: int, ndim: int) -> Transformation:
         # Always a defined affine: the finest placement composed with the
         # transformation from this level's grid to the finest grid.
-        base = _affine_or_identity(
+        base = affine_or_identity(
             self.voxel2world if self.voxel2world is not None else Identity(),
             ndim,
         )
@@ -500,7 +500,7 @@ def _to_voxel_displacement(
     return raw @ ab.asarray(inverse[:, :-1].T)
 
 
-def _dataset_placement(
+def dataset_placement(
     dataset: tx.Any, spatial: tx.Sequence[int], ndim: int
 ) -> Transformation:
     # A level's placement is the dataset's first coordinate transformation, or
@@ -556,7 +556,7 @@ def _spatial_part(
     return Affine(matrix=matrix[np.ix_(spatial, spatial + [ndim])])
 
 
-def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
+def affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
     # An affine placement is returned unchanged. Otherwise, an identity affine
     # stands in, so that the leading world-to-voxel element stays a defined
     # affine rather than a bare identity.

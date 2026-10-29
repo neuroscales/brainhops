@@ -23,14 +23,14 @@ from brainhops.io.base.parsers import (  # noqa: E402
 )
 from brainhops.io.transformations.fsl import FlirtTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
+    ImageGeometry,
     VoxelToScaledMm,
-    _ImageGeometry,
 )
 from brainhops.io.transformations.fsl.fnirt import FnirtWarpField  # noqa: E402
 from brainhops.io.transformations.fsl.fnirt._base import (  # noqa: E402
-    _anchor_offsets,
-    _detect_deformation_type,
-    _voxel_grid_in_scaled_mm,
+    anchor_offsets,
+    detect_deformation_type,
+    voxel_grid_in_scaled_mm,
 )
 
 data_dir = Path(__file__).parent / "data"
@@ -74,7 +74,7 @@ def _fsl_vox2scaled(affine, shape, pixdim):  # noqa: ANN001, ANN202
 
 
 def test_scaled_mm_flips_x_for_a_neurological_image() -> None:
-    geom = _ImageGeometry(_image(REF_SHAPE, REF_AFFINE))
+    geom = ImageGeometry(_image(REF_SHAPE, REF_AFFINE))
     assert geom.is_neurological
     expected = _fsl_vox2scaled(REF_AFFINE, REF_SHAPE, [2.0, 2.0, 2.5])
     assert np.allclose(geom.vox2fsl, expected)
@@ -83,13 +83,13 @@ def test_scaled_mm_flips_x_for_a_neurological_image() -> None:
 
 
 def test_scaled_mm_does_not_flip_a_radiological_image() -> None:
-    geom = _ImageGeometry(_image(MOV_SHAPE, MOV_AFFINE))
+    geom = ImageGeometry(_image(MOV_SHAPE, MOV_AFFINE))
     assert not geom.is_neurological
     assert np.allclose(geom.vox2fsl, np.diag([1.5, 1.5, 3.0, 1.0]))
 
 
 def test_scaled_mm_affine_object_matches_geometry() -> None:
-    geom = _ImageGeometry(_image(REF_SHAPE, REF_AFFINE))
+    geom = ImageGeometry(_image(REF_SHAPE, REF_AFFINE))
     xform = VoxelToScaledMm(matrix=geom.vox2fsl[:-1])
     assert np.allclose(xform.matrix, geom.vox2fsl[:-1])
 
@@ -113,7 +113,7 @@ class _StubHeader:
 def test_degenerate_header_does_not_crash() -> None:
     """A non-finite affine and zero zooms still give a finite geometry."""
     header = _StubHeader(np.full((4, 4), np.nan), (0.0, 0.0, 0.0), (4, 5, 6))
-    geom = _ImageGeometry(header)
+    geom = ImageGeometry(header)
     assert np.all(np.isfinite(geom.vox2fsl))
     assert np.all(np.isfinite(geom.fsl2ras))
     # Missing zooms are replaced with one, not zero.
@@ -123,7 +123,7 @@ def test_degenerate_header_does_not_crash() -> None:
 def test_missing_zoom_axis_is_replaced_with_one() -> None:
     """A header with fewer than three zooms is padded, not truncated."""
     header = _StubHeader(np.eye(4), (2.0,), (4, 5, 6))
-    geom = _ImageGeometry(header)
+    geom = ImageGeometry(header)
     assert np.allclose(geom.pixdim, [2.0, 1.0, 1.0])
 
 
@@ -411,7 +411,7 @@ def _warp(field, intent=2006):  # noqa: ANN001, ANN202
 
 
 def _world_field(warp, reference):  # noqa: ANN001, ANN202
-    ref = _ImageGeometry(reference)
+    ref = ImageGeometry(reference)
     shape = ref.shape
     grid = np.stack(
         np.meshgrid(*[np.arange(s) for s in shape], indexing="ij"), -1
@@ -459,14 +459,12 @@ def test_fnirt_detects_absolute_and_relative() -> None:
     _, absolute, relative = _fnirt_setup()
     ref_v2f = _fsl_vox2scaled(REF_AFFINE, REF_SHAPE, [2.0, 2.0, 2.5])
     xp = array_backend()
-    ref_scaled = _voxel_grid_in_scaled_mm(REF_SHAPE, ref_v2f, xp)
+    ref_scaled = voxel_grid_in_scaled_mm(REF_SHAPE, ref_v2f, xp)
     assert (
-        _detect_deformation_type(xp.asarray(absolute), ref_scaled)
-        == "absolute"
+        detect_deformation_type(xp.asarray(absolute), ref_scaled) == "absolute"
     )
     assert (
-        _detect_deformation_type(xp.asarray(relative), ref_scaled)
-        == "relative"
+        detect_deformation_type(xp.asarray(relative), ref_scaled) == "relative"
     )
 
 
@@ -694,16 +692,16 @@ def test_coefficient_field_repr_and_inspection_do_not_raise() -> None:
 
 def test_anchor_offset_is_floor_degree_over_two() -> None:
     """The knot offset is degree // 2 for cubic and quadratic splines."""
-    assert np.allclose(_anchor_offsets(3, [5, 5, 5]), [1, 1, 1])
-    assert np.allclose(_anchor_offsets(2, [5, 5, 5]), [1, 1, 1])
+    assert np.allclose(anchor_offsets(3, [5, 5, 5]), [1, 1, 1])
+    assert np.allclose(anchor_offsets(2, [5, 5, 5]), [1, 1, 1])
     # A dense field (degree 1, spacing 1) has no offset.
-    assert np.allclose(_anchor_offsets(1, [1, 1, 1]), [0, 0, 0])
+    assert np.allclose(anchor_offsets(1, [1, 1, 1]), [0, 0, 0])
 
 
 def test_anchor_offset_is_zero_where_knot_spacing_is_one() -> None:
     """An axis with a knot spacing of one has no offset."""
-    assert np.allclose(_anchor_offsets(2, [1, 5, 5]), [0, 1, 1])
-    assert np.allclose(_anchor_offsets(3, [5, 1, 5]), [1, 0, 1])
+    assert np.allclose(anchor_offsets(2, [1, 5, 5]), [0, 1, 1])
+    assert np.allclose(anchor_offsets(3, [5, 1, 5]), [1, 0, 1])
 
 
 # ----------------------------------------------------------------------

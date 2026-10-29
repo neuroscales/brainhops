@@ -39,7 +39,7 @@ from brainhops.io.transformations.zarr import (  # noqa: E402
     OmeFieldError,
     OmeZarrField,
 )
-from brainhops.io.transformations.zarr._axes import _to_axis  # noqa: E402
+from brainhops.io.transformations.zarr._axes import to_axis  # noqa: E402
 
 
 def _write_field_store(
@@ -405,13 +405,13 @@ def test_reader_selects_a_level_by_target_resolution() -> None:
 
 
 def test_to_axis_maps_each_ome_type() -> None:
-    assert isinstance(_to_axis({"type": "space"}), SpaceAxis)
-    assert isinstance(_to_axis({"type": "time"}), TimeAxis)
-    assert isinstance(_to_axis({"type": "channel"}), ChannelAxis)
-    assert isinstance(_to_axis({"type": "displacement"}), DisplacementAxis)
-    assert isinstance(_to_axis({"type": "coordinate"}), CoordinateAxis)
+    assert isinstance(to_axis({"type": "space"}), SpaceAxis)
+    assert isinstance(to_axis({"type": "time"}), TimeAxis)
+    assert isinstance(to_axis({"type": "channel"}), ChannelAxis)
+    assert isinstance(to_axis({"type": "displacement"}), DisplacementAxis)
+    assert isinstance(to_axis({"type": "coordinate"}), CoordinateAxis)
     # An unrecognised type falls back to a plain axis carrying the type.
-    other = _to_axis({"type": "array", "name": "c"})
+    other = to_axis({"type": "array", "name": "c"})
     assert type(other) is Axis
     assert other.type == "array"
     assert other.name == "c"
@@ -460,8 +460,8 @@ def test_a_placement_without_a_matrix_is_refused(
 
 def test_a_placement_without_a_matrix_becomes_the_identity() -> None:
     from brainhops.io.transformations.zarr._xforms import (
-        _affine_or_identity,
+        affine_or_identity,
     )
 
-    affine = _affine_or_identity(_placement_without_matrix(), 3)
+    affine = affine_or_identity(_placement_without_matrix(), 3)
     np.testing.assert_array_equal(np.asarray(affine.matrix), np.eye(4)[:3])

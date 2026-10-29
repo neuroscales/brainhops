@@ -55,7 +55,7 @@ from brainhops.io.metadata._internal_api import (
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base._converters import (
+from brainhops.io.transformations.base._internal_api import (
     relabel,
     relabelling,
 )
@@ -69,11 +69,11 @@ from brainhops.io.transformations.base.fields import (
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import (
-    _check_single_field,
-    _field_to_disk,
-    _field_to_model,
+from brainhops.io.transformations.nifti._internal_api import (
+    check_single_field,
+    consolidated_metadata,
+    field_to_disk,
+    field_to_model,
 )
 
 # this format
@@ -390,7 +390,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -564,7 +564,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -578,7 +578,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         )
         image = keep_given_fields(source._encoded(like, **overrides), fields)
         raw, record = stored_parts(image)
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -633,14 +633,14 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         was assigned.
         """
         if self._data is not None:
-            stored = _field_to_disk(self._data)
+            stored = field_to_disk(self._data)
         else:
             stored = self.rawdata
         if stored is None or self.niftyreg_type not in type(self).TYPES:
             return None
         if self._transformations is not None:
             return None
-        _check_single_field(stored, WriterError)
+        check_single_field(stored, WriterError)
         image = record_image(stored, self._record(), overrides=overrides)
         apply_like(image, like)
         apply_overrides(image, overrides)
@@ -670,7 +670,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         deformation fields in single precision, and refuses a grid of
         control points whose type differs from that of the field.
         """
-        vectors = _field_to_disk(vectors)
+        vectors = field_to_disk(vectors)
         image = record_image(vectors, self._record(), vox2world, overrides)
         header = image.header
         header.set_intent(NIFTI_INTENT_VECTOR, name=NIFTI_INTENT_NAME_NIFTYREG)

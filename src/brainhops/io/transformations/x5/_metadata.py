@@ -202,7 +202,7 @@ class X5Metadata(Hdf5ReaderWriter, MetadataFormat):
 # ----------------------------------------------------------------------
 
 
-def _vocabulary_node(raw: tx.Optional[X5Raw]) -> tx.Optional[int]:
+def vocabulary_node(raw: tx.Optional[X5Raw]) -> tx.Optional[int]:
     """Return the index of the transform that holds the vocabulary.
 
     It is the single transform of the first chain, or the single
@@ -219,7 +219,7 @@ def _vocabulary_node(raw: tx.Optional[X5Raw]) -> tx.Optional[int]:
 
 def _decode(raw: tx.Optional[X5Raw]) -> tx.Dict[str, tx.Any]:
     """Return the fields that the JSON metadata of the transform holds."""
-    index = _vocabulary_node(raw)
+    index = vocabulary_node(raw)
     if index is None:
         return {}
     json = raw.nodes[index].metadata
@@ -239,7 +239,7 @@ def _encode(
     transform that holds the vocabulary, every field is left in
     `changed`, so that it is reported as lost.
     """
-    index = _vocabulary_node(raw)
+    index = vocabulary_node(raw)
     if index is None:
         return raw
     node = raw.nodes[index]

@@ -27,13 +27,13 @@ from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
-from brainhops.io.transformations.base._conversions import affine_between
+from brainhops.io.transformations.base._internal_api import affine_between
 
 # this format
 from ._formats import AfniAffineFormat
 from ._geometry import cardinal_to_real_matrix
 from ._metadata import AfniAffineMetadata
-from ._raw import _COMMENT, AfniAffineRaw
+from ._raw import COMMENT, AfniAffineRaw
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -395,7 +395,7 @@ class AfniAffine(
         if record is not None:
             comment = record.comment
         else:
-            comment = _COMMENT if oneline else None
+            comment = COMMENT if oneline else None
         record = AfniAffineRaw(
             matrices=matrices, comment=comment, oneline=oneline
         )

@@ -47,8 +47,8 @@ from brainhops.io.transformations.freesurfer.lta import (
     LtaValidity,
 )
 from brainhops.io.transformations.freesurfer.lta._matrix_utils import (
-    _get_vox2ras,
-    _volume_geometry,
+    get_vox2ras,
+    volume_geometry,
 )
 from brainhops.io.transformations.freesurfer.regdat import (
     RegisterDatMetadata,
@@ -124,7 +124,7 @@ def _write(
 
 
 def _tkr2ras(info: LtaRaw.VolumeInfo) -> np.ndarray:
-    return _get_vox2ras(info) @ np.linalg.inv(
+    return get_vox2ras(info) @ np.linalg.inv(
         fs_vox2tkr(info.volume, info.voxelsize)
     )
 
@@ -453,7 +453,7 @@ def _expected_scanner(tkr: np.ndarray) -> np.ndarray:
     # The inverse of `MRItkReg2Native(ref, mov, R)` in `utils/mri.cpp`:
     # Tmov * inv(Kmov) * R * Kref * inv(Tref), written as FreeSurfer
     # writes it, with the voxel-to-RAS matrices of each volume.
-    t_ref, t_mov = _get_vox2ras(REFERENCE), _get_vox2ras(MOVING)
+    t_ref, t_mov = get_vox2ras(REFERENCE), get_vox2ras(MOVING)
     k_ref = fs_vox2tkr(REFERENCE.volume, REFERENCE.voxelsize)
     k_mov = fs_vox2tkr(MOVING.volume, MOVING.voxelsize)
     return t_mov @ np.linalg.inv(k_mov) @ tkr @ k_ref @ np.linalg.inv(t_ref)
@@ -593,7 +593,7 @@ def test_the_tkregister_space_is_that_of_nibabel() -> None:
         header.set_zooms(info.voxelsize)
         header["Mdc"] = np.array([info.xras, info.yras, info.zras])
         header["Pxyz_c"] = info.cras
-        assert np.allclose(header.get_affine(), _get_vox2ras(info))
+        assert np.allclose(header.get_affine(), get_vox2ras(info))
         tkr2ras = header.get_affine() @ np.linalg.inv(header.get_vox2ras_tkr())
         assert np.allclose(_tkr2ras(info), tkr2ras)
 
@@ -604,7 +604,7 @@ def test_the_tkregister_space_is_that_of_nibabel() -> None:
 
 
 def test_a_geometry_an_image_or_a_block_is_accepted() -> None:
-    vox2ras = _get_vox2ras(MOVING)
+    vox2ras = get_vox2ras(MOVING)
     voxel = _systems.FVoxelCoordinateSystem()
     geometry = Geometry(
         transformation=Affine(vox2ras[:3], input=voxel, output=_RAS),
@@ -657,7 +657,7 @@ def test_the_geometry_of_an_mgh_image_gives_its_tkregister_space(
 
 
 def _bad_geometries() -> dict:
-    vox2ras = _get_vox2ras(MOVING)
+    vox2ras = get_vox2ras(MOVING)
     voxel = _systems.FVoxelCoordinateSystem()
 
     def place(transformation: object, shape: tuple = (4, 4, 4)) -> Geometry:
@@ -719,8 +719,8 @@ def test_a_register_dat_converts_exactly_to_an_lta(tmp_path) -> None:  # noqa: A
     # is that of the register.dat: from the reference to the movable
     # volume, so the reference is the source.
     assert record.type == LtaType.LINEAR_RAS_TO_RAS
-    assert _same_place(_volume_geometry(record.src), REFERENCE)
-    assert _same_place(_volume_geometry(record.dst), MOVING)
+    assert _same_place(volume_geometry(record.src), REFERENCE)
+    assert _same_place(volume_geometry(record.dst), MOVING)
     scanner = _expected_scanner(np.asarray(MATRIX))
     assert np.allclose(lta.homogeneous_matrix, scanner, atol=1e-12)
     # `lta_convert --inreg` writes the inverse, from the movable volume to
@@ -864,7 +864,7 @@ def test_the_views_of_a_register_dat_lta_follow_freesurfer() -> None:
     native = np.linalg.inv(_expected_scanner(np.asarray(MATRIX)))
     assert np.allclose(ras.homogeneous_matrix, native, atol=1e-10)
     vox = LtaTransformationVoxToVox.from_raw(record)
-    vox2ras_src, vox2ras_dst = _get_vox2ras(MOVING), _get_vox2ras(REFERENCE)
+    vox2ras_src, vox2ras_dst = get_vox2ras(MOVING), get_vox2ras(REFERENCE)
     expected = np.linalg.inv(vox2ras_dst) @ native @ vox2ras_src
     assert np.allclose(vox.homogeneous_matrix, expected, atol=1e-10)
     phys = LtaTransformationPhysToPhys.from_raw(record)
@@ -881,12 +881,12 @@ def test_an_assigned_tkregister_matrix_is_written_as_register_dat() -> None:
     # A geometry held by a tkregister system goes to the record.
     xform = LtaTransformation(
         np.eye(4)[:3],
-        input=FreesurferTkrSystem(geometry=_volume_geometry(REFERENCE)),
-        output=FreesurferTkrSystem(geometry=_volume_geometry(MOVING)),
+        input=FreesurferTkrSystem(geometry=volume_geometry(REFERENCE)),
+        output=FreesurferTkrSystem(geometry=volume_geometry(MOVING)),
     )
     record = xform.consolidate().metadata.raw
-    assert _same_place(_volume_geometry(record.src), REFERENCE)
-    assert _same_place(_volume_geometry(record.dst), MOVING)
+    assert _same_place(volume_geometry(record.src), REFERENCE)
+    assert _same_place(volume_geometry(record.dst), MOVING)
 
 
 def test_a_register_dat_lta_converts_without_its_geometries() -> None:
@@ -919,7 +919,7 @@ def _same_place(geometry: Geometry, info: LtaRaw.VolumeInfo) -> bool:
     if geometry.transformation.output == _systems.LPSmm():
         matrix = np.diag([-1.0, -1.0, 1.0, 1.0]) @ matrix
     return tuple(geometry.shape) == tuple(info.volume) and np.allclose(
-        matrix, _get_vox2ras(info), atol=1e-12
+        matrix, get_vox2ras(info), atol=1e-12
     )
 
 

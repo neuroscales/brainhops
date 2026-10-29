@@ -62,32 +62,30 @@ import typing_extensions as tx
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.errors import ConversionError, LossyConversionError
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
-    _is_field,
-    _leaves,
     affine_between,
+    chain_leaves,
     displacement_parts,
     displacements_of,
     field_slots,
     format_options,
+    is_field,
+    orthonormal_placement,
     register_converter,
+    relabel,
     sample_on_grid,
     split_affine,
     undoes,
 )
-from brainhops.io.transformations.base._converters import relabel
-from brainhops.io.transformations.base._splines import (
-    orthonormal_placement,
+from brainhops.io.transformations.itk._common import ItkTransformClass
+from brainhops.io.transformations.itk._internal_api import (
+    euler_to_matrix,
+    make_system,
 )
-from brainhops.io.transformations.itk._common import (
-    ItkTransformClass,
-    _euler_to_matrix,
-)
-from brainhops.io.transformations.itk._systems import _make_system
 
-from ._blocks import _BSPLINES, _column_major, _struct, transformation_to_map
+from ._blocks import BSPLINES, column_major, itk_struct, transformation_to_map
 from ._raw import ElastixRaw
 from ._xform import (
     ElastixParameterTransform,
@@ -139,7 +137,7 @@ def to_elastix(
     syntax = "toml" if issubclass(cls, ElastixTomlTransform) else "text"
     options = format_options(t, cls, dict(kwargs), ELASTIX_OPTIONS)
     ndim = _ndim(t)
-    world = _make_system(ndim)
+    world = make_system(ndim)
     base, fixed_center = _fixed_map(options.get("reference"), ndim)
     center = options.get("center")
     center = fixed_center if center is None else center
@@ -226,16 +224,16 @@ def _affine_block(matrix: np.ndarray, center: np.ndarray) -> tx.Any:
     linear = matrix[:ndim, :ndim]
     offset = matrix[:ndim, ndim]
     if np.allclose(linear, np.eye(ndim), rtol=0, atol=1e-12):
-        return _struct(_ITKT.TranslationTransform, ndim, offset)
+        return itk_struct(_ITKT.TranslationTransform, ndim, offset)
     translation = offset - center + linear @ center
     if ndim == 3:
         angles = _euler_angles(linear)
         if angles is not None:
             params = np.concatenate([angles, translation])
             fixed = np.append(center, 1.0)
-            return _struct(_ITKT.Euler3DTransform, 3, params, fixed)
+            return itk_struct(_ITKT.Euler3DTransform, 3, params, fixed)
     params = np.concatenate([linear.ravel(), translation])
-    return _struct(_ITKT.AffineTransform, ndim, params, center)
+    return itk_struct(_ITKT.AffineTransform, ndim, params, center)
 
 
 def _euler_angles(linear: np.ndarray) -> tx.Optional[np.ndarray]:
@@ -256,7 +254,7 @@ def _euler_angles(linear: np.ndarray) -> tx.Optional[np.ndarray]:
     az = math.atan2(linear[1, 0], linear[0, 0])
     angles = np.array([ax, ay, az])
     if not np.allclose(
-        _euler_to_matrix(angles, True), linear, rtol=0, atol=1e-12
+        euler_to_matrix(angles, True), linear, rtol=0, atol=1e-12
     ):
         return None
     return angles
@@ -340,10 +338,10 @@ def _spline_degree(t: _xforms.Transformation) -> int:
     It is the degree of the field when elastix has a B-spline of that
     degree, and 3 otherwise.
     """
-    for leaf in _leaves(t):
-        if _is_field(leaf):
+    for leaf in chain_leaves(t):
+        if is_field(leaf):
             degree = int(leaf.degree)
-            return degree if degree in _BSPLINES else 3
+            return degree if degree in BSPLINES else 3
     return 3
 
 
@@ -366,8 +364,8 @@ def _bspline_block(
     )
     size = np.asarray(coefficients.shape[:-1], dtype=np.float64)
     fixed = np.concatenate([size, origin, spacing, direction.ravel()])
-    return _struct(
-        _ITKT.BSplineTransform, ndim, params, fixed, cls=_BSPLINES[degree]
+    return itk_struct(
+        _ITKT.BSplineTransform, ndim, params, fixed, cls=BSPLINES[degree]
     )
 
 
@@ -442,13 +440,13 @@ def _fixed_map(
         import nibabel as nb
 
         reference = nb.load(os.fspath(reference)).header
-    from brainhops.io.transformations.fsl._affines import (
-        _best_affine,
-        _shape,
+    from brainhops.io.transformations.fsl._internal_api import (
+        best_affine,
+        spatial_shape,
     )
 
-    vox2ras = _best_affine(reference)
-    shape = _shape(reference)[:ndim]
+    vox2ras = best_affine(reference)
+    shape = spatial_shape(reference)[:ndim]
     flip = np.diag([-1.0, -1.0, *([1.0] * (ndim - 2)), 1.0])
     vox2lps = flip @ vox2ras
     placement = orthonormal_placement(vox2lps)
@@ -461,7 +459,7 @@ def _fixed_map(
         "Index": (0,) * ndim,
         "Spacing": tuple(float(s) for s in spacing),
         "Origin": tuple(float(o) for o in origin),
-        "Direction": _column_major(direction),
+        "Direction": column_major(direction),
         "UseDirectionCosines": ("true",),
     }
     return pmap, center

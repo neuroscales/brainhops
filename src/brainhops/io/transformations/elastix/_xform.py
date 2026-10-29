@@ -42,7 +42,7 @@ from brainhops.io.metadata._internal_api import (
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _compatible
 from brainhops.io.transformations.itk._common import ItkStruct
-from brainhops.io.transformations.itk._systems import _make_system
+from brainhops.io.transformations.itk._internal_api import make_system
 
 from ._blocks import (
     fixed_geometry,
@@ -864,7 +864,7 @@ def _check_lps(xform: ElastixTransform, ndim: int) -> None:
         If a system that was assigned to `input` or `output` is not
         compatible with the LPS system of `ndim` dimensions.
     """
-    lps = _make_system(ndim)
+    lps = make_system(ndim)
     for side in ("input", "output"):
         system = getattr(xform, "_" + side)
         if system is None or _compatible(system, lps):

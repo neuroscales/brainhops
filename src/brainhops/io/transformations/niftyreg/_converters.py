@@ -47,7 +47,7 @@ import typing_extensions as tx
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import smart_replace
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     FieldParts,
     displacement_parts,

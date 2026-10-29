@@ -17,7 +17,7 @@ from brainhops.datamodel.axes import (
     is_component_type,
 )
 from brainhops.datamodel.enums import AxisType, TensorLayout, Valence
-from brainhops.io.transformations.zarr._axes import _to_axis
+from brainhops.io.transformations.zarr._axes import to_axis
 
 _J = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.5, 3.0]])
 _K = np.linalg.inv(_J)
@@ -47,7 +47,7 @@ def test_a_component_axis_is_built_from_its_type(kind: str, cls: type) -> None:
     assert isinstance(axis, cls)
     assert axis.type == AxisType(kind)
     assert is_component_type(kind)
-    assert isinstance(_to_axis({"name": "c", "type": kind}), cls)
+    assert isinstance(to_axis({"name": "c", "type": kind}), cls)
 
 
 @pytest.mark.parametrize(

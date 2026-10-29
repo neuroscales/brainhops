@@ -28,7 +28,7 @@ _AXIS_TYPES = {
 }
 
 
-def _to_axis(ome_axis: tx.Any) -> Axis:
+def to_axis(ome_axis: tx.Any) -> Axis:
     # The OME axis is a mapping or an object with attributes. A known OME type
     # selects the matching Axis subclass, which fixes the axis type. An
     # unknown type is stored in the `type` field of a plain Axis.

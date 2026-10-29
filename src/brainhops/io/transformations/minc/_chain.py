@@ -55,7 +55,7 @@ from ._grid import (
     write_volume,
 )
 from ._metadata import XfmMetadata
-from ._raw import XfmRaw, _decode, _read_bytes, _score, sniff_transforms
+from ._raw import XfmRaw, decode, read_bytes, score, sniff_transforms
 
 _Volumes = tx.Optional[tx.Tuple[tx.Any, ...]]
 """The displacement volumes of the grid transforms of a file, or `None`."""
@@ -355,7 +355,7 @@ class XfmTransform(
         """
         transforms = sniff_transforms(text)
         if transforms is None:
-            return _score(False, text, error)
+            return score(False, text, error)
         if len(transforms) == 1 and isinstance(transforms[0], XfmRaw.Linear):
             return Confidence.LIKELY
         return Confidence.CERTAIN
@@ -416,7 +416,7 @@ class XfmTransform(
         float
             The confidence, between 0 and 1.
         """
-        text = _decode(content, kwargs.get("encoding", "utf-8"))
+        text = decode(content, kwargs.get("encoding", "utf-8"))
         return cls.sniff_text(text, error=error)
 
     @classmethod
@@ -445,7 +445,7 @@ class XfmTransform(
         float
             The confidence, between 0 and 1.
         """
-        content = _read_bytes(filename)
+        content = read_bytes(filename)
         if content is None:
             return super().sniff_filename(filename, error=error, **kwargs)
         return cls.sniff_bytes(content, error=error, **kwargs)

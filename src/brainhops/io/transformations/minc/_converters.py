@@ -53,7 +53,7 @@ from brainhops.datamodel._internal_api import (
     smart_replace,
 )
 from brainhops.errors import LossyConversionError
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
     affine_between,

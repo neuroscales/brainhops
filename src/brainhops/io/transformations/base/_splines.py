@@ -30,10 +30,10 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.systems import CoordinateSystem
 
 from ._conversions import (
-    _bridge,
-    _is_field,
-    _leaves,
-    _matrix,
+    bridge_systems,
+    chain_leaves,
+    chain_matrix,
+    is_field,
     unrepresentable,
 )
 
@@ -70,18 +70,18 @@ def source_grid(
         If `t` holds no field with data, or the field is not reached
         from `input` through affines.
     """
-    leaves = [_bridge(input, t.input, t, cls), *_leaves(t)]
+    leaves = [bridge_systems(input, t.input, t, cls), *chain_leaves(t)]
     for i, leaf in enumerate(leaves):
-        if not _is_field(leaf):
+        if not is_field(leaf):
             continue
         if leaf.data is None:
             break
         ndim = int(leaf.data.shape[-1])
         before = [
             *leaves[:i],
-            _bridge(leaves[i - 1].output, leaf.input, t, cls),
+            bridge_systems(leaves[i - 1].output, leaf.input, t, cls),
         ]
-        world2grid = _matrix(before, t, cls, ndim)
+        world2grid = chain_matrix(before, t, cls, ndim)
         shape = tuple(int(n) for n in leaf.data.shape[:-1])
         return np.linalg.inv(world2grid), shape
     raise unrepresentable(

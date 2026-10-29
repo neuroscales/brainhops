@@ -49,7 +49,7 @@ from brainhops.io.images.zarr import (  # noqa: E402
     _ome,
 )
 from brainhops.io.transformations.zarr import _map  # noqa: E402
-from brainhops.io.transformations.zarr._axes import _to_axis  # noqa: E402
+from brainhops.io.transformations.zarr._axes import to_axis  # noqa: E402
 
 _JI = [{"name": "j", "type": "space"}, {"name": "i", "type": "space"}]
 _YX = [{"name": "y", "type": "space"}, {"name": "x", "type": "space"}]
@@ -74,7 +74,7 @@ class _System(tx.NamedTuple):
 
 
 def _system(axes: tx.List[dict]) -> _System:
-    parsed = [_to_axis(axis) for axis in axes]
+    parsed = [to_axis(axis) for axis in axes]
     return _System(
         stored=[axis["name"] for axis in axes],
         order=_axisorder.to_canonical(parsed),

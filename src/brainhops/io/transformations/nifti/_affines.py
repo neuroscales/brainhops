@@ -41,10 +41,10 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 # this format
 from ._base import (
     NiftiBasedTransformation,
-    _consolidated_metadata,
-    _nibabel_parts,
+    consolidated_metadata,
+    nibabel_parts,
 )
-from ._views import _affine_to_model
+from ._views import affine_to_model
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -107,7 +107,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         TypeError
             If `nifti` is neither a NIfTI image nor a NIfTI header.
         """
-        _, header = _nibabel_parts(nifti)
+        _, header = nibabel_parts(nifti)
         metadata = NiftiMetadata.from_raw(NiftiRaw(header=header.copy()))
         return cls(metadata=metadata, **kwargs)
 
@@ -206,7 +206,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         base = None if metadata is None else metadata.raw
         image = _affine_encoded(self, like, overrides, base, fields)
         record = NiftiRaw(header=image.header)
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -302,7 +302,7 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
         read-only, or `None` without metadata.
         """
         if self.rawdata is not None:
-            return _affine_to_model(self.rawdata)
+            return affine_to_model(self.rawdata)
         header = header_of(self)
         if header is None:
             return None
@@ -373,7 +373,7 @@ class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
         `None` without metadata.
         """
         if self.rawdata is not None:
-            return _affine_to_model(self.rawdata)
+            return affine_to_model(self.rawdata)
         header = header_of(self)
         if header is None:
             return None

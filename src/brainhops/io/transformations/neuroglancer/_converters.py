@@ -24,13 +24,13 @@ import typing_extensions as tx
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import convert_withlog, converter
 from brainhops.io.base.parsers import UnrepresentableTransformationError
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
     format_options,
     unrepresentable,
 )
 
-from ._xform import NeuroglancerTransform, _encoded
+from ._xform import NeuroglancerTransform, encoded
 
 
 @converter(_xforms.Identity, NeuroglancerTransform)
@@ -52,7 +52,7 @@ def _(
     matrix = affine_between(t, t.input, t.output, cls)
     result = cls(matrix=matrix[:-1], input=t.input, output=t.output, **options)
     try:
-        _encoded(result)
+        encoded(result)
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     return result

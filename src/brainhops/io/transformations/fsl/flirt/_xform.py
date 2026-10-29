@@ -46,9 +46,11 @@ from brainhops.io.metadata._internal_api import (
 )
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
+from brainhops.io.transformations.fsl._internal_api import (
+    FslAffineFormat,
+    ImageGeometry,
+)
 
-from .._affines import _ImageGeometry
-from .._formats import FslAffineFormat
 from ._metadata import FlirtMetadata
 from ._raw import FlirtRaw
 
@@ -233,8 +235,8 @@ class FlirtTransform(
                 "world coordinates. Pass reference=... and moving=... when "
                 "loading the matrix, or set them on the transformation."
             )
-        ref = _ImageGeometry(self.reference)
-        mov = _ImageGeometry(self.moving)
+        ref = ImageGeometry(self.reference)
+        mov = ImageGeometry(self.moving)
         flirt = np.asarray(flirt, dtype=np.float64)
         full = mov.fsl2ras @ np.linalg.inv(flirt) @ ref.ras2fsl
         return full[:-1]

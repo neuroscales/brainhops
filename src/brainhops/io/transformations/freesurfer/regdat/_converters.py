@@ -63,30 +63,30 @@ from brainhops.datamodel._internal_api import (
 )
 from brainhops.io.base.parsers import UnrepresentableTransformationError
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
     format_options,
+    matrix_to_disk,
     register_converter,
     unrepresentable,
 )
-from brainhops.io.transformations.base._records import matrix_to_disk
+from brainhops.io.transformations.freesurfer.lta._internal_api import (
+    check_tkr,
+    get_tkr2tkr,
+    lta_written,
+    volume_geometry,
+    volume_info,
+)
 
 from ..lta import LtaRaw, LtaTransformation, LtaType, LtaValidity
-from ..lta._converters import _check_tkr
-from ..lta._matrix_utils import (
-    _get_tkr2tkr,
-    _volume_geometry,
-    _volume_info,
-)
-from ..lta._xforms import _lta_written
 from ._raw import RegisterDatRaw
 from ._xforms import (
     RegisterDatTransformation,
-    _as_moving_geometry,
-    _as_reference_geometry,
-    _scanner_to_tkr,
-    _tkr_to_scanner,
+    as_moving_geometry,
+    as_reference_geometry,
+    scanner_to_tkr,
+    tkr_matrix_to_scanner,
 )
 
 OPTIONS = ("reference", "moving")
@@ -116,7 +116,7 @@ def _(
         reference = src.geometry if reference is None else reference
         moving = dst.geometry if moving is None else moving
     else:
-        _check_tkr(t, cls, src, dst)
+        check_tkr(t, cls, src, dst)
         missing = [
             name
             for name, value in zip(OPTIONS, (reference, moving))
@@ -134,7 +134,7 @@ def _(
                 f"reference= and that of its output as moving=.",
             )
         scanner = affine_between(t, RAS, RAS, cls)
-        matrix = _scanner_to_tkr(scanner, reference, moving)
+        matrix = scanner_to_tkr(scanner, reference, moving)
     if matrix.shape != (4, 4):
         raise unrepresentable(
             t,
@@ -193,8 +193,8 @@ def _(
     record = LtaRaw(
         type=LtaType.LINEAR_RAS_TO_RAS,
         affine=LtaRaw.Affine(matrix=matrix_to_disk(scanner[:-1])),
-        src=_volume_info(t.reference, LtaRaw.SrcVolumeInfo),
-        dst=_volume_info(t.moving, LtaRaw.DstVolumeInfo),
+        src=volume_info(t.reference, LtaRaw.SrcVolumeInfo),
+        dst=volume_info(t.moving, LtaRaw.DstVolumeInfo),
     )
     return cls.from_raw(record, **kwargs)
 
@@ -210,7 +210,7 @@ def _(
     # become those of the reference and the movable volume. A record
     # without valid geometries takes them as options, as any affine does.
     try:
-        record, _ = _lta_written(t, {})
+        record, _ = lta_written(t, {})
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     src, dst = _valid(record.src), _valid(record.dst)
@@ -234,12 +234,12 @@ def _(
             "geometries of both volumes give, and the LTA file does not "
             "hold a valid geometry for both of them.",
         )
-    matrix = _get_tkr2tkr(record)
+    matrix = get_tkr2tkr(record)
     raw = _new_raw(matrix, dst)
     return cls.from_raw(
         raw,
-        reference=None if src is None else _volume_geometry(src),
-        moving=None if dst is None else _volume_geometry(dst),
+        reference=None if src is None else volume_geometry(src),
+        moving=None if dst is None else volume_geometry(dst),
         **kwargs,
     )
 
@@ -262,8 +262,8 @@ def _geometries(
     # them, or `None` for a geometry that is not given.
     try:
         return (
-            _as_reference_geometry(options.get("reference")),
-            _as_moving_geometry(options.get("moving")),
+            as_reference_geometry(options.get("reference")),
+            as_moving_geometry(options.get("moving")),
         )
     except (TypeError, ValueError) as error:
         raise unrepresentable(t, cls, str(error)) from error
@@ -301,7 +301,7 @@ def _scanner_matrix(t: RegisterDatTransformation, cls: type) -> np.ndarray:
         )
 
     if both(FreesurferTkrSystem):
-        return _tkr_to_scanner(homogeneous, t.reference, t.moving)
+        return tkr_matrix_to_scanner(homogeneous, t.reference, t.moving)
     if both(_systems.RASmm):
         return homogeneous
     raise unrepresentable(

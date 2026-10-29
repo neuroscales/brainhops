@@ -27,15 +27,15 @@ from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
-
-from .._chains import (
-    _block,
-    _check_position,
-    _check_systems,
-    _decode_chain,
-    _read_only,
-    _same_chain,
+from brainhops.io.transformations.itk._internal_api import (
+    block_of,
+    check_position,
+    check_systems,
+    decode_chain,
+    read_only,
+    same_chain,
 )
+
 from .._common import ItkPrecision, ItkStruct
 from .._xform import ItkTransform
 from ._metadata import MatMetadata
@@ -275,7 +275,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             transform at `position`.
         """
         metadata = MatMetadata.from_fileobj(file)
-        _check_position(metadata.raw.blocks, position)
+        check_position(metadata.raw.blocks, position)
         return cls(metadata=metadata, position=position, **kwargs)
 
     @classmethod
@@ -301,7 +301,7 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
         ParserContentError
             If the record has no transform at `position`.
         """
-        _check_position(raw.blocks, kwargs.get("position"))
+        check_position(raw.blocks, kwargs.get("position"))
         return cls(metadata=MatMetadata.from_raw(raw), **kwargs)
 
     @classmethod
@@ -420,9 +420,9 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
             [] if record is None else _decode(record, self.position, True)
         )
         chain = held_transformations(self)
-        _check_systems(self, decoded if chain is None else chain)
+        check_systems(self, decoded if chain is None else chain)
         untouched = record is not None and (
-            chain is None or _same_chain(chain, decoded)
+            chain is None or same_chain(chain, decoded)
         )
         if untouched:
             blocks = record.blocks
@@ -507,8 +507,8 @@ class MatTransform(BinaryFileReader, BinaryFileWriter, ItkTransform):
 def _decode(
     record: MatRaw, position: tx.Optional[int], quiet: bool = False
 ) -> tx.List[_xforms.Transformation]:
-    """Decode the chain of a record, as [`_decode_chain`][] does."""
-    return _decode_chain(record.blocks, position, quiet=quiet)
+    """Decode the chain of a record, as [`decode_chain`][] does."""
+    return decode_chain(record.blocks, position, quiet=quiet)
 
 
 def _byteorder(byteorder: tx.Optional[str]) -> tx.Optional[str]:
@@ -548,7 +548,7 @@ def _single_block(chain: tx.Sequence[_xforms.Transformation]) -> ItkStruct:
             f"ANTs writes it, but this chain holds {len(chain)}. "
             f"Compose them first, for example with `.compute()`."
         )
-    return _block(chain[0])
+    return block_of(chain[0])
 
 
 def _with_precision(block: ItkStruct, precision: ItkPrecision) -> ItkStruct:
@@ -561,5 +561,5 @@ def _with_precision(block: ItkStruct, precision: ItkPrecision) -> ItkStruct:
     dtype = np.float32 if precision == ItkPrecision.Float else np.float64
     parameters = np.asarray(block.parameters, dtype=np.float64).astype(dtype)
     return replace(
-        block, precision=precision, parameters=_read_only(parameters)
+        block, precision=precision, parameters=read_only(parameters)
     )

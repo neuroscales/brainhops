@@ -34,7 +34,7 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     ParserNotImplementedError,
 )
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
     displacement_parts,
     split_field_chain,

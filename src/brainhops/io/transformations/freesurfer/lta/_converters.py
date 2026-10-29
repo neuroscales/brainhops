@@ -62,7 +62,7 @@ from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import Image
 from brainhops.io.base.parsers import UnrepresentableTransformationError
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
     format_options,
@@ -71,11 +71,11 @@ from brainhops.io.transformations.base._conversions import (
 )
 from brainhops.io.transformations.base.affines import _compatible
 
-from ._matrix_utils import _volume_info
+from ._matrix_utils import volume_info
 from ._metadata import LtaMetadata
 from ._raw import LtaRaw
 from ._systems import LtaPhysicalSystem, LtaVoxelSystem
-from ._xforms import LtaTransformation, _as_block, _build_raw
+from ._xforms import LtaTransformation, as_block, build_raw
 
 OPTIONS = ("reference", "moving")
 """What a conversion to an LTA file takes: the geometries of the volume
@@ -105,7 +105,7 @@ def _(
         if isinstance(src, kind) and isinstance(dst, kind):
             matrix = affine_between(t, src, dst, cls)
             return _held(t, cls, matrix, src, dst, None)
-    _check_tkr(t, cls, src, dst)
+    check_tkr(t, cls, src, dst)
     if _is_voxels(src) and _is_voxels(dst):
         return _voxels(t, cls, options)
     matrix = affine_between(t, RAS, RAS, cls)
@@ -187,7 +187,7 @@ def _block(
     # The geometry block of a volume, from a geometry, an image or a block,
     # or an invalid block when the geometry is not given.
     if value is None or isinstance(value, LtaRaw.VolumeInfo):
-        return _as_block(value, kind)
+        return as_block(value, kind)
     if isinstance(value, Image):
         value = value.geometry
     if not isinstance(value, Geometry):
@@ -198,7 +198,7 @@ def _block(
             f"LtaRaw.VolumeInfo, not a {type(value).__name__}.",
         )
     try:
-        return _volume_info(value, kind)
+        return volume_info(value, kind)
     except (TypeError, ValueError) as error:
         raise unrepresentable(t, cls, str(error)) from error
 
@@ -226,7 +226,7 @@ def _held(
         matrix=matrix[:-1], input=src, output=dst, metadata=metadata
     )
     try:
-        record = _build_raw(pending)
+        record = build_raw(pending)
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     _check_view(t, cls, src, dst)
@@ -261,7 +261,7 @@ def _check_view(
             )
 
 
-def _check_tkr(
+def check_tkr(
     t: _xforms.Transformation,
     cls: type,
     src: tx.Optional[_systems.CoordinateSystem],

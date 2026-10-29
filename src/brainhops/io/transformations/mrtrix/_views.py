@@ -7,14 +7,14 @@ intensity `scaling` of the header when its values are read. Both depend
 on the record, so they belong to the lazy array and not to the pair of
 functions below, which is therefore the identity. The two functions are
 pure and invert each other, so that
-`_warp_to_model(_warp_to_disk(data))` gives `data` back.
+`warp_to_model(warp_to_disk(data))` gives `data` back.
 """
 
 # internals
 from brainhops._core._internal_api import ArrayProtocol
 
 
-def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the vectors of a warp from the array that the file stores.
 
     The array is returned as it is, so that the lazy array of a file
@@ -24,7 +24,7 @@ def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return raw
 
 
-def _warp_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def warp_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the file of a warp stores from its vectors.
 
     A warp stores its vectors as they are, so the array is returned

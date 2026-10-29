@@ -23,14 +23,14 @@ from brainhops.io.base.parsers import (
 )
 
 from ._common import ItkPrecision, ItkStruct, ItkTransformClass
-from ._systems import _make_system
+from ._systems import make_system
 
 # ----------------------------------------------------------------------
 #   DECODING
 # ----------------------------------------------------------------------
 
 
-def _check_composite(blocks: tx.Sequence[ItkStruct]) -> None:
+def check_composite(blocks: tx.Sequence[ItkStruct]) -> None:
     """Refuse a list of blocks with a composite header that is not first.
 
     ITK writes a `CompositeTransform` header only as the first block of a
@@ -41,7 +41,7 @@ def _check_composite(blocks: tx.Sequence[ItkStruct]) -> None:
     ParserContentError
         If a composite header is not the first block.
     """
-    if any(_is_composite(block) for block in blocks[1:]):
+    if any(is_composite(block) for block in blocks[1:]):
         raise ParserContentError(
             "ITK only writes a CompositeTransform as the first block "
             "of a file, and it cannot be nested."
@@ -62,12 +62,12 @@ def _top_level(
     a file without a composite, every block is a separate top-level
     transform.
     """
-    if blocks and _is_composite(blocks[0]):
+    if blocks and is_composite(blocks[0]):
         return [list(reversed(blocks[1:]))]
     return [[block] for block in blocks]
 
 
-def _check_position(
+def check_position(
     blocks: tx.Sequence[ItkStruct], position: tx.Optional[int]
 ) -> None:
     """Refuse a position that a list of blocks has no transform at.
@@ -89,7 +89,7 @@ def _check_position(
         )
 
 
-def _decode_chain(
+def decode_chain(
     blocks: tx.Sequence[ItkStruct],
     position: tx.Optional[int] = None,
     quiet: bool = False,
@@ -120,7 +120,7 @@ def _decode_chain(
     ParserContentError
         If there is no top-level transform at `position`.
     """
-    _check_position(blocks, position)
+    check_position(blocks, position)
     transforms = _top_level(blocks)
     if position is None:
         if len(transforms) > 1 and not quiet:
@@ -136,7 +136,7 @@ def _decode_chain(
     return list(transforms[position])
 
 
-def _same_chain(
+def same_chain(
     chain: tx.Sequence[_xforms.Transformation],
     decoded: tx.Sequence[_xforms.Transformation],
 ) -> bool:
@@ -155,12 +155,12 @@ def _same_chain(
 # ----------------------------------------------------------------------
 
 
-def _encode_chain(
+def encode_chain(
     chain: tx.Sequence[_xforms.Transformation],
 ) -> tx.Tuple[ItkStruct, ...]:
     """Return the blocks of a file that holds a chain, in the file order.
 
-    Each transformation becomes a block, as [`_block`][] encodes it. A
+    Each transformation becomes a block, as [`block_of`][] encodes it. A
     chain of several blocks is stored as a composite, whose header comes
     first and whose queue lists the blocks from the last applied to the
     first applied, as ITK writes it. The header takes the precision and
@@ -172,7 +172,7 @@ def _encode_chain(
         If a transformation is neither an ITK block nor an affine between
         ITK spaces.
     """
-    blocks = [_block(xform) for xform in chain]
+    blocks = [block_of(xform) for xform in chain]
     if len(blocks) < 2:
         return tuple(blocks)
     queue = tuple(reversed(blocks))
@@ -181,13 +181,13 @@ def _encode_chain(
         precision=queue[0].precision,
         ndim_input=queue[0].ndim_input,
         ndim_output=queue[0].ndim_output,
-        parameters=_read_only(np.array([])),
-        fixed_parameters=_read_only(np.array([])),
+        parameters=read_only(np.array([])),
+        fixed_parameters=read_only(np.array([])),
     )
     return (header,) + queue
 
 
-def _block(xform: _xforms.Transformation) -> ItkStruct:
+def block_of(xform: _xforms.Transformation) -> ItkStruct:
     """Return the block that stores a transformation.
 
     An ITK block is stored as it is, center included. Any other
@@ -202,7 +202,7 @@ def _block(xform: _xforms.Transformation) -> ItkStruct:
         an ITK block nor an affine between ITK spaces.
     """
     if isinstance(xform, ItkStruct):
-        if _is_composite(xform):
+        if is_composite(xform):
             raise UnrepresentableTransformationError(
                 "A CompositeTransform header is written by the file that "
                 "holds its blocks, and is not a transformation of its own."
@@ -237,7 +237,7 @@ def _affine_block(xform: _xforms.Transformation) -> ItkStruct:
             f"dimension, of shape (D, D + 1), but the matrix has shape "
             f"{matrix.shape}."
         )
-    space = _make_system(ndim)
+    space = make_system(ndim)
     for end in ("input", "output"):
         system = getattr(affine, end)
         if system is not None and system != space:
@@ -254,14 +254,14 @@ def _affine_block(xform: _xforms.Transformation) -> ItkStruct:
         # ITK stores the matrix in row-major order, followed by the
         # translation. With the center at the origin, the ITK translation
         # is the translation of the affine.
-        parameters=_read_only(
+        parameters=read_only(
             np.concatenate([matrix[:, :-1].ravel(), matrix[:, -1]])
         ),
-        fixed_parameters=_read_only(np.zeros(ndim)),
+        fixed_parameters=read_only(np.zeros(ndim)),
     )
 
 
-def _check_systems(
+def check_systems(
     xform: _xforms.Sequence, chain: tx.Sequence[_xforms.Transformation]
 ) -> None:
     """Refuse assigned systems that the file of a chain cannot express.
@@ -290,7 +290,7 @@ def _check_systems(
             )
 
 
-def _read_only(values: tx.Any) -> tx.Any:
+def read_only(values: tx.Any) -> tx.Any:
     """Return parameters read from a file as a read-only array.
 
     A record is never changed in place, and the blocks that it holds are
@@ -305,11 +305,11 @@ def _read_only(values: tx.Any) -> tx.Any:
     return values
 
 
-def _is_composite(block: ItkStruct) -> bool:
+def is_composite(block: ItkStruct) -> bool:
     return block.type == ItkTransformClass.CompositeTransform
 
 
-def _type_name(block: ItkStruct) -> str:
+def type_name(block: ItkStruct) -> str:
     """Return the name of the type of a block, as an ITK file writes it.
 
     The name joins the class, the precision and the dimensions of the

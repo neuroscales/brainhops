@@ -18,7 +18,7 @@ def _lps_axes(ndim: int) -> tuple:
     return axes + tuple(_axes.SpaceAxis(unit=_MM) for _ in range(extra))
 
 
-def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
+def make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
     """Return the ITK spatial coordinate system with `ndim` dimensions."""
     if ndim == 2:
         return _systems.SpatialCoordinateSystem2D(axes=_lps_axes(2))
@@ -30,7 +30,7 @@ def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
         return _systems.SpatialCoordinateSystem(axes=_lps_axes(ndim))
 
 
-def _make_grid_system(ndim: int) -> _systems.CoordinateSystem:
+def make_grid_system(ndim: int) -> _systems.CoordinateSystem:
     """Return the index space of a field without adding or dropping axes."""
     if ndim == 2:
         return _systems.PixelCoordinateSystem()

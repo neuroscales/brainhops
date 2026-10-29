@@ -59,8 +59,8 @@ from brainhops.io.transformations.base.fields import (
 )
 
 # this format
-from ._base import NiftiBasedTransformation, _consolidated_metadata
-from ._views import _check_single_field, _field_to_disk, _field_to_model
+from ._base import NiftiBasedTransformation, consolidated_metadata
+from ._views import check_single_field, field_to_disk, field_to_model
 
 _NDIM = 3
 """Spatial dimension supported by the displacement reader."""
@@ -143,7 +143,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     def _consolidate(
         self,
@@ -223,7 +223,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -232,7 +232,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         raw, record = stored_parts(
             _coordinates_encoded(self, like, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -344,7 +344,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -606,7 +606,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -615,7 +615,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         raw, record = stored_parts(
             _displacement_encoded(self, like, log, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -706,16 +706,16 @@ def _coordinates_encoded(
     # NIfTI stores sampled coordinates.
     if StoreEnum(field.store) is not StoreEnum.values:
         values = field.to(store="values").data
-        raw = None if values is None else _field_to_disk(values)
+        raw = None if values is None else field_to_disk(values)
     elif field._data is not None:
-        raw = _field_to_disk(field._data)
+        raw = field_to_disk(field._data)
     else:
         raw = field.rawdata
     if raw is None:
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
         )
-    _check_single_field(raw, WriterError)
+    check_single_field(raw, WriterError)
     record = None if base is None else base.copy()
     image = record_image(raw, record, overrides=overrides)
     set_coordinates_intent(image.header)
@@ -743,7 +743,7 @@ def _displacement_encoded(
     """
     what = "A NIfTI displacement field"
     if field._data is not None:
-        stored = _field_to_disk(field._data)
+        stored = field_to_disk(field._data)
     else:
         stored = field.rawdata
     if (
@@ -751,7 +751,7 @@ def _displacement_encoded(
         and field._transformations is None
         and log == field.log
     ):
-        _check_single_field(stored, WriterError)
+        check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
         image = record_image(stored, record, overrides=overrides)
         if nifti_intent(image.header) != NIFTI_INTENT_DISPVECT:
@@ -760,7 +760,7 @@ def _displacement_encoded(
         vox2ras, vectors = split_ras_displacement_chain(
             field.transformations, what, ndim=_NDIM, log=log
         )
-        vectors = _field_to_disk(vectors)
+        vectors = field_to_disk(vectors)
         record = None if base is None else base.copy()
         image = record_image(vectors, record, vox2ras, overrides)
         image.header.set_intent(NIFTI_INTENT_DISPVECT)

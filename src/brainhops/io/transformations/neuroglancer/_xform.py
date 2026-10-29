@@ -331,7 +331,7 @@ class NeuroglancerTransform(
                 self.metadata = metadata
                 return self
             return replace(self, metadata=metadata)
-        record = _encoded(self)
+        record = encoded(self)
         if metadata is None:
             metadata = NeuroglancerTransformMetadata.from_raw(record)
         else:
@@ -405,7 +405,7 @@ def _record(
     return None if metadata is None else metadata.raw
 
 
-def _encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
+def encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
     """Encode the matrix and the systems of a transformation as a record.
 
     See `NeuroglancerTransform._consolidate`.

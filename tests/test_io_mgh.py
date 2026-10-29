@@ -958,7 +958,7 @@ def test_the_shape_is_read_without_the_voxels(
     name: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from brainhops.io.transformations.fsl._affines import _shape
+    from brainhops.io.transformations.fsl._affines import spatial_shape
 
     data = _data((3, 4, 5, 2))
     if name.endswith(".nii.gz"):
@@ -970,7 +970,7 @@ def test_the_shape_is_read_without_the_voxels(
     image = io.load(source)
     assert image.shape == (3, 4, 5, 2)
     assert image.ndim == 4
-    assert _shape(image) == (3, 4, 5, 2)
+    assert spatial_shape(image) == (3, 4, 5, 2)
     assert reads.count == 0
     assert "_cache_data" not in vars(image)
     # Assigned data gives its own shape, and an image without data raises

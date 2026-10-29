@@ -29,7 +29,7 @@ _SIGNATURE = "DICOM-to-DICOM"
 before their matrices: `# 3dAllineate matrices (DICOM-to-DICOM,
 row-by-row):`."""
 
-_COMMENT = "# AFNI matrices (DICOM-to-DICOM, row-by-row):"
+COMMENT = "# AFNI matrices (DICOM-to-DICOM, row-by-row):"
 """The comment written before matrices that were not read from a file."""
 
 _AFF12 = ".aff12.1d"

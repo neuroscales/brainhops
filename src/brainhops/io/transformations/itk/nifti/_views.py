@@ -3,7 +3,7 @@ NIfTI file stores, and encoded back.
 
 The two functions convert between `rawdata`, the array as the file stores it,
 and `data`, the array that the data model exposes. They are pure and
-invert each other, so that `_itk_field_to_model(_itk_field_to_disk(data))`
+invert each other, so that `itk_field_to_model(itk_field_to_disk(data))`
 gives `data` back.
 
 ITK stores a vector field in five dimensions, and it pads a field with
@@ -16,7 +16,7 @@ holds them with shapes (X, Y, 2) and (X, Y, Z, 3).
 from brainhops._core._internal_api import ArrayProtocol, array_backend
 
 
-def _itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an ITK vector field from the array that the file
     stores.
 
@@ -37,7 +37,7 @@ def _itk_field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return data[index]
 
 
-def _itk_field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def itk_field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the file of an ITK vector field stores from
     its data.
 

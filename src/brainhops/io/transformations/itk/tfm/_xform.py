@@ -20,14 +20,14 @@ from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
-
-from .._chains import (
-    _check_position,
-    _check_systems,
-    _decode_chain,
-    _encode_chain,
-    _same_chain,
+from brainhops.io.transformations.itk._internal_api import (
+    check_position,
+    check_systems,
+    decode_chain,
+    encode_chain,
+    same_chain,
 )
+
 from .._xform import ItkTransform
 from ._metadata import TfmMetadata
 from ._raw import TfmRaw
@@ -192,7 +192,7 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
             header is not its first block.
         """
         metadata = TfmMetadata.from_lines(lines)
-        _check_position(metadata.raw.blocks, position)
+        check_position(metadata.raw.blocks, position)
         return cls(metadata=metadata, position=position, **kwargs)
 
     @classmethod
@@ -218,7 +218,7 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
         ParserContentError
             If the record has no transform at `position`.
         """
-        _check_position(raw.blocks, kwargs.get("position"))
+        check_position(raw.blocks, kwargs.get("position"))
         return cls(metadata=TfmMetadata.from_raw(raw), **kwargs)
 
     @classmethod
@@ -317,9 +317,9 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
             [] if record is None else _decode(record, self.position, True)
         )
         chain = held_transformations(self)
-        _check_systems(self, decoded if chain is None else chain)
+        check_systems(self, decoded if chain is None else chain)
         if record is not None and (
-            chain is None or _same_chain(chain, decoded)
+            chain is None or same_chain(chain, decoded)
         ):
             if not inplace:
                 return replace(
@@ -334,7 +334,7 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
             self.output = None
             self.metadata = metadata
             return self
-        record = TfmRaw(blocks=_encode_chain(chain or []))
+        record = TfmRaw(blocks=encode_chain(chain or []))
         if metadata is None:
             metadata = TfmMetadata.from_raw(record)
         else:
@@ -414,5 +414,5 @@ class TfmTransform(TextFileReader, TextFileWriter, ItkTransform):
 def _decode(
     record: TfmRaw, position: tx.Optional[int], quiet: bool = False
 ) -> tx.List[_xforms.Transformation]:
-    """Decode the chain of a record, as [`_decode_chain`][] does."""
-    return _decode_chain(record.blocks, position, quiet=quiet)
+    """Decode the chain of a record, as [`decode_chain`][] does."""
+    return decode_chain(record.blocks, position, quiet=quiet)

@@ -34,7 +34,7 @@ from brainhops.errors import ParserContentError, WriterError
 # read as a four-dimensional grid of vectors.
 
 
-def _check_single_field(
+def check_single_field(
     array: tx.Optional[ArrayProtocol], error: tx.Type[Exception]
 ) -> None:
     """Refuse an array that stores one vector field per volume.
@@ -71,7 +71,7 @@ def _check_single_field(
         )
 
 
-def _field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of a vector field from the array that the file
     stores.
 
@@ -85,7 +85,7 @@ def _field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     ParserContentError
         If the array holds a field for each of several volumes.
     """
-    _check_single_field(raw, ParserContentError)
+    check_single_field(raw, ParserContentError)
     data = raw
     shape = tuple(int(d) for d in data.shape)
     if len(shape) == 5:
@@ -93,7 +93,7 @@ def _field_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return data
 
 
-def _field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the file of a vector field stores from its
     data.
 
@@ -110,7 +110,7 @@ def _field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """
     if len(data.shape) == 4:
         return array_backend(data).expand_dims(data, axis=3)
-    _check_single_field(data, WriterError)
+    check_single_field(data, WriterError)
     return data
 
 
@@ -122,11 +122,11 @@ def _field_to_disk(data: ArrayProtocol) -> ArrayProtocol:
 # compact (3, 4) matrix, without the last row.
 
 
-def _affine_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def affine_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the compact matrix of an affine from its homogeneous matrix."""
     return raw[:-1]
 
 
-def _affine_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def affine_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the homogeneous matrix of an affine from its compact matrix."""
     return to_homogeneous(array_backend(data).asarray(data))
