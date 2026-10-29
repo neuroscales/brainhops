@@ -14,6 +14,7 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 from brainhops._core.magic import replace
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -483,7 +484,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         """
         _no_options(kwargs)
         head, _, _ = afni_dataset_files(filename)
-        if not path.exists(head):
+        if not head.exists():
             raise ParserExistsError(f"No such file: {head}")
         with head.open("rb") as f:
             return cls.from_bytes(f.read())
@@ -566,6 +567,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
 
     # --- writing ------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the `.HEAD` file.
 
@@ -590,6 +592,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
                 return self.text
         return formatted
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the content of the `.HEAD` file, encoded as Latin-1.
 
@@ -791,7 +794,7 @@ def _sniffed_raw_at(
 ) -> tx.Tuple[tx.Optional[AfniRaw], tx.Optional[Exception]]:
     """Read and validate the record of the dataset that a path names."""
     head, _, _ = afni_dataset_files(filename)
-    if not path.exists(head):
+    if not head.exists():
         return None, ParserExistsError(f"No such file: {head}")
     with head.open("rb") as f:
         return _sniffed_raw(f)

@@ -8,7 +8,6 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import is_local_file
 
 # this format
 from ._constants import _BRIK_SUFFIXES
@@ -51,7 +50,7 @@ def afni_dataset_files(
     brik = None
     for suffix in _BRIK_SUFFIXES:
         candidate = parent / (stem + brik_ext + suffix)
-        if path.exists(candidate):
+        if candidate.exists():
             brik = candidate
             break
     if brik is None:
@@ -94,7 +93,7 @@ def afni_written_files(
     stale = []
     for other in _BRIK_SUFFIXES:
         sibling = filename.parent / (stem + brik_ext + other)
-        if other != suffix and is_local_file(sibling):
+        if other != suffix and sibling.is_local() and sibling.is_file():
             stale.append(sibling)
     return head, brik, stale
 

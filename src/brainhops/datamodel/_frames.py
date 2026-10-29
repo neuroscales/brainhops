@@ -21,10 +21,6 @@ from brainhops._core.typing import ArrayProtocol, Shape
 
 from ._axes.components import _batched, _inv, is_component_type
 from ._sugar import get_axes
-from ._transformations.compute.multiscale import (
-    _as_affine,
-    _as_affine_ignoring_fields,
-)
 from .axes import Axis, AxisSequence
 from .enums import ReframeMethod, ReframeMethodLike
 from .systems import CoordinateSystem
@@ -372,7 +368,7 @@ def _keeps_values(voxel_map: Transformation, points: bool) -> bool:
     Composing the array system with the map would also be correct, so a
     map that this function cannot read returns `False`.
     """
-    affine = _as_affine(voxel_map)
+    affine = voxel_map.to_affine(on_error=None)
     if affine is None:
         return False
     matrix = np.asarray(affine.matrix, dtype=float)
@@ -447,10 +443,10 @@ def _structure(frame: Transformation, ndim: int) -> tx.Optional[_Structure]:
         exact = True
     else:
         head = parts[0] if len(parts) == 1 else Sequence(transformations=parts)
-        affine = _as_affine(head)
+        affine = head.to_affine(on_error=None)
         exact = affine is not None
         if affine is None:
-            affine = _as_affine_ignoring_fields(head)
+            affine = head.to_affine(include="affine", on_error=None)
         if affine is None:
             return None
         linear = np.asarray(affine.matrix, dtype=float)[:, :-1]

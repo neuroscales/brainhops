@@ -311,7 +311,7 @@ def test_the_intent_is_the_field(tmp_path: Path) -> None:
     # An intent that changes how the axes are read is decided by the
     # geometry, and is reported as approximated.
     report = ConversionReport()
-    image.save(path, intent="vector", on_loss=report)
+    image.save(path, intent="vector", on_error=report)
     assert "intent" in report.approximated
     assert int(nb.load(str(path)).header["intent_code"]) == 0
 
@@ -319,7 +319,7 @@ def test_the_intent_is_the_field(tmp_path: Path) -> None:
 def test_the_time_step_owns_the_repetition_time(tmp_path: Path) -> None:
     image = _nifti(tmp_path)
     report = ConversionReport()
-    image.consolidate(repetition_time=3.0, on_loss=report)
+    image.consolidate(repetition_time=3.0, on_error=report)
     assert "repetition_time" in report.approximated
 
 
@@ -350,10 +350,10 @@ def test_a_save_that_converts_warns_once(tmp_path: Path) -> None:
         "T1w"
     )
     report = ConversionReport()
-    io.save(image, tmp_path / "report.mgz", on_loss=report)
+    io.save(image, tmp_path / "report.mgz", on_error=report)
     assert set(report.lost) == {"description", "extra"}
     with pytest.raises(MetadataLossError):
-        io.save(image, tmp_path / "raise.mgz", on_loss="raise")
+        io.save(image, tmp_path / "raise.mgz", on_error="raise")
 
 
 def test_a_format_without_a_vocabulary_reports_its_fields_as_lost(
@@ -366,14 +366,14 @@ def test_a_format_without_a_vocabulary_reports_its_fields_as_lost(
         xform = C3dAffine(np.eye(4)[:-1], metadata=Metadata(description="r"))
     report = ConversionReport()
     path = tmp_path / "affine.mat"
-    xform.save(path, on_loss=report)
+    xform.save(path, on_error=report)
     assert set(report.lost) == {"description"}
     assert C3dAffine.load(path).metadata.description is None
-    copy = xform.consolidate(on_loss="ignore")
+    copy = xform.consolidate(on_error="ignore")
     assert copy.metadata.description is None
     assert xform.metadata.description == "r"
     with pytest.raises(MetadataLossError):
-        xform.consolidate(on_loss="raise", history=("a step",))
+        xform.consolidate(on_error="raise", history=("a step",))
 
 
 def test_a_save_reports_the_metadata_that_a_conversion_drops(
@@ -388,7 +388,7 @@ def test_a_save_reports_the_metadata_that_a_conversion_drops(
         metadata=Metadata(description="reg"),
     )
     report = ConversionReport()
-    io.save(affine, tmp_path / "affine.mat", on_loss=report)
+    io.save(affine, tmp_path / "affine.mat", on_error=report)
     assert set(report.lost) == {"description"}
 
 

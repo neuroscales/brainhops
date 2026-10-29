@@ -800,7 +800,7 @@ def test_save_over_own_file_drops_lost_field(tmp_path: Path) -> None:
     image.metadata.description = "edited"
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        bio.save(image, path, on_loss="warn")
+        bio.save(image, path, on_error="warn")
     assert len(caught) == 1
     assert "description" in str(caught[0].message)
     assert image.metadata.description is None
@@ -816,7 +816,7 @@ def test_save_pyramid_over_own_file_drops_lost_field(tmp_path: Path) -> None:
     pyramid.metadata.description = "edited"
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        bio.save(pyramid, path, on_loss="warn")
+        bio.save(pyramid, path, on_error="warn")
     assert len(caught) == 1
     assert "description" in str(caught[0].message)
     assert pyramid.metadata.description is None

@@ -12,6 +12,7 @@ from bagof.magic import Factory, NoRepr
 
 # internals
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -453,6 +454,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
             return Confidence.LIKELY
         return _declined(error, failure)
 
+    @takes_error_policy
     def to_text(self) -> str:
         """Return the header text, without the empty line that ends it.
 
@@ -475,6 +477,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
                 lines.extend(self.data_files)
         return "\n".join(lines) + "\n"
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the header as the file stores it.
 

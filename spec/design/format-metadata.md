@@ -8,7 +8,9 @@ be carried from one format to another. It builds on the record design
 of `format-records.md`, where each format class holds a record of the
 header of its file, and on `DataModelBase` (#97, `bagof.magic`).
 Decisions are tagged `M1` to `M13` and collected at the end, followed
-by the open questions.
+by the open questions. The `on_loss=` keyword that this memo names is
+now the half of an error policy that concerns losses, beside
+`on_error=` (see `error-policy.md`, #590).
 
 On `main` today, `Metadata` has no field, and the metadata of a format
 holds only its record: `MetadataFormat.consolidate` takes no option and

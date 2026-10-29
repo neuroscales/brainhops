@@ -58,7 +58,7 @@ class PrecomputedMultiScaleImage(
     A pyramid built from images has no metadata.
     """
 
-    def consolidate(
+    def _consolidate(
         self, *, inplace: bool = False
     ) -> "PrecomputedMultiScaleImage":
         """Move the pending data of each level into its `rawdata`.
@@ -287,7 +287,7 @@ if HAS_TENSORSTORE:
 
 
 def _read_pyramid(
-    cls: type, location: str, record: PrecomputedRaw
+    cls: type, location: path.Path, record: PrecomputedRaw
 ) -> PrecomputedMultiScaleImage:
     """Build the pyramid of every scale of a volume.
 

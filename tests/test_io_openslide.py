@@ -436,7 +436,7 @@ def test_open_file(svs: Path) -> None:
     with open(svs, "rb") as f:
         image = load(f)
     assert isinstance(image, bos.AperioMultiScaleImage)
-    assert image.rawdata[0].slide.filename == str(svs)
+    assert image.rawdata[0].slide.filename == svs
     assert image.images[0].rawdata.slide is image.rawdata[0].slide
 
 
@@ -619,7 +619,7 @@ def test_kept_levels_hold_the_consolidated_metadata(
     metadata = pyramid.metadata
     pyramid.images[2].transformations = [Scaling([3.0, 3.0, 1.0])]
     copy = pyramid.consolidate(
-        inplace=inplace, on_loss="ignore", name="renamed"
+        inplace=inplace, on_error="ignore", name="renamed"
     )
     assert copy._images is not None
     assert copy.metadata is not None

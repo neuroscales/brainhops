@@ -35,9 +35,9 @@ on which it is placed, and the affines around it become transforms of
 their own; where the chain does not say how the field is placed, they
 are carried into it. A field interpolated with a degree other
 than 1 or 3 is evaluated at its nodes, which is a loss: the converter
-raises a `LossyConversionError`, and `t.to(X5Transform, lossy=True)`
-returns the approximation. How a field is extended beyond its grid,
-which X5 does with a zero boundary, is not counted as a loss.
+raises a `LossyConversionError`, and `t.to(X5Transform,
+on_loss="ignore")` returns the approximation. How a field is extended beyond
+its grid, which X5 does with a zero boundary, is not counted as a loss.
 
 The conversion takes `metadata=`, and without it the metadata of `t` is
 converted into the metadata of X5. An `X5Transform` that is converted

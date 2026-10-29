@@ -144,7 +144,7 @@ class XfmGridTransform(_xforms.ImmutableSequence):
 
 
 def read_volume(
-    name: str, location: tx.Optional[path.FilenameLike]
+    name: str, location: tx.Optional[path.Path]
 ) -> tx.Optional[tx.Any]:
     """Read the header of the displacement volume of a grid transform.
 
@@ -159,7 +159,7 @@ def read_volume(
     ----------
     name : str
         The name of the volume, as the transform file stores it.
-    location : path-like, optional
+    location : Path, optional
         The path of the transform file.
 
     Returns
@@ -181,7 +181,7 @@ def read_volume(
             return None
         filename = path.Path(name)
     else:
-        filename = path.Path(location).parent / name
+        filename = location.parent / name
     try:
         from brainhops.io.images.minc import MincImage
     except ImportError as error:

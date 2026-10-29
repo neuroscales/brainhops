@@ -16,6 +16,7 @@ import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, replace
 
 from brainhops._core import path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -296,6 +297,7 @@ class ElastixRaw(
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self) -> str:
         """Return the text of the file, ending with a newline.
 
@@ -325,6 +327,7 @@ class ElastixRaw(
                 return self.text
         return formatted
 
+    @takes_error_policy
     def to_lines(self) -> tx.Iterator[str]:
         return iter(self.to_text().splitlines())
 
@@ -394,20 +397,18 @@ def resolve_initial(
         If the file cannot be found. This error is a subclass of
         `FileNotFoundError`.
     """
+    directory = None if origin is None else path.Path(origin).parent
     candidates = []
-    directory = None
-    if origin is not None:
-        directory = os.path.dirname(os.fspath(origin))
-    if is_absolute(name) or os.path.exists(name) or not directory:
-        candidates.append(name)
-    if directory:
+    if is_absolute(name) or os.path.exists(name) or directory is None:
+        candidates.append(path.Path(name))
+    if directory is not None:
         if not is_absolute(name):
-            candidates.append(os.path.join(directory, name))
+            candidates.append(directory / name)
         base = name.replace("\\", "/").rsplit("/", 1)[-1]
-        candidates.append(os.path.join(directory, base))
+        candidates.append(directory / base)
     for candidate in candidates:
-        if os.path.isfile(candidate):
-            return path.Path(candidate)
+        if candidate.is_file():
+            return candidate
     where = f" (named by {origin})" if origin is not None else ""
     raise ParserExistsError(
         f"Cannot find the elastix initial transform {name!r}{where}. "
@@ -458,7 +459,8 @@ def syntax_of(filename: tx.Optional[path.FilenameLike]) -> tx.Optional[str]:
     """
     if filename is None:
         return None
-    return "toml" if os.fspath(filename).lower().endswith(".toml") else "text"
+    name = (path.base_name(filename) or "").lower()
+    return "toml" if name.endswith(".toml") else "text"
 
 
 def _read_file(
@@ -466,7 +468,7 @@ def _read_file(
     syntax: tx.Optional[str],
     initial: _InitialOption,
     encoding: str,
-    visited: tx.Tuple[str, ...],
+    visited: tx.Tuple[path.Path, ...],
 ) -> ElastixRaw:
     """Read the record of a file by its name, with its chain.
 
@@ -475,11 +477,10 @@ def _read_file(
     ParserExistsError
         If the file does not exist.
     """
-    if isinstance(filename, str):
-        filename = path.Path(filename)
-    if not path.exists(filename):
+    filename = path.Path(filename)
+    if not filename.exists():
         raise ParserExistsError(f"No such file: {filename}")
-    with path.Path(filename).open("rb") as file:
+    with filename.open("rb") as file:
         text = file.read().decode(encoding)
     if syntax is None:
         syntax = syntax_of(filename)
@@ -492,12 +493,14 @@ def _read(
     syntax: tx.Optional[str],
     initial: _InitialOption,
     origin: tx.Optional[path.FilenameLike],
-    visited: tx.Tuple[str, ...],
+    visited: tx.Tuple[path.Path, ...],
 ) -> ElastixRaw:
     """Parse a record and read the records of the chain that it names.
 
-    `visited` lists the real paths of the files that name this one, so
-    that a chain that loops back is refused.
+    `visited` lists the resolved paths of the files that name this one,
+    so that a chain that loops back is refused. An `origin` that is not
+    a path, such as the number that names the file of a file descriptor,
+    is ignored.
 
     Raises
     ------
@@ -505,6 +508,9 @@ def _read(
         If the lines are not a transform parameter file, or if the chain
         loops back to one of its files.
     """
+    origin = path.as_path_or_stream(origin)
+    if not isinstance(origin, path.Path):
+        origin = None
     if syntax is None:
         syntax = syntax_of(origin)
     pmap, syntax = _parse(lines, syntax)
@@ -517,8 +523,8 @@ def _read(
     record = None
     if initial is True and name is not None:
         filename = resolve_initial(name, origin)
-        key = os.path.realpath(os.fspath(filename))
-        here = None if origin is None else os.path.realpath(os.fspath(origin))
+        key = filename.resolve()
+        here = None if origin is None else origin.resolve()
         if key in visited or key == here:
             raise ParserContentError(
                 f"The elastix initial transforms loop back to {filename}."

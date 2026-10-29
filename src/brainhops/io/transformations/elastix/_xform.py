@@ -6,20 +6,22 @@ __all__ = [
     "ElastixTomlTransform",
 ]
 
-import os
 from warnings import warn
 
 import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     ParserNotImplementedError,
@@ -240,6 +242,7 @@ class ElastixTransform(
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file, with the files of its chain.
 
@@ -258,8 +261,7 @@ class ElastixTransform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            `on_loss` and the fields of the metadata, given to
-            [`consolidate`][].
+            The fields of the metadata, given to [`consolidate`][].
 
         Raises
         ------
@@ -269,13 +271,13 @@ class ElastixTransform(
             If a file of the chain would be written over the new file, or
             over another file that holds different bytes.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         record = _record(self.consolidate(**kwargs))
         content = record.to_bytes()
         _place_initial(record, filename, filename)
-        atomic_write_bytes(filename, content)
+        filename.write_bytes(content, atomic=filename.is_local())
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the parameter file that encodes the chain.
 
@@ -285,8 +287,7 @@ class ElastixTransform(
         Parameters
         ----------
         **kwargs : Any
-            `on_loss` and the fields of the metadata, given to
-            [`consolidate`][].
+            The fields of the metadata, given to [`consolidate`][].
 
         Returns
         -------
@@ -300,6 +301,7 @@ class ElastixTransform(
         """
         return _record(self.consolidate(**kwargs)).to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         return _record(self.consolidate(**kwargs)).to_lines()
 
@@ -420,25 +422,21 @@ class ElastixParameterTransform(ElastixTransform):
     ) -> tx.Self:
         return _from_text(cls, "text", None, lines, initial, origin)
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
 
-        The rules are those of [`ElastixTomlTransform.consolidate`][],
+        The rules are those of `ElastixTomlTransform._consolidate`,
         with the classic text syntax.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -459,7 +457,7 @@ class ElastixParameterTransform(ElastixTransform):
             as a single elastix transform, or if a system that was
             assigned is not LPS.
         """
-        return _consolidated(self, "text", inplace, on_loss, fields)
+        return _consolidated(self, "text", inplace, fields)
 
 
 @register_format
@@ -543,11 +541,10 @@ class ElastixTomlTransform(ElastixTransform):
     ) -> tx.Self:
         return _from_text(cls, "toml", None, lines, initial, origin)
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
@@ -573,17 +570,15 @@ class ElastixTomlTransform(ElastixTransform):
         initial transform of the old record, is reset.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an elastix
-        file holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`.
+        write), with the fields given by keyword. The record of an
+        elastix file holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -604,7 +599,7 @@ class ElastixTomlTransform(ElastixTransform):
             as a single elastix transform, or if a system that was
             assigned is not LPS.
         """
-        return _consolidated(self, "toml", inplace, on_loss, fields)
+        return _consolidated(self, "toml", inplace, fields)
 
 
 # ----------------------------------------------------------------------
@@ -744,12 +739,11 @@ def _consolidated(
     xform: ElastixTransform,
     syntax: str,
     inplace: bool,
-    on_loss: tx.Optional[OnLoss],
     fields: tx.Mapping[str, tx.Any],
 ) -> ElastixTransform:
     """Encode the pending state of a transformation into a new record.
 
-    The rules are described in [`ElastixTomlTransform.consolidate`][].
+    The rules are described in `ElastixTomlTransform._consolidate`.
 
     Raises
     ------
@@ -763,7 +757,7 @@ def _consolidated(
     metadata = metadata_to_write(
         xform.metadata, ElastixMetadata, fields, report
     )
-    apply_loss_policy(report, on_loss, stacklevel=3)
+    apply_loss_policy(report, stacklevel=3)
     if not requested:
         metadata = xform.metadata
     record = _record(xform)
@@ -880,8 +874,8 @@ def _check_lps(xform: ElastixTransform, ndim: int) -> None:
 
 def _place_initial(
     record: ElastixRaw,
-    filename: path.FilenameLike,
-    written: path.FilenameLike,
+    filename: path.Path,
+    written: path.Path,
 ) -> None:
     """Write the files of the chain of a record where its file names them.
 
@@ -901,24 +895,21 @@ def _place_initial(
     initial = record.initial
     if initial is None or name is None or is_absolute(name):
         return
-    target = path.Path(filename).parent / name
-    if is_same_file(target, written) or (
-        os.fspath(target) == os.fspath(written)
-    ):
+    target = filename.parent / name
+    if is_same_file(target, written) or target == written:
         raise WriterError(
             f"The elastix initial transform {name!r} would be written over "
             f"{written}, which names it."
         )
     content = initial.to_bytes()
-    if path.exists(target):
-        with path.Path(target).open("rb") as file:
-            if file.read() != content:
-                raise WriterError(
-                    f"The elastix initial transform {name!r} must be "
-                    f"written to {target}, which holds another file. "
-                    f"Write the transformation to another directory, or "
-                    f"remove that file."
-                )
+    if target.exists():
+        if target.read_bytes() != content:
+            raise WriterError(
+                f"The elastix initial transform {name!r} must be "
+                f"written to {target}, which holds another file. "
+                f"Write the transformation to another directory, or "
+                f"remove that file."
+            )
     else:
-        atomic_write_bytes(target, content)
+        target.write_bytes(content, atomic=target.is_local())
     _place_initial(initial, target, written)

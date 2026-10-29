@@ -9,6 +9,7 @@ from bagof.magic import fields
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import (
     FileFormat,
@@ -179,6 +180,7 @@ def test_write_only_adapters_preserve_borrowed_streams(
 
         if binary:
 
+            @takes_error_policy
             def to_bytes(self, **kwargs) -> bytes:
                 return b"\x00\xff"
 

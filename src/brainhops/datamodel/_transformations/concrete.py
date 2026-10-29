@@ -1164,6 +1164,7 @@ class Translation(_CompactTransformation):
 
 
 @kinds.Identity
+@nocycles.register_identity
 class Identity(_CompactTransformation):
     """Identity transformation.
 

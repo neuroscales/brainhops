@@ -16,7 +16,6 @@ from bagof.magic import Magic, replace
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import HAS_PILLOW, HAS_TIFFFILE
-from brainhops._core.path import is_local
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
     Confidence,
@@ -487,19 +486,21 @@ def local_folder(folder: tx.Any) -> str:
 def local_name(target: tx.Any) -> str:
     """Return the local path that a path names, which may not exist.
 
+    The folder of a stack is listed and written with the functions of
+    `os` and `glob`, so the path is returned as text.
+
     Raises
     ------
     ParserContentError
         If `target` is not a path, or not a local one.
     """
-    if isinstance(target, str):
-        target = path.Path(target)
-    if not isinstance(target, (str, os.PathLike)):
+    target = path.as_path_or_stream(target)
+    if not isinstance(target, path.Path):
         raise ParserContentError(
             f"An image stack is read from the path of a folder, not from "
             f"an object of type {type(target).__name__}."
         )
-    if not is_local(target):
+    if not target.is_local():
         raise ParserContentError(
             f"Image stacks are stored in local folders only, and "
             f"{str(target)!r} is not local."

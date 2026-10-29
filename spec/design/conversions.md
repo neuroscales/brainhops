@@ -66,8 +66,9 @@ and `SpaceAxis.from_instance(LeftToRightAxis())` keeps the left to
 right axis. `convert()` checks `isinstance(result, cls)`.
 
 C6. Conversions are exact by default, and a loss is opted into. A
-transformation raises `LossyConversionError` unless `lossy=True` is
-given, and the error carries the lossy result. Metadata follows its
+transformation raises `LossyConversionError` unless
+`on_loss="ignore"` is given (see `error-policy.md`), and the error
+carries the lossy result. Metadata follows its
 loss policy, which warns by default, because a lost metadata field is
 minor where a lost parameter changes the geometry. A converter that
 goes through intermediate classes reports a loss with a result of the

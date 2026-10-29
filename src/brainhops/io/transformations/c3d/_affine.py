@@ -13,8 +13,13 @@ from brainhops._core.properties import (
 )
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
-from brainhops.errors import IncompatibleSystemError
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
+from brainhops.errors import (
+    IncompatibleSystemError,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -293,11 +298,10 @@ class C3dAffine(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix into a new record.
@@ -312,15 +316,13 @@ class C3dAffine(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a
         Convert3D matrix holds no field of the vocabulary yet, so a
-        field that is set is reported as lost, once, by `on_loss`.
+        field that is set is reported as lost, once, under the error
+        policy of the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -345,7 +347,7 @@ class C3dAffine(
         metadata = metadata_to_write(
             self.metadata, C3dAffineMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         _check_systems(self)
@@ -367,6 +369,7 @@ class C3dAffine(
         self.data = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the transformation to a path or a file object.
 
@@ -379,9 +382,8 @@ class C3dAffine(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            Options of the writer of the record, which takes none.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which takes none. The
+            fields of the metadata are given to [`consolidate`][].
 
         Raises
         ------
@@ -391,6 +393,7 @@ class C3dAffine(
         record, options = _written(self, kwargs)
         return record.to_file(file, **options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the content of the file that encodes the transformation.
 
@@ -400,9 +403,8 @@ class C3dAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which takes none.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which takes none. The
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -417,6 +419,7 @@ class C3dAffine(
         record, options = _written(self, kwargs)
         return record.to_text(**options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the file that encodes the transformation.
 
@@ -426,9 +429,8 @@ class C3dAffine(
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which takes none.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which takes none. The
+            fields of the metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -543,9 +545,9 @@ def _written(
 ) -> tx.Tuple[C3dAffineRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.
 
-    The record is that of the copy consolidated with `on_loss` and the
-    fields of the metadata among `kwargs`, and the other options, for
-    the writer of the record, are returned with it.
+    The record is that of the copy consolidated with the fields of the
+    metadata among `kwargs`, and the other options, for the writer of
+    the record, are returned with it.
 
     Raises
     ------
