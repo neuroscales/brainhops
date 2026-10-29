@@ -56,7 +56,7 @@ class N5MultiScaleImage(BinaryFileReader, ImageFormat, MultiScaleImage):
     A pyramid built from images has no metadata.
     """
 
-    def consolidate(self, *, inplace: bool = False) -> "N5MultiScaleImage":
+    def _consolidate(self, *, inplace: bool = False) -> "N5MultiScaleImage":
         """Move the pending data of each level into its `rawdata`.
 
         N5 containers are not written, so no record can be encoded. Each
@@ -280,7 +280,7 @@ if HAS_TENSORSTORE:
 
 
 def _read_pyramid(
-    cls: type, location: str, record: N5Raw
+    cls: type, location: path.Path, record: N5Raw
 ) -> N5MultiScaleImage:
     """Build the pyramid of every level of a group.
 

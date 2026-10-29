@@ -1,18 +1,20 @@
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
+from brainhops._core.errors import UNSET
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel._backends import _BackendsMixin
 from brainhops.datamodel.base import DataModelBase, _ComparesByIdMixin
 from brainhops.datamodel.metadata import Metadata
+from brainhops.datamodel.metadata._report import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.errors import ConversionError, LossyConversionError
+from brainhops.errors import ConversionError, ErrorAction, ErrorPolicy
 
 from . import nocycles
 from .compute.check import is_kind
 from .compute.convert import convert
+from .compute.filter import MatchLike, replace_parts
 from .compute.simplify import SimplifyLike
 from .compute.utils import require_endomorphism
 from .modes import ModeLike
@@ -550,8 +552,8 @@ class Transformation(
         self,
         cls: tx.Optional[tx.Type[tx.Self]] = None,
         *,
-        lossy: bool = False,
-        error: tx.Union[tx.Type[Exception], Exception, bool] = True,
+        on_loss: ErrorAction = UNSET,
+        on_error: ErrorPolicy = UNSET,
         copy: bool = False,
         **kwargs,
     ) -> tx.Self:
@@ -563,16 +565,43 @@ class Transformation(
         * within a type: `displacement.to(store="coefficients")`   ; or
         * both: `coords.to(DisplacementField, store="values")`     .
 
+        A conversion that would lose information raises a
+        [`LossyConversionError`][brainhops.errors.LossyConversionError],
+        which carries the lossy result. A conversion that cannot be
+        made raises a [`ConversionError`][]. An error policy decides
+        what happens to these errors (see
+        [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). Its scope is
+        `(ConversionError,)`, so that a single action applies to these
+        errors only, and any other error is raised unless a mapping
+        names it. The policy that the call applies is
+        `{LossyConversionError: on_loss, **on_error}`, so that
+        `on_loss="ignore"` returns the lossy result. Without
+        `on_loss=`, a loss falls under `on_error=`, so that
+        `on_error="ignore"` alone also returns the lossy result. A loss
+        of metadata, in the conversions of metadata that the conversion
+        triggers, follows the same policy, because a
+        [`MetadataLossError`][brainhops.datamodel.metadata.MetadataLossError]
+        is a lossy conversion error.
+
         Parameters
         ----------
         cls : type of Transformation, optional
             Type to convert to. By default, the type is normally kept.
-        lossy : bool, default=False
-            Whether to allow a conversion that loses information.
-        error : type of Exception or Exception or bool, default=True
-            What to do when the conversion fails. `True` (the default) raises
-            the original error again, an exception or exception type is raised
-            from it, and any other value is returned in place of the result.
+        on_loss : ErrorAction, optional
+            What to do with a conversion that loses information, with
+            the same values as a single action of `on_error`.
+            `"ignore"` returns the lossy result, `"warn"` warns and
+            returns it, and a report records the loss and returns it.
+            By default, a loss falls under `on_error`.
+        on_error : ErrorPolicy, optional
+            What to do when the conversion fails. One action applies to
+            a [`ConversionError`][], which includes a loss, and any
+            other error, such as an `OSError`, is raised unchanged. A
+            mapping chooses an action by the class of the error, and
+            may name a class outside the conversion errors, as
+            `{Exception: None}` does. An entry for a loss in `on_error`
+            takes precedence over `on_loss`. `True` and `False` are
+            refused. By default, every error is raised.
         copy : bool, default=False
             Whether to return a new object when the conversion has nothing
             to change. By default, a transformation converted to its own
@@ -586,26 +615,24 @@ class Transformation(
         Returns
         -------
         Transformation
-            The converted transformation.
+            The converted transformation, or what the policy returns in
+            its place.
+
+        Examples
+        --------
+        ```python
+        # Accept a loss, and return None if no converter exists.
+        t.to(Rotation, on_loss="ignore", on_error=None)
+        ```
         """
-        cls = cls or self._target_class(kwargs)
-        try:
-            return _copied(self, convert(self, cls, **kwargs), copy)
-        except LossyConversionError as e:
-            if lossy:
-                # The caller accepts a lossy result, which the exception
-                # carries.
-                return e.result
-            failure = e
-        except ConversionError as e:
-            failure = e
-        # The conversion failed and no loss was accepted, so `error` decides
-        # what happens.
-        if error is True:
-            raise failure
-        if is_instance_or_subclass(error, Exception):
-            raise error from failure
-        return error
+
+        def convert_to() -> Transformation:
+            target = cls or self._target_class(kwargs)
+            return _copied(self, convert(self, target, **kwargs), copy)
+
+        return call_under_policy(
+            convert_to, on_error, on_loss=on_loss, scope=(ConversionError,)
+        )
 
     def _target_class(
         self, kwargs: tx.Dict[str, tx.Any]
@@ -722,6 +749,425 @@ class Transformation(
         [`kinds.Affine`][brainhops.datamodel.kinds.Affine] or the identity.
         """
         return self.is_kind(kinds.Affine, compute)
+
+    # --- filters ------------------------------------------------------
+
+    def without(self, match: MatchLike) -> "Transformation":
+        """Return the transformation with some parts replaced by the identity.
+
+        A caller uses this method to ignore a class of transformations,
+        for example the displacement fields of a chain whose affine part
+        it needs. Every part that the matcher selects becomes an
+        [`Identity`][brainhops.datamodel.transformations.Identity] with
+        the same input and output coordinate systems, so that the
+        elements of a chain still connect and no bridge is guessed
+        between them. The identities disappear when the result is
+        computed.
+
+        The transformation is visited from the outside in. A selected
+        node is replaced as a whole, and the method looks inside a
+        sequence or an inverse only when the node itself is not
+        selected. The inverse of a replaced part is replaced as well.
+        The method does not look inside any other wrapper, such as a
+        lazy square root (`Sqrt`), a `Bijection` or a
+        `SubspaceTransformation`, so the matcher decides such a wrapper
+        as a whole, and a part that it holds is not replaced on its own.
+
+        Parameters
+        ----------
+        match : MatchLike
+            Parts to replace. A matcher is a kind or the name of a kind,
+            such as `"affine"`, a concrete class of transformation, a
+            predicate that takes a transformation and returns a boolean,
+            or a sequence of these values, which selects a part when any
+            of its items selects it.
+
+        Returns
+        -------
+        Transformation
+            The filtered transformation, or the transformation itself
+            when no part is replaced.
+
+        Raises
+        ------
+        ValueError
+            If a part to replace changes the number of axes.
+        """
+        return replace_parts(self, match, keep=False)
+
+    def with_only(self, match: MatchLike) -> "Transformation":
+        """Return the transformation with only some parts kept.
+
+        This method is the complement of
+        [`without`][brainhops.datamodel.transformations.Transformation.without]:
+        every part that the matcher does not select is replaced by an
+        identity with the same coordinate systems. Because a kind can
+        only describe the transformations that have a property,
+        `with_only("affine")` is the way to remove everything that is not
+        affine.
+
+        A node that the matcher selects is kept as a whole, so a chain
+        that is affine as a whole is not split. The method looks inside
+        a sequence or an inverse only when the node itself is not
+        selected, and replaces any other node that is not selected. A
+        wrapper other than a sequence or an inverse, such as a lazy
+        square root (`Sqrt`), a `Bijection` or a
+        `SubspaceTransformation`, is therefore kept or replaced as a
+        whole, even when only a part that it holds is selected.
+
+        Parameters
+        ----------
+        match : MatchLike
+            Parts to keep, in the same forms as for `without`.
+
+        Returns
+        -------
+        Transformation
+            The filtered transformation, or the transformation itself
+            when no part is replaced.
+
+        Raises
+        ------
+        ValueError
+            If a part to replace changes the number of axes.
+        """
+        return replace_parts(self, match, keep=True)
+
+    # --- conversions to a kind ----------------------------------------
+
+    def to_translation(
+        self,
+        *,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to a translation.
+
+        The transformation is first filtered: the parts that `include`
+        does not select are replaced by the identity, as by
+        `with_only(include)`, and then the parts that `exclude` selects
+        are replaced, as by `without(exclude)`. The filtered
+        transformation is computed, because a chain must be composed
+        before it can be converted, and the result is converted to a
+        `Translation` with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        The result always has its `data`. A result without it raises
+        a [`ConversionError`][], because its dimension is unknown, as for
+        an `Identity()`. Plain `to` makes no such check. The policy given
+        as `on_error=` and `on_loss=` applies to the whole call, so that
+        `on_error=None` returns `None` when the conversion fails.
+
+        Parameters
+        ----------
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`, after
+            `include` is applied. By default, no part is replaced.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that the policy
+            returns when the conversion fails.
+        """
+        from .concrete import Translation
+
+        return self._to_class(
+            Translation, include=include, exclude=exclude, **kwargs
+        )
+
+    def to_scaling(
+        self,
+        *,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to a scaling.
+
+        The transformation is first filtered: the parts that `include`
+        does not select are replaced by the identity, as by
+        `with_only(include)`, and then the parts that `exclude` selects
+        are replaced, as by `without(exclude)`. The filtered
+        transformation is computed, because a chain must be composed
+        before it can be converted, and the result is converted to a
+        `Scaling` with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        The result always has its `data`. A result without it raises
+        a [`ConversionError`][], because its dimension is unknown, as for
+        an `Identity()`. Plain `to` makes no such check. The policy given
+        as `on_error=` and `on_loss=` applies to the whole call, so that
+        `on_error=None` returns `None` when the conversion fails.
+
+        Parameters
+        ----------
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`, after
+            `include` is applied. By default, no part is replaced.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that the policy
+            returns when the conversion fails.
+        """
+        from .concrete import Scaling
+
+        return self._to_class(
+            Scaling, include=include, exclude=exclude, **kwargs
+        )
+
+    def to_permutation(
+        self,
+        *,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to a permutation.
+
+        The transformation is first filtered: the parts that `include`
+        does not select are replaced by the identity, as by
+        `with_only(include)`, and then the parts that `exclude` selects
+        are replaced, as by `without(exclude)`. The filtered
+        transformation is computed, because a chain must be composed
+        before it can be converted, and the result is converted to a
+        `Permutation` with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        The result always has its `data`. A result without it raises
+        a [`ConversionError`][], because its dimension is unknown, as for
+        an `Identity()`. Plain `to` makes no such check. The policy given
+        as `on_error=` and `on_loss=` applies to the whole call, so that
+        `on_error=None` returns `None` when the conversion fails.
+
+        Parameters
+        ----------
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`, after
+            `include` is applied. By default, no part is replaced.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that the policy
+            returns when the conversion fails.
+        """
+        from .concrete import Permutation
+
+        return self._to_class(
+            Permutation, include=include, exclude=exclude, **kwargs
+        )
+
+    def to_rotation(
+        self,
+        *,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to a rotation.
+
+        The transformation is first filtered: the parts that `include`
+        does not select are replaced by the identity, as by
+        `with_only(include)`, and then the parts that `exclude` selects
+        are replaced, as by `without(exclude)`. The filtered
+        transformation is computed, because a chain must be composed
+        before it can be converted, and the result is converted to a
+        `Rotation` with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        The result always has its `matrix`. A result without it raises
+        a [`ConversionError`][], because its dimension is unknown, as for
+        an `Identity()`. Plain `to` makes no such check. The policy given
+        as `on_error=` and `on_loss=` applies to the whole call, so that
+        `on_error=None` returns `None` when the conversion fails.
+
+        Parameters
+        ----------
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`, after
+            `include` is applied. By default, no part is replaced.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that the policy
+            returns when the conversion fails.
+        """
+        from .concrete import Rotation
+
+        return self._to_class(
+            Rotation, include=include, exclude=exclude, **kwargs
+        )
+
+    def to_linear(
+        self,
+        *,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to a linear map.
+
+        The transformation is first filtered: the parts that `include`
+        does not select are replaced by the identity, as by
+        `with_only(include)`, and then the parts that `exclude` selects
+        are replaced, as by `without(exclude)`. The filtered
+        transformation is computed, because a chain must be composed
+        before it can be converted, and the result is converted to a
+        `Linear` with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        The result always has its `matrix`. A result without it raises
+        a [`ConversionError`][], because its dimension is unknown, as for
+        an `Identity()`. Plain `to` makes no such check. The policy given
+        as `on_error=` and `on_loss=` applies to the whole call, so that
+        `on_error=None` returns `None` when the conversion fails.
+
+        Parameters
+        ----------
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`, after
+            `include` is applied. By default, no part is replaced.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that the policy
+            returns when the conversion fails.
+        """
+        from .concrete import Linear
+
+        return self._to_class(
+            Linear, include=include, exclude=exclude, **kwargs
+        )
+
+    def to_affine(
+        self,
+        *,
+        include: tx.Optional[MatchLike] = None,
+        exclude: tx.Optional[MatchLike] = None,
+        **kwargs,
+    ) -> "Transformation":
+        """Convert the transformation to an affine map.
+
+        The transformation is first filtered: the parts that `include`
+        does not select are replaced by the identity, as by
+        `with_only(include)`, and then the parts that `exclude` selects
+        are replaced, as by `without(exclude)`. The filtered
+        transformation is computed, because a chain must be composed
+        before it can be converted, and the result is converted to a
+        `Affine` with
+        [`to`][brainhops.datamodel.transformations.Transformation.to].
+
+        The result always has its `matrix`. A result without it raises
+        a [`ConversionError`][], because its dimension is unknown, as for
+        an `Identity()`. Plain `to` makes no such check. The policy given
+        as `on_error=` and `on_loss=` applies to the whole call, so that
+        `on_error=None` returns `None` when the conversion fails.
+
+        For example, `to_affine(on_error=None)` returns `None` when
+        the transformation is not affine, and
+        `to_affine(include="affine", on_error=None)` returns the affine
+        part of a chain whose other parts, such as fields, are dropped.
+
+        Parameters
+        ----------
+        include : MatchLike, optional
+            Parts to keep, as in `with_only`. By default, every part is
+            kept.
+        exclude : MatchLike, optional
+            Parts to replace by the identity, as in `without`, after
+            `include` is applied. By default, no part is replaced.
+        **kwargs : Any
+            Keyword arguments of `to`, such as `on_loss=` and
+            `on_error=`.
+
+        Returns
+        -------
+        Transformation
+            The converted transformation, or the value that the policy
+            returns when the conversion fails.
+        """
+        from .concrete import Affine
+
+        return self._to_class(
+            Affine, include=include, exclude=exclude, **kwargs
+        )
+
+    def _to_class(
+        self,
+        target: type,
+        *,
+        include: tx.Optional[MatchLike],
+        exclude: tx.Optional[MatchLike],
+        on_loss: ErrorAction = UNSET,
+        on_error: ErrorPolicy = UNSET,
+        **kwargs,
+    ) -> "Transformation":
+        """Filter, compute and convert the transformation to `target`.
+
+        This method is the body of the `to_*` methods, which each name
+        their own class. The policy of the call applies to the filtering,
+        the computation and the conversion. A result whose parameters are
+        unknown, such as the conversion of `Identity()`, whose dimension
+        is not known, is refused with a `ConversionError`. Every class
+        that a `to_*` method converts to holds its parameters in `data`,
+        which is `None` exactly when they are unknown, and its other
+        views, such as `matrix`, are computed from `data`.
+        """
+
+        def convert_to() -> "Transformation":
+            xform = self
+            if include is not None:
+                xform = xform.with_only(include)
+            if exclude is not None:
+                xform = xform.without(exclude)
+            result = xform.compute().to(target, **kwargs)
+            if result.data is None:
+                raise ConversionError(
+                    f"The {target.__name__} that this "
+                    f"{type(self).__name__} converts to has no "
+                    f"parameters, because its dimension is not known."
+                )
+            return result
+
+        return call_under_policy(
+            convert_to, on_error, on_loss=on_loss, scope=(ConversionError,)
+        )
 
     # --- operators ----------------------------------------------------
 

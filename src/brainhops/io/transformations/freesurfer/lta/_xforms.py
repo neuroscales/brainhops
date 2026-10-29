@@ -23,7 +23,10 @@ from brainhops._core.properties import (
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
@@ -377,11 +380,10 @@ class LtaTransformation(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -401,17 +403,15 @@ class LtaTransformation(
         matrix and the systems are then decoded from it.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an LTA file
-        holds no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, by `on_loss`.
+        write), with the fields given by keyword. The record of an LTA
+        file holds no field of the vocabulary yet, so a field that is
+        set is reported as lost, once, under the error policy of the
+        call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -437,7 +437,7 @@ class LtaTransformation(
         metadata = metadata_to_write(
             self.metadata, LtaMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         record = record_of(self)
         overridden = (
             self._data is not None
@@ -467,6 +467,7 @@ class LtaTransformation(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the transformation to a path or file object in the LTA format.
 
@@ -479,8 +480,8 @@ class LtaTransformation(
         file : path or file object
             The path or the open text file.
         **kwargs : Any
-            `on_loss` and the fields of the metadata, as for
-            [`consolidate`][], and options of the writer of the record.
+            The fields of the metadata, as for [`consolidate`][], and
+            options of the writer of the record.
 
         Raises
         ------
@@ -490,6 +491,7 @@ class LtaTransformation(
         record, options = _lta_written(self, kwargs)
         return record.to_file(file, **options)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the LTA file that encodes the transformation.
 
@@ -499,8 +501,8 @@ class LtaTransformation(
         Parameters
         ----------
         **kwargs : Any
-            `on_loss` and the fields of the metadata, as for
-            [`consolidate`][], and options of the writer of the record.
+            The fields of the metadata, as for [`consolidate`][], and
+            options of the writer of the record.
 
         Yields
         ------
@@ -515,6 +517,7 @@ class LtaTransformation(
         record, options = _lta_written(self, kwargs)
         return record.to_lines(**options)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the LTA file content that encodes the transformation.
 
@@ -524,8 +527,8 @@ class LtaTransformation(
         Parameters
         ----------
         **kwargs : Any
-            `on_loss` and the fields of the metadata, as for
-            [`consolidate`][], and options of the writer of the record.
+            The fields of the metadata, as for [`consolidate`][], and
+            options of the writer of the record.
 
         Returns
         -------
@@ -684,7 +687,7 @@ def _as_block(
 def _build_raw(xform: LtaTransformation) -> LtaRaw:
     """Encode the matrix and coordinate systems of `xform` as a record.
 
-    See [`LtaTransformation.consolidate`][].
+    See `LtaTransformation._consolidate`.
     """
     src_system, dst_system = xform.input, xform.output
     old = record_of(xform)
@@ -779,19 +782,15 @@ def _lta_written(
     """Return the record that a file written from a transformation holds.
 
     The record is that of the copy of the transformation consolidated
-    with `on_loss` and the fields of the metadata among `kwargs`, and the
-    other options, for the writer of the record, are returned with it.
+    with the fields of the metadata among `kwargs`, and the other
+    options, for the writer of the record, are returned with it.
 
     Raises
     ------
     UnrepresentableTransformationError
         If the LTA format cannot encode the systems or the matrix.
     """
-    fields = {
-        name: value
-        for name, value in kwargs.items()
-        if name in FIELDS or name == "on_loss"
-    }
+    fields = {name: value for name, value in kwargs.items() if name in FIELDS}
     options = {
         name: value for name, value in kwargs.items() if name not in fields
     }

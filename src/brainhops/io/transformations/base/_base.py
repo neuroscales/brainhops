@@ -42,6 +42,16 @@ class TransformationFormat(
     or is rebuilt by the converters of the data model.
     A file, a mapping and an instance of the format itself are read or
     copied as the bases of this class read or copy them.
+
+    The `consolidate` method of a transformation format, and each method
+    that writes a file, take an error policy as their `on_error=` and
+    `on_loss=` keywords (see
+    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
+    happens to what the file cannot hold. A format overrides the hook
+    `_consolidate`, around which the base class applies the policy, and
+    puts the decorator `takes_error_policy` above each writer that it
+    defines, which applies the policy around the writer. Neither the
+    hook nor a writer declares these keywords.
     """
 
     HINTS = ("xform",)

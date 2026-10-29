@@ -115,6 +115,7 @@ nav = [
         {"enum" = "api/_core/enum.md"},
         {"proxy" = "api/_core/proxy.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
+        {"interpol" = "api/_ext/interpol/index.md"},
     ]}
   ]},
   {"Developer guide" = [

@@ -27,7 +27,7 @@ from io import BytesIO, TextIOBase
 import typing_extensions as tx
 
 from brainhops._core import path, peek
-from brainhops._core.path import is_local, replace_file
+from brainhops._core.path import replace_file
 from brainhops._core.streams import (
     compression_suffix,
     decompress,
@@ -35,6 +35,7 @@ from brainhops._core.streams import (
     open_decompressed,
     preserve_position,
 )
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.errors import (
     AmbiguousFormatError,  # noqa: F401
     ParserContentError,  # noqa: F401
@@ -237,8 +238,9 @@ class _SnifferMixin(_FileNamesMixin):
             The confidence, between 0 and 1. An unsupported input scores zero.
         """
         kwargs["error"] = error
+        file = path.as_path_or_stream(file)
 
-        if isinstance(file, (str, path.PathLike)):
+        if isinstance(file, path.Path):
             return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
@@ -262,8 +264,9 @@ class _SnifferMixin(_FileNamesMixin):
     ) -> float:
         """Same as [`sniff`][], for a path or an open file."""
         kwargs["error"] = error
+        file = path.as_path_or_stream(file)
 
-        if isinstance(file, (str, path.PathLike)):
+        if isinstance(file, path.Path):
             return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
@@ -290,11 +293,10 @@ class _SnifferMixin(_FileNamesMixin):
         """
         kwargs["error"] = error
 
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.as_path_or_stream(filename)
 
-        if isinstance(filename, path.PathLike):
-            if not path.exists(filename):
+        if isinstance(filename, path.Path):
+            if not filename.exists():
                 if error:
                     if error is True:
                         error = SnifferExistsError
@@ -547,10 +549,9 @@ class _ReaderMixin:
         if isinstance(other, SourceSpec):
             return cls.from_spec(other, **kwargs)
 
-        if isinstance(other, str):
-            other = path.Path(other)
+        other = path.as_path_or_stream(other)
 
-        if isinstance(other, path.PathLike):
+        if isinstance(other, path.Path):
             return cls.from_file(other, **kwargs)
 
         if hasattr(other, "read"):
@@ -581,7 +582,8 @@ class _ReaderMixin:
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """Read an object from a path or an open file."""
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return cls.from_filename(file, **kwargs)
 
         if hasattr(file, "read"):
@@ -601,10 +603,9 @@ class _ReaderMixin:
         ParserExistsError
             If the file does not exist.
         """
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
 
-        if not path.exists(filename):
+        if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         with open_decompressed(filename, cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
@@ -725,10 +726,41 @@ class _WriterMixin:
     as `to_bytes` or `to_lines`, and this mixin derives the other `to_*`
     methods and `save` from it. It is the counterpart of
     [`_ReaderMixin`][], and is independent of reading and sniffing.
+
+    Every entry point (`save`, `to_file`, `to_filename`, `to_fileobj`,
+    `to_bytes`, `to_text`, `to_lines`, and `to_h5` where a format has
+    it) takes the error policy of the write as two keywords. The
+    `on_error=` keyword is an error policy (see
+    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
+    happens to a conversion error of the write, and the `on_loss=`
+    keyword is the action for a loss, such as the metadata that the
+    file cannot hold, which takes precedence over `on_error=` for a
+    loss. By default, an error is raised, and a loss follows the policy
+    in effect (see
+    [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+
+    Each entry point that the mixin defines carries the decorator
+    `takes_error_policy`, and so must each entry point that a subclass
+    defines or overrides, so that a format never declares the two
+    keywords. A test of the suite checks that no entry point lacks the
+    decorator. The decorator removes the keywords from the keyword
+    arguments and applies the policy around the call: while the body
+    runs, the action for a loss is the policy in effect, which the
+    consolidation of the object reads, and an error that the body
+    raises is handed to the policy. A value to return in place of the
+    result, such as `on_error=None`, is therefore applied once, by the
+    entry point that was called, and an entry point that the body calls
+    without a policy, including the method of a base class that an
+    override calls with `super()`, follows the policy of that call.
+    When `to_lines` is a generator, whose body runs only while its lines
+    are read, the decorator applies the policy while each line is
+    computed, and an error on which the policy does not raise ends the
+    lines there.
     """
 
     _WRITE_MODE = "w"
 
+    @takes_error_policy
     def save(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or an open file.
 
@@ -738,6 +770,7 @@ class _WriterMixin:
         """
         return self.to_file(file, **kwargs)
 
+    @takes_error_policy
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """Write the object to a path or a file object.
 
@@ -748,7 +781,8 @@ class _WriterMixin:
         ParserTypeError
             If `file` is of another type.
         """
-        if isinstance(file, (str, path.PathLike)):
+        file = path.as_path_or_stream(file)
+        if isinstance(file, path.Path):
             return self.to_filename(file, **kwargs)
 
         if hasattr(file, "write"):
@@ -756,6 +790,7 @@ class _WriterMixin:
 
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the object to a path, always as bytes.
 
@@ -780,7 +815,7 @@ class _WriterMixin:
                 else:
                     stream.write(self.to_bytes(**kwargs))
 
-        if not is_local(filename):
+        if not filename.is_local():
             buffer = BytesIO()
             encode(buffer)
             filename.write_bytes(buffer.getvalue())
@@ -792,6 +827,7 @@ class _WriterMixin:
 
         replace_file(filename, write)
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the object to a file object open for writing.
 
@@ -806,6 +842,7 @@ class _WriterMixin:
         else:
             file.write(self.to_bytes(**kwargs))
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the binary content of the file.
 
@@ -819,6 +856,7 @@ class _WriterMixin:
             f"to_bytes() is not available in writer of type {cls.__name__}"
         )
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the file.
 
@@ -827,6 +865,7 @@ class _WriterMixin:
         """
         return "".join(line + "\n" for line in self.to_lines(**kwargs))
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Return the lines of the file, without terminators.
 
@@ -953,6 +992,7 @@ class TextFileReader(_TextReaderMixin, _TextSnifferMixin, FileReader):
 class TextFileWriter(FileWriter):
     """Output adapters for text, without any reading methods."""
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the text of the file, encoded.
 

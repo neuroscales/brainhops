@@ -217,7 +217,7 @@ def test_a_local_path_is_read_by_name(
 
     for file in (str(target), target, Path(target), f"file://{target}"):
         image = NiftiImage.load(file)
-        assert image.rawdata.root.source == str(target)
+        assert image.rawdata.root.source == Path(target)
         assert np.array_equal(np.asarray(image.data), DATA)
 
 

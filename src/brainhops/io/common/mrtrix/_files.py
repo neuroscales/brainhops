@@ -19,7 +19,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import WriterError
@@ -366,14 +366,14 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
 # ----------------------------------------------------------------------
 
 
-def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
+def reads_from(raw: tx.Any, written: tx.Sequence[path.Path]) -> bool:
     """Tell whether a lazy array reads one of the files that are written.
 
     Parameters
     ----------
     raw : array
         The `rawdata` array of an object.
-    written : sequence of path
+    written : sequence of Path
         The files that a writer writes.
 
     Returns
@@ -384,10 +384,13 @@ def reads_from(raw: tx.Any, written: tx.Sequence[tx.Any]) -> bool:
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
     if not isinstance(raw, _MrtrixProxy):
         return False
+    if not isinstance(raw.source, path.Path):
+        # A stream is never one of the files that are written.
+        return False
     return any(is_same_file(raw.source, file) for file in written)
 
 
-def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
+def written_files(filename: path.FilenameLike) -> tx.List[path.Path]:
     """Return the files that writing to a path writes.
 
     A `.mih` header names its data, which is written next to it in a
@@ -400,7 +403,7 @@ def written_files(filename: path.FilenameLike) -> tx.List[tx.Any]:
 
     Returns
     -------
-    list of path
+    list of Path
         The header file, and the data file of a `.mih` header.
     """
     filename = path.Path(filename)
@@ -508,10 +511,10 @@ def write_mrtrix(
         header = written_header(record, raw, files[1].name)
         content = header.to_bytes()
         data = payload(header, raw)
-        atomic_write_bytes(files[1], data)
-        atomic_write_bytes(files[0], content)
+        files[1].write_bytes(data, atomic=files[1].is_local())
+        files[0].write_bytes(content, atomic=files[0].is_local())
         return
     content = mrtrix_bytes(record, raw)
     if str(files[0]).lower().endswith(".gz"):
         content = gzip.compress(content)
-    atomic_write_bytes(files[0], content)
+    files[0].write_bytes(content, atomic=files[0].is_local())

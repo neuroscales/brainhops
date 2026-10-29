@@ -12,12 +12,15 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.path import atomic_write_bytes, is_same_file
+from brainhops._core.path import is_same_file
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -82,7 +85,7 @@ def _grid_number(record: XfmRaw, index: int) -> int:
 
 
 def _read_volumes(
-    record: XfmRaw, location: tx.Optional[path.FilenameLike]
+    record: XfmRaw, location: tx.Optional[path.Path]
 ) -> _Volumes:
     """Read the displacement volumes of the grid transforms of a record.
 
@@ -482,6 +485,8 @@ class XfmTransform(
             If a displacement volume is not a MINC file that brainhops
             reads.
         """
+        if location is not None:
+            location = path.Path(location)
         volumes = _read_volumes(raw, location)
         return cls(
             metadata=XfmMetadata.from_raw(raw), rawdata=volumes, **kwargs
@@ -580,8 +585,9 @@ class XfmTransform(
             raw = XfmRaw.from_text(content)
         else:
             raw = XfmRaw.from_bytes(content, kwargs.pop("encoding", "utf-8"))
-        name = getattr(file, "name", None)
-        location = name if isinstance(name, (str, os.PathLike)) else None
+        location = path.as_path_or_stream(getattr(file, "name", None))
+        if not isinstance(location, path.Path):
+            location = None
         return cls.from_raw(raw, location=location, **kwargs)
 
     @classmethod
@@ -648,11 +654,10 @@ class XfmTransform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain and systems into a new record.
@@ -674,15 +679,13 @@ class XfmTransform(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the fields given by keyword. The record of a MINC
         transform file holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, by `on_loss`.
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transform rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -708,7 +711,7 @@ class XfmTransform(
         metadata = metadata_to_write(
             self.metadata, XfmMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not requested:
             metadata = self.metadata
         record = _record(self)
@@ -751,6 +754,7 @@ class XfmTransform(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transform to a file, with its displacement volumes.
 
@@ -767,8 +771,8 @@ class XfmTransform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -780,14 +784,14 @@ class XfmTransform(
             changed.
         """
         fields, kwargs = metadata_options(kwargs)
-        if isinstance(filename, str):
-            filename = path.Path(filename)
+        filename = path.Path(filename)
         copy = self.consolidate(**fields)
         record = _named(_record(copy), copy.rawdata, filename)
         content = record.to_bytes(**kwargs)
         _place_volumes(record, copy.rawdata, filename)
-        atomic_write_bytes(filename, content)
+        filename.write_bytes(content, atomic=filename.is_local())
 
+    @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the transform file to an open file, without its volumes.
 
@@ -796,8 +800,8 @@ class XfmTransform(
         file : IO
             The open file, in text or binary mode.
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Raises
         ------
@@ -807,15 +811,15 @@ class XfmTransform(
         fields, kwargs = metadata_options(kwargs)
         _record(self.consolidate(**fields)).to_fileobj(file, **kwargs)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the text of the MNI transform file that encodes the chain.
 
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Returns
         -------
@@ -830,15 +834,15 @@ class XfmTransform(
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_text(**kwargs)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the MNI transform file that encodes the chain.
 
         Parameters
         ----------
         **kwargs : Any
-            Options of the writer of the record, which refuses them.
-            `on_loss` and the fields of the metadata are given to
-            [`consolidate`][].
+            Options of the writer of the record, which refuses them. The
+            fields of the metadata are given to [`consolidate`][].
 
         Yields
         ------
@@ -853,14 +857,15 @@ class XfmTransform(
         fields, kwargs = metadata_options(kwargs)
         return _record(self.consolidate(**fields)).to_lines(**kwargs)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the MNI transform file that encodes the chain.
 
         Parameters
         ----------
         **kwargs : Any
-            Options of [`XfmRaw.to_bytes`][]. `on_loss` and the fields
-            of the metadata are given to [`consolidate`][].
+            Options of [`XfmRaw.to_bytes`][]. The fields of the metadata
+            are given to [`consolidate`][].
 
         Returns
         -------
@@ -917,7 +922,7 @@ def _encode(
 ) -> tx.Tuple[XfmRaw, _Volumes]:
     """Encode a chain of transformations as a new record and its volumes.
 
-    The rules are described in [`XfmTransform.consolidate`][]. An element
+    The rules are described in `XfmTransform._consolidate`. An element
     that was decoded from transform `i` of `old`, which `decoded` lists,
     is recognized by its identity.
 
@@ -974,16 +979,14 @@ def _pending(xform: XfmGridTransform) -> PendingVolume:
     return PendingVolume(vectors, vox2ras)
 
 
-def _named(
-    record: XfmRaw, volumes: _Volumes, filename: path.FilenameLike
-) -> XfmRaw:
+def _named(record: XfmRaw, volumes: _Volumes, filename: path.Path) -> XfmRaw:
     """Name the new displacement volumes after the transform file.
 
     libminc names the volume of grid transform `n` of `<name>.xfm` as
     `<name>_grid_<n>.mnc`, beside the file, and so does this writer for
     a volume that it writes.
     """
-    stem = os.path.basename(str(filename))
+    stem = filename.name
     if stem.lower().endswith(".xfm"):
         stem = stem[: -len(".xfm")]
     blocks = list(record.transforms)
@@ -1042,7 +1045,7 @@ def _encode_linear(xform: _xforms.Transformation) -> tx.List[XfmRaw.Linear]:
 # ----------------------------------------------------------------------
 
 
-def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
+def _volume_source(volume: tx.Any) -> tx.Optional[path.Path]:
     """Return the path of the file that a displacement volume was read from.
 
     `None` is returned for a volume that was not read from a path, and for
@@ -1054,9 +1057,7 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
     if volume is None or volume._data is not None:
         return None
     proxy = volume.rawdata
-    if isinstance(proxy, _MincProxy) and isinstance(
-        proxy.source, (str, os.PathLike)
-    ):
+    if isinstance(proxy, _MincProxy) and isinstance(proxy.source, path.Path):
         return proxy.source
     return None
 
@@ -1066,7 +1067,7 @@ def _volume_source(volume: tx.Any) -> tx.Optional[tx.Any]:
 
 
 def _place_volumes(
-    record: XfmRaw, volumes: _Volumes, filename: path.FilenameLike
+    record: XfmRaw, volumes: _Volumes, filename: path.Path
 ) -> None:
     """Copy the displacement volumes where a new transform file names them.
 
@@ -1085,7 +1086,7 @@ def _place_volumes(
     for number, block in enumerate(grids):
         if os.path.isabs(block.volume):
             continue
-        target = path.Path(filename).parent / block.volume
+        target = filename.parent / block.volume
         volume = None if volumes is None else volumes[number]
         if isinstance(volume, PendingVolume):
             write_volume(target, volume)
@@ -1101,10 +1102,7 @@ def _place_volumes(
             )
         if is_same_file(source, target):
             continue
-        with path.Path(source).open("rb") as file:
-            content = file.read()
-        if path.exists(target):
-            with path.Path(target).open("rb") as file:
-                if file.read() == content:
-                    continue
-        atomic_write_bytes(target, content)
+        content = source.read_bytes()
+        if target.exists() and target.read_bytes() == content:
+            continue
+        target.write_bytes(content, atomic=target.is_local())

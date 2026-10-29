@@ -30,7 +30,8 @@ grid transform, whose displacements are written as a new MINC volume
 beside the file. libminc interpolates a grid with cubic splines, so a
 field that is interpolated otherwise is the same map at the nodes of its
 grid only, and the converter raises a `LossyConversionError` that
-carries the result, which `t.to(XfmTransform, lossy=True)` returns.
+carries the result, which `t.to(XfmTransform, on_loss="ignore")`
+returns.
 
 A conversion takes no option, since every option would change the map.
 An `XfmAffine` that is converted to its own class is changed by the
@@ -115,7 +116,7 @@ def _(
         return result
     raise LossyConversionError(
         f"The XfmTransform that this transformation converts to is not "
-        f"the same map: {loss} Pass lossy=True to accept it.",
+        f"the same map: {loss} Pass on_loss='ignore' to accept it.",
         result=result,
     )
 

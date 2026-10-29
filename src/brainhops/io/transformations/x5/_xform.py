@@ -12,7 +12,10 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport, Metadata
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
@@ -393,11 +396,10 @@ class X5Transform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending chain, systems and metadata into a new record.
@@ -423,22 +425,18 @@ class X5Transform(
         reset.
 
         The fields of the metadata that changed, and those given by
-        keyword, are encoded over the record that the chain gives, since an
-        X5 file stores the vocabulary in the JSON metadata of the transform
-        that holds it (see [`X5Metadata`][]). A transform that is reused
-        keeps its own JSON metadata otherwise, and a transformation built
-        from one transformation and given metadata writes the metadata into
-        its single transform. What the write loses is acted on once, by
-        `on_loss`.
+        keyword, are encoded over the record that the chain gives, since
+        an X5 file stores the vocabulary in the JSON metadata of the
+        transform that holds it (see [`X5Metadata`][]). A transform that
+        is reused keeps its own JSON metadata otherwise, and a
+        transformation built from one transformation and given metadata
+        writes the metadata into its single transform. What the write
+        loses is acted on once, under the error policy of the call.
 
         Parameters
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
         **fields : Any
             Fields of the metadata to override.
 
@@ -465,7 +463,7 @@ class X5Transform(
         declared = self._input is not None or self._output is not None
         if not assigned and not declared:
             if record is not None and not requested:
-                apply_loss_policy(report, on_loss, stacklevel=2)
+                apply_loss_policy(report, stacklevel=2)
                 return self if inplace else replace(self)
             base = X5Raw() if record is None else record
         else:
@@ -482,7 +480,7 @@ class X5Transform(
             fresh = cls.from_raw(base)
             metadata = fresh.consolidate(on_loss=report, **requested)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not assigned and not declared and record is not None:
             # Only the metadata changed: the nodes and the chains are
             # those of the record, so the selection still holds.
@@ -508,6 +506,7 @@ class X5Transform(
         self.position = None
         return self
 
+    @takes_error_policy
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the transformation into an empty HDF5 file.
 
@@ -520,7 +519,7 @@ class X5Transform(
         h5file : h5py.File
             The empty file, open for writing.
         **kwargs : Any
-            `on_loss` and the fields of the metadata to override, as in
+            The fields of the metadata to override, as in
             [`consolidate`][].
 
         Raises
@@ -531,6 +530,7 @@ class X5Transform(
         """
         _record(self.consolidate(**kwargs)).to_h5(h5file)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to the file at a path, replacing it.
 
@@ -543,7 +543,7 @@ class X5Transform(
         filename : path-like
             The path of the file.
         **kwargs : Any
-            `on_loss` and the fields of the metadata to override, as in
+            The fields of the metadata to override, as in
             [`consolidate`][].
 
         Raises
@@ -554,6 +554,7 @@ class X5Transform(
         """
         _record(self.consolidate(**kwargs)).to_filename(filename)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of the X5 file that encodes the transformation.
 
@@ -563,7 +564,7 @@ class X5Transform(
         Parameters
         ----------
         **kwargs : Any
-            `on_loss` and the fields of the metadata to override, as in
+            The fields of the metadata to override, as in
             [`consolidate`][].
 
         Returns

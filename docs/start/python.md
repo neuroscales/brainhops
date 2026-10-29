@@ -134,16 +134,16 @@ io.save(affine, "transform.json", hint="neuroglancer.affine")
 ```
 
 A format that holds a transformation only approximately is used only
-when `lossy=True` is given. A field interpolated with cubic splines, for
-example, is written in a NIfTI file as the values at its nodes, which are
-read back with linear interpolation. Some formats need images that the
-transformation does not hold, such as the reference and moving images of
-an FSL warp, which are given as options of the conversion. A format that
-cannot hold the transformation at all is refused, with the reason it
-gives: an affine between two world spaces is not a voxel-to-RAS affine.
+when `on_loss="ignore"` is given. A field interpolated with cubic splines,
+for example, is written in a NIfTI file as the values at its nodes, which
+are read back with linear interpolation. Some formats need images that
+the transformation does not hold, such as the reference and moving images
+of an FSL warp, which are given as options of the conversion. A format
+that cannot hold the transformation at all is refused, with the reason
+it gives: an affine between two world spaces is not a voxel-to-RAS affine.
 
 ```python
-io.save(bspline, "warp.nii.gz", lossy=True)
+io.save(bspline, "warp.nii.gz", on_loss="ignore")
 io.save(
     warp,
     "fnirt.nii.gz",
