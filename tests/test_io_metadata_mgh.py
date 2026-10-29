@@ -104,7 +104,7 @@ def test_a_changed_field_is_encoded_into_a_copy() -> None:
         echo_time=None,
         history=("recon-all",),
         dtype="uint8",
-        on_loss=report,
+        on_error=report,
     )
     assert not report.lossy
     header = copy.raw.header
@@ -125,7 +125,7 @@ def test_what_mgh_cannot_hold() -> None:
     meta = _read()
     report = ConversionReport()
     copy = meta.consolidate(
-        dtype="float64", description="d", extra={"K": 1}, on_loss=report
+        dtype="float64", description="d", extra={"K": 1}, on_error=report
     )
     assert set(report.approximated) == {"dtype"}
     assert set(report.lost) == {"description", "extra"}
@@ -133,7 +133,7 @@ def test_what_mgh_cannot_hold() -> None:
     # A history over tags that do not parse is lost.
     broken = MghMetadata.from_raw(MghRaw(tags=b"\0\0"))
     report = ConversionReport()
-    copy = broken.consolidate(history=("a",), on_loss=report)
+    copy = broken.consolidate(history=("a",), on_error=report)
     assert report.lost == {"history": ("a",)}
     assert copy.raw.tags == b"\0\0"
 

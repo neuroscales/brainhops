@@ -6,6 +6,7 @@ import pytest
 import typing_extensions as tx
 
 from brainhops._core.path import Path
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import (
     FileFormat,
     format_registry,
@@ -52,6 +53,7 @@ class WritableGreeting(TextFileReader, TextFileWriter):
     def __init__(self, text: str) -> None:
         self.text = text
 
+    @takes_error_policy
     def to_lines(self, **kwargs):  # noqa: ANN001, ANN201
         yield "HELLO " + self.text
 

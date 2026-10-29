@@ -7,6 +7,7 @@ from bagof.magic import fields
 
 from brainhops._core.magic import SharedOptions
 from brainhops._core.peek import peekable_lines
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
@@ -99,6 +100,7 @@ class LtaReaderWriter(SharedOptions, TextFileReader, TextFileWriter):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the LTA lines of the object.
 
@@ -110,6 +112,7 @@ class LtaReaderWriter(SharedOptions, TextFileReader, TextFileWriter):
             write = LtaFieldWriter(key, **kwargs)
             yield from write(value)
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the LTA text of the object, ending with a newline."""
         return super().to_text(**kwargs) + "\n"
@@ -141,6 +144,7 @@ class VolumeInfoReaderWriter(LtaReaderWriter):
         next(lines)
         return super().from_lines(lines, **kwargs)
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Generator[str]:
         """Yield the lines of the block, including its header."""
         yield f"{self.NAME} volume info"
@@ -182,6 +186,7 @@ class MatrixReaderWriter(LtaReaderWriter):
 
         return cls(matrix=tuple(matrix))
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the matrix block.
 

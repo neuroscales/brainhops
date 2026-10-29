@@ -18,7 +18,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 
 # io
@@ -390,21 +390,20 @@ class AfniBrikWarp(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "AfniBrikWarp":
         """Encode the pending sub-bricks or chain into `rawdata` and a record.
 
         The warp is encoded as an
         [`AfniImage`][brainhops.io.images.afni.AfniImage] is, by
-        [`AfniImage.consolidate`][brainhops.io.images.afni.AfniImage.consolidate],
+        `AfniImage._consolidate`,
         over the record of its metadata. A warp whose chain was not
         assigned keeps its sub-bricks, assigned or read, under the geometry
         of its record. A warp whose chain was assigned is encoded from the
@@ -417,10 +416,10 @@ class AfniBrikWarp(
         and nothing pending, consolidated without options, is left as it
         is: the copy shares `rawdata` and the metadata.
 
-        The metadata is consolidated first, as by the AFNI image, with the
-        fields given by keyword. The record of an AFNI dataset holds no
-        field of the vocabulary yet, so a field that is set is reported as
-        lost, once, by `on_loss`.
+        The metadata is consolidated first, as by the AFNI image, with
+        the fields given by keyword. The record of an AFNI dataset holds
+        no field of the vocabulary yet, so a field that is set is
+        reported as lost, once, under the error policy of the call.
 
         Parameters
         ----------
@@ -432,9 +431,6 @@ class AfniBrikWarp(
             AFNI type name or NumPy type of the stored values.
         attributes : mapping, optional
             Attributes set last, as for an AFNI image.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -476,7 +472,6 @@ class AfniBrikWarp(
             view=view,
             datatype=datatype,
             attributes=_labelled(self, attributes),
-            on_loss=on_loss,
             **fields,
         )
         if self.metadata is not None and image.metadata is self.metadata:
@@ -501,13 +496,13 @@ class AfniBrikWarp(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_filename(
         self,
         filename: path.FilenameLike,
         view: tx.Optional[str] = None,
         datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> None:
         """Write the `.HEAD` and `.BRIK` files of the dataset of the warp.
@@ -534,9 +529,6 @@ class AfniBrikWarp(
             The type of the stored values, as for [`consolidate`][].
         attributes : mapping, optional
             Attributes set last, as for [`consolidate`][].
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold, as
-            for [`consolidate`][].
         **fields : Any
             Fields of the metadata to override, as for [`consolidate`][].
             Any other option is refused.
@@ -555,7 +547,7 @@ class AfniBrikWarp(
         head, brik, stale = afni_written_files(filename)
         options = dict(view=view or afni_view(filename), datatype=datatype)
         options["attributes"] = attributes
-        options.update(fields, on_loss=on_loss)
+        options.update(fields)
         reading = reads_brik(self.rawdata, brik) or any(
             reads_brik(self.rawdata, sibling) for sibling in stale
         )

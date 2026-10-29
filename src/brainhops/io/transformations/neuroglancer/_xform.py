@@ -11,7 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.metadata._report import OnLoss
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -275,11 +275,10 @@ class NeuroglancerTransform(
 
     # --- to -----------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> tx.Self:
         """Encode the pending matrix and systems into a new record.
@@ -299,9 +298,6 @@ class NeuroglancerTransform(
         ----------
         inplace : bool, default=False
             Whether to change this transformation rather than a copy.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with metadata that the format cannot store. By
-            default, the policy in effect.
         **fields : Any
             Metadata fields to override before encoding the transform.
 
@@ -319,13 +315,11 @@ class NeuroglancerTransform(
         metadata = self.metadata
         requested = requested_fields(metadata, fields)
         if metadata is not None:
-            metadata = metadata.consolidate(on_loss=on_loss, **fields)
+            metadata = metadata.consolidate(**fields)
             if not requested:
                 metadata = self.metadata
         elif fields:
-            metadata = NeuroglancerTransformMetadata().consolidate(
-                on_loss=on_loss, **fields
-            )
+            metadata = NeuroglancerTransformMetadata().consolidate(**fields)
         record = _record(self)
         overridden = (
             self._data is not None
@@ -352,6 +346,7 @@ class NeuroglancerTransform(
         self.output = None
         return self
 
+    @takes_error_policy
     def to_text(self, **kwargs) -> str:
         """Return the JSON text of the transform.
 
@@ -375,6 +370,7 @@ class NeuroglancerTransform(
         """
         return _record(self.consolidate(**kwargs)).to_text()
 
+    @takes_error_policy
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the lines of the JSON text of the transform.
 
@@ -412,7 +408,7 @@ def _record(
 def _encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
     """Encode the matrix and the systems of a transformation as a record.
 
-    See [`NeuroglancerTransform.consolidate`][].
+    See `NeuroglancerTransform._consolidate`.
 
     Raises
     ------

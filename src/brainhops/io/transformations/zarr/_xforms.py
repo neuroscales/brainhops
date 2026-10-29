@@ -22,7 +22,6 @@ from brainhops._core.path import Path, replace_directory
 
 # datamodel
 from brainhops.datamodel._sugar import vector_axis
-from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,
@@ -443,7 +442,8 @@ class OmeZarrField(
             return
         if isinstance(placement, CartesianField):
             return
-        if _as_affine(placement) is None:
+        affine = placement.to_affine(on_error=None)
+        if affine is None:
             raise OmeFieldError(
                 "This OME displacement field is placed by a transformation "
                 "that cannot be reduced to an affine, so the displacements "
@@ -481,8 +481,18 @@ def _to_voxel_displacement(
     # L^-1 of the linear part of the placement: raw @ L^-T. The product is
     # computed in the backend of the displacements, so that a Dask array is
     # converted block by block rather than read into memory.
-    matrix = _as_affine(voxel2world).matrix
-    inverse = to_numpy(_affine_inv(matrix))
+    # `_check_affine_voxel2world` checks the placement of the finest
+    # level only, and the placement of a coarser level also goes through
+    # its level transform, which may not reduce to an affine.
+    affine = voxel2world.to_affine(on_error=None)
+    if affine is None:
+        raise OmeFieldError(
+            "A level of this OME displacement field is placed by a "
+            "transformation that cannot be reduced to an affine, so its "
+            "displacements cannot be rescaled to voxel units. Only an "
+            "affine placement is supported for a displacement field."
+        )
+    inverse = to_numpy(_affine_inv(affine.matrix))
     ab = array_backend(raw)
     return raw @ ab.asarray(inverse[:, :-1].T)
 
@@ -532,7 +542,7 @@ def _spatial_part(
                 for part in placement.transformations
             ]
         )
-    affine = _as_affine(placement)
+    affine = placement.to_affine(on_error=None)
     if affine is None:
         raise OmeFieldError(
             "This OME field is placed by a transformation that is not "
@@ -547,7 +557,8 @@ def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
     # An affine placement is returned unchanged. Otherwise, an identity affine
     # stands in, so that the leading world-to-voxel element stays a defined
     # affine rather than a bare identity.
-    if _as_affine(xform) is not None:
+    affine = xform.to_affine(on_error=None)
+    if affine is not None:
         return xform
     return Affine(
         matrix=[

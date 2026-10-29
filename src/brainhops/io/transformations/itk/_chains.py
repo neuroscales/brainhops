@@ -16,6 +16,7 @@ import numpy as np
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
+from brainhops.errors import ConversionError
 from brainhops.io.base.parsers import (
     ParserContentError,
     UnrepresentableTransformationError,
@@ -221,7 +222,7 @@ def _affine_block(xform: _xforms.Transformation) -> ItkStruct:
     """
     affine = xform
     if not isinstance(affine, _xforms.Affine):
-        affine = xform.to(_xforms.Affine, error=None)
+        affine = xform.to(_xforms.Affine, on_error={ConversionError: None})
     matrix = None if affine is None else affine.matrix
     if matrix is None:
         raise UnrepresentableTransformationError(

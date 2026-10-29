@@ -21,7 +21,9 @@ from brainhops.datamodel._transformations.compute.converters import (
 )
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -406,12 +408,11 @@ class AfniNiftiWarp(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> "AfniNiftiWarp":
         """Encode the pending sub-bricks or chain into `rawdata` and a header.
@@ -434,7 +435,8 @@ class AfniNiftiWarp(
         the base of the new header. The fields given by keyword take
         precedence over `like`, and a `dtype` that is given, or changed
         in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, by `on_loss`.
+        loses or approximates is acted on once, under the error policy
+        of the call.
 
         Parameters
         ----------
@@ -443,9 +445,6 @@ class AfniNiftiWarp(
         like : path, nibabel image or header, or NIfTI object, optional
             Template whose header fields that do not encode the
             transformation are copied.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the header cannot hold. By
-            default, the policy in effect.
         **options : Any
             Fields of the metadata to override, such as `description` or
             `dtype`, and header fields, which take precedence over the
@@ -494,7 +493,7 @@ class AfniNiftiWarp(
             and self.metadata.raw is not None
         ):
             _check_single_field(self.rawdata, WriterError)
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
@@ -504,7 +503,7 @@ class AfniNiftiWarp(
         )
         metadata = _consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,

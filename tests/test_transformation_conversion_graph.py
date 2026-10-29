@@ -110,16 +110,16 @@ def test_every_pair_converts_or_is_refused_on_purpose(
         if (source, target) in _REFUSED:
             for sample in (identity, general):
                 with pytest.raises(ConversionError):
-                    sample.to(cls, lossy=True)
+                    sample.to(cls, on_loss="ignore")
             return
         # The identity is exact in every class.
         assert isinstance(identity.to(cls), cls)
         if (source, target) in _NO_LOGARITHM:
             with pytest.raises(DomainError):
-                general.to(cls, lossy=True)
+                general.to(cls, on_loss="ignore")
             return
         # A lossy result is still of the requested class.
-        assert isinstance(general.to(cls, lossy=True), cls)
+        assert isinstance(general.to(cls, on_loss="ignore"), cls)
 
 
 @pytest.mark.parametrize("source", _SOURCES)

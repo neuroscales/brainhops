@@ -10,6 +10,8 @@ import json
 import typing_extensions as tx
 from bagof.magic import NoRepr
 
+from brainhops.datamodel.metadata._report import takes_error_policy
+
 # internals
 from brainhops.io.base._raw import Raw
 from brainhops.io.base.parsers import (
@@ -228,6 +230,7 @@ class NeuroglancerTransformRaw(Raw, TextFileReader, TextFileWriter, eq=False):
 
     # --- to -----------------------------------------------------------
 
+    @takes_error_policy
     def to_text(self) -> str:
         """Return the JSON text of the transform.
 
@@ -245,6 +248,7 @@ class NeuroglancerTransformRaw(Raw, TextFileReader, TextFileWriter, eq=False):
             return self.text
         return _dumps(self.content)
 
+    @takes_error_policy
     def to_lines(self) -> tx.Iterator[str]:
         """Yield the lines of the JSON text, without line endings.
 

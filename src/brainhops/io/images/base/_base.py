@@ -24,6 +24,16 @@ class ImageFormat(
     from this class and registers itself with `@register_format`, so that
     [`load`][brainhops.io.images.load] finds the reader without a
     hand-maintained table of formats.
+
+    The `consolidate` method of an image format, and each method that
+    writes a file, take an error policy as their `on_error=` and
+    `on_loss=` keywords (see
+    [`ErrorPolicy`][brainhops.errors.ErrorPolicy]), which decides what
+    happens to what the file cannot hold. A format overrides the hook
+    `_consolidate`, around which the base class applies the policy, and
+    puts the decorator `takes_error_policy` above each writer that it
+    defines, which applies the policy around the writer. Neither the
+    hook nor a writer declares these keywords.
     """
 
     PRIORITY: tx.ClassVar[int] = 10

@@ -765,12 +765,15 @@ def _make_converter_chain(*types: type) -> None:
         # A hop that loses information does not stop the walk. Its result is
         # converted through the remaining hops, so that the loss is reported
         # with a result of the requested class rather than of an
-        # intermediate type.
+        # intermediate type. A loss without a result, such as a refused
+        # loss of metadata, cannot be walked through, and is raised.
         lossy = False
         for hop in hops:
             try:
                 t = convert(t, hop)
             except LossyConversionError as e:
+                if e.result is None:
+                    raise
                 lossy, t = True, e.result
         t = convert(t, cls, **kwargs)  # overrides apply to the last hop
         if lossy:

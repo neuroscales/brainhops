@@ -31,9 +31,9 @@ axes of the array, which is exact and reads nothing. A field on an
 oblique grid is sampled on the nearest grid along the world axes, and a
 field interpolated with another degree than 1 is sampled at its nodes.
 Both are losses: the converter raises a `LossyConversionError`, and
-`t.to(OmeZarrField, lossy=True)` returns the sampled field. The arrays
-are built with the operations of their backend, so a Dask array stays
-lazy until the field is written.
+`t.to(OmeZarrField, on_loss="ignore")` returns the sampled field. The
+arrays are built with the operations of their backend, so a Dask array
+stays lazy until the field is written.
 
 A field that is already of this format is changed by the rules of its
 family, which keep its type.

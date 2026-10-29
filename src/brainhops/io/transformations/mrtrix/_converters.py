@@ -33,7 +33,7 @@ affines on either side of a field of displacements are carried into
 its values when they do not undo each other. A field interpolated with
 another degree than 1 is sampled at its nodes, which is a loss: the
 converter raises a `LossyConversionError`, and
-`t.to(Format, lossy=True)` returns the sampled field.
+`t.to(Format, on_loss="ignore")` returns the sampled field.
 
 A warpfull file holds four midway-space warps and two linear
 transforms, and no chain can be split back into them, so its converter

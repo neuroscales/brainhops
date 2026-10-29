@@ -15,6 +15,7 @@ from brainhops._core import path
 # io
 from brainhops._core.path import replace_file
 from brainhops._core.streams import preserve_position
+from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -333,6 +334,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
     The format also implements `to_h5`, which fills a new, empty HDF5 file.
     """
 
+    @takes_error_policy
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write the object into an empty HDF5 file open for writing.
 
@@ -361,6 +363,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
         """
         return lambda h5file: self.to_h5(h5file, **kwargs)
 
+    @takes_error_policy
     def to_file(self, file: H5Like, **kwargs) -> None:
         """Write to a path, a binary stream or an open HDF5 file.
 
@@ -375,6 +378,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             return self._h5_writer(**kwargs)(file)
         return super().to_file(file, **kwargs)
 
+    @takes_error_policy
     def to_filename(self, filename: tx.Union[str, PathLike], **kwargs) -> None:
         """Write to the file at a path, replacing it.
 
@@ -404,6 +408,7 @@ class Hdf5ReaderWriter(Hdf5Reader, BinaryFileWriter):
             with h5py.File(str(filename), "w") as f:
                 writer(f)
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of an HDF5 file that encodes the object.
 

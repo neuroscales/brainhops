@@ -16,7 +16,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -315,9 +318,10 @@ class MrtrixImage(
         voxels when they are needed.
 
         The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an MRtrix
-        image holds no field of the vocabulary yet, so a field that is set
-        is reported as lost, once, by `on_loss`.
+        write), with the fields given by keyword. The record of an
+        MRtrix image holds no field of the vocabulary yet, so a field
+        that is set is reported as lost, once, under the error policy of
+        the call.
 
         Parameters
         ----------
@@ -390,7 +394,7 @@ class MrtrixImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
@@ -398,7 +402,6 @@ class MrtrixImage(
         datatype: tx.Optional[tx.Any] = None,
         scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **fields: tx.Any,
     ) -> "MrtrixImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -459,9 +462,6 @@ class MrtrixImage(
             Header keys merged into those of the base. A value of `None`
             removes a key. The keys that the other options, the data and
             the geometry decide are refused.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect.
         **fields : Any
             Fields of the metadata to override.
 
@@ -492,7 +492,7 @@ class MrtrixImage(
         metadata = metadata_to_write(
             self.metadata, MrtrixMetadata, fields, report
         )
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         # The record is kept when the transformations were never read, or
         # are the same as those that it decodes to.
         held = held_transformations(self)
@@ -537,6 +537,7 @@ class MrtrixImage(
         self.transformations = None
         return self
 
+    @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
         """Return the bytes of a single-file, uncompressed `.mif` image.
 
@@ -564,6 +565,7 @@ class MrtrixImage(
         image = self.consolidate(**_options(kwargs))
         return mrtrix_bytes(image.metadata.raw, image.rawdata)
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write to a path, in the variant that its extension names.
 
@@ -614,8 +616,8 @@ class MrtrixImage(
 def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the writer options, refusing unknown ones.
 
-    The options of the writer are read by `writer_options`, and `on_loss`
-    and the fields of the metadata, which go to the consolidation of the
+    The options of the writer are read by `writer_options`, and the
+    fields of the metadata, which go to the consolidation of the
     metadata, are passed on.
 
     Raises
@@ -624,9 +626,7 @@ def _options(kwargs: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
         If an unknown option is given.
     """
     metadata = {
-        name: value
-        for name, value in kwargs.items()
-        if name in FIELDS or name == "on_loss"
+        name: value for name, value in kwargs.items() if name in FIELDS
     }
     options = writer_options(
         {name: v for name, v in kwargs.items() if name not in metadata}
@@ -642,7 +642,7 @@ def _encoded(
 ) -> tx.Tuple[MrtrixRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`MrtrixImage.consolidate`][] describes, and
+    The record is encoded as `MrtrixImage._consolidate` describes, and
     the held record is returned when the encoding changes nothing. The
     voxels are `rawdata` when it is a lazy array that is copied as the
     file stores it, and otherwise the array of the assigned data or of

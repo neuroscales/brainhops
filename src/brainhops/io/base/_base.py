@@ -5,11 +5,19 @@ __all__ = [
 ]
 
 import typing_extensions as tx
-from bagof.magic import Field, fields
+from bagof.magic import Field, fields, replace
 
 from brainhops._core import backends, path
+from brainhops._core.errors import UNSET
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.metadata._report import (
+    ConversionReport,
+    apply_loss_policy,
+    call_under_policy,
+)
+from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     FileReader,
@@ -569,6 +577,122 @@ class _FileBasedModelMixin:
     def __init_subclass__(cls, **kwargs: tx.Any) -> None:
         super().__init_subclass__(**kwargs)
         _check_base_order(cls)
+
+    def consolidate(
+        self,
+        *,
+        inplace: bool = False,
+        on_error: ErrorPolicy = UNSET,
+        on_loss: ErrorAction = UNSET,
+        **fields: tx.Any,
+    ) -> tx.Self:
+        """Encode the object into the record that its file format writes.
+
+        An image, a transformation or the metadata of a file format holds
+        the record of its file, such as the header of a NIfTI file, as
+        it was read or as the object was last consolidated. When the
+        object changes, the record no longer describes it, and the
+        consolidation encodes the object into a copy of the record. Every
+        write of the format consolidates the object first, and the method
+        can also be called to see what a write would store. The options
+        that each format takes, and the rules of its encoding, are those
+        of the format.
+
+        What the record cannot hold, such as a field of the metadata that
+        the format has no slot for, is reported as lost or approximated,
+        and the error policy of the call decides what happens to the
+        report: by default, the policy in effect warns (see
+        [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+        A format that cannot encode the object at all raises a conversion
+        error, to which the policy applies as well.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to change this object rather than a copy.
+        on_error : ErrorPolicy, optional
+            What to do with a conversion error, including a loss (see
+            [`ErrorPolicy`][brainhops.errors.ErrorPolicy]). A mapping may
+            also name other errors. By default, an error is raised, and a
+            loss follows the policy in effect.
+        on_loss : ErrorAction, optional
+            What to do with a loss, with the same values as a single
+            action of `on_error`. An entry for a loss in `on_error` takes
+            precedence over it. By default, a loss falls under
+            `on_error`.
+        **fields : Any
+            Fields of the metadata to override before the encoding, by
+            name, and the options of the format.
+
+        Returns
+        -------
+        Self
+            The consolidated copy, or this object with `inplace=True`, or
+            the value that the policy returns in its place.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names neither a field of the metadata nor an
+            option of the format.
+        MetadataLossError
+            If something is lost under the `"raise"` policy.
+        """
+        return call_under_policy(
+            lambda: self._consolidate(inplace=inplace, **fields),
+            on_error,
+            on_loss=on_loss,
+        )
+
+    def _consolidate(
+        self, *, inplace: bool = False, **fields: tx.Any
+    ) -> tx.Any:
+        """Encode the object into its record, under the policy in effect.
+
+        The public [`consolidate`][] applies the error policy around this
+        method, which each format that holds a record overrides. The
+        method acts on what the record cannot hold by calling
+        `apply_loss_policy`, which reads the policy in effect, and passes
+        no policy on to the calls that it makes.
+
+        This class knows no record, so there is nothing to encode, and
+        the method returns the object unchanged. A field of the metadata
+        given by keyword cannot be stored either, so it is reported as
+        lost, and the policy in effect decides what happens to the
+        report. The object keeps the value that it held.
+
+        Parameters
+        ----------
+        inplace : bool, default=False
+            Whether to return this object rather than a copy.
+        **fields : Any
+            Fields of the metadata to override. A format without a
+            record takes no other option.
+
+        Returns
+        -------
+        Self
+            An unchanged copy, or this object with `inplace=True`.
+
+        Raises
+        ------
+        TypeError
+            If a keyword names no field of the metadata.
+        MetadataLossError
+            If a field is given under the `"raise"` policy.
+        """
+        unknown = sorted(set(fields) - set(FIELDS))
+        if unknown:
+            raise TypeError(
+                f"{type(self).__name__}.consolidate() got unknown "
+                f"option(s): {', '.join(unknown)}"
+            )
+        if fields:
+            name = type(self).__name__
+            report = ConversionReport(source=name, target=name)
+            report.lost.update(fields)
+            apply_loss_policy(report)
+        return self if inplace else replace(self)
 
     @classmethod
     def _data_model(cls) -> type:

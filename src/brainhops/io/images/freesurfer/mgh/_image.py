@@ -17,7 +17,10 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    takes_error_policy,
+)
 from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
@@ -393,12 +396,11 @@ class MghImage(
 
     # --- writing ------------------------------------------------------
 
-    def consolidate(
+    def _consolidate(
         self,
         *,
         inplace: bool = False,
         like: tx.Any = None,
-        on_loss: tx.Optional[OnLoss] = None,
         **options: tx.Any,
     ) -> "MghImage":
         """Encode the pending data and geometry into `rawdata` and the record.
@@ -430,13 +432,14 @@ class MghImage(
         The metadata is consolidated first (step 2 of the precedence on
         write), with the options that name its fields, and its record is
         the base of the new record. The MRI parameters given by keyword,
-        such as `flip_angle=` in degrees, take precedence over `like`. The
-        image owns its geometry, so a repetition time that disagrees with
-        the TR stated by the transformations is reported as approximated.
-        The voxels are stored with the type given as `dtype=`, or else
-        with the nearest type to `metadata.dtype` that MGH stores, or else
-        with the nearest type to that of the data. What the write loses
-        or approximates is acted on once, by `on_loss`.
+        such as `flip_angle=` in degrees, take precedence over `like`.
+        The image owns its geometry, so a repetition time that disagrees
+        with the TR stated by the transformations is reported as
+        approximated. The voxels are stored with the type given as
+        `dtype=`, or else with the nearest type to `metadata.dtype` that
+        MGH stores, or else with the nearest type to that of the data.
+        What the write loses or approximates is acted on once, under the
+        error policy of the call.
 
         Parameters
         ----------
@@ -446,10 +449,6 @@ class MghImage(
             Template whose MRI parameters override those of the metadata.
             The fields given by keyword, and a TR stated by the
             transformations, override them.
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do with the metadata that the record cannot hold. By
-            default, the policy in effect (see
-            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
         **options : Any
             Fields of the metadata to override, such as `dtype`,
             `repetition_time` or `flip_angle`, and other header fields,
@@ -502,7 +501,7 @@ class MghImage(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, on_loss, stacklevel=2)
+            apply_loss_policy(report, stacklevel=2)
             if not inplace:
                 return replace(self, transformations=None)
             self.transformations = None
@@ -513,7 +512,7 @@ class MghImage(
         else:
             metadata = type(metadata or MghMetadata()).from_raw(record)
         overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, on_loss, stacklevel=2)
+        apply_loss_policy(report, stacklevel=2)
         if not inplace:
             return replace(
                 self,
@@ -554,8 +553,8 @@ class MghImage(
             Template whose MRI parameters override those of this image. A
             TR stated by the transformation overrides both.
         **overrides : Any
-            `on_loss`, and the fields of the metadata and of the header,
-            as for [`consolidate`][].
+            The fields of the metadata and of the header, as for
+            [`consolidate`][].
 
         Returns
         -------
@@ -575,6 +574,7 @@ class MghImage(
         record, raw = _mgh_written(image)
         return _mgh.MGHImage(raw, record.vox2ras, header=record.header)
 
+    @takes_error_policy
     def to_bytes(self, compress: bool = False, **kwargs) -> bytes:
         """Return the MGH encoding: header, voxels, footer and tags.
 
@@ -589,8 +589,7 @@ class MghImage(
         compress : bool, default=False
             Whether to gzip the result into MGZ.
         **kwargs : Any
-            The template `like`, `on_loss` and the options of
-            [`consolidate`][].
+            The template `like` and the options of [`consolidate`][].
 
         Returns
         -------
@@ -605,6 +604,7 @@ class MghImage(
         content = encode_mgh(*_mgh_written(self.consolidate(**kwargs)))
         return gzip.compress(content) if compress else content
 
+    @takes_error_policy
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the image to a path.
 
@@ -800,7 +800,7 @@ def _encoded(
 ) -> tx.Tuple[MghRaw, ArrayProtocol]:
     """Return the record and the voxels that consolidating an image stores.
 
-    The record is encoded as [`MghImage.consolidate`][] describes, over a
+    The record is encoded as `MghImage._consolidate` describes, over a
     copy of the record of the consolidated `metadata`, and the voxels are
     the assigned data, or else `rawdata`, arranged in the axis order
     of the file when the transformations declare another order. The held
