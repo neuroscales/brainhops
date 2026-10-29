@@ -512,11 +512,21 @@ class SimplifyTable(dict):
         and the safest of those policies wins. When no entry matches, the
         fallback applies. For several transformations, the safest of their
         policies wins, so a pair is rewritten only as far as its most
-        protected member allows.
+        protected member allows. A batch belongs to no family, so it is
+        resolved against its elements (see
+        [`BatchedTransformation.resolve_policy`][brainhops.datamodel.transformations.BatchedTransformation.resolve_policy]).
         """
         return _safest_policy(*map(self._resolve_one, transformations))
 
     def _resolve_one(self, t: "Transformation") -> SimplifyPolicy:
+        # The module of the batches imports this one, so it is imported
+        # here.
+        from ..batched import BatchedTransformation
+
+        if isinstance(t, BatchedTransformation):
+            # A batch belongs to no family, and the families of its
+            # elements decide its policy.
+            return t.resolve_policy(self)
         matched = [
             policy
             for family, policy in self.items()

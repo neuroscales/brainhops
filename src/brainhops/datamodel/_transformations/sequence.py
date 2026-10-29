@@ -21,6 +21,7 @@ from brainhops.errors import CompositionError, ConversionError
 # transformations
 from . import nocycles
 from .base import Transformation, _copied
+from .batched import BatchedTransformation
 from .compute.check import is_kind
 from .compute.compose import compose
 from .compute.factor import factor_sequence
@@ -972,6 +973,12 @@ def _interpolates(xform: Transformation) -> bool:
         return False
     if isinstance(xform, Inverse):
         return _interpolates(xform.forward)
+    if isinstance(xform, BatchedTransformation):
+        # The elements of a stacked batch share one type, so the first
+        # element answers for all of them.
+        if xform.element_type is not None:
+            return _interpolates(xform[(0,) * xform.batch_ndim])
+        return any(_interpolates(t) for t in xform.elements.flat)
     if isinstance(xform, Sequence):
         return any(_interpolates(t) for t in (xform.transformations or []))
     if isinstance(xform, SubspaceTransformation):
