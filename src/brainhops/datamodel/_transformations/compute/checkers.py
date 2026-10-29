@@ -42,6 +42,7 @@ from brainhops.errors import AdaptationError
 
 # transformations
 from ..base import Transformation
+from ..batched import BatchedTransformation
 from ..concrete import (
     Affine,
     CartesianField,
@@ -1037,6 +1038,7 @@ _register_wrapper(Sqrt, _sqrt_member)
 # Wrapper, field and container kinds have no node, so their names are matched
 # by isinstance. A friendlier spelling of a node belongs in the NAME attribute
 # of that node instead.
+register_kind_alias("batch", BatchedTransformation)
 register_kind_alias("inverse", Inverse)
 register_kind_alias("subspace", SubspaceTransformation)
 register_kind_alias("projection", Projection)

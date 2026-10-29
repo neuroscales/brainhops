@@ -32,18 +32,26 @@ the types compared position by position, so a composer for
 the dispatcher raises
 [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError]. The
 error propagates out of `compose` instead of being resolved by the
-order of registration. The registered composers contain only one
-near-tie, between `(Sequence, Transformation)` and
-`(Transformation, Sequence)`. The only operands that both of these
-composers accept are two sequences, and in that case a dedicated
-composer for `(Sequence, Sequence)` wins.
+order of registration. The registered composers contain near-ties
+between the composers of a sequence and of a batch with any
+transformation, `(Sequence, Transformation)`,
+`(Transformation, Sequence)`, `(BatchedTransformation, Transformation)`
+and `(Transformation, BatchedTransformation)`. Two of them accept the
+same operands only when these are two sequences, two batches, or a
+batch and a sequence, and a dedicated composer for each of these pairs
+wins.
 
 A composer may receive operands of the right types and still be unable
 to combine them, for example two subspace transformations whose axes do
 not line up. Such a composer raises [`CompositionError`][], which stops
-the composition. The `compose` function knows nothing of modes. The
-sequence engine decides which adjacent transformations are passed to
-`compose`.
+the composition. A composer, like a pair simplifier, may also return a
+chain, as a [`Sequence`][brainhops.datamodel.transformations.Sequence],
+whose members are cheaper than the pair. The sweep of the sequence
+engine then puts the members of the chain in the place of the pair, so
+that each member meets its new neighbours.
+
+The `compose` function knows nothing of modes. The sequence engine
+decides which adjacent transformations are passed to `compose`.
 """
 
 import typing_extensions as tx
@@ -51,6 +59,7 @@ from bagof.dispatchers import Function, NoMethodError
 
 from brainhops.errors import CompositionError
 
+from .. import nocycles
 from .simplify import ANALYTIC_FLOOR, simplify
 from .utils import boundary_disagrees
 
@@ -95,7 +104,11 @@ def compose(
     Returns
     -------
     Transformation
-        The composed transformation.
+        The composed transformation. It is a single transformation, or a
+        computed [`Sequence`][brainhops.datamodel.transformations.Sequence]
+        when a rule replaces the pair by a chain whose members do not all
+        compose into one, as when a batch is replaced by its element
+        followed by the creation of its batch axis.
 
     Raises
     ------
@@ -104,6 +117,11 @@ def compose(
     """
     # Pair simplifiers use the order of application.
     result = simplify(x2, x1, policy=ANALYTIC_FLOOR)
+    if isinstance(result, nocycles.SEQUENCE):
+        # A pair simplifier that gives a chain, such as the selection of
+        # the element of a batch, leaves its members uncomputed, and the
+        # composition computes them.
+        return result.compute()
     if result is not None:
         return result
 

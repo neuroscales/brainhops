@@ -15,6 +15,12 @@ whose subclasses are [`BatchedAffine`][], [`BatchedLinear`][],
 in one array, whose leading dimensions index the elements, and it
 creates an element only when one is asked for.
 
+The rules that `compute` and `simplify` apply to batches are registered
+in the modules `pruners`, `simplifiers`, `converters` and `composers`
+of the compute machinery. They call the functions of this module, such
+as [`compose_with`][], for the part that reads the elements, so that a
+stacked subclass computes that part on its stack.
+
 The design is recorded in `spec/design/batched-transformations.md`.
 """
 
@@ -38,23 +44,32 @@ from bagof.magic import Forget, InitVar, NotKwOnly, fields
 from brainhops._core.affines import expm as affine_expm
 from brainhops._core.affines import inv as affine_inv
 from brainhops._core.affines import logm as affine_logm
+from brainhops._core.affines import matmul as affine_matmul
 from brainhops._core.affines import to_compact, to_homogeneous
 from brainhops._core.backends import array_backend
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.linalg import expm, inv, logm
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol, npvector
+from brainhops.datamodel import kinds
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.errors import CompositionError, ConversionError
 
 from . import nocycles
 from .base import Transformation
-from .compute.simplify import SimplifyLike
+from .compute.check import KindLike, is_kind, normalize_kind
+from .compute.compose import compose
+from .compute.prune import close_counts, read_pattern, restrict_block
+from .compute.simplify import SimplifyLike, SimplifyTable
 from .compute.simplify import simplify as _simplify
-from .compute.utils import axis_counts, axis_list
+from .compute.utils import UNREADABLE, axis_counts, axis_list
 from .concrete import (
     Affine,
+    CoordinateField,
+    DisplacementField,
     Linear,
     Permutation,
     Rotation,
@@ -367,6 +382,185 @@ class BatchedTransformation(
         for index in range(self.batch_shape[0]):
             yield self[index]
 
+    def select(
+        self, values: tx.Mapping[int, float]
+    ) -> tx.Optional[Transformation]:
+        """Return the elements that sit at some coordinates of the batch.
+
+        A point whose coordinates along the batch axes are known reaches
+        its element through this method, which the compute rules use when
+        a chain fixes a batch axis at a value. Each coordinate is matched
+        to the position of an element up to the tolerance of
+        [`match_positions`][]. When every batch axis is given, the result
+        is the element itself. Otherwise, it is the smaller batch along
+        the batch axes that are not given, as `b[k]` returns it.
+
+        Parameters
+        ----------
+        values : Mapping[int, float]
+            Coordinate along some batch axes, indexed by the position of
+            the batch axis in the input space.
+
+        Returns
+        -------
+        Transformation or None
+            The element or the smaller batch, or None when a coordinate,
+            such as NaN, matches no position.
+
+        Raises
+        ------
+        ValueError
+            If a key is not the position of a batch axis.
+        """
+        others = set(values) - set(self.batch_input_axes)
+        if others:
+            raise ValueError(
+                f"The batch axes are at {self.batch_input_axes} in the "
+                f"input space, so a batch cannot select elements by the "
+                f"axes at {sorted(others)}."
+            )
+        key: tx.List[tx.Union[int, slice]] = []
+        for axis, positions in zip(self.batch_input_axes, self.positions):
+            if axis not in values:
+                key.append(slice(None))
+                continue
+            index = int(match_positions(positions, [values[axis]])[0])
+            if index < 0:
+                return None
+            key.append(index)
+        return self[tuple(key)]
+
+    def elements_are(self, kind: KindLike, compute: bool = False) -> bool:
+        """Return whether every element is of a kind.
+
+        A batch is not of any kind finer than `Transformation`, because
+        its outputs depend on its batch axes, so `is_kind` is false for a
+        batch of affines. This method asks the question of the elements
+        instead. A stacked batch answers without creating its elements
+        when no value is read, because its elements share one type and
+        one shape, and it stops at the first element that is not of the
+        kind otherwise.
+
+        Parameters
+        ----------
+        kind : KindLike
+            Kind to test, such as a node of
+            [`kinds`][brainhops.datamodel.kinds] or a string that names
+            one.
+        compute : bool, default=False
+            Whether the values of the elements may be read.
+
+        Returns
+        -------
+        bool
+            Whether every element can be shown to be of the kind.
+        """
+        return all(is_kind(e, kind, compute) for e in self._each_element())
+
+    # --- kernels of the compute rules ---------------------------------
+    # The rules that the compute machinery registers for batches handle
+    # the axes, the positions and the systems, and they call these
+    # methods, through the functions of the same names at the end of
+    # this module, for the part that reads the elements. The general
+    # form reads the elements one at a time, so these implementations
+    # hold for every batch. A stacked subclass overrides some of them to
+    # compute on its stack.
+
+    def _each_element(self) -> tx.Iterator[Transformation]:
+        # The elements, one at a time.
+        return iter(self._elements.flat)
+
+    def _representatives(self) -> tx.List[Transformation]:
+        # The elements that stand for every element when only their types
+        # and their structure are read.
+        return list(self._elements.flat)
+
+    def _resolve_policy(self, table: SimplifyTable) -> SimplifyPolicy:
+        # A batch belongs to no family, so the safest policy of its
+        # elements applies. Resolving walks the families of every
+        # element, so the answer is kept for each table.
+        key = tuple(table.items())
+        cache = self.__dict__.setdefault("_policies", {})
+        if key not in cache:
+            cache[key] = table.resolve(*self._representatives())
+        return cache[key]
+
+    def _varies_along(self, dim: int) -> bool:
+        # Two elements of the general form are the same when they are the
+        # same object, so this test reads no value.
+        first = np.take(self.elements, [0], axis=dim)
+        first = np.broadcast_to(first, self.batch_shape)
+        return any(a is not b for a, b in zip(self.elements.flat, first.flat))
+
+    def _element_pattern(
+        self, policy: SimplifyTable
+    ) -> tx.Tuple[np.ndarray, np.ndarray]:
+        # The union of the patterns of the elements. Under the numeric
+        # policy, the elements read a batch axis when they differ along it.
+        ni, no = self.element_counts
+        block = np.zeros((no, ni), dtype=bool)
+        for element in self.elements.flat:
+            pattern = read_pattern(element, policy)
+            if pattern is UNREADABLE or np.shape(pattern) != (no, ni):
+                block[...] = True
+                break
+            block |= np.asarray(pattern, dtype=bool)
+        numeric = policy.resolve(self) is SimplifyPolicy.numeric
+        varies = [
+            not numeric or self._varies_along(j)
+            for j in range(self.batch_ndim)
+        ]
+        reads_batch = np.tile(np.asarray(varies, dtype=bool), (no, 1))
+        return block, reads_batch
+
+    def _restrict_elements(
+        self,
+        inputs: tx.List[int],
+        outputs: tx.List[int],
+        policy: SimplifyTable,
+        **fields,
+    ) -> tx.Optional["BatchedTransformation"]:
+        # Cut each element down by its own restrictor, and decline when
+        # one of them declines.
+        elements = self.elements
+        pieces = np.empty(self.batch_shape, dtype=object)
+        for index in np.ndindex(*self.batch_shape):
+            piece = restrict_block(elements[index], inputs, outputs, policy)
+            if piece is not None:
+                # An identity piece states no number of axes, which every
+                # element of a batch must state.
+                piece = close_counts(piece, len(inputs), len(outputs))
+            if piece is None:
+                return None
+            pieces[index] = piece
+        return BatchedTransformation(pieces, **fields)
+
+    def _compose_with(
+        self, inner: "BatchedTransformation", **fields
+    ) -> "BatchedTransformation":
+        # Compose the elements one at a time.
+        outer, first = np.broadcast_arrays(self.elements, inner.elements)
+        products = np.empty(outer.shape, dtype=object)
+        for index in np.ndindex(*outer.shape):
+            products[index] = compose(outer[index], first[index])
+        return BatchedTransformation(products, **fields)
+
+    def _apply_to_points(
+        self, points: np.ndarray, index: np.ndarray, valid: np.ndarray
+    ) -> np.ndarray:
+        # Group the points by element, and apply each element to its
+        # group.
+        values = np.full((len(points), self.element_counts[1]), np.nan)
+        rows = np.nonzero(valid)[0]
+        if not len(rows):
+            return values
+        flat = np.ravel_multi_index(tuple(index[rows].T), self.batch_shape)
+        elements = self.elements.reshape(-1)
+        for k in np.unique(flat):
+            group = rows[flat == k]
+            values[group] = _apply_element(elements[k], points[group])
+        return values
+
     # --- methods ------------------------------------------------------
 
     def compute(
@@ -434,6 +628,15 @@ class BatchedTransformation(
         )
         return obj.compute(**kwargs) if compute else obj
 
+    def _target_class(
+        self, kwargs: tx.Dict[str, tx.Any]
+    ) -> tx.Type[Transformation]:
+        # A new element type selects its own stacked subclass, which the
+        # constructor of the general form chooses.
+        if "element_type" in kwargs:
+            return BatchedTransformation
+        return type(self)
+
     def as_backend(
         self,
         backend: tx.Any = None,
@@ -466,6 +669,7 @@ class BatchedTransformation(
             )
         if inplace:
             self._elements = converted
+            self.__dict__.pop("_policies", None)
             return self
         return self._rebuild(
             converted,
@@ -567,6 +771,13 @@ class BatchedTransformation(
                     f"The positions along batch axis {i} must be a vector "
                     f"of {n} values, one per element, but they have the "
                     f"shape {p.shape}."
+                )
+            # A coordinate selects the element whose position it matches,
+            # so two elements cannot share a position.
+            if len(np.unique(p)) != len(p):
+                raise ValueError(
+                    f"The positions along batch axis {i} must be distinct, "
+                    f"but they are {p.tolist()}."
                 )
 
     def _check_systems(self) -> None:
@@ -712,6 +923,130 @@ class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
         # whatever the backend, as for the types themselves.
         return self
 
+    # --- kernels of the compute rules ---------------------------------
+    # Each typed subclass supplies `_stack_as`, which gives its stack in
+    # the encoding of its own family or of a wider one, and the small
+    # kernels `_product`, `_apply_gathered` and `_restrict_elements`. The
+    # kernels below are written once for every subclass in terms of
+    # these, and the pattern reads the stack in the encoding of an
+    # affine.
+
+    def elements_are(self, kind: KindLike, compute: bool = False) -> bool:
+        if not compute:
+            # Without values, the answer depends only on the type and the
+            # shape of the elements, which they all share.
+            return is_kind(self._representatives()[0], kind, False)
+        if normalize_kind(kind) is kinds.Identity:
+            # The identity is read on the whole stack.
+            ni, no = self.element_counts
+            affine = np.asarray(self._stack_as(Affine))
+            return ni == no and bool(np.all(affine == np.eye(no, ni + 1)))
+        return super().elements_are(kind, compute)
+
+    elements_are.__doc__ = BatchedTransformation.elements_are.__doc__
+
+    def _each_element(self) -> tx.Iterator[Transformation]:
+        # Each element is created when the iteration reaches it.
+        return (self._element(i) for i in np.ndindex(*self.batch_shape))
+
+    def _representatives(self) -> tx.List[Transformation]:
+        # One element stands for all of them, and it is kept as long as
+        # the stack is the same array.
+        cached = self.__dict__.get("_representative")
+        if cached is None or cached[0] is not self._data:
+            element = self._element((0,) * self.batch_ndim)
+            cached = self.__dict__["_representative"] = (self._data, element)
+        return [cached[1]]
+
+    def _resolve_policy(self, table: SimplifyTable) -> SimplifyPolicy:
+        return table.resolve(*self._representatives())
+
+    def _varies_along(self, dim: int) -> bool:
+        data = np.asarray(self.data)
+        return bool(np.any(data != np.take(data, [0], axis=dim)))
+
+    def _element_pattern(
+        self, policy: SimplifyTable
+    ) -> tx.Tuple[np.ndarray, np.ndarray]:
+        ni, no = self.element_counts
+        if policy.resolve(self) is not SimplifyPolicy.numeric:
+            # The analytic policy reads the structure of the type, which
+            # one element gives, and never the values of the stack.
+            reads_batch = np.ones((no, self.batch_ndim), dtype=bool)
+            return self._structure(policy), reads_batch
+        # Under the numeric policy, the exact zeros of the whole stack are
+        # read, and a row reads a batch axis when it changes along it.
+        affine = np.asarray(self._stack_as(Affine))
+        batch_dims = tuple(range(self.batch_ndim))
+        block = np.any(affine[..., :-1] != 0, axis=batch_dims)
+        reads_batch = np.stack(
+            [
+                np.any(
+                    affine != np.take(affine, [0], axis=j),
+                    axis=batch_dims + (-1,),
+                )
+                for j in batch_dims
+            ],
+            axis=-1,
+        )
+        return block, reads_batch
+
+    def _structure(self, policy: SimplifyTable) -> np.ndarray:
+        # The pattern of the type, read from one element.
+        element = self._representatives()[0]
+        return np.asarray(read_pattern(element, policy), dtype=bool)
+
+    def _compose_with(
+        self, inner: BatchedTransformation, **fields
+    ) -> BatchedTransformation:
+        if not isinstance(inner, _StackedBatch):
+            return super()._compose_with(inner, **fields)
+        # The two stacks are read in the family of the composition of two
+        # of their elements, so that one product computes every element.
+        family = result_type(self.element_type, inner.element_type)
+        outer, inner = widen(self, family), widen(inner, family)
+        data = outer._product(inner)
+        return outer._rebuild(data, element_type=family, **fields)
+
+    def _apply_to_points(
+        self, points: np.ndarray, index: np.ndarray, valid: np.ndarray
+    ) -> np.ndarray:
+        # Each point gathers the parameters of its element from the stack,
+        # in the encoding that the elements apply, so that a tangent is
+        # exponentiated once for each element and not for each point.
+        stack = np.asarray(self._stack_as(_family(self.element_type)))
+        key = tuple(np.where(valid[:, None], index, 0).T)
+        values = self._apply_gathered(stack[key], points).astype(float)
+        values[~valid] = np.nan
+        return values
+
+    def _stack_as(self, family: tx.Type[Transformation]) -> ArrayProtocol:
+        # The stack in the encoding of the plain class `family`, such as
+        # the matrices of a batch of scalings for `Linear`. A family that
+        # cannot hold the elements without a loss is refused. The affine
+        # encoding of a linear map is its matrix with a zero translation.
+        if family is Affine:
+            linear = self._stack_as(Linear)
+            zeros = np.zeros(np.shape(linear)[:-1] + (1,))
+            return np.concatenate([linear, zeros], axis=-1)
+        raise ConversionError(
+            f"A batch of {self.element_type.__name__} cannot be held as a "
+            f"batch of {family.__name__} without a loss."
+        )
+
+    def _product(self, inner: "_StackedBatch") -> ArrayProtocol:
+        # The data of the compositions of the elements of two stacks of
+        # the same plain class, this one being applied second.
+        raise NotImplementedError
+
+    def _apply_gathered(
+        self, stack: np.ndarray, points: np.ndarray
+    ) -> np.ndarray:
+        # Apply one element to each point, where `stack` holds, for each
+        # point, the parameters of its element in the encoding of the
+        # family of the elements.
+        raise NotImplementedError
+
 
 class BatchedAffine(
     _StackedBatch[Affine],
@@ -769,6 +1104,40 @@ class BatchedAffine(
             return -self.data
         return affine_inv(self.data)
 
+    def _stack_as(self, family: tx.Type[Transformation]) -> ArrayProtocol:
+        if family is Affine:
+            return self.matrix
+        return super()._stack_as(family)
+
+    def _restrict_elements(
+        self,
+        inputs: tx.List[int],
+        outputs: tx.List[int],
+        policy: SimplifyTable,
+        **fields,
+    ) -> tx.Optional[BatchedTransformation]:
+        if not inputs:
+            # Outputs that read no input are created at a value, which
+            # only the projections that the elements give can hold.
+            return super()._restrict_elements(
+                inputs, outputs, policy, **fields
+            )
+        matrix = self.matrix
+        columns = list(inputs) + [np.shape(matrix)[-1] - 1]
+        data = matrix[..., outputs, :][..., columns]
+        return self._rebuild(data, element_type=Affine, **fields)
+
+    def _product(self, inner: _StackedBatch) -> ArrayProtocol:
+        # A NaN in the translation of `inner` is a free axis, which only
+        # the outputs that read it inherit, as for two affines.
+        return affine_matmul(self.data, inner.data, zero_cancels_nan=True)
+
+    def _apply_gathered(
+        self, stack: np.ndarray, points: np.ndarray
+    ) -> np.ndarray:
+        linear = np.einsum("nij,nj->ni", stack[..., :-1], points)
+        return linear + stack[..., -1]
+
 
 class BatchedLinear(
     _StackedBatch[Linear],
@@ -812,6 +1181,37 @@ class BatchedLinear(
             return array_backend(self.data).swapaxes(self.data, -1, -2)
         return inv(self.data)
 
+    def _stack_as(self, family: tx.Type[Transformation]) -> ArrayProtocol:
+        if family is Linear or (
+            family is Rotation and issubclass(self.element_type, Rotation)
+        ):
+            return self.matrix
+        return super()._stack_as(family)
+
+    def _restrict_elements(
+        self,
+        inputs: tx.List[int],
+        outputs: tx.List[int],
+        policy: SimplifyTable,
+        **fields,
+    ) -> tx.Optional[BatchedTransformation]:
+        # The block of a rotation is not a rotation in general, so every
+        # stack of linear maps is cut into a stack of `Linear`.
+        if not inputs:
+            return super()._restrict_elements(
+                inputs, outputs, policy, **fields
+            )
+        data = self.matrix[..., outputs, :][..., inputs]
+        return self._rebuild(data, element_type=Linear, **fields)
+
+    def _product(self, inner: _StackedBatch) -> ArrayProtocol:
+        return self.data @ inner.data
+
+    def _apply_gathered(
+        self, stack: np.ndarray, points: np.ndarray
+    ) -> np.ndarray:
+        return np.einsum("nij,nj->ni", stack, points)
+
 
 class BatchedScaling(
     _StackedBatch[Scaling],
@@ -850,6 +1250,41 @@ class BatchedScaling(
             return -self.data
         return 1 / self.data
 
+    def _stack_as(self, family: tx.Type[Transformation]) -> ArrayProtocol:
+        if family is Scaling:
+            return self.scale
+        if family is Linear:
+            scale = np.asarray(self.scale)
+            return scale[..., :, None] * np.eye(scale.shape[-1])
+        return super()._stack_as(family)
+
+    def _restrict_elements(
+        self,
+        inputs: tx.List[int],
+        outputs: tx.List[int],
+        policy: SimplifyTable,
+        **fields,
+    ) -> tx.Optional[BatchedTransformation]:
+        if not inputs:
+            return super()._restrict_elements(
+                inputs, outputs, policy, **fields
+            )
+        if inputs == outputs:
+            data = self.scale[..., outputs]
+            return self._rebuild(data, element_type=Scaling, **fields)
+        # A zero scale leaves its input unread, so a block may have
+        # different axes on its two sides, and it is cut as a matrix.
+        data = self._stack_as(Linear)[..., outputs, :][..., inputs]
+        return self._rebuild(data, element_type=Linear, **fields)
+
+    def _product(self, inner: _StackedBatch) -> ArrayProtocol:
+        return self.data * inner.data
+
+    def _apply_gathered(
+        self, stack: np.ndarray, points: np.ndarray
+    ) -> np.ndarray:
+        return points * stack
+
 
 class BatchedTranslation(
     _StackedBatch[Translation],
@@ -882,6 +1317,38 @@ class BatchedTranslation(
     def _inverse_storage(self) -> ArrayProtocol:
         return -self.data
 
+    def _stack_as(self, family: tx.Type[Transformation]) -> ArrayProtocol:
+        if family is Translation:
+            return self.translation
+        if family is Affine:
+            translation = np.asarray(self.translation)
+            n = translation.shape[-1]
+            eye = np.broadcast_to(np.eye(n), translation.shape[:-1] + (n, n))
+            return np.concatenate([eye, translation[..., None]], axis=-1)
+        return super()._stack_as(family)
+
+    def _restrict_elements(
+        self,
+        inputs: tx.List[int],
+        outputs: tx.List[int],
+        policy: SimplifyTable,
+        **fields,
+    ) -> tx.Optional[BatchedTransformation]:
+        if not inputs or inputs != outputs:
+            return super()._restrict_elements(
+                inputs, outputs, policy, **fields
+            )
+        data = self.translation[..., outputs]
+        return self._rebuild(data, element_type=Translation, **fields)
+
+    def _product(self, inner: _StackedBatch) -> ArrayProtocol:
+        return self.data + inner.data
+
+    def _apply_gathered(
+        self, stack: np.ndarray, points: np.ndarray
+    ) -> np.ndarray:
+        return points + stack
+
 
 class BatchedPermutation(
     _StackedBatch[Permutation],
@@ -913,6 +1380,516 @@ class BatchedPermutation(
 
     def _inverse_storage(self) -> ArrayProtocol:
         return array_backend(self.data).argsort(self.data, axis=-1)
+
+    def _stack_as(self, family: tx.Type[Transformation]) -> ArrayProtocol:
+        if family is Permutation:
+            return self.permutation
+        if family is Linear:
+            permutation = np.asarray(self.permutation)
+            n = permutation.shape[-1]
+            return (permutation[..., :, None] == np.arange(n)).astype(float)
+        return super()._stack_as(family)
+
+    def _structure(self, policy: SimplifyTable) -> np.ndarray:
+        # The vector of a permutation is its structure, and it differs
+        # from one element to the next, so the patterns of all the
+        # elements are read.
+        batch_dims = tuple(range(self.batch_ndim))
+        return np.any(self._stack_as(Linear) != 0, axis=batch_dims)
+
+    def _restrict_elements(
+        self,
+        inputs: tx.List[int],
+        outputs: tx.List[int],
+        policy: SimplifyTable,
+        **fields,
+    ) -> tx.Optional[BatchedTransformation]:
+        if not inputs or len(inputs) != len(outputs):
+            return super()._restrict_elements(
+                inputs, outputs, policy, **fields
+            )
+        permutation = np.asarray(self.permutation)
+        sources = permutation[..., outputs]
+        if np.any(np.sort(sources, axis=-1) != np.asarray(inputs)):
+            return None
+        # The inputs of the block are numbered from zero in the cut.
+        local = np.full(permutation.shape[-1], -1)
+        local[inputs] = np.arange(len(inputs))
+        data = local[sources]
+        return self._rebuild(data, element_type=Permutation, **fields)
+
+    def _product(self, inner: _StackedBatch) -> ArrayProtocol:
+        # Output i of the composition reads input inner[outer[i]].
+        outer, first = np.broadcast_arrays(self.data, inner.data)
+        return np.take_along_axis(first, outer, axis=-1)
+
+    def _apply_gathered(
+        self, stack: np.ndarray, points: np.ndarray
+    ) -> np.ndarray:
+        return np.take_along_axis(points, stack.astype(int), axis=-1)
+
+
+# ----------------------------------------------------------------------
+#   KERNELS OF THE COMPUTE RULES
+# ----------------------------------------------------------------------
+# The compute rules of the modules `pruners`, `simplifiers` and
+# `composers` call these functions, which call the kernels of the batch,
+# so that a stacked subclass can compute on its stack.
+
+
+def representatives(batch: BatchedTransformation) -> tx.List[Transformation]:
+    """Return the elements that stand for every element of a batch.
+
+    A test that reads only the types and the structure of the elements,
+    such as whether applying them interpolates, asks these elements. The
+    general form returns all its elements, which may differ in type, and
+    a stacked batch returns one element, which it creates once.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch.
+
+    Returns
+    -------
+    list of Transformation
+        The elements that stand for the others.
+    """
+    return batch._representatives()
+
+
+def varies_along(batch: BatchedTransformation, dim: int) -> bool:
+    """Return whether the elements of a batch differ along a batch dimension.
+
+    The simplifier removes a batch axis along which the elements do not
+    differ. Two elements of the general form are the same when they are
+    the same object, so that the test reads no value. A stacked batch
+    compares the parameters of its elements.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch.
+    dim : int
+        Index of the batch dimension.
+
+    Returns
+    -------
+    bool
+        False when every element equals the first element along the
+        dimension, and True when it may differ.
+    """
+    return batch._varies_along(dim)
+
+
+def element_pattern(
+    batch: BatchedTransformation, policy: SimplifyTable
+) -> tx.Tuple[np.ndarray, np.ndarray]:
+    """Return the dependency pattern of the elements of a batch.
+
+    The pattern reader of a batch places this pattern in the pattern of
+    the whole space. The pattern of the elements is the union of the
+    patterns of each element, and an element whose pattern cannot be
+    read counts as fully coupled. Under the analytic policy, every output
+    of the elements reads every batch axis. Under the numeric policy, an
+    output reads a batch axis only when it may differ along that axis. A
+    stacked batch reads the exact zeros of its whole stack, row by row.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch.
+    policy : SimplifyTable
+        Policy that says how closely the elements may be read.
+
+    Returns
+    -------
+    block : numpy.ndarray
+        Boolean array of shape `(no, ni)`, where `ni` and `no` are the
+        numbers of inputs and outputs of one element, whose entry
+        `(o, i)` is true when output `o` may read input `i` in some
+        element.
+    reads_batch : numpy.ndarray
+        Boolean array of shape `(no, batch_ndim)` whose entry `(o, j)` is
+        true when output `o` may read the batch axis `j`.
+    """
+    return batch._element_pattern(policy)
+
+
+def restrict_elements(
+    batch: BatchedTransformation,
+    inputs: tx.List[int],
+    outputs: tx.List[int],
+    policy: SimplifyTable,
+    **fields,
+) -> tx.Optional[BatchedTransformation]:
+    """Return the batch of the elements of a batch cut down to a block.
+
+    The block restrictor of a batch calls this function once it has
+    checked that the block keeps every batch axis. Each element is cut
+    down as its own restrictor cuts it, and the function declines when
+    one of them declines. A stacked batch cuts its whole stack.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch.
+    inputs : list of int
+        Sorted positions of the inputs of the block among the inputs of
+        one element.
+    outputs : list of int
+        Sorted positions of the outputs of the block among the outputs of
+        one element.
+    policy : SimplifyTable
+        Policy that says how closely the elements may be read.
+    **fields : Any
+        Axes, positions and systems of the result, as the constructor
+        takes them.
+
+    Returns
+    -------
+    BatchedTransformation or None
+        The batch of the cut elements, or None to decline.
+    """
+    return batch._restrict_elements(inputs, outputs, policy, **fields)
+
+
+def compose_with(
+    outer: BatchedTransformation, inner: BatchedTransformation, **fields
+) -> BatchedTransformation:
+    """Return the batch of the compositions of the elements of two batches.
+
+    Each element of `outer` is applied after the element of `inner` at
+    the same index, and a batch dimension of length 1 is broadcast
+    against the other batch, as in NumPy. The composers of batches call
+    this function once they have checked that the two batches meet on
+    the same axes. The general form composes the elements one at a time
+    with [`compose`][], and two stacked batches compose their stacks.
+
+    Parameters
+    ----------
+    outer : BatchedTransformation
+        Batch applied second.
+    inner : BatchedTransformation
+        Batch applied first, with as many batch dimensions as `outer`.
+    **fields : Any
+        Axes, positions and systems of the result, as the constructor
+        takes them.
+
+    Returns
+    -------
+    BatchedTransformation
+        The batch of the compositions.
+
+    Raises
+    ------
+    CompositionError
+        If two elements cannot be composed.
+    """
+    return outer._compose_with(inner, **fields)
+
+
+def apply_to_points(
+    batch: BatchedTransformation,
+    points: np.ndarray,
+    index: np.ndarray,
+    valid: np.ndarray,
+) -> np.ndarray:
+    """Apply to each point the element of a batch that the point selects.
+
+    The composer of a batch with a coordinate field reads the batch
+    coordinates of each point, matches them to the positions of the
+    elements, and calls this function with the coordinates of the points
+    along the input axes of the elements. The general form groups the
+    points by element and applies each element to its group, and a
+    stacked batch gathers the parameters of each point from its stack.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch.
+    points : numpy.ndarray
+        Coordinates of `N` points along the input axes of the elements,
+        of shape `(N, ni)`.
+    index : numpy.ndarray
+        Index of the element of each point along each batch dimension, of
+        shape `(N, batch_ndim)`.
+    valid : numpy.ndarray
+        Boolean vector of shape `(N,)`, false for a point whose batch
+        coordinates match no element.
+
+    Returns
+    -------
+    numpy.ndarray
+        Coordinates of the points along the output axes of the elements,
+        of shape `(N, no)`, and NaN for a point that is not valid.
+    """
+    return batch._apply_to_points(points, index, valid)
+
+
+# ----------------------------------------------------------------------
+#   POSITIONS AND FAMILIES
+# ----------------------------------------------------------------------
+
+
+def match_positions(
+    positions: tx.Sequence[float], values: tx.Sequence[float]
+) -> np.ndarray:
+    """Return the index of the position that each value matches.
+
+    A coordinate along a batch axis selects the element whose position
+    it matches. The match tolerates the rounding of a coordinate computed
+    in floating point, such as `t0 + k * TR`, so that it still selects
+    volume `k`. The tolerance is a millionth of the smallest spacing
+    between two positions, or a millionth of the largest of 1 and the
+    magnitude of the position when there is only one. A value that lies
+    between two positions, or outside their range, matches none.
+
+    Parameters
+    ----------
+    positions : sequence of float
+        Distinct positions of the elements along one batch axis.
+    values : sequence of float
+        Coordinates to match.
+
+    Returns
+    -------
+    numpy.ndarray
+        Vector of integers with one entry per value, which is the index of
+        the matched position, or -1 when the value, such as NaN, matches
+        none.
+    """
+    positions = np.asarray(positions, dtype=float)
+    values = np.asarray(values, dtype=float)
+    order = np.argsort(positions)
+    ordered = positions[order]
+    if len(ordered) > 1:
+        tolerance = 1e-6 * np.min(np.diff(ordered))
+    else:
+        tolerance = 1e-6 * max(1.0, abs(float(ordered[0])))
+    # The nearest position is one of the two that surround the value.
+    right = np.clip(np.searchsorted(ordered, values), 0, len(ordered) - 1)
+    left = np.clip(right - 1, 0, len(ordered) - 1)
+    nearest = np.where(
+        np.abs(ordered[left] - values) < np.abs(ordered[right] - values),
+        left,
+        right,
+    )
+    # A NaN compares false, so it matches no position.
+    hit = np.abs(ordered[nearest] - values) <= tolerance
+    return np.where(hit, order[nearest], -1)
+
+
+# The plain classes of the stacked batches, from the most specific to the
+# most general. The family of an element type is the first of them that
+# it derives from, so that a tangent class or a class with a direction,
+# such as `VoxelToLPS`, belongs to the family of its plain class.
+_FAMILIES = (Rotation, Scaling, Translation, Permutation, Linear, Affine)
+_LINEAR_FAMILIES = (Rotation, Scaling, Permutation, Linear)
+
+
+def _family(element_type: tx.Type[Transformation]) -> tx.Type[Transformation]:
+    """Return the plain class of the family of an element type."""
+    return next(f for f in _FAMILIES if issubclass(element_type, f))
+
+
+def result_type(
+    outer: tx.Type[Transformation], inner: tx.Type[Transformation]
+) -> tx.Type[Transformation]:
+    """Return the class of the composition of two stacked element types.
+
+    The classes follow the composers of the elements. Two elements of
+    the same family compose into that family, so that two rotations give
+    a rotation, and two linear maps of other families give a `Linear`.
+    Any other pair gives an `Affine`. A tangent class composes through
+    the map that it encodes, so the result is always a plain class.
+
+    Parameters
+    ----------
+    outer : type
+        Class of the element applied second.
+    inner : type
+        Class of the element applied first.
+
+    Returns
+    -------
+    type
+        Plain class of the composition.
+    """
+    outer, inner = _family(outer), _family(inner)
+    if outer is inner:
+        return outer
+    if outer in _LINEAR_FAMILIES and inner in _LINEAR_FAMILIES:
+        return Linear
+    return Affine
+
+
+def widen(
+    batch: "_StackedBatch", family: tx.Type[Transformation]
+) -> "_StackedBatch":
+    """Return a stacked batch as a batch of a wider plain class.
+
+    A batch of scalings becomes a batch of `Linear` or of `Affine`, and
+    a batch of translations becomes a batch of `Affine`. A tangent class
+    is read through the map that it encodes. The batch is returned as it
+    is when its element type is already `family`.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        A stacked batch.
+    family : type
+        Plain class of the elements of the result.
+
+    Returns
+    -------
+    BatchedTransformation
+        The batch with elements of class `family`.
+
+    Raises
+    ------
+    ConversionError
+        If `family` cannot hold the elements without a loss.
+    """
+    if batch.element_type is family:
+        return batch
+    return batch._rebuild(
+        batch._stack_as(family),
+        element_type=family,
+        input_axes=batch._input_axes,
+        output_axes=batch._output_axes,
+        positions=batch._positions,
+        input=batch._input,
+        output=batch._output,
+    )
+
+
+def restack(
+    batch: BatchedTransformation, element_type: tx.Type[Transformation]
+) -> BatchedTransformation:
+    """Return a batch as a stacked batch of an element type.
+
+    A general batch copies the data of its elements, converted to
+    `element_type`, into one stack, which is the cheaper form to compute
+    with. A stacked batch is widened, as by [`widen`][], and is returned
+    as it is when it already has this element type. `t.to(element_type=...)`
+    calls this function.
+
+    Parameters
+    ----------
+    batch : BatchedTransformation
+        The batch to convert.
+    element_type : type
+        Matrix or vector type of the elements of the result.
+
+    Returns
+    -------
+    BatchedTransformation
+        The stacked batch.
+
+    Raises
+    ------
+    ConversionError
+        If `element_type` cannot be stacked, if an element does not
+        convert to it, or if the elements disagree on their systems, or
+        state systems other than those of the batch, because the elements
+        of a stacked batch take their systems from the batch.
+    """
+    try:
+        model = _element_type(element_type)
+    except TypeError as error:
+        raise ConversionError(str(error)) from None
+    if batch.element_type is not None:
+        return batch if model is batch.element_type else widen(batch, model)
+    elements = list(batch.elements.flat)
+    first = elements[0]
+    if any(
+        e.input != first.input or e.output != first.output for e in elements
+    ):
+        raise ConversionError(
+            "The elements of a stacked batch share the systems of the "
+            "batch, but these elements have different systems."
+        )
+    for own, given in (
+        (first.input, batch.element_input),
+        (first.output, batch.element_output),
+    ):
+        if own is not None and own != given:
+            raise ConversionError(
+                "The elements of a stacked batch take their systems from "
+                "the batch, but the elements of this batch state other "
+                f"systems, {own} instead of {given}."
+            )
+    data = np.stack([np.asarray(e.to(model).data) for e in elements])
+    return BatchedTransformation(
+        element_type=model,
+        data=data.reshape(batch.batch_shape + data.shape[1:]),
+        input_axes=batch._input_axes,
+        output_axes=batch._output_axes,
+        positions=batch._positions,
+        input=batch._input,
+        output=batch._output,
+    )
+
+
+def broadcast_element(
+    t: Transformation, batch_ndim: int
+) -> BatchedTransformation:
+    """Return a batch of one element that broadcasts along every batch axis.
+
+    A composer of a batch with a transformation that acts on the axes of
+    its elements only composes the batch with this batch, whose batch
+    dimensions all have length 1. A matrix or vector transformation
+    gives a stacked batch, so that a stacked neighbour composes with it
+    on its whole stack, and any other transformation gives a general
+    batch.
+
+    Parameters
+    ----------
+    t : Transformation
+        Transformation, which states its numbers of axes.
+    batch_ndim : int
+        Number of batch dimensions.
+
+    Returns
+    -------
+    BatchedTransformation
+        The batch of shape `(1,) * batch_ndim` that holds `t`.
+    """
+    family = next((f for f in _FAMILIES if isinstance(t, f)), None)
+    if family is not None:
+        # The view of a lazy inverse or of a tangent gives its map.
+        data = np.asarray(getattr(t, _VIEWS[family]))
+        return family.batch(data[(None,) * batch_ndim])
+    elements = np.empty((1,) * batch_ndim, dtype=object)
+    elements[(0,) * batch_ndim] = t
+    return BatchedTransformation(elements)
+
+
+# The view of each plain class that holds the map of an element.
+_VIEWS = {
+    Rotation: "matrix",
+    Linear: "matrix",
+    Affine: "matrix",
+    Scaling: "scale",
+    Translation: "translation",
+    Permutation: "permutation",
+}
+
+
+def _apply_element(element: Transformation, points: np.ndarray) -> np.ndarray:
+    """Return the coordinates of some points through one element."""
+    domain = CoordinateField(field=points, store="values")
+    result = nocycles.SEQUENCE([domain, element]).compute()
+    if isinstance(result, DisplacementField):
+        result = result.to(CoordinateField)
+    if not isinstance(result, CoordinateField):
+        raise CompositionError(
+            f"An element of a batch, of type {type(element).__name__}, did "
+            f"not reduce to a field of coordinates when it was applied to "
+            f"points."
+        )
+    return np.asarray(result.field)
 
 
 # ----------------------------------------------------------------------

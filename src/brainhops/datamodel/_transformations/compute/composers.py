@@ -9,6 +9,7 @@ that both transformations are fully defined, with no unset parameters.
 """
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
@@ -24,10 +25,18 @@ from brainhops._core.bsplines import pull_field
 
 # api
 from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.errors import CompositionError, ConversionError
 
 # transformations
 from ..base import Transformation
+from ..batched import (
+    BatchedTransformation,
+    apply_to_points,
+    broadcast_element,
+    compose_with,
+    match_positions,
+)
 from ..concrete import (
     Affine,
     CoordinateField,
@@ -48,38 +57,44 @@ from ..meta import (
 )
 from ..sequence import Sequence, _interpolates
 from .compose import compose, composer
-from .utils import axis_counts
+from .prune import close_counts, read_pattern, restrict_block, stage_counts
+from .simplifiers import section_before
+from .simplify import SimplifyTable
+from .utils import UNREADABLE, axis_counts
 
 # ----------------------------------------------------------------------
 #     SEQUENCE
 # ----------------------------------------------------------------------
 
 
-@composer
-def _(To: Sequence, Ti: Transformation) -> Transformation:
+# A sequence composes with its neighbour as the chain of their members,
+# which is computed.
+
+
+def _chain(To: Transformation, Ti: Transformation) -> Transformation:
+    def members(t: Transformation) -> tx.List[Transformation]:
+        return list(t.transformations) if isinstance(t, Sequence) else [t]
+
     return Sequence(
-        transformations=[Ti] + list(To.transformations),
+        transformations=members(Ti) + members(To),
         input=Ti.input,
         output=To.output,
     ).compute()
+
+
+@composer
+def _(To: Sequence, Ti: Transformation) -> Transformation:
+    return _chain(To, Ti)
 
 
 @composer
 def _(To: Transformation, Ti: Sequence) -> Transformation:
-    return Sequence(
-        transformations=list(Ti.transformations) + [To],
-        input=Ti.input,
-        output=To.output,
-    ).compute()
+    return _chain(To, Ti)
 
 
 @composer
 def _(To: Sequence, Ti: Sequence) -> Transformation:
-    return Sequence(
-        transformations=list(Ti.transformations) + list(To.transformations),
-        input=Ti.input,
-        output=To.output,
-    ).compute()
+    return _chain(To, Ti)
 
 
 # ----------------------------------------------------------------------
@@ -625,3 +640,248 @@ def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
         bound=Ti.bound,
         store=Ti.store,
     )
+
+
+# ----------------------------------------------------------------------
+#     BATCHES
+# ----------------------------------------------------------------------
+# Two batches that meet on the same axes compose element by element. A
+# batch composes with a transformation that carries its batch axes
+# through unchanged, and that acts on the axes of its elements only, as
+# a batch of the compositions of each element with that transformation.
+# A batch that follows a transformation that creates some batch axes at
+# a value reduces to the elements at that value. A batch applied to a
+# field of coordinates applies to each point the element that the point
+# selects. Any other neighbour reads or writes a batch axis in a way
+# that no batch can hold, such as a scaling of the time axis, and stays
+# next to the batch.
+
+_NUMERIC = SimplifyTable({None: SimplifyPolicy.numeric})
+"""Policy under which the composers read their operands, values included."""
+
+
+@composer
+def _(
+    To: BatchedTransformation, Ti: BatchedTransformation
+) -> BatchedTransformation:
+    if (
+        To.batch_input_axes != Ti.batch_output_axes
+        or To.input_axes != Ti.output_axes
+    ):
+        raise CompositionError(
+            "Two batches compose only when the first one writes the batch "
+            "axes and the axes of the elements that the second one reads, "
+            "in the same order."
+        )
+    positions = [
+        _shared_positions(outer, inner)
+        for outer, inner in zip(To.positions, Ti.positions)
+    ]
+    return compose_with(
+        To,
+        Ti,
+        input_axes=Ti.input_axes,
+        output_axes=To.output_axes,
+        positions=positions,
+        input=Ti.input,
+        output=To.output,
+    )
+
+
+@composer
+def _(To: BatchedTransformation, Ti: Transformation) -> Transformation:
+    # A composer reads values, so the selection reads the values of `Ti`
+    # whatever the policy of the caller, and the chain that it gives is
+    # computed with the default mode and policy of `compute`, as the
+    # composers of a sequence compute their chain.
+    section = section_before(Ti, To, _NUMERIC)
+    if section is not None:
+        return section.compute()
+    counts = _counts(Ti, To)
+    piece, carried = _split_at_batch(Ti, counts, To, before=True)
+    fields = {
+        "input_axes": [c for c in range(counts[0]) if c not in carried],
+        "output_axes": To.output_axes,
+        "positions": To.positions,
+        "input": Ti.input,
+        "output": To.output,
+    }
+    if isinstance(piece, Identity):
+        return replace(To, **fields)
+    piece = broadcast_element(piece, To.batch_ndim)
+    return compose_with(To, piece, **fields)
+
+
+@composer
+def _(To: Transformation, Ti: BatchedTransformation) -> Transformation:
+    counts = _counts(Ti, To)
+    piece, carried = _split_at_batch(To, counts[1:], Ti, before=False)
+    fields = {
+        "input_axes": Ti.input_axes,
+        "output_axes": [r for r in range(counts[2]) if r not in carried],
+        "positions": Ti.positions,
+        "input": Ti.input,
+        "output": To.output,
+    }
+    if isinstance(piece, Identity):
+        return replace(Ti, **fields)
+    piece = broadcast_element(piece, Ti.batch_ndim)
+    return compose_with(piece, Ti, **fields)
+
+
+@composer
+def _(To: BatchedTransformation, Ti: CoordinateField) -> CoordinateField:
+    # The batch coordinates of each point select its element, and they
+    # are carried to the output unchanged, even for a point whose
+    # coordinates match no element and whose other outputs are NaN.
+    Ti = Ti.compute()
+    field = np.asarray(to_backend(Ti.field, "numpy"), dtype=float)
+    n_in, n_out = To.counts
+    if field.shape[-1] != n_in:
+        raise CompositionError(
+            f"A batch of {n_in} input axes cannot be applied to a field of "
+            f"{field.shape[-1]} components."
+        )
+    points = field.reshape(-1, n_in)
+    coordinates = points[:, To.batch_input_axes]
+    index = np.stack(
+        [
+            match_positions(positions, coordinates[:, j])
+            for j, positions in enumerate(To.positions)
+        ],
+        axis=-1,
+    )
+    valid = np.all(index >= 0, axis=-1)
+    values = np.empty((len(points), n_out))
+    values[:, To.output_axes] = apply_to_points(
+        To, points[:, To.input_axes], index, valid
+    )
+    values[:, To.batch_output_axes] = coordinates
+    return CoordinateField(
+        field=values.reshape(field.shape[:-1] + (n_out,)),
+        input=Ti.input,
+        output=To.output,
+        degree=Ti.degree,
+        bound=Ti.bound,
+        store=Ti.store,
+    )
+
+
+@composer
+def _(To: BatchedTransformation, Ti: DisplacementField) -> Transformation:
+    # The displacements are read as coordinates, and the grid is
+    # subtracted again when the batch maps the space to itself.
+    Ti = Ti.compute()
+    y = compose(To, Ti.to(CoordinateField))
+    if To.counts[0] != To.counts[1]:
+        return y
+    return DisplacementField(
+        field=y.field - _grid_like(y.field),
+        input=Ti.input,
+        output=To.output,
+        degree=Ti.degree,
+        bound=Ti.bound,
+        store=Ti.store,
+    )
+
+
+# A batch next to a sequence composes as the chain of their members, as
+# any other transformation does. These two composers are more specific
+# than both the composers of a batch with any transformation and the
+# composers of a sequence with any transformation, which would otherwise
+# tie.
+
+
+@composer
+def _(To: BatchedTransformation, Ti: Sequence) -> Transformation:
+    return _chain(To, Ti)
+
+
+@composer
+def _(To: Sequence, Ti: BatchedTransformation) -> Transformation:
+    return _chain(To, Ti)
+
+
+def _shared_positions(outer: np.ndarray, inner: np.ndarray) -> np.ndarray:
+    # Return the positions along a batch axis that two batches share. A
+    # batch axis of length 1 is broadcast, and takes the positions of
+    # the other batch.
+    if len(outer) == 1 and len(inner) > 1:
+        return inner
+    if len(inner) == 1 and len(outer) > 1:
+        return outer
+    if len(outer) != len(inner) or np.any(
+        match_positions(inner, outer) != np.arange(len(outer))
+    ):
+        raise CompositionError(
+            f"Two batches compose only when their elements sit at the same "
+            f"positions, but they sit at {outer.tolist()} and at "
+            f"{inner.tolist()}."
+        )
+    return inner
+
+
+def _counts(Ti: Transformation, To: Transformation) -> tx.List[int]:
+    # Return the numbers of axes before, between and after two
+    # neighbours, and raise when they are unknown or disagree.
+    counts = stage_counts([Ti, To])
+    if counts is None:
+        raise CompositionError(
+            f"A {type(To).__name__} cannot follow a {type(Ti).__name__} "
+            f"whose numbers of axes are unknown or disagree with its own."
+        )
+    return counts
+
+
+def _split_at_batch(
+    t: Transformation,
+    counts: tx.Sequence[int],
+    batch: BatchedTransformation,
+    before: bool,
+) -> tx.Tuple[Transformation, tx.List[int]]:
+    # Split a neighbour of a batch into the part that carries the batch
+    # axes through unchanged and the part that acts on the axes of the
+    # elements. `counts` holds the numbers of axes before and after `t`.
+    # Return that second part, and the positions of the batch axes on
+    # the side of `t` that does not touch the batch. Raise when `t`
+    # reads or writes a batch axis in any other way.
+    refused = CompositionError(
+        "A batch composes with a transformation only when that "
+        "transformation carries the batch axes through unchanged, in "
+        "their order, and acts on the axes of the elements only, in "
+        "their order."
+    )
+    t = close_counts(t, counts[0], counts[1])
+    pattern = UNREADABLE if t is None else read_pattern(t, _NUMERIC)
+    if pattern is UNREADABLE:
+        raise refused
+    # The rows of `links` are the axes that `t` shares with the batch.
+    pattern = np.asarray(pattern, dtype=bool)
+    links = pattern if before else pattern.T
+    if before:
+        shared, inner = batch.batch_input_axes, batch.input_axes
+    else:
+        shared, inner = batch.batch_output_axes, batch.output_axes
+    carried = []
+    for axis in shared:
+        partners = np.nonzero(links[axis])[0]
+        if len(partners) != 1 or links[:, partners[0]].sum() != 1:
+            raise refused
+        carried.append(int(partners[0]))
+    if carried != sorted(set(carried)) or inner != sorted(inner):
+        raise refused
+    outer = [a for a in range(links.shape[1]) if a not in carried]
+    if before:
+        through = restrict_block(t, carried, shared, _NUMERIC)
+        piece = restrict_block(t, outer, inner, _NUMERIC)
+    else:
+        through = restrict_block(t, shared, carried, _NUMERIC)
+        piece = restrict_block(t, inner, outer, _NUMERIC)
+    if through is None or not through.is_identity(compute=True):
+        raise refused
+    if piece is None:
+        raise refused
+    n_in, n_out = (
+        (len(outer), len(inner)) if before else (len(inner), len(outer))
+    )
+    return close_counts(piece, n_in, n_out) or piece, carried

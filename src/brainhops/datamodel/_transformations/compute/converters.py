@@ -19,6 +19,7 @@ from brainhops.errors import (
 
 # transformations
 from ..base import Transformation
+from ..batched import BatchedTransformation, restack
 from ..concrete import (
     Affine,
     CartesianField,
@@ -63,6 +64,7 @@ TRANSLATION = tx.TypeVar("TRANSLATION", bound=Translation)
 IDENTITY = tx.TypeVar("IDENTITY", bound=Identity)
 SEQUENCE = tx.TypeVar("SEQUENCE", bound=Sequence)
 SVF = tx.TypeVar("SVF", bound=StationaryVelocityField)
+BATCH = tx.TypeVar("BATCH", bound=BatchedTransformation)
 AFFINE_EXP = tx.TypeVar("AFFINE_EXP", bound=AffineExponential)
 LINEAR_EXP = tx.TypeVar("LINEAR_EXP", bound=LinearExponential)
 ROTATION_EXP = tx.TypeVar("ROTATION_EXP", bound=RotationExponential)
@@ -344,6 +346,29 @@ def _(
         inner = kwargs.get("transformation", t.transformation)
         if inner is not None:
             kwargs["transformation"] = inner.to(log=log)
+    return smart_replace(t, cls, **kwargs)
+
+
+# ----------------------------------------------------------------------
+#   BATCHES
+# ----------------------------------------------------------------------
+
+
+@converter
+def _(t: BatchedTransformation, cls: tx.Type[BATCH], **kwargs) -> BATCH:
+    # A new element type stacks the elements of a general batch, or
+    # widens the elements of a stacked batch, and the other fields are
+    # then replaced. Without one, the batch is rebuilt as the catch-all
+    # converter rebuilds any transformation.
+    element_type = kwargs.pop("element_type", None)
+    if element_type is not None:
+        return smart_replace(restack(t, element_type), **kwargs)
+    if issubclass(type(t), cls):
+        # The class of a stacked batch is chosen by its element type, so
+        # a request for one of its base classes keeps it.
+        return smart_replace(t, **kwargs)
+    if not issubclass(cls, type(t)):
+        return t
     return smart_replace(t, cls, **kwargs)
 
 

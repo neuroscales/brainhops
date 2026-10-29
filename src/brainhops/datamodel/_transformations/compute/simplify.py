@@ -12,16 +12,22 @@ that takes two transformations, called as `f(first, second, policy)`,
 either replaces the pair by one transformation at no cost, as when a
 transformation next to its inverse becomes the identity, or returns None to
 decline. Declining is a common answer and not an error. As in a
-[`Sequence`][], `first` is applied before `second`.
+[`Sequence`][], `first` is applied before `second`. A pair simplifier may
+also return a chain, as a [`Sequence`][], whose members are cheaper than
+the pair, as when a batch that follows the creation of its batch axis at
+a value becomes the chain that holds its element at that value. The
+members of the chain then replace the pair in the sweep over a sequence,
+and each of them meets its new neighbours.
 
 Simplification is optional and never raises. Composition with
 [`compose`][brainhops.datamodel._transformations.compose.compose] differs
 in this respect, because it raises a CompositionError when it refuses a
 pair. The simplification of a sequence asks every adjacent pair and is
 usually told no, so declining must be silent. A simplifier never makes a
-sequence longer and never reconciles the coordinate systems of two
-neighbours, which is the job of composition, so it declines a pair whose
-systems disagree. `compose` tries the pair simplifiers first, because a
+sequence longer, except for the chain that selects the element of a
+batch, and never reconciles the coordinate systems of two neighbours,
+which is the job of composition, so it declines a pair whose systems
+disagree. `compose` tries the pair simplifiers first, because a
 cost-free rewrite is always correct when it applies, and for a pair such as
 `~field @ field` it is the only answer.
 
@@ -269,8 +275,9 @@ def simplify(
     -------
     Transformation or None
         For one transformation, the simplified transformation, which is the
-        transformation itself if nothing applies. For a pair, the single
-        collapsed transformation, or None if the pair does not collapse.
+        transformation itself if nothing applies. For a pair, the collapsed
+        transformation, which may be a chain whose members replace the
+        pair, or None if the pair does not collapse.
 
     Raises
     ------
@@ -512,11 +519,32 @@ class SimplifyTable(dict):
         and the safest of those policies wins. When no entry matches, the
         fallback applies. For several transformations, the safest of their
         policies wins, so a pair is rewritten only as far as its most
-        protected member allows.
+        protected member allows. A batch belongs to no family, so it is
+        resolved against its elements, and the safest of their policies
+        applies.
         """
-        return _safest_policy(*map(self._resolve_one, transformations))
+        policies = (t._resolve_policy(self) for t in transformations)
+        return _safest_policy(*policies)
 
-    def _resolve_one(self, t: "Transformation") -> SimplifyPolicy:
+    def resolve_families(self, t: "Transformation") -> SimplifyPolicy:
+        """Resolve the policy of one transformation from its families.
+
+        Each entry whose family contains the transformation applies to it,
+        and the safest of those policies wins. When no entry matches, the
+        fallback applies. [`resolve`][] reaches this method through the
+        transformation, so that a transformation that belongs to no
+        family, such as a batch, can resolve the table otherwise.
+
+        Parameters
+        ----------
+        t : Transformation
+            The transformation.
+
+        Returns
+        -------
+        SimplifyPolicy
+            The policy of `t`.
+        """
         matched = [
             policy
             for family, policy in self.items()
