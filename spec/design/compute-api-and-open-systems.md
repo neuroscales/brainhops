@@ -476,9 +476,11 @@ dropped from inside `...`.
 Some transformations are a family of transformations indexed by an axis,
 such as one spatial affine per volume of a time series, as estimated by
 motion correction, or the batches of transforms that X5 and ITK files
-store (#251). Batched transformations are not implemented yet (#576), but
-the operations of Part A are defined so that they treat them
-consistently.
+store (#251). The operations of Part A are defined so that they treat
+batched transformations consistently. The data model of batches (#610)
+and their rules in `compute` and `simplify` (#620) are implemented, and
+the resampling of a batch and the readers and writers of the formats
+that store batches are not implemented yet (#576).
 
 A batch axis is an axis that a transformation carries through unchanged,
 while its other outputs may depend on it. With one affine per volume, the
@@ -495,6 +497,8 @@ The following rules hold for batched transformations:
   read `t`, although the time output, which is dropped, reads `z`.
 - The transformation of one element is the restriction with `at` set on
   the batch axis, as in `t.restrict(SpaceAxis, SpaceAxis, at={"t": k})`.
+  `restrict` is not implemented yet, so the element is selected from the
+  chain of projections that `restrict` builds (A.4).
 - A batched transformation reports that its other outputs depend on the
   batch axis. The rules of `compute` and the factor pass read which
   outputs depend on which inputs, and a batched affine that looked like
@@ -504,10 +508,13 @@ The following rules hold for batched transformations:
   two of them, so it selects elements of the batch and never blends them.
   Re-expressing vectors in another frame already evaluates a frame at
   every position of such an axis without differentiating along it, which
-  gives one Jacobian per element.
+  gives one Jacobian per element. The resampler does not read the batches
+  of a chain yet.
 
-How a batched transformation is stored, for example as an affine whose
-matrix has a leading batch dimension, is decided when it is implemented.
+A batched transformation is stored in one of two forms, an array of
+transformations or a stack of the parameters of elements of one matrix
+or vector type, as the design of the batched transformations (#607)
+describes.
 
 ---
 
@@ -685,8 +692,9 @@ tests of the idempotence of `compute` and reslice timings. Cutting a
 field down to some of its own outputs, and taking the section of a
 field, need fields whose number of components differs from the dimension
 of their grid (#588). Until then, a projection that would cut a field
-stays next to it. Batched transformations (A.10) come after Part A,
-together with the readers and writers of the formats that store them
+stays next to it. The data model and the compute rules of batched
+transformations (A.10) are implemented (#610, #620). Their resampling
+and the readers and writers of the formats that store them come next
 (#576).
 
 ## Decisions
@@ -736,8 +744,10 @@ Part B, implemented:
     and `restrict` accept queries (#574).
 
 Part A, agreed with `restrict` and batched transformations. Decisions
-24, 25 and 26 are implemented (#582), and the others are not implemented
-yet:
+24, 25 and 26 are implemented (#582), and decisions 27 and 28 are
+implemented (#620). `restrict` itself is not implemented yet, so the
+restriction of decision 28 is the chain of projections that `restrict`
+would build:
 
 24. `Projection.at` gives the value of each created axis. It is `0` by
     default, and NaN makes the axis free.
@@ -806,6 +816,33 @@ implemented (#602):
     that the pruning cannot carry (decision 35). A subspace
     transformation that moves its axes is not a factor, so it composes
     as any other transformation does.
+
+Batched transformations, the rules of `compute` and `simplify`.
+Decisions 40 to 43 are implemented (#620):
+
+40. The selection of the elements of a batch at the values of the batch
+    axes that its neighbour creates is a pair simplifier, so it applies
+    under every mode. The composer of a batch with the transformation
+    before it tries the selection first, under the numeric policy, so
+    that a composing `compute` also selects an element when the creation
+    is a constant row of an affine.
+41. A pair simplifier or a composer may return a chain whose members are
+    cheaper than the pair, and the sweeps of `simplify` and `compute`
+    put the members in the place of the pair, so that each member meets
+    its new neighbours. A chain whose members are the pair itself is no
+    merge. The selection of decision 40 needs this, because it replaces
+    a batch in the middle of a chain by its element followed by the
+    creation of the batch axes.
+42. The rewrites of `simplify` on a batch are exact at the positions of
+    its elements, which are the only coordinates of a batch axis that
+    select an element. `simplify` therefore removes a batch axis of
+    length 1, or along which the elements do not change, and the axis
+    passes through for every coordinate. A point between two positions
+    has no element, and its outputs are NaN.
+43. A batch belongs to no family, so the simplification policy of a
+    batch is resolved against its elements. A table that reads the
+    values of matrix transformations only reads the values of a batch of
+    affines.
 
 ## Open questions
 

@@ -240,7 +240,65 @@ an affine map of its inputs: its other outputs depend on the batch axes.
 For the same reason, the matrix and vector types accept only data with
 the number of dimensions of one element. `inverse()` returns the batch
 of the inverses, which a stacked batch computes on its whole stack.
-Stacked batches of fields, and the rules that let `compute` compose and
-resample batches, are not implemented yet.
+`elements_are(kind)` asks instead whether every element is of a kind.
+
+A point reaches the element whose positions match its coordinates along
+the batch axes. The match tolerates the rounding of a coordinate that
+is computed in floating point, up to a millionth of the smallest spacing
+between two positions. A point whose coordinate lies between two
+positions, or outside their range, has no element, and its other
+outputs are NaN, while its batch coordinates are carried through
+unchanged.
+
+`compute` and `simplify` know the following rules for batches.
+
+- A chain that creates a batch axis at a value just before the batch
+  selects the element at that value, which is how one element is
+  restricted out of a batch. A value that matches no position selects
+  nothing, and a free axis, whose value is NaN, raises when the chain is
+  computed.
+- `simplify` simplifies the elements of a general batch, converts a
+  general batch whose elements share one matrix or vector type to the
+  stacked form, and turns a batch of identities that keeps its axes in
+  place into the identity. It
+  removes a batch axis of length 1 and, under the numeric policy, a
+  batch axis along which the elements do not change, and the axis then
+  passes through a `SubspaceTransformation`. These rewrites are exact at
+  the positions of the elements, which are the only coordinates that
+  select one. A general batch cancels with its inverse, but a stacked
+  batch does not, because the inverse of its stack is computed.
+- With `mode=True`, a batch composes with a neighbour that carries the
+  batch axes through unchanged and acts on the axes of the elements
+  only, such as a spatial affine, into one batch. Two batches that meet
+  on the same axes compose element by element, with a batch axis of
+  length 1 broadcast against the other batch, and their positions must
+  match. A batch composed with a coordinate field applies to each point
+  the element that the point selects. A neighbour that reads or writes a
+  batch axis in any other way, such as an affine that scales the time
+  axis, stays next to the batch.
+- `mode="affine"` composes the affines on each side of a batch and keeps
+  the batch as a separate element, because a batch is of no kind.
+  `mode="batch"` composes runs of batches only.
+
+```python
+import numpy as np
+
+from brainhops.datamodel.transformations import Affine, Projection, Sequence
+
+# one affine per volume of a series (x, y, z, t) sampled every 2 seconds
+matrices = np.stack([np.eye(3, 4)] * 10)
+batch = Affine.batch(
+    matrices, input_axes=[0, 1, 2], positions=[np.arange(10) * 2.0]
+)
+# the affine of the volume at 8 seconds
+volume = Sequence(
+    [Projection(created=[3], at=[8.0]), batch, Projection(dropped=[3])]
+).simplify()
+```
+
+`b.to(element_type=...)` converts a general batch to the stacked form,
+or widens a stacked batch, such as a batch of scalings into a batch of
+affines. Stacked batches of fields, and the resampling of an image
+through a batch, are not implemented yet.
 
 # ::: brainhops.datamodel.transformations

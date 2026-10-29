@@ -15,6 +15,12 @@ whose subclasses are [`BatchedAffine`][], [`BatchedLinear`][],
 in one array, whose leading dimensions index the elements, and it
 creates an element only when one is asked for.
 
+The rules that `compute` and `simplify` apply to batches are registered
+in the modules `pruners`, `simplifiers`, `converters` and `composers`
+of the compute machinery. They call the kernels of the batches, such as
+[`BatchedTransformation.compose_with`][], for the part that reads the
+elements, so that a stacked subclass computes that part on its stack.
+
 The design is recorded in `spec/design/batched-transformations.md`.
 """
 
