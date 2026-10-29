@@ -5,6 +5,8 @@ import pytest
 import typing_extensions as tx
 
 from brainhops._core.linalg import (
+    batched,
+    chunked,
     expm,
     logm,
     require_principal,
@@ -99,3 +101,35 @@ def test_require_square_reads_the_last_two_dimensions() -> None:
         require_square(np.zeros((4, 2, 3)))
     with pytest.raises(DomainError, match="not a matrix"):
         require_square(np.zeros(3))
+
+
+def test_a_domain_error_names_the_element_of_the_stack() -> None:
+    stack = np.stack([np.eye(2), _REFLECTION, np.eye(2)])
+    with pytest.raises(DomainError, match=r"element at index \(1,\)"):
+        sqrtm(stack, "The root")
+
+
+def test_batched_applies_a_function_of_one_matrix_to_each_element() -> None:
+    seen = []
+
+    @batched(2)
+    def trace(matrix: np.ndarray) -> np.ndarray:
+        seen.append(matrix.shape)
+        return np.trace(matrix)[None]
+
+    stack = np.arange(24.0).reshape(2, 3, 2, 2)
+    result = trace(stack)
+    assert result.shape == (2, 3, 1)
+    assert seen == [(2, 2)] * 6
+    np.testing.assert_array_equal(result[..., 0], np.trace(stack, 0, -2, -1))
+    assert trace(np.eye(2)).shape == (1,)
+
+
+def test_chunked_keeps_the_name_of_the_function() -> None:
+    @chunked((-2, -1))
+    def identity(matrix: np.ndarray) -> np.ndarray:
+        """Return the matrix."""
+        return matrix
+
+    assert identity.__name__ == "identity"
+    assert identity.__doc__ == "Return the matrix."
