@@ -40,7 +40,7 @@ from brainhops.io.common.minc._utils import (
     minc_version,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )

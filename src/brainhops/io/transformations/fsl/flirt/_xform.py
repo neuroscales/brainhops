@@ -39,7 +39,7 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common.nifti._header import _NiftiObject
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,

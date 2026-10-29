@@ -24,7 +24,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 
 # io
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 

@@ -663,7 +663,7 @@ def test_the_policy_of_a_generator_is_checked_when_it_is_called() -> None:
 # The methods of the formats that apply a policy themselves. Every other
 # method of a format runs under the policy of its caller.
 _ENTRY_POINTS = {
-    ("brainhops.io.base._base", "_FileBasedModelMixin", "consolidate"),
+    ("brainhops.io.base._base", "FileBasedModelMixin", "consolidate"),
     ("brainhops.io.metadata._base", "MetadataFormat", "from_instance"),
 }
 

@@ -16,8 +16,8 @@ from brainhops.datamodel.metadata._internal_api import (
 from brainhops.io.base._base import register_format
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
 from brainhops.io.metadata import MetadataFormat
-from brainhops.io.metadata._base import consolidated
-from brainhops.io.metadata._json import (
+from brainhops.io.metadata._internal_api import (
+    consolidated,
     decode_object,
     encode_changes,
     encode_extra,

@@ -49,7 +49,7 @@ from brainhops.io.images.nifti._views import (
     _image_to_disk,
     _image_to_model,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,

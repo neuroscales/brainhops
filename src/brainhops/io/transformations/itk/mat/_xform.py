@@ -23,7 +23,10 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common._geometry import held_transformations
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 from .._chains import (
     _block,

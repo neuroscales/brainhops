@@ -28,7 +28,7 @@ from brainhops.datamodel.transformations import (
     Affine,
     Transformation,
 )
-from brainhops.io.base._base import FileFormat, _takes_over
+from brainhops.io.base._base import FileFormat, takes_over
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
@@ -147,7 +147,7 @@ def test_every_format_that_holds_metadata_takes_it_over() -> None:
     ]
     assert holders
     for cls in holders:
-        assert _takes_over(cls, "metadata"), cls.__name__
+        assert takes_over(cls, "metadata"), cls.__name__
 
 
 def test_metadata_fields_is_renamed_encoding_fields() -> None:

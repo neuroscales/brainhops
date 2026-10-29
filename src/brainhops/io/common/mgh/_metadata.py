@@ -17,7 +17,7 @@ from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
-from brainhops.io.metadata._base import consolidated
+from brainhops.io.metadata._internal_api import consolidated
 
 # this format
 from ._raw import MghRaw

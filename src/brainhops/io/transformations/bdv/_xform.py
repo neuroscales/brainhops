@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
 from brainhops.io.common.bdv._geometry import global_system, voxel_system
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,

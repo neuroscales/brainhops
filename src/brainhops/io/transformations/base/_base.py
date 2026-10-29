@@ -4,11 +4,8 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 from brainhops.datamodel.base import DataModelBase
-from brainhops.io.base._base import (
-    FileFormat,
-    _FileBasedModelMixin,
-    format_registry,
-)
+from brainhops.io.base._base import FileFormat, format_registry
+from brainhops.io.base._internal_api import FileBasedModelMixin
 from brainhops.io.transformations.base._conversions import (
     convert_instance,
     converts_to,
@@ -17,7 +14,7 @@ from brainhops.io.transformations.base._conversions import (
 
 @format_registry
 class TransformationFormat(
-    _FileBasedModelMixin,
+    FileBasedModelMixin,
     DataModelBase,
     FileFormat,
     reverse=True,

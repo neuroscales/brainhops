@@ -7,7 +7,7 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 from brainhops.datamodel import systems as _systems
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import ParserContentError
 
 from . import _conventions

@@ -34,7 +34,7 @@ from brainhops.io.common.freesurfer._tkr import (
     scanner_vox2ras,
     tkr_to_scanner,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,

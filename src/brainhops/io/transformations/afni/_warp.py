@@ -55,7 +55,7 @@ from brainhops.io.common.afni._raw import (
     _sniffed_raw_at,
 )
 from brainhops.io.images.afni import AfniImage
-from brainhops.io.metadata._base import requested_fields
+from brainhops.io.metadata._internal_api import requested_fields
 from brainhops.io.transformations.base.fields import (
     ras_displacement_chain,
     split_ras_displacement_chain,

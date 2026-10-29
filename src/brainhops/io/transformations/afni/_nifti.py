@@ -42,7 +42,7 @@ from brainhops.io.common.nifti._header import (
 )
 from brainhops.io.common.nifti._raw import _sniffed_header
 from brainhops.io.images.afni import AfniImage
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,

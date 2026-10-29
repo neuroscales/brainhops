@@ -546,7 +546,7 @@ class FileFormat(_FileNamesMixin):
 # ----------------------------------------------------------------------
 
 
-class _FileBasedModelMixin:
+class FileBasedModelMixin:
     """Give file-based data models a `from_any` that reads files first.
 
     A path, an open file, binary content or a [`SourceSpec`][] is read with
@@ -798,7 +798,7 @@ class _FileBasedModelMixin:
         # here. A pyramid that takes `images` over reads its levels from
         # the file, so the levels of another pyramid are read here.
         for name in ("data", "images"):
-            if not isinstance(other, cls) and _takes_over(cls, name):
+            if not isinstance(other, cls) and takes_over(cls, name):
                 # The data are read as the other object stores them, not
                 # converted with the backend setting in effect.
                 with backends.backend("native"):
@@ -808,7 +808,7 @@ class _FileBasedModelMixin:
         # The metadata of a data model, generic or of another format, is
         # given to the field that this format takes it over with, which
         # converts it into the metadata of this format.
-        if not isinstance(other, cls) and _takes_over(cls, "metadata"):
+        if not isinstance(other, cls) and takes_over(cls, "metadata"):
             metadata = getattr(other, "metadata", None)
             if metadata is not None:
                 kwargs.setdefault("metadata", metadata)
@@ -930,7 +930,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     ]
 
 
-def _takes_over(cls: type, name: str) -> bool:
+def takes_over(cls: type, name: str) -> bool:
     """Tell whether a format stores a field of its data model privately.
 
     A format takes a field over when it declares the field `_<name>` with

@@ -19,7 +19,10 @@ from brainhops.datamodel.metadata._internal_api import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
-from brainhops.io.metadata._base import overruled_fields, requested_fields
+from brainhops.io.metadata._internal_api import (
+    overruled_fields,
+    requested_fields,
+)
 from brainhops.io.transformations.base import TransformationFormat
 
 from ._blocks import (

@@ -13,7 +13,7 @@ from bagof.magic import Factory, NoRepr
 # internals
 from brainhops._core._internal_api import preserve_position
 from brainhops.datamodel.metadata._internal_api import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,

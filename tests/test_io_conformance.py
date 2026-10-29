@@ -81,8 +81,8 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import FileFormat, _takes_over, register_format
-from brainhops.io.base._save import _model
+from brainhops.io.base._base import FileFormat, register_format, takes_over
+from brainhops.io.base._save import data_model_of
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -5361,7 +5361,7 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     names = _init_names
     # A format whose data model is a chain may still take its stored data
     # as `data`, which is pending until the object is consolidated.
-    allowed = names(_model(cls)) | {"rawdata", "metadata", "data"}
+    allowed = names(data_model_of(cls)) | {"rawdata", "metadata", "data"}
     allowed |= exemplar.options
     assert names(cls) <= allowed
     assert not names(cls) & _PARSER_STATE
@@ -5569,7 +5569,7 @@ def test_09_copies_keep_rawdata_and_metadata(
         converted = cls.from_instance(foreign)
     # The metadata of a data model is converted into the metadata of the
     # format, without the record of another format.
-    if _takes_over(cls, "metadata") and foreign.metadata is not None:
+    if takes_over(cls, "metadata") and foreign.metadata is not None:
         assert isinstance(converted.metadata, Metadata)
         assert converted.metadata.raw is None
     elif foreign.metadata is None:
@@ -5578,7 +5578,7 @@ def test_09_copies_keep_rawdata_and_metadata(
         assert np.array_equal(np.asarray(converted.data), value)
         _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
         return
-    if "data" in _init_names(_model(cls)):
+    if "data" in _init_names(data_model_of(cls)):
         assert getattr(converted, "rawdata", None) is None
         assert np.array_equal(np.asarray(converted.data), value)
         consolidated = converted.consolidate()
@@ -5742,7 +5742,7 @@ def test_14_copies_between_classes_carry_the_decoded_transformations(
     # The data model and another format read the decoded transformations,
     # since the record of this format means nothing to them.
     for copy in (
-        _model(cls).from_instance(loaded),
+        data_model_of(cls).from_instance(loaded),
         _ForeignImage.from_instance(loaded),
     ):
         assert np.allclose(exemplar.geometry(copy), decoded)

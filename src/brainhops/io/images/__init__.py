@@ -19,7 +19,7 @@ from brainhops._core._internal_api import (
     HAS_TIFFFILE,
     has_abczarr_driver,
 )
-from brainhops.io.base._dispatch import register_missing_format
+from brainhops.io.base._internal_api import register_missing_format
 
 from . import afni, base, mrtrix, nrrd
 from .base import ImageFormat, load, sniff

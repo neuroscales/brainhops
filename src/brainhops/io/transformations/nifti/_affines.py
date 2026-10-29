@@ -30,7 +30,7 @@ from brainhops.io.common.nifti._header import (
     _split_options,
     _written_nifti,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,

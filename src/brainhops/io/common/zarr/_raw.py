@@ -11,7 +11,7 @@ from abczarr.metadata.base import ArrayMetadata, NodeMetadata
 from bagof.magic import NoRepr
 
 # internals
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import ParserContentError, WriterError
 
 # ----------------------------------------------------------------------

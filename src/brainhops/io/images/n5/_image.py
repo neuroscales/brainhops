@@ -33,7 +33,10 @@ from brainhops.io.images.base._utils_raster import (
     default_axes,
     level_transformation,
 )
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._data import (

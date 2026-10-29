@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core._internal_api import open_compressed, preserve_position
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,

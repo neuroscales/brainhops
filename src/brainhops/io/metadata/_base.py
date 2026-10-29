@@ -27,11 +27,8 @@ from brainhops.datamodel.metadata._internal_api import (
     short,
 )
 from brainhops.errors import ErrorAction, ErrorPolicy
-from brainhops.io.base._base import (
-    FileFormat,
-    _FileBasedModelMixin,
-    format_registry,
-)
+from brainhops.io.base._base import FileFormat, format_registry
+from brainhops.io.base._internal_api import FileBasedModelMixin
 from brainhops.io.base.specs import register_parser
 
 # An encoder of the vocabulary of a format: `encode(record, changed,
@@ -45,7 +42,7 @@ _Encoder = tx.Callable[
 
 @register_parser(Metadata)
 @format_registry(isolated=True)
-class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
+class MetadataFormat(FileBasedModelMixin, Metadata, FileFormat, eq=False):
     """Format dispatcher and common base for the metadata of files.
 
     The metadata of a file is what its header records beside the data. Each
@@ -161,7 +158,7 @@ class MetadataFormat(_FileBasedModelMixin, Metadata, FileFormat, eq=False):
 
         Metadata of any class, generic or of another format, is copied
         field by field with [`from_instance`][]. A file is read as
-        `_FileBasedModelMixin.from_any` reads it, and any other value is
+        `FileBasedModelMixin.from_any` reads it, and any other value is
         passed to the data model.
 
         Parameters

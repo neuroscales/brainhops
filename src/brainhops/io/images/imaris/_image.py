@@ -29,7 +29,10 @@ from brainhops.io.common._geometry import (
 from brainhops.io.common.hdf5 import Hdf5Reader
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._data import read_imaris_level

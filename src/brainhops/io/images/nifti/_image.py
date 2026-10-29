@@ -62,7 +62,7 @@ from brainhops.io.common.nifti._header import (
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,

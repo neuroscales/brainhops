@@ -35,7 +35,10 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import _compatible
 from brainhops.io.transformations.itk._common import ItkStruct

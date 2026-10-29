@@ -38,7 +38,10 @@ from brainhops.io.common.bdv._geometry import (
 )
 from brainhops.io.common.bdv._hdf5 import level_count, read_dataset
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._views import _image_to_disk, _image_to_model

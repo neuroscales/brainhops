@@ -39,7 +39,10 @@ from brainhops.io.common._geometry import (
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from . import _utils as backend

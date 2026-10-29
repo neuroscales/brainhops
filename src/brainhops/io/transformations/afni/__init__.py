@@ -150,7 +150,7 @@ __all__ = [
     "cardinal_to_real",
 ]
 
-from brainhops.io.base._dispatch import register_missing_format
+from brainhops.io.base._internal_api import register_missing_format
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
 
 from ._affine import AfniAffine

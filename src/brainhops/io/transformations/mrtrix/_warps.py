@@ -72,7 +72,7 @@ from brainhops.io.common.mrtrix._raw import (
     _no_options,
     _sniffed_raw,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,

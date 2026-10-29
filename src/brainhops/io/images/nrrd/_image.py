@@ -74,7 +74,7 @@ from brainhops.io.common.nrrd._raw import (
     _sniffed_raw,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )

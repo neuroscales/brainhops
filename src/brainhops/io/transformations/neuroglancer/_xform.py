@@ -19,7 +19,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.metadata._base import requested_fields
+from brainhops.io.metadata._internal_api import requested_fields
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
