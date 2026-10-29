@@ -81,8 +81,7 @@ def test_coordinates_are_created_in_the_promoted_backend(
 ) -> None:
     # The reslice of a Dask image creates the coordinates at which it
     # samples the voxels as a Dask array, rather than with NumPy and then
-    # moving them. The small weight matrices of `spline_matrix` are also
-    # sampled with `pull`, from NumPy arrays, and are not counted.
+    # moving them.
     seen = []
     original = bsplines.pull
 

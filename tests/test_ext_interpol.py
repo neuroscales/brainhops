@@ -345,17 +345,41 @@ def test_memory_layouts(perm, options) -> None:  # noqa: ANN001
     )
 
 
-def test_extrapolate(options) -> None:  # noqa: ANN001
+def test_clip(options) -> None:  # noqa: ANN001
     x = np.arange(1.0, 6.0)
     grid = np.asarray([[-0.6], [-0.4], [-0.01], [2.0], [4.01], [4.4], [4.6]])
     full = pull(x, grid, 1, "nearest", **options)
     np.testing.assert_array_equal(
-        pull(x, grid, 1, "nearest", extrapolate=False, **options),
-        full * [0, 0, 1, 1, 1, 0, 0],
+        pull(x, grid, 1, "nearest", clip=0, **options),
+        full * [0, 0, 0, 1, 0, 0, 0],
     )
     np.testing.assert_array_equal(
-        pull(x, grid, 1, "nearest", extrapolate="edges", **options),
+        pull(x, grid, 1, "nearest", clip=0.5, **options),
         full * [0, 1, 1, 1, 1, 1, 0],
+    )
+    np.testing.assert_array_equal(
+        pull(x, grid, 1, "nearest", clip=(0.5, 0), **options),
+        full * [0, 1, 1, 1, 0, 0, 0],
+    )
+    np.testing.assert_array_equal(
+        pull(x, grid, 1, "nearest", clip=[(-0.5, 0.7)], **options),
+        full * [0, 0, 0, 1, 1, 1, 1],
+    )
+
+
+def test_clip_keeps_coordinates_on_a_limit(options) -> None:  # noqa: ANN001
+    # Coordinates that rounding puts just outside a limit are kept, up
+    # to the tolerance of 1e-5 voxel, and the limits are inclusive.
+    x = np.arange(1.0, 6.0)
+    grid = np.asarray([[-1e-7], [0.0], [4.0], [4.0 + 1e-7], [4.001]])
+    np.testing.assert_array_equal(
+        pull(x, grid, 1, "nearest", clip=0, **options),
+        [1, 1, 5, 5, 0],
+    )
+    grid2 = np.asarray([[[-0.5, 2.0]], [[3.0, 4.5 + 1e-9]], [[2.0, 4.6]]])
+    np.testing.assert_array_equal(
+        pull(np.ones((5, 5)), grid2, 1, "nearest", clip=0.5, **options),
+        [[1], [1], [0]],
     )
 
 
@@ -405,8 +429,9 @@ def test_names_and_errors() -> None:
         pull(x, grid, 8)
     with pytest.raises(ValueError):
         pull(x, grid, [1, 2, 3])
-    with pytest.raises(ValueError):
-        pull(x, grid, 1, extrapolate="sometimes")
+    for clip in ("edges", (1, 2, 3), [(1, 2)], float("nan")):
+        with pytest.raises(ValueError):
+            pull(x, grid, 1, clip=clip)
     np.testing.assert_array_equal(
         pull(x, grid, "cubic", "zeros"), pull(x, grid, 3, "grid-constant")
     )
@@ -564,18 +589,18 @@ def test_cupy_arrays_stay_on_device(cupy, bound, order, options) -> None:  # noq
     rng = np.random.default_rng(order)
     x = rng.standard_normal((2, 6, 7, 5))
     grid = rng.uniform(-3, 8, (4, 3, 2, 3))
-    for extrapolate in (True, False):
+    for clip in (None, 0):
         out = pull(
             cupy.asarray(x),
             cupy.asarray(grid),
             order,
             bound,
-            extrapolate=extrapolate,
+            clip=clip,
             prefilter=True,
             **options,
         )
         assert isinstance(out, fake_cupy.ndarray)
-        reference = pull(x, grid, order, bound, extrapolate, prefilter=True)
+        reference = pull(x, grid, order, bound, clip, prefilter=True)
         np.testing.assert_allclose(out.get(), reference, atol=1e-12)
     # A NumPy grid is uploaded explicitly to the device of the input.
     grid1 = rng.uniform(-3, 8, (5, 1))

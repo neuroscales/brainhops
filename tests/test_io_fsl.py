@@ -712,16 +712,31 @@ def test_anchor_offset_is_zero_where_knot_spacing_is_one() -> None:
 
 
 def test_constant_boundary_maps_to_grid_constant() -> None:
-    """A constant boundary maps to the grid-constant mode of scipy."""
-    from brainhops._core.bsplines import _scipy_boundary
+    """A constant boundary is the grid-constant mode of scipy."""
+    from scipy.ndimage import map_coordinates
 
-    assert _scipy_boundary("constant") == ("grid-constant", 0.0)
-    assert _scipy_boundary(0.0) == ("grid-constant", 0.0)
-    # A numeric fill value is carried through as the constant.
-    assert _scipy_boundary(3.5) == ("grid-constant", 3.5)
-    # Other named conditions are unchanged.
-    assert _scipy_boundary("nearest") == ("nearest", 0.0)
-    assert _scipy_boundary("mirror") == ("mirror", 0.0)
+    from brainhops._core.bsplines import pull
+
+    coeff = np.random.default_rng(0).standard_normal(6)
+    x = np.array([-2.0, -0.7, 0.0, 2.3, 5.0, 5.6, 7.0])
+    for bound, cval in (("constant", 0.0), (0.0, 0.0), (3.5, 3.5)):
+        expected = map_coordinates(
+            coeff,
+            x[None],
+            order=3,
+            mode="grid-constant",
+            cval=cval,
+            prefilter=False,
+        )
+        got = pull(coeff, x[:, None], 3, bound, True)
+        np.testing.assert_allclose(got, expected, atol=1e-12)
+    # Other named conditions keep the mode of the same name.
+    for bound in ("nearest", "mirror"):
+        expected = map_coordinates(
+            coeff, x[None], order=3, mode=bound, prefilter=False
+        )
+        got = pull(coeff, x[:, None], 3, bound, True)
+        np.testing.assert_allclose(got, expected, atol=1e-12)
 
 
 # ----------------------------------------------------------------------
