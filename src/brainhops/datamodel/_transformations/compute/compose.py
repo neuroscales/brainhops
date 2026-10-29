@@ -32,11 +32,14 @@ the types compared position by position, so a composer for
 the dispatcher raises
 [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError]. The
 error propagates out of `compose` instead of being resolved by the
-order of registration. The registered composers contain only one
-near-tie, between `(Sequence, Transformation)` and
-`(Transformation, Sequence)`. The only operands that both of these
-composers accept are two sequences, and in that case a dedicated
-composer for `(Sequence, Sequence)` wins.
+order of registration. The registered composers contain near-ties
+between the composers of a sequence and of a batch with any
+transformation, `(Sequence, Transformation)`,
+`(Transformation, Sequence)`, `(BatchedTransformation, Transformation)`
+and `(Transformation, BatchedTransformation)`. Two of them accept the
+same operands only when these are two sequences, two batches, or a
+batch and a sequence, and a dedicated composer for each of these pairs
+wins.
 
 A composer may receive operands of the right types and still be unable
 to combine them, for example two subspace transformations whose axes do

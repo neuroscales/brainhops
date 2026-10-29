@@ -14,6 +14,7 @@ from brainhops.datamodel._transformations.batched import (
     match_positions,
     result_type,
 )
+from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel._transformations.compute.prune import (
     read_pattern,
     restrict_block,
@@ -30,6 +31,7 @@ from brainhops.datamodel.transformations import (
     BatchedTransformation,
     CartesianField,
     CoordinateField,
+    DisplacementField,
     Identity,
     Linear,
     Permutation,
@@ -41,7 +43,11 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
 )
-from brainhops.errors import ConversionError, RestrictionError
+from brainhops.errors import (
+    CompositionError,
+    ConversionError,
+    RestrictionError,
+)
 
 ANALYTIC = SimplifyTable.from_like("analytic")
 NUMERIC = SimplifyTable.from_like({None: "numeric"})
@@ -509,10 +515,12 @@ def test_the_factor_pass_keeps_a_batch_whole(general: bool) -> None:
 # ----------------------------------------------------------------------
 
 
-def _series(general: bool) -> BatchedTransformation:
-    # A batch of scalings of (x, y, z) at the times 0, 2, 4 and 6 of the
-    # last axis of (x, y, z, t).
-    batch = _stacked("scaling")
+def _series_batch(
+    name: str, general: bool, seed: int = 0
+) -> BatchedTransformation:
+    # A batch of elements of type `name` at the times 0, 2, 4 and 6 of
+    # the last axis of (x, y, z, t).
+    batch = _stacked(name, seed=seed)
     batch = BatchedTransformation(
         element_type=batch.element_type,
         data=batch.data,
@@ -531,7 +539,7 @@ def _section(batch: BatchedTransformation, at: float) -> Sequence:
 
 @pytest.mark.parametrize("general", [False, True])
 def test_a_section_of_a_batch_simplifies_to_its_element(general: bool) -> None:
-    batch = _series(general)
+    batch = _series_batch("scaling", general)
     element = _section(batch, 4.0).simplify()
     assert isinstance(element, Scaling)
     assert np.allclose(element.scale, batch[2].scale)
@@ -543,7 +551,7 @@ def test_a_section_of_a_batch_simplifies_to_its_element(general: bool) -> None:
 def test_a_free_batch_axis_raises_when_the_section_is_computed(
     general: bool,
 ) -> None:
-    chain = _section(_series(general), np.nan)
+    chain = _section(_series_batch("scaling", general), np.nan)
     assert isinstance(chain.simplify(), Sequence)
     with pytest.raises(RestrictionError):
         chain.compute()
@@ -553,7 +561,7 @@ def test_a_free_batch_axis_raises_when_the_section_is_computed(
 def test_a_coordinate_between_two_positions_selects_nothing(
     general: bool,
 ) -> None:
-    batch = _series(general)
+    batch = _series_batch("scaling", general)
     chain = _section(batch, 3.0).simplify()
     assert any(t is batch or isinstance(t, type(batch)) for t in chain)
 
@@ -644,3 +652,258 @@ def test_a_batch_of_identities_is_the_identity(general: bool) -> None:
     batch = Scaling.batch(np.ones((3, 2)))
     batch = _general(batch) if general else batch
     assert isinstance(batch.simplify("numeric"), Identity)
+
+
+# ----------------------------------------------------------------------
+#   COMPOSITION
+# ----------------------------------------------------------------------
+
+
+def _apply_batch(
+    batch: BatchedTransformation, points: np.ndarray
+) -> np.ndarray:
+    # Apply a batch to points by hand: each point reaches the element at
+    # its batch coordinates and keeps these coordinates.
+    n_out = batch.counts[1]
+    values = np.full((len(points), n_out), np.nan)
+    values[:, batch.batch_output_axes] = points[:, batch.batch_input_axes]
+    for p, point in enumerate(points):
+        key = []
+        for axis, positions in zip(batch.batch_input_axes, batch.positions):
+            key.append(int(match_positions(positions, [point[axis]])[0]))
+        if min(key) < 0:
+            continue
+        element = batch[tuple(key)]
+        inner = _apply(element, point[batch.input_axes][None])
+        values[p, batch.output_axes] = inner[0]
+    return values
+
+
+def _reference(
+    chain: tx.List[Transformation], points: np.ndarray
+) -> np.ndarray:
+    # Apply a chain to points, element by element.
+    for t in chain:
+        if isinstance(t, BatchedTransformation):
+            points = _apply_batch(t, points)
+        else:
+            points = _apply(t, points)
+    return points
+
+
+def _series_points(n: int = 12, seed: int = 0) -> np.ndarray:
+    # Points of (x, y, z, t) whose times are the positions of `_series`.
+    points = _points(4, n=n, seed=seed)
+    points[:, 3] = np.arange(n) % 4 * 2.0
+    return points
+
+
+def _matching(chain: tx.List[Transformation], result: Transformation) -> bool:
+    points = _series_points()
+    expected = _reference(chain, points)
+    got = _reference([result], points)
+    return np.allclose(got, expected, equal_nan=True)
+
+
+# A spatial affine of (x, y, z, t) that carries t through, and the same
+# affine of (t, x, y, z), whose time comes first.
+_SPATIAL = np.array(
+    [
+        [2.0, 0.5, 0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0, 0.0, 2.0],
+        [0.0, 0.3, 3.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0],
+    ]
+)
+_TIME_FIRST = np.array(
+    [
+        [0.0, 2.0, 0.5, 0.0, 1.0],
+        [0.0, 0.0, 1.0, 0.0, 2.0],
+        [0.0, 0.0, 0.3, 3.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0, 0.0],
+    ]
+)
+
+
+@pytest.mark.parametrize("general", [False, True])
+@pytest.mark.parametrize("name", ["affine", "scaling", "permutation"])
+def test_a_transformation_of_the_elements_composes_before_a_batch(
+    name: str, general: bool
+) -> None:
+    batch = _series_batch(name, general)
+    spatial = Affine(_SPATIAL)
+    product = compose(batch, spatial)
+    assert isinstance(product, BatchedTransformation)
+    assert (product.element_type is None) == general
+    assert _matching([spatial, batch], product)
+    for k in range(4):
+        expected = compose(batch[k], Affine(_SPATIAL[:3, [0, 1, 2, 4]]))
+        points = _points(3)
+        assert np.allclose(
+            _apply(product[k], points), _apply(expected, points)
+        )
+
+
+@pytest.mark.parametrize("general", [False, True])
+@pytest.mark.parametrize("name", ["affine", "scaling", "translation"])
+def test_a_transformation_of_the_elements_composes_after_a_batch(
+    name: str, general: bool
+) -> None:
+    batch = _series_batch(name, general)
+    spatial = Affine(_SPATIAL)
+    product = compose(spatial, batch)
+    assert isinstance(product, BatchedTransformation)
+    assert _matching([batch, spatial], product)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_neighbour_may_move_the_batch_axis(general: bool) -> None:
+    batch = _series_batch("affine", general)
+    moved = Affine(_TIME_FIRST)
+    product = compose(batch, moved)
+    assert product.batch_input_axes == [0]
+    assert product.input_axes == [1, 2, 3]
+    points = _series_points()[:, [3, 0, 1, 2]]
+    expected = _reference([moved, batch], points)
+    assert np.allclose(_reference([product], points), expected)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_neighbour_that_scales_the_batch_axis_stays_beside_it(
+    general: bool,
+) -> None:
+    batch = _series_batch("affine", general)
+    scaled = Affine(np.diag([1.0, 1.0, 1.0, 2.0, 1.0])[:4])
+    with pytest.raises(CompositionError):
+        compose(batch, scaled)
+    with pytest.raises(CompositionError):
+        compose(scaled, batch)
+    first, second = Sequence([scaled, batch]).compute()
+    assert isinstance(first, Affine)
+    assert isinstance(second, BatchedTransformation)
+
+
+@pytest.mark.parametrize("general", [False, True])
+@pytest.mark.parametrize("inner", ["affine", "scaling", "permutation"])
+@pytest.mark.parametrize("outer", ["affine", "linear", "translation"])
+def test_two_batches_compose_element_by_element(
+    outer: str, inner: str, general: bool
+) -> None:
+    first = _series_batch(inner, general)
+    second = _series_batch(outer, general, seed=3)
+    product = compose(second, first)
+    assert isinstance(product, BatchedTransformation)
+    assert _matching([first, second], product)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_axis_of_length_one_is_broadcast(general: bool) -> None:
+    batch = _series_batch("affine", general)
+    single = Scaling.batch(
+        np.array([[2.0, 3.0, 4.0]]), input_axes=[0, 1, 2], positions=[[9.0]]
+    )
+    product = compose(single, batch)
+    assert product.batch_shape == (4,)
+    assert product.positions[0].tolist() == [0.0, 2.0, 4.0, 6.0]
+    for k in range(4):
+        points = _points(3)
+        expected = _apply(single[0], _apply(batch[k], points))
+        assert np.allclose(_apply(product[k], points), expected)
+
+
+def test_two_batches_at_different_positions_do_not_compose() -> None:
+    batch = _series_batch("affine", False)
+    other = BatchedTransformation(
+        element_type=Affine,
+        data=batch.data,
+        input_axes=[0, 1, 2],
+        positions=[[0.0, 1.0, 2.0, 3.0]],
+    )
+    with pytest.raises(CompositionError, match="positions"):
+        compose(other, batch)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_applied_to_points_selects_their_elements(
+    general: bool,
+) -> None:
+    batch = _series_batch("affine", general)
+    points = _series_points()
+    points[[1, 5], 3] = [1.0, 7.5]
+    field = CoordinateField(field=points.reshape(3, 4, 4))
+    result = compose(batch, field)
+    assert isinstance(result, CoordinateField)
+    values = np.asarray(result.field).reshape(-1, 4)
+    assert np.isnan(values[[1, 5], :3]).all()
+    assert values[[1, 5], 3].tolist() == [1.0, 7.5]
+    assert np.allclose(values, _apply_batch(batch, points), equal_nan=True)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_applied_to_displacements_gives_displacements(
+    general: bool,
+) -> None:
+    batch = _series_batch("translation", general)
+    field = DisplacementField(field=np.zeros((2, 2, 2, 4, 4)))
+    result = compose(batch, field)
+    assert isinstance(result, DisplacementField)
+    grid = np.asarray(field.to(CoordinateField).field)
+    expected = _apply_batch(batch, grid.reshape(-1, 4)).reshape(grid.shape)
+    got = np.asarray(result.field) + grid
+    assert np.allclose(got, expected, equal_nan=True)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_mode_affine_composes_on_each_side_of_a_batch(general: bool) -> None:
+    batch = _series_batch("affine", general)
+    spatial = Affine(_SPATIAL)
+    chain = Sequence([spatial, spatial, batch, spatial])
+    computed = chain.compute(mode="affine")
+    first, middle, last = computed
+    assert isinstance(middle, BatchedTransformation)
+    assert _same_elements(middle, batch)
+    assert isinstance(first, Affine) and isinstance(last, Affine)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_mode_true_composes_a_batch_with_its_neighbours(general: bool) -> None:
+    batch = _series_batch("affine", general)
+    spatial = Affine(_SPATIAL)
+    chain = [spatial, batch, spatial]
+    computed = Sequence(chain).compute()
+    assert isinstance(computed, BatchedAffine)
+    assert _matching(chain, computed)
+    assert isinstance(Sequence(chain).compute(mode="batch"), Sequence)
+
+
+def test_runs_of_batches_compose_under_the_batch_mode() -> None:
+    batch = _series_batch("affine", False)
+    computed = Sequence([batch, batch]).compute(mode="batch")
+    assert isinstance(computed, BatchedAffine)
+    assert _matching([batch, batch], computed)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_the_composers_of_a_batch_do_not_tie(general: bool) -> None:
+    batch = _series_batch("affine", general)
+    chain = Sequence([Affine(_SPATIAL), Scaling([1.0, 2.0, 3.0, 1.0])])
+    for product in (
+        compose(batch, chain),
+        compose(chain, batch),
+        compose(batch, batch),
+        compose(batch, CoordinateField(field=_series_points())),
+    ):
+        assert isinstance(product, Transformation)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_after_the_creation_of_its_batch_axis_is_selected(
+    general: bool,
+) -> None:
+    batch = _series_batch("affine", general)
+    creation = Affine(np.vstack([np.eye(3, 4), [0.0, 0.0, 0.0, 4.0]]))
+    product = compose(batch, creation)
+    assert isinstance(product, Affine)
+    points = _points(3)
+    expected = np.hstack([_apply(batch[2], points), np.full((6, 1), 4.0)])
+    assert np.allclose(_apply(product, points), expected)
