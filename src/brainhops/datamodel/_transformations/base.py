@@ -22,6 +22,7 @@ from .modes import ModeLike
 
 if tx.TYPE_CHECKING:
     from .concrete import CoordinateField
+    from .restriction import AxisReferences, InputValues
     from .sequence import Sequence
 
 
@@ -303,6 +304,121 @@ class Transformation(
             The inverse.
         """
         raise NotImplementedError("Transformation.inverse()")
+
+    def restrict(
+        self,
+        input_axes: "AxisReferences",
+        output_axes: "AxisReferences",
+        at: tx.Optional["InputValues"] = None,
+    ) -> "Transformation":
+        """Return the transformation restricted to some of its axes.
+
+        A restriction keeps a part of a transformation, such as the
+        spatial part of a map of space and time, or the map of one
+        volume of a time series. It is lazy, like [`inverse`][]. The
+        result is a [`Sequence`][] of three elements: a
+        [`Projection`][brainhops.datamodel.transformations.Projection]
+        that creates the inputs that `input_axes` leaves out, the
+        transformation itself, and a projection that drops the outputs
+        that `output_axes` leaves out. Nothing is computed until
+        [`compute`][] is called, and [`simplify`][] then removes the
+        axes that are not needed. When both sides keep every axis, the
+        transformation itself is returned.
+
+        A removed input takes the value that `at` gives it, which
+        selects the section of the transformation at that value. A
+        removed input that `at` does not name is free, which means that
+        the kept outputs must not read it. [`compute`][] raises a
+        `RestrictionError` when a kept output reads a free input,
+        whereas `restrict` and [`simplify`][] never raise for that
+        reason. With one affine per volume of a time series, for
+        example, the spatial outputs read the time axis, so the
+        restriction to the spatial axes needs a value of time, which
+        selects one volume.
+
+        Each side is a list of references, or a single reference. A
+        reference is a position, the name of an axis, or any other query
+        of [`AxisQuery`][brainhops.datamodel.axes.AxisQuery], such as an
+        axis class. It is resolved against the input or the output
+        system of the transformation, as
+        [`AxisSequence.restrict`][brainhops.datamodel.axes.AxisSequence.restrict]
+        resolves it, so a query never matches the unknown axes that the
+        `...` of an open system stands for. A name must designate
+        exactly one axis, and any other query must designate at least
+        one. Each side is a set of axes, so the order of the references
+        does not matter: the kept axes stay in the order that they have
+        in the transformation, and an axis must not be designated twice.
+        Positions also work on a transformation without systems,
+        or with open systems, provided that its numbers of axes are
+        known, for example from the shape of its matrix. The systems of
+        the result are the systems of the transformation restricted to
+        the kept axes.
+
+        A subspace transformation, an instance of
+        [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation],
+        often does not know how many axes it passes through, which a
+        restriction needs. When it is restricted to the axes that it
+        acts on, however, the result is the transformation that it
+        wraps, whatever that number is, and this result is returned. A
+        subspace that lists its axes in another order than the full
+        space gives the wrapped transformation between two permutations,
+        which put its axes in the order of the full space. A geometry,
+        an instance of
+        [`Geometry`][brainhops.datamodel.geometry.Geometry], restricts
+        its grid as well when it can, as its own method describes.
+
+        !!! example
+            ```pycon
+            >>> x, y = SpaceAxis(name="x"), SpaceAxis(name="y")
+            >>> xyt = CoordinateSystem(axes=[x, y, TimeAxis(name="t")])
+            >>> matrix = [[2, 0, 0.5, 1], [0, 3, 0, 2], [0, 0, 1, 0]]
+            >>> t = Affine(matrix=matrix, input=xyt, output=xyt)
+            >>> part = t.restrict(SpaceAxis, SpaceAxis, at={"t": 4})
+            >>> part.compute().matrix
+            array([[2., 0., 3.],
+                   [0., 3., 2.]])
+            ```
+
+        Parameters
+        ----------
+        input_axes : AxisQuery or iterable of (int or AxisQuery)
+            Input axes to keep, given by position, by name or by query.
+        output_axes : AxisQuery or iterable of (int or AxisQuery)
+            Output axes to keep, given by position, by name or by query.
+        at : mapping of (int or AxisQuery) to float, optional
+            Values of some of the removed inputs. Each key designates
+            input axes as an item of `input_axes` does, and every axis
+            that it designates takes its value. NaN makes an input free,
+            as leaving it out of `at` does.
+
+        Returns
+        -------
+        Transformation
+            The lazy restriction, or the transformation itself when both
+            sides keep every axis.
+
+        Raises
+        ------
+        RestrictionError
+            If the number of input or output axes of the transformation
+            is unknown, because the axes to remove are then unknown.
+        KeyError
+            If no axis has a name that a reference gives.
+        IndexError
+            If a position lies outside the axes of the transformation.
+        ValueError
+            If a query matches no axis, a name is shared by several
+            axes, an axis is designated twice, or `at` gives a value to
+            an input that is kept.
+        TypeError
+            If a reference is neither a position nor a query, or if `at`
+            is not a mapping of real numbers.
+        """
+        # The module imports the projection and the sequence classes,
+        # which import this one.
+        from .restriction import restrict
+
+        return restrict(self, input_axes, output_axes, at)
 
     def square(self, compute: bool = False, **kwargs) -> "Transformation":
         """Return the transformation composed with itself.

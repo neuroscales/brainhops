@@ -318,6 +318,35 @@ or with the `svf` hint on the command line (`warp.nii.gz|svf`). See
 [Tangents: the `log` flag](../api/datamodel/transformations.md#tangents-the-log-flag)
 for the full model.
 
+### Restriction to some axes
+
+`restrict` keeps a part of a transformation, such as the spatial part of
+a map of space and time. It reads the transformation from some of its
+input axes to some of its output axes, which are given by position, by
+name or by any other axis query, such as an axis class. The restriction
+is lazy, like `inverse`: it places a `Projection` before the
+transformation, which creates the inputs that are removed, and another
+after it, which drops the outputs that are removed, and `compute`
+reduces the result.
+
+A removed input takes the value that `at` gives it, so that a
+restriction can select one volume of a time series that has one affine
+per volume. A removed input that `at` does not name is free, which
+means that the kept outputs must not read it, and `compute` raises
+`RestrictionError` when one of them does. The order of the axes in
+each block does not matter, and the kept axes stay in the order that
+they have in the transformation. Restricting the geometry of an image
+with the index of a sample in `at`, such as the index of a volume or of
+a slice, gives the geometry of that part of the image.
+
+```python
+from brainhops.datamodel.axes import SpaceAxis
+
+spatial = xform.restrict(SpaceAxis, SpaceAxis)
+volume = xform.restrict(SpaceAxis, SpaceAxis, at={"t": 4})
+matrix = volume.compute().matrix
+```
+
 ## Comparing transformations and images
 
 Transformations and images compare and hash by identity: `a == b` is the
