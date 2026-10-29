@@ -504,9 +504,27 @@ def _to_voxel_displacement(
 def dataset_placement(
     dataset: tx.Any, spatial: tx.Sequence[int], ndim: int
 ) -> Transformation:
-    # A level's placement is the dataset's first coordinate transformation, or
-    # the identity. It is mapped over all `ndim` stored axes, and then
-    # restricted to the `spatial` ones, which keep their stored order.
+    """Return the placement of a level of an OME-Zarr field.
+
+    The placement is the first coordinate transformation of the dataset
+    of the level, or the identity when it has none. It is mapped over
+    all the `ndim` stored axes, and then restricted to the `spatial`
+    ones, which keep their stored order.
+
+    Parameters
+    ----------
+    dataset : Any
+        The dataset of the level, from the multiscale metadata.
+    spatial : Sequence[int]
+        The indices of the spatial axes among the stored axes.
+    ndim : int
+        The number of stored axes.
+
+    Returns
+    -------
+    Transformation
+        The placement of the level over its spatial axes.
+    """
     transforms = list(
         getattr(dataset, "coordinateTransformations", None) or []
     )
@@ -558,9 +576,25 @@ def _spatial_part(
 
 
 def affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
-    # An affine placement is returned unchanged. Otherwise, an identity affine
-    # stands in, so that the leading world-to-voxel element stays a defined
-    # affine rather than a bare identity.
+    """Return a placement, or an identity affine in its place.
+
+    An affine placement is returned unchanged. Otherwise, an identity
+    affine between the same systems stands in, so that the leading
+    world-to-voxel element of a chain stays a defined affine rather than
+    a bare identity.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The placement.
+    ndim : int
+        The number of dimensions of the identity affine.
+
+    Returns
+    -------
+    Transformation
+        The placement, or an identity affine.
+    """
     affine = xform.to_affine(on_error=None)
     if affine is not None:
         return xform

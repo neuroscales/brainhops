@@ -126,6 +126,23 @@ def _is_kind_like(kind: tx.Any) -> bool:
 
 
 def is_family_like(mode: tx.Any) -> bool:
+    """Tell whether a value names a family of transformations.
+
+    A family can be given as a `TransformationFamily`, as a kind (a name
+    or a class of [`kinds`][brainhops.datamodel.kinds]), as a number of
+    dimensions, or as a pair of a kind and a number of dimensions, where
+    the number may be `None`.
+
+    Parameters
+    ----------
+    mode : Any
+        The value.
+
+    Returns
+    -------
+    bool
+        Whether `mode` names a family.
+    """
     if isinstance(mode, TransformationFamily):
         return True
     if _is_kind_like(mode):

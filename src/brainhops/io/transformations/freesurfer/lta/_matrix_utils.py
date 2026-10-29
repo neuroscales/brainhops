@@ -33,6 +33,19 @@ def _get_phys2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
 
 
 def get_vox2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
+    """Return the voxel-to-RAS matrix of a volume of an LTA file.
+
+    Parameters
+    ----------
+    vol_info : LtaRaw.VolumeInfo
+        The description of the volume.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the voxels of the volume to
+        scanner RAS.
+    """
     return _get_phys2ras(vol_info) @ _get_vox2phys(vol_info)
 
 
@@ -57,6 +70,31 @@ def _rsa2ras(matrix: np.ndarray) -> np.ndarray:
 
 
 def get_ras2ras(lta: LtaRaw) -> np.ndarray:
+    """Return the RAS-to-RAS matrix of an LTA record, whatever its type.
+
+    A matrix of another type is expressed between the scanner RAS spaces
+    of the source and destination volumes, which their descriptions
+    give.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the RAS of the source to that of
+        the destination.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    AssertionError
+        If the type of the record is not a linear type.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_RAS_TO_RAS:
         return matrix
@@ -87,6 +125,31 @@ def get_ras2ras(lta: LtaRaw) -> np.ndarray:
 
 
 def get_phys2phys(lta: LtaRaw) -> np.ndarray:
+    """Return the physical-to-physical matrix of an LTA record.
+
+    The physical space of a volume is its voxels scaled by the voxel
+    size. A matrix of another type is expressed between the physical
+    spaces of the source and destination volumes.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the physical space of the source
+        to that of the destination.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    AssertionError
+        If the type of the record is not a linear type.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return matrix
@@ -112,6 +175,30 @@ def get_phys2phys(lta: LtaRaw) -> np.ndarray:
 
 
 def get_vox2vox(lta: LtaRaw) -> np.ndarray:
+    """Return the voxel-to-voxel matrix of an LTA record.
+
+    A matrix of another type is expressed between the voxels of the
+    source and destination volumes.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the voxels of the source to
+        those of the destination.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    AssertionError
+        If the type of the record is not a linear type.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_VOX_TO_VOX:
         return matrix
@@ -139,8 +226,29 @@ def get_vox2vox(lta: LtaRaw) -> np.ndarray:
 
 
 def get_tkr2tkr(lta: LtaRaw) -> np.ndarray:
-    # The affine from the tkregister RAS space of `src` to that of `dst`.
-    # A REGISTER_DAT record stores its inverse.
+    """Return the tkregister-to-tkregister matrix of an LTA record.
+
+    The matrix maps the tkregister RAS space of the source volume to
+    that of the destination volume. A `REGISTER_DAT` record stores its
+    inverse.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix between the two tkregister RAS
+        spaces.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.REGISTER_DAT:
         return np.linalg.inv(matrix)
@@ -164,6 +272,18 @@ _mat2orient = mat2orient
 
 
 def get_orient(vol_info: LtaRaw.VolumeInfo) -> str:
+    """Return the orientation of the voxel axes of a volume.
+
+    Parameters
+    ----------
+    vol_info : LtaRaw.VolumeInfo
+        The description of the volume.
+
+    Returns
+    -------
+    str
+        The orientation, as three letters such as `"LIA"`.
+    """
     vox2ras = get_vox2ras(vol_info)
     return _mat2orient(vox2ras)
 

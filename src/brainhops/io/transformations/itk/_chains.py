@@ -306,6 +306,18 @@ def read_only(values: tx.Any) -> tx.Any:
 
 
 def is_composite(block: ItkStruct) -> bool:
+    """Tell whether an ITK block is a `CompositeTransform` header.
+
+    Parameters
+    ----------
+    block : ItkStruct
+        The block.
+
+    Returns
+    -------
+    bool
+        Whether the block is a `CompositeTransform`.
+    """
     return block.type == ItkTransformClass.CompositeTransform
 
 

@@ -240,6 +240,29 @@ def itk_struct(
     fixed_parameters: tx.Sequence[float] = (),
     cls: tx.Type[ItkStruct] = ItkStruct,
 ) -> ItkStruct:
+    """Build the ITK block that stores a transformation.
+
+    The block is in double precision and maps a space of `ndim`
+    dimensions to itself. Its parameters are stored as read-only arrays.
+
+    Parameters
+    ----------
+    type : ItkTransformClass
+        The ITK class of the transformation.
+    ndim : int
+        The number of dimensions.
+    parameters : np.ndarray
+        The parameters of the transformation.
+    fixed_parameters : Sequence[float], default=()
+        The fixed parameters of the transformation.
+    cls : type[ItkStruct], default=ItkStruct
+        The class of the block.
+
+    Returns
+    -------
+    ItkStruct
+        The block.
+    """
     return cls(
         type=type,
         precision="double",
@@ -460,6 +483,21 @@ _ELASTIX_NAMES = {
 
 
 def column_major(direction: np.ndarray) -> tx.Tuple[float, ...]:
+    """Return a matrix of directions in column-major order.
+
+    elastix stores the directions of a grid column by column, while
+    NumPy stores a matrix row by row.
+
+    Parameters
+    ----------
+    direction : np.ndarray
+        The matrix of directions.
+
+    Returns
+    -------
+    tuple[float, ...]
+        The values of the matrix, column after column.
+    """
     return tuple(np.asarray(direction, dtype=np.float64).T.ravel().tolist())
 
 

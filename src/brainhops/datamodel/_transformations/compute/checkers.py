@@ -811,10 +811,28 @@ def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def embed_targets(node: type) -> tx.Tuple[type, ...]:
-    # The block-diagonal map blockdiag(inner, I) belongs to `node` if and only
-    # if `inner` belongs to one of the returned sets. The result is `node`
-    # itself when `node` is embeddable, and otherwise the largest embeddable
-    # sets that are strictly contained in `node`.
+    """Return the sets that the inner map of an embedding must lie in.
+
+    The checkers use it to decide whether a transformation that acts on
+    some axes and leaves the others unchanged, which is the
+    block-diagonal map `blockdiag(inner, I)`, belongs to a set of
+    transformations: it does if and only if `inner` belongs to one of
+    the returned sets. The result is `node` itself when `node` is
+    embeddable, and otherwise the largest embeddable sets that `node`
+    strictly contains.
+
+    Parameters
+    ----------
+    node : type
+        The set of transformations, as a class of
+        [`kinds`][brainhops.datamodel.kinds].
+
+    Returns
+    -------
+    tuple[type, ...]
+        The sets of transformations that the inner map may belong
+        to.
+    """
     if kinds.is_embeddable(node):
         return (node,)
     return tuple(
@@ -832,11 +850,28 @@ def embed_targets(node: type) -> tx.Tuple[type, ...]:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
-    # For a permutation P of the coordinates with the given parity, the map
-    # P @ blockdiag(...) belongs to `node` if and only if the embedded map
-    # belongs to one of the returned sets. The result is `node` itself when
-    # `node` is closed under such permutations, and otherwise the largest
-    # closed sets that are strictly contained in `node`.
+    """Return the sets that a map must lie in before a permutation.
+
+    For a permutation `P` of the coordinates with the given parity, the
+    map `P @ blockdiag(...)` belongs to `node` if and only if the
+    embedded map belongs to one of the returned sets. The result is
+    `node` itself when `node` is closed under such permutations, and
+    otherwise the largest closed sets that `node` strictly contains.
+
+    Parameters
+    ----------
+    node : type
+        The set of transformations, as a class of
+        [`kinds`][brainhops.datamodel.kinds].
+    even : bool
+        Whether the permutation is even.
+
+    Returns
+    -------
+    tuple[type, ...]
+        The sets of transformations that the permuted map may belong
+        to.
+    """
     perm = kinds.EvenPermutation if even else kinds.Permutation
 
     def is_closed(node: type) -> bool:
@@ -855,10 +890,26 @@ def permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def bijective_targets(node: type) -> tx.Tuple[type, ...]:
-    # The inverse inv(T) belongs to `node` if and only if T belongs to one of
-    # the returned sets. The result is `node` itself when `node` contains only
-    # bijections, since such sets are closed under inversion, and otherwise the
-    # largest subsets of `node` that contain only bijections.
+    """Return the sets in which the forward of an inverse must lie.
+
+    The checkers use it to decide whether the lazy inverse `inv(T)` of a
+    transformation `T` belongs to a set of transformations: `inv(T)`
+    belongs to `node` if and only if `T` belongs to one of the returned
+    sets. The result is `node` itself when `node` holds only bijections,
+    because such a set is closed under inversion. Otherwise, it is the
+    largest subsets of `node` that hold only bijections.
+
+    Parameters
+    ----------
+    node : type
+        The set of transformations, as a class of
+        [`kinds`][brainhops.datamodel.kinds].
+
+    Returns
+    -------
+    tuple[type, ...]
+        The sets of transformations that the forward may belong to.
+    """
     if issubclass(node, kinds.Bijection):
         return (node,)
     return tuple(

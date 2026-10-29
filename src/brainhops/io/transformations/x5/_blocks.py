@@ -465,6 +465,23 @@ def _name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
 
 
 def check_ras(xform: _xforms.Transformation, what: str) -> None:
+    """Refuse a transformation that does not map RAS to RAS.
+
+    X5 stores transformations between RAS world coordinates, so both
+    systems of the transformation must be `RASmm`.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation to store.
+    what : str
+        What the transformation is, as the error message names it.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the input or the output of `xform` is not `RASmm`.
+    """
     src, dst = xform.input, xform.output
     if isinstance(src, _systems.RASmm) and isinstance(dst, _systems.RASmm):
         return

@@ -241,10 +241,23 @@ def _first_count(
 
 
 def preserves_count(t: "Transformation") -> bool:
-    # Tell whether `t` is known to have as many output axes as input
-    # axes without stating either number: an identity, a subspace, a
-    # field that interpolates, an affine-like map without parameters, or
-    # the lazy inverse of one of them.
+    """Tell whether a transformation keeps its number of axes.
+
+    A transformation does when it is known to have as many output axes
+    as input axes, without stating either number: an identity, a
+    subspace, a field that interpolates, an affine-like map without
+    parameters, or the lazy inverse of one of them.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation.
+
+    Returns
+    -------
+    bool
+        Whether `t` has as many output axes as input axes.
+    """
     from ..concrete import Identity
     from ..inverse import Inverse
     from ..meta import SubspaceTransformation

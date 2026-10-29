@@ -139,6 +139,37 @@ def _convert_withdata(
 def convert_withlog(
     t: Transformation, cls: tx.Type[TRANSFORMATION], _fallback: str, **kwargs
 ) -> TRANSFORMATION:
+    """Convert a transformation that may store a logarithm.
+
+    The converters of every class that has a matrix or a field, in
+    `datamodel` and in the file formats, call this function. An affine
+    or a field may be stored either directly or as its logarithm, which
+    the flag `log` says. When the conversion crosses between the two
+    encodings, the parameter named by `_fallback`, read in its direct
+    form, is transferred instead of `data`, because `data` means
+    different things in the two encodings. When only the class changes,
+    the stored parameters keep their encoding, and the input and output
+    systems are transferred when the target class stores them but `t`
+    only derives them.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation to convert.
+    cls : type[Transformation]
+        The class to convert to.
+    _fallback : str
+        The name of the parameter to transfer in its direct form,
+        such as `"matrix"` or `"field"`.
+    **kwargs : Any
+        Fields of the new transformation, which take precedence over
+        those of `t`.
+
+    Returns
+    -------
+    Transformation
+        The transformation, as an instance of `cls`.
+    """
     # When the conversion crosses between the log and exp encodings, the
     # exponentiated parameter is transferred instead of `data`, because
     # `data` means different things in the two encodings. Families without
@@ -188,9 +219,32 @@ _SPLINE_FLAGS = ("degree", "bound", "store")
 def convert_withsplines(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
-    # A spline flag is written back into `kwargs` only if it differs from
-    # the flag of `t`. An unchanged flag carries no information, and classes
-    # whose flags are derived, such as a lazy inverse, would reject it.
+    """Convert a field whose values are interpolated by splines.
+
+    The spline flags `degree`, `bound` and `store` are passed to the new
+    field only when they differ from those of `t`, because an unchanged
+    flag carries no information, and a class whose flags are derived,
+    such as a lazy inverse, would refuse it. The conversion first goes
+    through [`convert_withlog`][] to reach the requested encoding. When
+    a spline flag changes, the values of the field are transferred
+    instead of its data, so that the spline coefficients are fitted
+    again.
+
+    Parameters
+    ----------
+    t : Transformation
+        The field to convert.
+    cls : type[Transformation]
+        The class to convert to.
+    **kwargs : Any
+        Fields of the new field, which take precedence over those of
+        `t`.
+
+    Returns
+    -------
+    Transformation
+        The field, as an instance of `cls`.
+    """
     before = tuple(getattr(t, name) for name in _SPLINE_FLAGS)
     after = tuple(
         kwargs.pop(name, value) for name, value in zip(_SPLINE_FLAGS, before)

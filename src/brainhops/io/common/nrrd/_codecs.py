@@ -73,16 +73,62 @@ def dtype_to_nrrd(dtype: tx.Any) -> str:
 
 
 def unescape(text: str) -> str:
+    """Decode the escaped characters of a NRRD string.
+
+    A NRRD header escapes a newline as `\\n` and any other character as
+    a backslash followed by that character.
+
+    Parameters
+    ----------
+    text : str
+        The escaped text.
+
+    Returns
+    -------
+    str
+        The decoded text.
+    """
     return re.sub(
         r"\\(.)", lambda m: "\n" if m.group(1) == "n" else m.group(1), text
     )
 
 
 def escape(text: str) -> str:
+    """Escape the backslashes and the newlines of a NRRD string.
+
+    This is the inverse of [`unescape`][].
+
+    Parameters
+    ----------
+    text : str
+        The text to escape.
+
+    Returns
+    -------
+    str
+        The escaped text.
+    """
     return str(text).replace("\\", "\\\\").replace("\n", "\\n")
 
 
 def parse_float(token: str) -> float:
+    """Read a number of a NRRD header.
+
+    Parameters
+    ----------
+    token : str
+        The text of the number.
+
+    Returns
+    -------
+    float
+        The number.
+
+    Raises
+    ------
+    ParserContentError
+        If the text is not a number.
+    """
     try:
         return float(token)
     except ValueError:
@@ -90,6 +136,22 @@ def parse_float(token: str) -> float:
 
 
 def format_float(value: float) -> str:
+    """Write a number of a NRRD header.
+
+    A whole number below `1e15` is written without a decimal point, and
+    any other number is written with the shortest text that reads back
+    as the same float.
+
+    Parameters
+    ----------
+    value : float
+        The number.
+
+    Returns
+    -------
+    str
+        The text of the number.
+    """
     value = float(value)
     if math.isnan(value):
         return "nan"
@@ -115,6 +177,21 @@ def parse_vectors(value: str) -> tx.List[tx.Optional[tx.List[float]]]:
 
 
 def format_vectors(vectors: tx.Iterable[tx.Any]) -> str:
+    """Write a list of vectors of a NRRD header.
+
+    Each vector is written in parentheses, with its components separated
+    by commas, and a missing vector is written as `none`.
+
+    Parameters
+    ----------
+    vectors : Iterable[Any]
+        The vectors, each a sequence of numbers or `None`.
+
+    Returns
+    -------
+    str
+        The text of the vectors, separated by spaces.
+    """
     return " ".join(
         "none"
         if v is None
@@ -129,6 +206,21 @@ def parse_strings(value: str) -> tx.List[str]:
 
 
 def format_strings(values: tx.Iterable[str]) -> str:
+    """Write a list of quoted strings of a NRRD header.
+
+    Each string is written between double quotes, with its backslashes
+    and double quotes escaped.
+
+    Parameters
+    ----------
+    values : Iterable[str]
+        The strings.
+
+    Returns
+    -------
+    str
+        The quoted strings, separated by spaces.
+    """
     return " ".join(
         '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
         for v in values

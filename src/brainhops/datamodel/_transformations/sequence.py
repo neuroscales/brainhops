@@ -953,9 +953,23 @@ def _is_flat(self: Sequence) -> bool:
 
 
 def unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
-    # Flatten nested sequences without touching any endpoint (unlike
-    # `flatten()`, which may rebuild the first or last element and so read
-    # a lazy field). Generic inverses are expanded along the way.
+    """Flatten nested chains without touching any endpoint.
+
+    Unlike `flatten()`, which may rebuild the first or the last
+    transformation and so read a lazy field, this function only unrolls
+    the nested chains. Generic inverses are expanded along the way.
+
+    Parameters
+    ----------
+    transformations : list[Transformation], optional
+        The transformations of a chain, or `None` for an empty
+        chain.
+
+    Returns
+    -------
+    list
+        The transformations, with nested chains unrolled.
+    """
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)
@@ -967,10 +981,23 @@ def unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 
 def interpolates(xform: Transformation) -> bool:
-    # Whether applying a transformation resamples through a spline, that is,
-    # whether it reaches a displacement or coordinate field. A
-    # `CartesianField` is the identity over its grid, so it does not
-    # interpolate.
+    """Tell whether a transformation resamples through a spline.
+
+    A transformation does when it reaches a displacement field or a
+    coordinate field, possibly inside a chain, a subspace or a lazy
+    inverse. A `CartesianField` is the identity over its grid, so it
+    does not interpolate.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation, or `None`.
+
+    Returns
+    -------
+    bool
+        Whether applying `xform` interpolates a field.
+    """
     if xform is None:
         return False
     if isinstance(xform, Inverse):

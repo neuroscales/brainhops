@@ -267,9 +267,29 @@ def check_tkr(
     src: tx.Optional[_systems.CoordinateSystem],
     dst: tx.Optional[_systems.CoordinateSystem],
 ) -> None:
-    # A tkregister space has the axes of RAS but another origin, which
-    # only the geometry of its volume gives, so it is never read as the
-    # scanner RAS of the other side.
+    """Refuse an affine between a tkregister space and another space.
+
+    A tkregister space has the axes of RAS but another origin, which
+    only the geometry of its volume gives. It is therefore never read as
+    the scanner RAS of the other side of the affine.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation being converted, which the error names.
+    cls : type
+        The class of the format, which the error names.
+    src : CoordinateSystem, optional
+        The input system of the affine.
+    dst : CoordinateSystem, optional
+        The output system of the affine.
+
+    Raises
+    ------
+    ConversionError
+        If one of the systems is a tkregister space and the other is
+        not.
+    """
     tkr = [isinstance(system, FreesurferTkrSystem) for system in (src, dst)]
     if any(tkr) and not all(tkr):
         raise unrepresentable(

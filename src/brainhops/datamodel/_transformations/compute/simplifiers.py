@@ -278,7 +278,27 @@ _PRUNING_ROUNDS = 4
 def settle(
     leaves: tx.List[Transformation], policy: SimplifyTable
 ) -> tx.List[Transformation]:
-    # Collapse and downcast in rounds until a round changes nothing.
+    """Simplify the transformations of a chain until nothing changes.
+
+    Each round collapses neighbouring transformations that the policy
+    lets merge, then downcasts each transformation to the simplest class
+    that represents it. The rounds stop when a round returns the same
+    transformations.
+
+    Parameters
+    ----------
+    leaves : list[Transformation]
+        The transformations of the chain, with nested chains
+        unrolled.
+    policy : SimplifyTable
+        The policy that says which transformations may be merged or
+        downcast.
+
+    Returns
+    -------
+    list[Transformation]
+        The simplified transformations.
+    """
     while True:
         collapsed = _collapse_pass(leaves, policy)
         simplified = _downcast_pass(collapsed, policy)

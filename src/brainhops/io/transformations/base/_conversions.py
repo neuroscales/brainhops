@@ -455,6 +455,37 @@ def bridge_systems(
     t: _xforms.Transformation,
     cls: type,
 ) -> _xforms.Transformation:
+    """Return the exact transformation between two systems.
+
+    The converters of the formats call this function to place a
+    transformation between the systems that a format stores. The bridge
+    is built as a composition builds it, pairing the axes that are still
+    unmatched by their position within their type, as `Sequence.compute`
+    does. A system that declares a distinct origin, such as a tkregister
+    space, has the axes of another space but is not that space, so it is
+    bridged only to a system of its own class.
+
+    Parameters
+    ----------
+    source : CoordinateSystem, optional
+        The system to start from, or `None` when it is not known.
+    target : CoordinateSystem, optional
+        The system to reach, or `None` when it is not known.
+    t : Transformation
+        The transformation being converted, which the error names.
+    cls : type
+        The class of the format, which the error names.
+
+    Returns
+    -------
+    Transformation
+        The transformation from `source` to `target`.
+
+    Raises
+    ------
+    ConversionError
+        If there is no exact bridge between the two systems.
+    """
     # The exact bridge between two systems, built as a composition builds
     # it (pairing still-unmatched axes by position within their type, as
     # `Sequence.compute` does), or the reason why there is none. A system
@@ -487,7 +518,21 @@ def bridge_systems(
 
 
 def chain_leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
-    # The transformations a chain is made of, nested chains unrolled.
+    """Return the transformations that a chain is made of.
+
+    Nested chains are unrolled, and a transformation that is not a chain
+    is returned alone.
+
+    Parameters
+    ----------
+    t : Transformation
+        The chain, or any other transformation.
+
+    Returns
+    -------
+    list[Transformation]
+        The transformations of the chain, in order.
+    """
     if not isinstance(t, _xforms.Sequence):
         return [t]
     return [
@@ -498,6 +543,18 @@ def chain_leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
 
 
 def is_field(t: _xforms.Transformation) -> bool:
+    """Tell whether a transformation is a field of vectors or points.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation.
+
+    Returns
+    -------
+    bool
+        Whether `t` is a `DisplacementField` or a `CoordinateField`.
+    """
     return isinstance(t, (_xforms.DisplacementField, _xforms.CoordinateField))
 
 
@@ -513,8 +570,33 @@ def chain_matrix(
     cls: type,
     ndim: tx.Optional[int] = None,
 ) -> np.ndarray:
-    # The homogeneous matrix of a chain of affines. A chain of identities
-    # between unknown systems has no size of its own, and takes `ndim`.
+    """Return the homogeneous matrix of a chain of affines.
+
+    A chain of identities between unknown systems has no size of its
+    own, so its matrix is the identity of `ndim` dimensions.
+
+    Parameters
+    ----------
+    chain : list[Transformation]
+        The transformations of the chain.
+    t : Transformation
+        The transformation being converted, which the error names.
+    cls : type
+        The class of the format, which the error names.
+    ndim : int, optional
+        The number of dimensions of a chain whose size is not known.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix of the chain, in float64.
+
+    Raises
+    ------
+    ConversionError
+        If the chain is not an affine, or if its size is not known
+        and `ndim` is not given.
+    """
     try:
         affine = _xforms.Sequence(transformations=chain).to(_xforms.Affine)
     except ConversionError as error:

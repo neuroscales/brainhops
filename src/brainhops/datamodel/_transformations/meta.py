@@ -388,9 +388,22 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
 
 def has_same_axes(t: SubspaceTransformation) -> bool:
-    # Return whether the subspace reads and writes the same axes in the same
-    # order, that is, whether it embeds the inner transformation without
-    # reindexing its axes.
+    """Tell whether a subspace keeps its axes in the same order.
+
+    Such a subspace embeds its inner transformation without reindexing
+    its axes. A subspace whose input and output axes are both unknown
+    counts as one, and a subspace that knows only one of them does not.
+
+    Parameters
+    ----------
+    t : SubspaceTransformation
+        The subspace.
+
+    Returns
+    -------
+    bool
+        Whether the input and output axes of `t` are the same.
+    """
     if t.input_axes is None and t.output_axes is None:
         return True
     if t.input_axes is None or t.output_axes is None:
