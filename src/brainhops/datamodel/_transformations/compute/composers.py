@@ -32,7 +32,9 @@ from brainhops.errors import CompositionError, ConversionError
 from ..base import Transformation
 from ..batched import (
     BatchedTransformation,
+    apply_to_points,
     broadcast_element,
+    compose_with,
     match_positions,
 )
 from ..concrete import (
@@ -675,7 +677,8 @@ def _(
         _shared_positions(outer, inner)
         for outer, inner in zip(To.positions, Ti.positions)
     ]
-    return To.compose_with(
+    return compose_with(
+        To,
         Ti,
         input_axes=Ti.input_axes,
         output_axes=To.output_axes,
@@ -687,10 +690,14 @@ def _(
 
 @composer
 def _(To: BatchedTransformation, Ti: Transformation) -> Transformation:
+    # A composer reads values, so the selection reads the values of `Ti`
+    # whatever the policy of the caller, and the chain that it gives is
+    # computed with the default mode and policy of `compute`, as the
+    # composers of a sequence compute their chain.
     section = section_before(Ti, To, _NUMERIC)
     if section is not None:
         return section.compute()
-    counts = stage_counts([Ti, To])
+    counts = _counts(Ti, To)
     piece, carried = _split_at_batch(Ti, counts, To, before=True)
     fields = {
         "input_axes": [c for c in range(counts[0]) if c not in carried],
@@ -702,12 +709,12 @@ def _(To: BatchedTransformation, Ti: Transformation) -> Transformation:
     if isinstance(piece, Identity):
         return replace(To, **fields)
     piece = broadcast_element(piece, To.batch_ndim)
-    return To.compose_with(piece, **fields)
+    return compose_with(To, piece, **fields)
 
 
 @composer
 def _(To: Transformation, Ti: BatchedTransformation) -> Transformation:
-    counts = stage_counts([Ti, To])
+    counts = _counts(Ti, To)
     piece, carried = _split_at_batch(To, counts[1:], Ti, before=False)
     fields = {
         "input_axes": Ti.input_axes,
@@ -719,7 +726,7 @@ def _(To: Transformation, Ti: BatchedTransformation) -> Transformation:
     if isinstance(piece, Identity):
         return replace(Ti, **fields)
     piece = broadcast_element(piece, Ti.batch_ndim)
-    return piece.compose_with(Ti, **fields)
+    return compose_with(piece, Ti, **fields)
 
 
 @composer
@@ -746,8 +753,8 @@ def _(To: BatchedTransformation, Ti: CoordinateField) -> CoordinateField:
     )
     valid = np.all(index >= 0, axis=-1)
     values = np.empty((len(points), n_out))
-    values[:, To.output_axes] = To.apply_to_points(
-        points[:, To.input_axes], index, valid
+    values[:, To.output_axes] = apply_to_points(
+        To, points[:, To.input_axes], index, valid
     )
     values[:, To.batch_output_axes] = coordinates
     return CoordinateField(
@@ -814,9 +821,21 @@ def _shared_positions(outer: np.ndarray, inner: np.ndarray) -> np.ndarray:
     return inner
 
 
+def _counts(Ti: Transformation, To: Transformation) -> tx.List[int]:
+    # Return the numbers of axes before, between and after two
+    # neighbours, and raise when they are unknown or disagree.
+    counts = stage_counts([Ti, To])
+    if counts is None:
+        raise CompositionError(
+            f"A {type(To).__name__} cannot follow a {type(Ti).__name__} "
+            f"whose numbers of axes are unknown or disagree with its own."
+        )
+    return counts
+
+
 def _split_at_batch(
     t: Transformation,
-    counts: tx.Optional[tx.Sequence[int]],
+    counts: tx.Sequence[int],
     batch: BatchedTransformation,
     before: bool,
 ) -> tx.Tuple[Transformation, tx.List[int]]:
@@ -832,7 +851,7 @@ def _split_at_batch(
         "their order, and acts on the axes of the elements only, in "
         "their order."
     )
-    t = None if counts is None else close_counts(t, counts[0], counts[1])
+    t = close_counts(t, counts[0], counts[1])
     pattern = UNREADABLE if t is None else read_pattern(t, _NUMERIC)
     if pattern is UNREADABLE:
         raise refused

@@ -363,7 +363,11 @@ def _(t: BatchedTransformation, cls: tx.Type[BATCH], **kwargs) -> BATCH:
     element_type = kwargs.pop("element_type", None)
     if element_type is not None:
         return smart_replace(restack(t, element_type), **kwargs)
-    if not (issubclass(cls, type(t)) or issubclass(type(t), cls)):
+    if issubclass(type(t), cls):
+        # The class of a stacked batch is chosen by its element type, so
+        # a request for one of its base classes keeps it.
+        return smart_replace(t, **kwargs)
+    if not issubclass(cls, type(t)):
         return t
     return smart_replace(t, cls, **kwargs)
 

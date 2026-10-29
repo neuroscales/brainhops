@@ -21,7 +21,7 @@ from brainhops.errors import CompositionError, ConversionError
 # transformations
 from . import nocycles
 from .base import Transformation, _copied
-from .batched import BatchedTransformation
+from .batched import BatchedTransformation, representatives
 from .compute.check import is_kind
 from .compute.compose import compose
 from .compute.factor import factor_sequence
@@ -820,7 +820,9 @@ def merge_members(
     """
     if not isinstance(merged, Sequence) or not merged.transformations:
         return [merged]
-    members = _unnest(merged.transformations)
+    # The systems that a nested chain declares are pushed onto its
+    # leaves, so that splicing its members loses none of them.
+    members = _unnest(merged.flatten().transformations)
     if len(members) == 2 and members[0] is first and members[1] is second:
         return None
     return members
@@ -1022,11 +1024,9 @@ def _interpolates(xform: Transformation) -> bool:
     if isinstance(xform, Inverse):
         return _interpolates(xform.forward)
     if isinstance(xform, BatchedTransformation):
-        # The elements of a stacked batch share one type, so the first
-        # element answers for all of them.
-        if xform.element_type is not None:
-            return _interpolates(xform[(0,) * xform.batch_ndim])
-        return any(_interpolates(t) for t in xform.elements.flat)
+        # The type of an element tells whether it interpolates, so the
+        # elements that stand for the others answer.
+        return any(_interpolates(t) for t in representatives(xform))
     if isinstance(xform, Sequence):
         return any(_interpolates(t) for t in (xform.transformations or []))
     if isinstance(xform, SubspaceTransformation):

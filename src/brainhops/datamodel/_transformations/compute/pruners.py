@@ -49,7 +49,11 @@ from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.systems import CoordinateSystem
 
 from ..base import Transformation
-from ..batched import BatchedTransformation
+from ..batched import (
+    BatchedTransformation,
+    element_pattern,
+    restrict_elements,
+)
 from ..concrete import (
     Affine,
     Identity,
@@ -258,7 +262,7 @@ def _(t: BatchedTransformation, policy: SimplifyTable) -> tx.Any:
     # of the elements read the inputs and the batch axes that the
     # elements read.
     n_in, n_out = t.counts
-    block, reads_batch = t.element_pattern(policy)
+    block, reads_batch = element_pattern(t, policy)
     pattern = np.zeros((n_out, n_in), dtype=bool)
     pattern[np.ix_(t.output_axes, t.input_axes)] = block
     pattern[np.ix_(t.output_axes, t.batch_input_axes)] = reads_batch
@@ -576,7 +580,8 @@ def _(
     if not inner_out:
         # Only the batch axes are kept, and they pass through in order.
         return Identity() if not inner_in else None
-    piece = t.restrict_elements(
+    piece = restrict_elements(
+        t,
         inner_in,
         inner_out,
         policy,

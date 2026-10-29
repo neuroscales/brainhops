@@ -34,10 +34,12 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 from brainhops.datamodel import kinds
+from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import ConversionError, DomainError
 
 from ..base import Transformation
-from ..batched import BatchedTransformation
+from ..batched import BatchedTransformation, varies_along
 from ..concrete import (
     Affine,
     CartesianField,
@@ -285,7 +287,7 @@ def _(t: BatchedTransformation, policy: SimplifyTable) -> Transformation:
     constant = [
         j
         for j, n in enumerate(t.batch_shape)
-        if n == 1 or (numeric and not t.varies_along(j))
+        if n == 1 or (numeric and not varies_along(t, j))
     ]
     if constant:
         return _simplify(_without_batch_dims(t, constant), policy=policy)
@@ -340,9 +342,19 @@ def _without_batch_dims(
         t[key],
         [i for i in range(n_in) if i not in gone_in],
         [o for o in range(n_out) if o not in gone_out],
-        input=t.input if t.input is not None else unnamed_system(n_in),
-        output=t.output if t.output is not None else unnamed_system(n_out),
+        input=_closed_system(t.input, n_in),
+        output=_closed_system(t.output, n_out),
     )
+
+
+def _closed_system(
+    system: tx.Optional[CoordinateSystem], n: int
+) -> CoordinateSystem:
+    # Return a closed system, or an unnamed closed system of `n` axes in
+    # place of a missing or open one.
+    if get_axes(system).ndim is not None:
+        return system
+    return unnamed_system(n)
 
 
 @simplifier
@@ -689,13 +701,15 @@ def section_before(
     if piece is None:
         return None
     chain = [] if isinstance(piece, Identity) else [piece]
+    if isinstance(selected, Sequence):
+        # An element that is a chain is spliced with the systems that it
+        # declares pushed onto its leaves, so that none of them is lost.
+        selected = selected.flatten()
     created = [
         batch.batch_output_axes[batch.batch_input_axes.index(a)] for a in fixed
     ]
-    chain += [
-        selected,
-        Projection(created=created, at=values, output=batch.output),
-    ]
+    chain += selected if isinstance(selected, Sequence) else [selected]
+    chain.append(Projection(created=created, at=values, output=batch.output))
     return Sequence(chain)
 
 

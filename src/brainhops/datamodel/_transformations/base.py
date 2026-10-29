@@ -518,6 +518,13 @@ class Transformation(
             convert_to, on_error, on_loss=on_loss, scope=(ConversionError,)
         )
 
+    def _resolve_policy(self, table: tx.Any) -> tx.Any:
+        # Return the simplification policy that a `SimplifyTable` gives
+        # this transformation, which the table asks of each one. A
+        # transformation that belongs to no family, such as a batch,
+        # overrides it to resolve the table against what it holds.
+        return table.resolve_families(self)
+
     def _target_class(
         self, kwargs: tx.Dict[str, tx.Any]
     ) -> tx.Type["Transformation"]:

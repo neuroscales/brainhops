@@ -59,6 +59,7 @@ from bagof.dispatchers import Function, NoMethodError
 
 from brainhops.errors import CompositionError
 
+from .. import nocycles
 from .simplify import ANALYTIC_FLOOR, simplify
 from .utils import boundary_disagrees
 
@@ -103,7 +104,11 @@ def compose(
     Returns
     -------
     Transformation
-        The composed transformation.
+        The composed transformation. It is a single transformation, or a
+        computed [`Sequence`][brainhops.datamodel.transformations.Sequence]
+        when a rule replaces the pair by a chain whose members do not all
+        compose into one, as when a batch is replaced by its element
+        followed by the creation of its batch axis.
 
     Raises
     ------
@@ -112,6 +117,11 @@ def compose(
     """
     # Pair simplifiers use the order of application.
     result = simplify(x2, x1, policy=ANALYTIC_FLOOR)
+    if isinstance(result, nocycles.SEQUENCE):
+        # A pair simplifier that gives a chain, such as the selection of
+        # the element of a batch, leaves its members uncomputed, and the
+        # composition computes them.
+        return result.compute()
     if result is not None:
         return result
 

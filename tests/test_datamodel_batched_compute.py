@@ -11,7 +11,11 @@ import typing_extensions as tx
 
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations.batched import (
+    apply_to_points,
+    compose_with,
+    element_pattern,
     match_positions,
+    restrict_elements,
     result_type,
 )
 from brainhops.datamodel._transformations.compute.compose import compose
@@ -22,10 +26,12 @@ from brainhops.datamodel._transformations.compute.prune import (
 from brainhops.datamodel._transformations.compute.simplify import (
     SimplifyTable,
 )
+from brainhops.datamodel._transformations.compute.utils import axis_counts
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    AffineExponential,
     BatchedAffine,
     BatchedScaling,
     BatchedTransformation,
@@ -38,6 +44,7 @@ from brainhops.datamodel.transformations import (
     Projection,
     Rotation,
     Scaling,
+    ScalingExponential,
     Sequence,
     SubspaceTransformation,
     Transformation,
@@ -291,8 +298,8 @@ def test_the_pattern_of_a_stack_bounds_that_of_its_elements(
     name: str, policy: SimplifyTable
 ) -> None:
     stacked = _stacked(name)
-    block, reads_batch = stacked.element_pattern(policy)
-    general, _ = _general(stacked).element_pattern(policy)
+    block, reads_batch = element_pattern(stacked, policy)
+    general, _ = element_pattern(_general(stacked), policy)
     # A stack reads its zeros on the whole stack, and the general form
     # reads each element, so the two give the same union.
     assert np.array_equal(block, general)
@@ -311,9 +318,9 @@ def test_a_general_batch_reads_a_batch_axis_unless_its_elements_repeat() -> (
     scaling = Scaling([1.0, 2.0])
     same = BatchedTransformation.stack([scaling, scaling])
     other = BatchedTransformation.stack([scaling, Scaling([1.0, 3.0])])
-    assert not same.element_pattern(NUMERIC)[1].any()
-    assert other.element_pattern(NUMERIC)[1].all()
-    assert same.element_pattern(ANALYTIC)[1].all()
+    assert not element_pattern(same, NUMERIC)[1].any()
+    assert element_pattern(other, NUMERIC)[1].all()
+    assert element_pattern(same, ANALYTIC)[1].all()
 
 
 _BLOCKS = [([0, 1], [0, 1]), ([2], [2]), ([0, 1, 2], [0]), ([], [1])]
@@ -330,9 +337,9 @@ def test_a_stack_is_cut_as_its_elements_are(
         "input_axes": list(range(len(inputs))),
         "output_axes": list(range(len(outputs))),
     }
-    cut = stacked.restrict_elements(inputs, outputs, NUMERIC, **fields)
-    reference = _general(stacked).restrict_elements(
-        inputs, outputs, NUMERIC, **fields
+    cut = restrict_elements(stacked, inputs, outputs, NUMERIC, **fields)
+    reference = restrict_elements(
+        _general(stacked), inputs, outputs, NUMERIC, **fields
     )
     assert (cut is None) == (reference is None)
     if cut is not None:
@@ -347,9 +354,9 @@ def test_two_stacks_compose_as_their_elements_do(
     outer: str, inner: str
 ) -> None:
     first, second = _stacked(inner, seed=1), _stacked(outer, seed=2)
-    product = second.compose_with(first, input_axes=[0, 1, 2])
-    reference = _general(second).compose_with(
-        _general(first), input_axes=[0, 1, 2]
+    product = compose_with(second, first, input_axes=[0, 1, 2])
+    reference = compose_with(
+        _general(second), _general(first), input_axes=[0, 1, 2]
     )
     assert product.element_type is not None
     assert issubclass(
@@ -362,10 +369,10 @@ def test_two_stacks_compose_as_their_elements_do(
 def test_a_batch_of_one_element_broadcasts() -> None:
     stacked = _stacked("affine")
     single = Scaling.batch(np.array([[2.0, 3.0, 4.0]]))
-    product = single.compose_with(stacked, input_axes=[0, 1, 2])
+    product = compose_with(single, stacked, input_axes=[0, 1, 2])
     assert product.batch_shape == stacked.batch_shape
-    reference = _general(single).compose_with(
-        _general(stacked), input_axes=[0, 1, 2]
+    reference = compose_with(
+        _general(single), _general(stacked), input_axes=[0, 1, 2]
     )
     assert _same_elements(product, reference)
 
@@ -384,8 +391,8 @@ def test_a_stack_applies_to_points_as_its_elements_do(name: str) -> None:
     points = _points(3, n=8)
     index = np.array([[0], [1], [2], [3], [3], [0], [-1], [2]])
     valid = (index >= 0).all(axis=1)
-    values = stacked.apply_to_points(points, index, valid)
-    reference = _general(stacked).apply_to_points(points, index, valid)
+    values = apply_to_points(stacked, points, index, valid)
+    reference = apply_to_points(_general(stacked), points, index, valid)
     assert np.allclose(values, reference, equal_nan=True)
     assert np.isnan(values[6]).all()
     expected = _apply(stacked[3], points[3:4])
@@ -1041,17 +1048,209 @@ def test_random_series_chains_keep_their_map_when_simplified(
     assert _structure(again) == _structure(simplified)
 
 
+@pytest.mark.parametrize("mode", [True, "batch"])
 @pytest.mark.parametrize("factor", [False, True])
 @pytest.mark.parametrize("policy", ["analytic", "numeric"])
 @pytest.mark.parametrize("seed", range(16))
 def test_compute_is_idempotent_on_random_series_chains(
-    seed: int, policy: str, factor: bool
+    seed: int, policy: str, factor: bool, mode: tx.Any
 ) -> None:
     chain, n_in = _random_series_chain(seed)
-    once = Sequence(chain).compute(simplify=policy, factor=factor)
+    options = {"simplify": policy, "factor": factor}
+    once = Sequence(chain).compute(mode, **options)
     assert _same_chain_map(chain, _flat(once), n_in, seed)
-    twice = Sequence(_flat(once) or [Identity()]).compute(
-        simplify=policy, factor=factor
-    )
+    twice = Sequence(_flat(once) or [Identity()]).compute(mode, **options)
     assert _structure(twice) == _structure(once)
     assert _same_chain_map(_flat(once), _flat(twice), n_in, seed)
+
+
+# ----------------------------------------------------------------------
+#   REVIEW
+# ----------------------------------------------------------------------
+
+
+def test_the_elements_of_a_batch_of_chains_keep_their_systems() -> None:
+    # A chain that the batch selects keeps the systems that it declares.
+    chains = [
+        Sequence(
+            [Scaling([1.0 + k, 2.0, 3.0]), Translation([k, 0.0, 0.0])],
+            input=_system("xyz"),
+            output=_system("abc"),
+        )
+        for k in range(3)
+    ]
+    batch = BatchedTransformation(
+        chains,
+        input_axes=[1, 2, 3],
+        input=_system("txyz"),
+        output=_system("tabc"),
+    )
+    section = Sequence(
+        [Projection(created=[0], at=[1.0]), batch, Projection(dropped=[0])]
+    )
+    for result in (section.compute(), section.simplify()):
+        assert result.input == _system("xyz")
+        assert result.output == _system("abc")
+        points = _points(3)
+        assert np.allclose(_apply(result, points), _apply(chains[1], points))
+
+
+def test_compose_selects_the_element_after_a_creation() -> None:
+    batch = _series_batch("affine", False)
+    creation = Projection(created=[3], at=[4.0], input=_system("xyz"))
+    product = compose(batch, creation)
+    assert isinstance(product, Affine)
+    points = _points(3)
+    expected = np.hstack([_apply(batch[2], points), np.full((6, 1), 4.0)])
+    assert np.allclose(_apply(product, points), expected)
+
+
+def test_a_neighbour_with_other_numbers_of_axes_is_refused() -> None:
+    batch = _series_batch("affine", False)
+    with pytest.raises(CompositionError):
+        compose(Affine(np.eye(3, 4)), batch)
+    with pytest.raises(CompositionError):
+        compose(batch, Affine(np.eye(3, 4)))
+
+
+def test_simplifying_a_stack_creates_no_element(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stack = np.tile(np.eye(3, 4), (50, 1, 1))
+    stack[:, 0, 3] = np.arange(50)
+    batch = Affine.batch(stack, input_axes=[0, 1, 2])
+    # The element that stands for the others is created once.
+    batch.simplify()
+    created = []
+    element = type(batch)._element
+
+    def counted(self: tx.Any, key: tx.Any) -> Transformation:
+        created.append(key)
+        return element(self, key)
+
+    monkeypatch.setattr(type(batch), "_element", counted)
+    for policy in ("analytic", "numeric", {None: "numeric"}):
+        assert batch.simplify(policy) is batch
+    assert not batch.elements_are(kinds.Identity, compute=True)
+    assert batch.elements_are(kinds.Affine)
+    assert created == []
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_batch_with_open_systems_keeps_its_numbers_of_axes(
+    general: bool,
+) -> None:
+    batch = Affine.batch(
+        _stacked("affine").data[:1],
+        input_axes=[0, 1, 2],
+        input=CoordinateSystem(),
+        output=CoordinateSystem(),
+    )
+    batch = _general(batch) if general else batch
+    simplified = batch.simplify()
+    assert isinstance(simplified, SubspaceTransformation)
+    assert axis_counts(simplified) == (4, 4)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_spatial_neighbour_composes_with_two_batch_axes(
+    general: bool,
+) -> None:
+    batch = _grid(general)
+    spatial = np.eye(4, 5)
+    spatial[1:3, 1:3] = [[2.0, 0.5], [0.0, 3.0]]
+    spatial[1:3, 4] = [1.0, -1.0]
+    product = compose(batch, Affine(spatial))
+    assert isinstance(product, BatchedTransformation)
+    assert product.batch_shape == (2, 3)
+    points = _points(4, n=6)
+    points[:, 0] = [10.0, 20.0, 10.0, 20.0, 10.0, 20.0]
+    points[:, 3] = [0.0, 0.5, 1.0, 0.0, 0.5, 1.0]
+    expected = _reference([Affine(spatial), batch], points)
+    assert np.allclose(_reference([product], points), expected)
+
+
+@pytest.mark.parametrize("general", [False, True])
+def test_a_permutation_that_moves_the_batch_axis_composes(
+    general: bool,
+) -> None:
+    batch = _series_batch("scaling", general)
+    moved = Permutation([1, 2, 3, 0])
+    product = compose(batch, moved)
+    assert product.batch_input_axes == [0]
+    points = _series_points()[:, [3, 0, 1, 2]]
+    expected = _reference([moved, batch], points)
+    assert np.allclose(_reference([product], points), expected)
+    after = compose(Permutation([3, 0, 1, 2]), batch)
+    assert after.batch_output_axes == [0]
+    points = _series_points()
+    expected = _reference([batch, Permutation([3, 0, 1, 2])], points)
+    assert np.allclose(_reference([after], points), expected)
+
+
+def _fields(n: int = 4) -> tx.List[Transformation]:
+    rng = np.random.default_rng(1)
+    return [
+        DisplacementField(field=rng.normal(size=(4, 5, 6, 3)) * 0.1)
+        for _ in range(n)
+    ]
+
+
+@pytest.mark.parametrize("kind", ["chains", "fields"])
+def test_a_general_batch_applies_each_element_to_its_points(
+    kind: str,
+) -> None:
+    if kind == "chains":
+        elements = [
+            Sequence([Scaling([1.0 + k, 2.0, 3.0]), Affine(_SPATIAL[:3, 1:])])
+            for k in range(4)
+        ]
+    else:
+        elements = _fields()
+    batch = BatchedTransformation(
+        elements, input_axes=[0, 1, 2], positions=[_TIMES]
+    )
+    points = _series_points()
+    points[:, :3] = np.abs(points[:, :3]) + 1.0
+    result = compose(batch, CoordinateField(field=points))
+    expected = _apply_batch(batch, points)
+    assert np.allclose(np.asarray(result.field), expected, equal_nan=True)
+
+
+def test_a_subspace_of_a_batch_of_fields_interpolates() -> None:
+    batch = BatchedTransformation(_fields(), input_axes=[0, 1, 2])
+    system = CoordinateSystem().expand(5)
+    subspace = SubspaceTransformation(
+        batch, [0, 1, 2, 3], [0, 1, 2, 3], input=system, output=system
+    )
+    with pytest.raises(CompositionError, match="wraps a field"):
+        compose(Affine(np.eye(5, 6)), subspace)
+
+
+def test_elements_are_on_elements_of_several_types() -> None:
+    batch = BatchedTransformation.stack(
+        [Scaling([1.0, 2.0]), Affine(np.eye(2, 3)), Translation([1.0, 0.0])]
+    )
+    assert batch.elements_are(kinds.Affine)
+    assert not batch.elements_are("scaling")
+    assert not batch.elements_are(kinds.Identity, compute=True)
+
+
+def test_tangent_elements_stack_and_widen() -> None:
+    logs = [np.diag([0.1 * k, 0.2, 0.0]) for k in range(3)]
+    affines = [
+        AffineExponential(np.hstack([m, np.ones((3, 1))])) for m in logs
+    ]
+    stacked = BatchedTransformation.stack(affines).to(
+        element_type=AffineExponential
+    )
+    assert stacked.element_type is AffineExponential
+    assert np.allclose(stacked.data, np.stack([a.data for a in affines]))
+    scales = BatchedTransformation.stack(
+        [Scaling([0.1 * k, 0.2], log=True) for k in range(3)]
+    ).to(element_type=ScalingExponential)
+    widened = scales.to(element_type=Linear)
+    assert widened.element_type is Linear
+    for k in range(3):
+        assert np.allclose(widened[k].matrix, np.diag(np.exp([0.1 * k, 0.2])))
+    assert _same_elements(widened, scales)
