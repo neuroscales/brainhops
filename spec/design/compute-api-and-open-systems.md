@@ -616,7 +616,7 @@ Converting a subspace with a missing or open system to an `Affine` raises
 closed, or incompatible when either is open; a compatible open neighbour
 is bridged as the identity, and an incompatible one raises
 `AdaptationError`. A composer closes the open system of a subspace from
-its neighbour (`meta._close_subspace`), and raises `CompositionError` when
+its neighbour (`meta.close_subspace`), and raises `CompositionError` when
 the count does not fit. Code that reads axis counts treats `None` as
 unknown and never guesses. Since no file format stores `...`, the NIfTI
 and OME-Zarr writers close open systems from the shape of the data, and

@@ -217,7 +217,7 @@ an exact converter builds. The format alone can decide, because two
 formats of the same data model may mean different maps: an LTA affine
 between voxel systems and an MNI affine between RAS systems are both
 `Affine`. Bases that only read or write, such as `BinaryFileReader`,
-may come first. `_FileBasedModelMixin` raises `TypeError` when a class
+may come first. `FileBasedModelMixin` raises `TypeError` when a class
 that breaks the rule is defined, and a test checks that no format
 passes copied fields to its converter.
 

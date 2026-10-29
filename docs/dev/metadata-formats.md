@@ -19,7 +19,10 @@ the record, a `_consolidate` that encodes the fields that changed, and
 two module-level functions that do the work, `_decode` and `_encode`.
 NIfTI (`io/common/nifti/_metadata.py` and `_vocabulary.py`), MGH
 (`io/common/mgh/_metadata.py`) and X5
-(`io/transformations/x5/_metadata.py`) are the worked examples.
+(`io/transformations/x5/_metadata.py`) are the worked examples. A
+function that another module imports loses its underscore, as
+`spec/design/internal-api.md` requires: the MGH image imports the
+encoder of MGH, which is therefore named `encode`.
 
 ## Where the names live
 

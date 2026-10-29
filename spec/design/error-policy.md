@@ -165,7 +165,7 @@ The policy is applied in three ways.
   `to_*` methods of a transformation through `_to_class()`,
   `Metadata.to()`, `Metadata.from_instance()`,
   `MetadataFormat.from_instance()`, `io.save()` and `to_bids()`.
-- The common base of the formats, `_FileBasedModelMixin`, defines the
+- The common base of the formats, `FileBasedModelMixin`, defines the
   one public `consolidate(*, inplace=False, on_error, on_loss,
   **fields)`, in which both keywords are optional, and which calls the protected hook
   `_consolidate(inplace=inplace, **fields)` under the policy. A format
