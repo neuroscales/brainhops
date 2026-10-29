@@ -11,6 +11,12 @@ CuPy. The functions run with the package of their input, so that an
 array on a GPU is processed on the GPU, and CuPy is only imported when
 it is installed. The package does not depend on brainhops.
 
+The functions also take dask arrays, whose blocks may be NumPy or CuPy
+arrays, and then return dask arrays. Each task of the result runs the
+same code on the part of the input that it needs, and the results equal
+those of the whole arrays to rounding errors. Dask is only imported when
+an argument is a dask array.
+
 Compared with `scipy.ndimage.map_coordinates`, [`pull`][] takes one
 order and one boundary condition per axis, and takes batch axes, whose
 items it processes together rather than one at a time. Coordinates are

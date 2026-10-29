@@ -52,7 +52,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._backend import _asarray, _get_namespace
+from ._backend import _asarray, _get_namespace, _is_dask
 from ._bounds import _bound_index, _normalize_bound
 from ._splines import _MAX_ORDER
 
@@ -489,6 +489,20 @@ def spline_coeff1d(
     therefore wrong near the edges, at every order for the zero
     boundary and from order 4 for the replicate boundary.
 
+    A dask array gives a dask array with the same chunks. The
+    coefficients of a chunk depend on the values within the horizon of
+    the filter, from 23 samples at order 2 to 63 samples at order 7,
+    beyond which the weight of a value is below 1e-17. Each chunk is
+    therefore computed by one task, which runs the filter above on the
+    chunk extended by the horizon on each side, and keeps the chunk.
+    The task reads all the chunks that overlap this window, however
+    short they are, and the whole axis when the axis is short. At an
+    edge of the array, the window keeps the boundary condition of the
+    array. Where the window cuts the array, the boundary condition that
+    the filter applies changes the coefficients of the chunk by less
+    than their rounding errors, since the cut is at least the horizon
+    away from the chunk.
+
     Parameters
     ----------
     input : array
@@ -512,6 +526,10 @@ def spline_coeff1d(
     ------
     ValueError
     """
+    if _is_dask(input):
+        from ._dask import _spline_coeff1d_dask
+
+        return _spline_coeff1d_dask(input, order, bound, axis)
     xp = _get_namespace(input)
     order = _normalize_order(order)
     bound = _normalize_bound(bound)
@@ -542,7 +560,8 @@ def spline_coeff(
     whose spline, sampled at the integer coordinates with
     [`pull`][brainhops._ext.interpol.pull], gives back the input
     exactly. The computation runs with the package of the input, NumPy
-    or CuPy.
+    or CuPy. A dask array gives a dask array with the same chunks,
+    computed as explained in [`spline_coeff1d`][].
 
     Parameters
     ----------
@@ -572,8 +591,8 @@ def spline_coeff(
     ------
     ValueError
     """
-    xp = _get_namespace(input)
-    input = _asarray(xp, input)
+    if not _is_dask(input):
+        input = _asarray(_get_namespace(input), input)
     if ndim is None:
         ndim = _sequence_length(order, bound) or input.ndim
     orders = _normalize_per_axis(order, ndim, "order")

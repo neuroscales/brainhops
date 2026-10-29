@@ -13,7 +13,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._backend import _asarray, _BufferPool, _get_namespace
+from ._backend import _asarray, _BufferPool, _get_namespace, _is_dask
 from ._bounds import _normalize_bound
 from ._coeff import (
     _normalize_dtype,
@@ -125,6 +125,21 @@ def pull(
     The default strategy, "auto", is the blocked one for NumPy arrays
     and the batched one for CuPy arrays. Both give the same values.
 
+    When the input or the grid is a dask array, the function returns a
+    dask array of the same values, which dask computes block by block.
+    The output has the chunks of the grid along its spatial axes. Each
+    block of the output is one task, which reads only the window of the
+    input that its coordinates need, and runs the computation above on
+    that window. With the prefilter, the coefficients of the window are
+    computed from the values within a margin of 23 to 63 samples around
+    it, depending on the order, which gives the coefficients of the
+    whole input to rounding errors. The strategy and the block size
+    apply to each block. For dask arrays, the default strategy is the
+    batched one, because the many small operations of the blocked
+    strategy are serialized by the lock of the Python interpreter under
+    the threaded scheduler of dask. Dask is only imported when an
+    argument is a dask array.
+
     Order 0 takes the nearest sample, and a coordinate exactly halfway
     between two samples takes the upper one, as in SciPy. Outside the
     array, the tie is broken before the boundary condition is applied.
@@ -178,9 +193,85 @@ def pull(
     ------
     ValueError
     """
+    if _is_dask(input) or _is_dask(grid):
+        from ._dask import _pull_dask
+
+        return _pull_dask(
+            input,
+            grid,
+            order,
+            bound,
+            extrapolate,
+            prefilter,
+            strategy,
+            block_size,
+        )
     xp = _get_namespace(input, grid)
     input = _asarray(xp, input)
     grid = _asarray(xp, grid)
+    orders, bounds, margin, blocked = _check_arguments(
+        xp, input, grid, order, bound, extrapolate, strategy, block_size
+    )
+    dtype = _normalize_dtype(input.dtype)
+    if prefilter and max(orders) > 1:
+        input = spline_coeff(input, orders, bounds, len(orders))
+    input = input.astype(dtype, copy=False)
+    if grid.dtype.kind != "f":
+        grid = grid.astype(np.float64)
+    return _pull(xp, input, grid, orders, bounds, margin, blocked, block_size)
+
+
+def _check_arguments(
+    xp: ModuleType,
+    input: tx.Any,
+    grid: tx.Any,
+    order: tx.Any,
+    bound: tx.Any,
+    extrapolate: tx.Any,
+    strategy: str,
+    block_size: tx.Optional[int],
+) -> tx.Tuple[tx.List[int], tx.List[str], tx.Optional[float], bool]:
+    """Check the arguments of [`pull`][] and return them in normal form.
+
+    The eager and the dask versions of [`pull`][] share this function,
+    which only reads the shapes of the arrays.
+
+    Parameters
+    ----------
+    xp : module
+        The module `numpy` or `cupy` with which the values are
+        computed.
+    input : array
+        The argument `input` of [`pull`][].
+    grid : array
+        The argument `grid` of [`pull`][].
+    order : int or sequence of int
+        The argument `order` of [`pull`][].
+    bound : str or sequence of str
+        The argument `bound` of [`pull`][].
+    extrapolate : bool or str
+        The argument `extrapolate` of [`pull`][].
+    strategy : str
+        The argument `strategy` of [`pull`][].
+    block_size : int or None
+        The argument `block_size` of [`pull`][].
+
+    Returns
+    -------
+    orders : list of int
+        The spline order of each spatial axis.
+    bounds : list of str
+        The boundary condition of each spatial axis, one of the names
+        in `_BOUNDS`.
+    margin : float or None
+        The margin of [`_inside`][], or None to keep every point.
+    blocked : bool
+        Whether the blocked strategy is used.
+
+    Raises
+    ------
+    ValueError
+    """
     ndim = grid.shape[-1]
     if input.ndim < ndim or grid.ndim < ndim + 1:
         raise ValueError(
@@ -198,14 +289,71 @@ def pull(
     blocked = _select_strategy(xp, strategy) == "blocked"
     if block_size is not None and int(block_size) < 1:
         raise ValueError(f"The block size must be positive: {block_size}.")
-    dtype = _normalize_dtype(input.dtype)
-    if prefilter and max(orders) > 1:
-        input = spline_coeff(input, orders, bounds, ndim)
-    input = input.astype(dtype, copy=False)
-    if grid.dtype.kind != "f":
-        grid = grid.astype(np.float64)
+    return orders, bounds, margin, blocked
 
-    spatial_in = tuple(input.shape[-ndim:])
+
+def _pull(
+    xp: ModuleType,
+    input: tx.Any,
+    grid: tx.Any,
+    orders: tx.List[int],
+    bounds: tx.List[str],
+    margin: tx.Optional[float],
+    blocked: bool,
+    block_size: tx.Optional[int],
+    shape: tx.Optional[tx.Sequence[int]] = None,
+    origin: tx.Optional[tx.Sequence[int]] = None,
+) -> tx.Any:
+    """Interpolate an array, or a window of it, at checked coordinates.
+
+    This function does the work of [`pull`][] once the arguments are
+    checked and the input is prefiltered. The input can also be a
+    window of a larger array, which is how the dask version of
+    [`pull`][] samples one block of coordinates: each spatial axis of
+    the window holds the samples `origin[d]` to
+    `origin[d] + input.shape[d] - 1` of an axis of length `shape[d]`.
+    The boundary condition, the zero weights of the `zero` boundary and
+    the mask of `extrapolate` then apply to the whole array, and the
+    samples that the coordinates read must all lie in the window.
+
+    Parameters
+    ----------
+    xp : module
+        The module `numpy` or `cupy` of the arrays.
+    input : array
+        The values or the coefficients, with shape
+        `(*batch_input, *window)` and the data type of the output.
+    grid : array
+        The coordinates, of a floating data type, with shape
+        `(*batch_grid, *spatial_out, ndim)`.
+    orders : list of int
+        The spline order of each spatial axis.
+    bounds : list of str
+        The boundary condition of each spatial axis, one of the names in
+        `_BOUNDS`.
+    margin : float or None
+        The margin of [`_inside`][], or None to keep every point.
+    blocked : bool
+        Whether to use the blocked strategy rather than the batched one.
+    block_size : int or None
+        The argument `block_size` of [`pull`][].
+    shape : sequence of int, optional
+        The spatial shape of the whole array. By default, it is the
+        spatial shape of the input.
+    origin : sequence of int, optional
+        The index of the first sample of the window along each spatial
+        axis. By default, it is zero.
+
+    Returns
+    -------
+    array
+        The interpolated values, with shape `(*batch, *spatial_out)`.
+    """
+    ndim = grid.shape[-1]
+    dtype = input.dtype
+    window = tuple(input.shape[-ndim:])
+    spatial_in = window if shape is None else tuple(shape)
+    origin = (0,) * ndim if origin is None else tuple(origin)
     spatial_out = tuple(grid.shape[-ndim - 1 : -1])
     batch_input = tuple(input.shape[:-ndim])
     batch_grid = tuple(grid.shape[: -ndim - 1])
@@ -215,8 +363,9 @@ def pull(
         # An empty output has nothing to interpolate, and the views below
         # cannot be built when an axis has a length of zero.
         return xp.zeros(batch + spatial_out, dtype=dtype)
-    # The flat index of a voxel is the sum of its indices times these.
-    strides = [int(math.prod(spatial_in[d + 1 :])) for d in range(ndim)]
+    # The flat index of a voxel is the sum of its indices in the window
+    # times these.
+    strides = [int(math.prod(window[d + 1 :])) for d in range(ndim)]
     pool = _BufferPool(xp)
 
     # When NumPy's `take` writes into an output array and checks the
@@ -303,6 +452,7 @@ def pull(
                     strides,
                     margin,
                     pool,
+                    origin,
                 )
                 if not blocked:
                     # The single block of the batched strategy does not
@@ -444,6 +594,7 @@ def _block_taps(
     strides: tx.List[int],
     margin: tx.Optional[float],
     pool: _BufferPool,
+    origin: tx.Sequence[int],
 ) -> tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]]:
     """Return the indices and the weights of the taps of a block.
 
@@ -455,7 +606,8 @@ def _block_taps(
         The coordinates of the points of the block, with the
         coordinates of each point along the last axis.
     spatial : tuple of int
-        The spatial shape of the input.
+        The spatial shape of the whole input, whose boundary conditions
+        apply.
     orders : list of int
         The spline order of each axis.
     bounds : list of str
@@ -463,18 +615,22 @@ def _block_taps(
     dtype : data type
         The data type of the interpolated values.
     strides : list of int
-        The strides of the spatial axes in the flattened spatial axes.
+        The strides of the spatial axes in the flattened spatial axes of
+        the window that is read.
     margin : float or None
         The margin of [`_inside`][], or None to keep every point.
     pool : _BufferPool
         The pool that provides the arrays.
+    origin : sequence of int
+        The index of the first sample of the window along each spatial
+        axis.
 
     Returns
     -------
     list of list of tuple
         For each axis, one pair `(flat index, weight)` per tap, with
         the shape of `coords` without its last axis. The flat index is
-        the index along the axis times its stride.
+        the index in the window along the axis times its stride.
     """
     taps = []
     for d in range(len(spatial)):
@@ -489,6 +645,7 @@ def _block_taps(
                 strides[d],
                 pool,
                 d,
+                origin[d],
             )
         )
     if margin is not None:
