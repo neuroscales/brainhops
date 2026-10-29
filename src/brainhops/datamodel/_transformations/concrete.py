@@ -771,7 +771,7 @@ class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation):
         if data is not None:
             kwargs["data"] = data
         return BatchedTransformation(
-            element_type,
+            element_type=element_type,
             input_axes=input_axes,
             output_axes=output_axes,
             positions=positions,

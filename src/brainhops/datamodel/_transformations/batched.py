@@ -1,13 +1,19 @@
 """Batched transformations, which hold one transformation per element.
 
-Some transformations are a family of transformations of one type,
-indexed by one or more axes of the space. Motion correction, for
-example, estimates one affine per volume of a time series. Such an axis
-is a batch axis: the transformation carries it through unchanged, while
-its other outputs depend on it. A [`BatchedTransformation`][] holds the
-parameters of all its elements in one array, whose leading dimensions
-index the elements, and it creates an element only when one is asked
-for.
+Some transformations are a family of transformations indexed by one or
+more axes of the space. Motion correction, for example, estimates one
+affine per volume of a time series. Such an axis is a batch axis: the
+transformation carries it through unchanged, while its other outputs
+depend on it.
+
+A [`BatchedTransformation`][] holds the family in one of two forms. The
+general form holds an array of transformations, which may be of any
+type, such as a chain of affines for each time point. The stacked form,
+whose subclasses are [`BatchedAffine`][], [`BatchedLinear`][],
+[`BatchedScaling`][], [`BatchedTranslation`][] and
+[`BatchedPermutation`][], holds the parameters of elements of one type
+in one array, whose leading dimensions index the elements, and it
+creates an element only when one is asked for.
 
 The design is recorded in `spec/design/batched-transformations.md`.
 """
@@ -25,7 +31,7 @@ from numbers import Integral
 
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import InitVar, NotKwOnly
+from bagof.magic import Forget, InitVar, NotKwOnly
 
 from brainhops._core.affines import expm as affine_expm
 from brainhops._core.affines import inv as affine_inv
@@ -36,7 +42,6 @@ from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.linalg import expm, inv, logm
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol, npvector
-from brainhops.datamodel._backends import _FrozenBackendMixin
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
@@ -45,7 +50,7 @@ from . import nocycles
 from .base import Transformation
 from .compute.simplify import SimplifyLike
 from .compute.simplify import simplify as _simplify
-from .compute.utils import axis_list
+from .compute.utils import axis_counts, axis_list
 from .concrete import (
     Affine,
     Linear,
@@ -69,67 +74,68 @@ def _subclass_of(family: type, element_type: tx.Any) -> bool:
 
 
 class BatchedTransformation(
-    _FrozenBackendMixin,
     Transformation,
     tx.Generic[TRANSFORMATION],
     polymorphic=True,
 ):
-    """A family of transformations of one type, one for each batch element.
+    """A family of transformations, one for each element of a batch.
 
     A batched transformation stands for one transformation per element of
     its batch axes, such as one affine per volume of a time series. A batch
     axis is carried through unchanged, while the other outputs depend on
     it, so the transformation of a point is the element that sits at the
-    coordinate of the point along the batch axes. All the elements have
-    the same type, given by `element_type`, and their parameters are
-    stacked in `data`, whose leading dimensions index the elements. An
-    element is created only when it is asked for, as a view of the stack.
+    coordinate of the point along the batch axes.
+
+    This class is the general form of a batch. It holds an array of
+    transformations, one per element, whose shape is the shape of the
+    batch. The elements may be of any type, such as sequences, fields or
+    lazy inverses, and they may differ from one element to the next, as
+    long as they all have the same numbers of input and output axes. The
+    stacked form holds elements of one matrix or vector type in one array
+    of parameters, and it is built by the class method `batch` of the
+    element type, such as `Affine.batch(matrices)`, which returns a
+    subclass such as [`BatchedAffine`][].
 
     `input_axes` and `output_axes` give the positions of the axes of the
     elements in the input and output spaces, as for a
     [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation].
     Every other axis is a batch axis, and the batch axes follow the order
-    of the leading dimensions of `data`. When neither is given, the batch
-    axes come first and the axes of the elements follow, so that the
-    space is `(*batch_axes, *element_axes)`. `positions` gives the
-    coordinate of each element along each batch axis, and its default is
-    the index of the element.
+    of the dimensions of the batch. When neither is given, the batch axes
+    come first and the axes of the elements follow, so that the space is
+    `(*batch_axes, *element_axes)`. `positions` gives the coordinate of
+    each element along each batch axis, and its default is the index of
+    the element.
 
-    The class is generic, and building it returns the subclass that
-    matches the element type, such as [`BatchedAffine`][] for an
-    [`Affine`][brainhops.datamodel.transformations.Affine]. A batched
-    transformation is not registered as any kind: a batch of affines is
-    not an affine map of its inputs, because its spatial outputs depend
-    on the batch axes. A batch is usually built with the class method
-    `batch` of its element type, such as `Affine.batch(matrices)`, or
-    with [`stack`][] from existing transformations.
+    A batched transformation is not registered as any kind: a batch of
+    affines is not an affine map of its inputs, because its other outputs
+    depend on the batch axes.
 
     !!! example
         ```pycon
         >>> import numpy as np
-        >>> from brainhops.datamodel.transformations import Affine
-        >>> matrices = np.stack([np.eye(3, 4)] * 5)
-        >>> batch = Affine.batch(matrices, input_axes=[0, 1, 2])
-        >>> batch.batch_shape
-        (5,)
-        >>> batch.input_axes, batch.batch_input_axes
-        ([0, 1, 2], [3])
-        >>> type(batch[2]).__name__
-        'Affine'
+        >>> from brainhops.datamodel.transformations import (
+        ...     Affine,
+        ...     BatchedTransformation,
+        ...     Scaling,
+        ...     Sequence,
+        ... )
+        >>> chains = [
+        ...     Sequence([Scaling([1.0, 2.0, 3.0])]),
+        ...     Sequence([Scaling([2.0, 2.0, 2.0]), Affine(np.eye(3, 4))]),
+        ... ]
+        >>> batch = BatchedTransformation(chains, input_axes=[0, 1, 2])
+        >>> batch.batch_shape, batch.batch_input_axes
+        ((2,), [3])
+        >>> batch[1] is chains[1]
+        True
 
         ```
 
     Parameters
     ----------
-    element_type : type, optional
-        Class of the elements, a matrix or a vector type such as
-        [`Affine`][brainhops.datamodel.transformations.Affine] or
-        [`Scaling`][brainhops.datamodel.transformations.Scaling]. It must
-        be given.
-    data : ArrayLike, optional
-        Data of the elements, of shape `(*batch, ...)`, where `...` is the
-        shape of the data of one element. It must be given, unless a view
-        of the data, such as `matrix`, is given instead.
+    elements : array_like of Transformation, optional
+        Transformations of the elements, as a nested list or an array of
+        objects whose shape is the shape of the batch.
 
     Other Parameters
     ----------------
@@ -141,6 +147,11 @@ class BatchedTransformation(
     positions : sequence of array_like, optional
         Coordinates of the elements along each batch axis, one vector per
         batch axis.
+    element_type : type, optional
+        Class of the elements of a stacked batch, which selects the
+        stacked subclass.
+    data : ArrayLike, optional
+        Data of the elements of a stacked batch, of shape `(*batch, ...)`.
     input : CoordinateSystem, optional
         Coordinate system of the whole input space.
     output : CoordinateSystem, optional
@@ -150,8 +161,7 @@ class BatchedTransformation(
     # --- class attributes ---------------------------------------------
 
     data_fields: _FieldNames = (
-        "element_type",
-        "data",
+        "elements",
         "input_axes",
         "output_axes",
         "positions",
@@ -159,11 +169,8 @@ class BatchedTransformation(
 
     # --- attributes ---------------------------------------------------
 
-    element_type: NotKwOnly[tx.Optional[tx.Type[Transformation]]] = None
-    """Class of the elements."""
-
-    _data: NotKwOnly[tx.Optional[ArrayProtocol]] = None
-    """Data of the elements, stacked along the leading dimensions."""
+    _elements: NotKwOnly[tx.Optional[tx.Any]] = None
+    """Transformations of the elements, as given."""
 
     _input_axes: tx.Optional[npvector[Integral]] = None
     """Positions of the input axes of the elements, as given."""
@@ -174,49 +181,92 @@ class BatchedTransformation(
     _positions: tx.Optional[tx.Sequence[tx.Any]] = None
     """Coordinates of the elements along each batch axis, as given."""
 
-    data = smartproperty("data", fset=False)
+    element_type: tx.Optional[tx.Type[Transformation]] = None
+    """Class of the elements of a stacked batch, or None."""
+
+    _data: tx.Optional[ArrayProtocol] = None
+    """Data of the elements of a stacked batch, or None."""
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        self.element_type = _element_type(self.element_type)
-        if self._data is None:
-            raise ValueError(
-                f"{type(self).__name__} needs the data of its elements."
-            )
-        ndim = self.element_type._element_ndim
-        if np.ndim(self._data) <= ndim:
-            raise ValueError(
-                f"The data of a batch of {self.element_type.__name__} must "
-                f"have more than {ndim} dimensions, because its leading "
-                f"dimensions index the elements, but it has "
-                f"{np.ndim(self._data)}."
-            )
+        self._check_storage()
         self._check_axes()
         self._check_positions()
         self._check_systems()
+
+    # --- storage ------------------------------------------------------
+    # The general form stores an array of transformations. A stacked
+    # subclass overrides these methods to read its stacked data instead.
+
+    def _check_storage(self) -> None:
+        if self.element_type is not None or self._data is not None:
+            raise TypeError(
+                f"No stacked batch exists for elements of type "
+                f"{getattr(self.element_type, '__name__', None)}. A batch "
+                f"of other transformations is built from an array of "
+                f"elements."
+            )
+        if self._elements is None:
+            raise ValueError(
+                "A batch needs the transformations of its elements."
+            )
+        self._elements = _object_array(self._elements)
+        if self._elements.ndim == 0:
+            raise ValueError("A batch needs at least one batch axis.")
+        if self._elements.size == 0:
+            raise ValueError("A batch needs at least one element.")
+        counts = {axis_counts(t) for t in self._elements.flat}
+        if len(counts) > 1:
+            raise ValueError(
+                f"The elements of a batch must have the same numbers of "
+                f"input and output axes, but they have {sorted(counts)}."
+            )
+        if None in next(iter(counts), (None, None)):
+            raise ValueError(
+                "The numbers of axes of the elements of a batch must be "
+                "known. Give the elements their input and output systems."
+            )
+
+    @property
+    def batch_shape(self) -> tx.Tuple[int, ...]:
+        """Number of elements along each batch axis."""
+        return tuple(int(n) for n in self._elements.shape)
+
+    @property
+    def element_counts(self) -> tx.Tuple[int, int]:
+        """Numbers of input and output axes of one element."""
+        return axis_counts(self._elements.flat[0])
+
+    @property
+    def elements(self) -> np.ndarray:
+        """Transformations of the elements, as an array of objects."""
+        return self._elements
+
+    def _element(self, key: tx.Tuple[int, ...]) -> Transformation:
+        # The element at a full index of the batch.
+        return self._elements[key]
+
+    def _take(self, key: tx.Tuple[tx.Union[int, slice], ...]) -> tx.Any:
+        # The storage of the batch that a key selects.
+        return self._elements[key]
+
+    def _rebuild(self, storage: tx.Any, **changes) -> "BatchedTransformation":
+        # A batch of the same form, with other storage and other fields.
+        return BatchedTransformation(storage, **changes)
+
+    def _inverse_storage(self) -> tx.Any:
+        # The storage of the batch of the inverses.
+        inverses = np.empty(self.batch_shape, dtype=object)
+        for index in np.ndindex(*self.batch_shape):
+            inverses[index] = self._elements[index].inverse()
+        return inverses
 
     # --- shape of the batch -------------------------------------------
 
     @property
     def batch_ndim(self) -> int:
         """Number of batch axes, which is the number of batch dimensions."""
-        return int(np.ndim(self.data)) - self.element_type._element_ndim
-
-    @property
-    def batch_shape(self) -> tx.Tuple[int, ...]:
-        """Number of elements along each batch axis."""
-        return tuple(int(n) for n in np.shape(self.data)[: self.batch_ndim])
-
-    @property
-    def element_counts(self) -> tx.Tuple[int, int]:
-        """Numbers of input and output axes of one element."""
-        return self._element_counts(np.shape(self.data))
-
-    def _element_counts(self, shape: tx.Tuple[int, ...]) -> tx.Tuple[int, int]:
-        # The numbers of input and output axes of an element, read from the
-        # shape of the stack. A vector type maps a space to itself.
-        n = int(shape[-1])
-        return n, n
+        return len(self.batch_shape)
 
     @property
     def counts(self) -> tx.Tuple[int, int]:
@@ -282,54 +332,39 @@ class BatchedTransformation(
     # --- elements -----------------------------------------------------
 
     def __getitem__(self, key: _Key) -> Transformation:
-        """Return an element, or a smaller batch, as a view of the stack.
+        """Return an element, or a smaller batch.
 
         The key indexes the batch dimensions in order, as an integer, a
         slice, or a tuple of them. An integer selects one element along its
         batch axis, which then disappears from the space. A slice keeps
         the batch axis and selects some of its elements. When every batch
-        axis is selected by an integer, the result is an element of the
-        element type. Otherwise, it is a batched transformation.
+        axis is selected by an integer, the result is the element itself.
+        Otherwise, it is a batch of the same form.
         """
         key = _normalize_key(key, self.batch_ndim)
-        data = self.data[key]
         removed = [i for i, k in enumerate(key) if not isinstance(k, slice)]
         if len(removed) == self.batch_ndim:
-            return self.element_type(
-                data, input=self.element_input, output=self.element_output
-            )
+            return self._element(key)
         positions = tuple(
             np.asarray(p)[k]
             for p, k in zip(self.positions, key)
             if isinstance(k, slice)
         )
-        return self._without_batch_axes(data, removed, positions)
-
-    def __iter__(self) -> tx.Iterator[Transformation]:
-        """Iterate over the elements along the first batch axis."""
-        for index in range(self.batch_shape[0]):
-            yield self[index]
-
-    def _without_batch_axes(
-        self,
-        data: ArrayProtocol,
-        removed: tx.List[int],
-        positions: tx.Tuple[np.ndarray, ...],
-    ) -> "BatchedTransformation":
-        # Build the batch that remains when the batch dimensions in
-        # `removed` are selected, which removes their axes from both
-        # spaces.
         gone_in = [self.batch_input_axes[i] for i in removed]
         gone_out = [self.batch_output_axes[i] for i in removed]
-        return BatchedTransformation(
-            self.element_type,
-            data,
+        return self._rebuild(
+            self._take(key),
             input_axes=_shift(self.input_axes, gone_in),
             output_axes=_shift(self.output_axes, gone_out),
             positions=positions,
             input=_drop(self._input, gone_in, self.counts[0]),
             output=_drop(self._output, gone_out, self.counts[1]),
         )
+
+    def __iter__(self) -> tx.Iterator[Transformation]:
+        """Iterate over the elements along the first batch axis."""
+        for index in range(self.batch_shape[0]):
+            yield self[index]
 
     # --- methods ------------------------------------------------------
 
@@ -340,10 +375,10 @@ class BatchedTransformation(
         simplify: SimplifyLike = "analytic",
         factor: bool = False,
     ) -> Transformation:
-        """Simplify the batch, which holds its own parameters.
+        """Simplify the batch.
 
-        A batched transformation has nothing to compose on its own, so it
-        is only simplified, or computed as a sequence of one element when
+        Nothing is composed across the elements of a batch, so the batch is
+        only simplified, or computed as a sequence of one element when
         `factor` is true.
 
         Parameters
@@ -370,9 +405,11 @@ class BatchedTransformation(
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:
         """Return the batch of the inverses of the elements.
 
-        The inverses are computed on the whole stack at once, and the
-        batch axes and their positions are kept. The input and output
-        systems, and the axes of the elements, are swapped.
+        The batch axes and their positions are kept, and the input and
+        output systems, and the axes of the elements, are swapped. The
+        general form holds the inverse of each element, which may be a
+        lazy inverse. A stacked batch computes the inverses on its whole
+        stack.
 
         Parameters
         ----------
@@ -386,12 +423,8 @@ class BatchedTransformation(
         BatchedTransformation
             The batch of the inverses.
         """
-        # A type whose name states a direction, such as `VoxelToLPS`,
-        # inverts to the type of its pair.
-        reverse = getattr(self.element_type, "_reverseof", None)
-        obj = BatchedTransformation(
-            reverse or self.element_type,
-            self._inverse_data(),
+        obj = self._rebuild(
+            self._inverse_storage(),
             input_axes=self.output_axes,
             output_axes=self.input_axes,
             positions=self._positions,
@@ -400,12 +433,46 @@ class BatchedTransformation(
         )
         return obj.compute(**kwargs) if compute else obj
 
-    def _inverse_data(self) -> ArrayProtocol:
-        # The data of the inverses of the elements. Each typed subclass
-        # computes it on the stack.
-        raise NotImplementedError(
-            f"The inverse of a batch of {self.element_type.__name__} is "
-            f"not implemented."
+    def as_backend(
+        self,
+        backend: tx.Any = None,
+        *,
+        device: tx.Any = None,
+        inplace: bool = False,
+    ) -> tx.Self:
+        """Return the batch with the data of its elements on a backend.
+
+        Parameters
+        ----------
+        backend : str | module, optional
+            The setting. By default, the current setting is used.
+        device : str | int, optional
+            The device for converted arrays.
+        inplace : bool, default=False
+            Whether the elements of this batch are replaced and this batch
+            is returned, instead of a new batch.
+
+        Returns
+        -------
+        BatchedTransformation
+            A batch of the same class.
+        """
+        converted = np.empty(self.batch_shape, dtype=object)
+        for index in np.ndindex(*self.batch_shape):
+            element = self._elements[index]
+            converted[index] = element.as_backend(
+                backend, device=device, inplace=inplace
+            )
+        if inplace:
+            self._elements = converted
+            return self
+        return self._rebuild(
+            converted,
+            input_axes=self._input_axes,
+            output_axes=self._output_axes,
+            positions=self._positions,
+            input=self._input,
+            output=self._output,
         )
 
     @classmethod
@@ -416,19 +483,19 @@ class BatchedTransformation(
     ) -> "BatchedTransformation":
         """Build a batch from transformations that already exist.
 
-        The data of the elements is copied into one array, along a new
-        leading dimension. The elements must have the same type and the
-        same shape, and their systems, when they have any, must be equal.
-        The batch axis comes first in the space, and `batch_axis`
-        describes it in the input and output systems. A batch built from
-        an array that already holds the stack should use the class method
-        `batch` of the element type instead, which copies nothing.
+        The batch has one batch axis, which comes first in the space, and
+        `batch_axis` describes it in the input and output systems. The
+        elements may have different types, but they must have the same
+        numbers of axes and, when they have any, the same systems. The
+        result is a general batch, which holds the elements as they are.
+        A batch built from an array that already holds the parameters of
+        all its elements should use the class method `batch` of the
+        element type instead.
 
         Parameters
         ----------
         elements : iterable of Transformation
-            The transformations to stack, all of the same matrix or vector
-            type.
+            The transformations to stack.
         batch_axis : Axis, optional
             Description of the batch axis. An axis about which nothing is
             known is used when it is not given.
@@ -441,39 +508,21 @@ class BatchedTransformation(
         Raises
         ------
         ValueError
-            If no element is given, or if the elements differ in type,
-            shape or systems.
-        TypeError
-            If an element is not a matrix or a vector type.
+            If no element is given, or if the elements differ in their
+            numbers of axes or in their systems.
         """
         elements = list(elements)
         if not elements:
             raise ValueError("A batch needs at least one element.")
         first = elements[0]
-        element_type = _element_type(type(first))
-        shape = np.shape(first.data)
         for element in elements[1:]:
-            if _element_type(type(element)) is not element_type:
-                raise ValueError(
-                    f"The elements of a batch must have the same type, but "
-                    f"a {type(element).__name__} follows a "
-                    f"{type(first).__name__}."
-                )
-            if np.shape(element.data) != shape:
-                raise ValueError(
-                    f"The elements of a batch must have the same shape, "
-                    f"but {np.shape(element.data)} differs from {shape}."
-                )
             if element.input != first.input or element.output != first.output:
                 raise ValueError(
                     "The elements of a batch must have the same input and "
                     "output systems."
                 )
-        xp = array_backend(first.data)
-        data = xp.stack([xp.asarray(element.data) for element in elements])
         return BatchedTransformation(
-            element_type,
-            data,
+            _object_array(elements),
             input=_prepend(first.input, batch_axis),
             output=_prepend(first.output, batch_axis),
         )
@@ -534,15 +583,140 @@ class BatchedTransformation(
 
 
 # ----------------------------------------------------------------------
-#   TYPED BATCHES
+#   STACKED BATCHES
 # ----------------------------------------------------------------------
 
 
+class _StackedBatch(BatchedTransformation[TRANSFORMATION]):
+    """Base class of the batches that stack the data of their elements.
+
+    The elements have one matrix or vector type, `element_type`, and their
+    parameters are stacked in `data`, whose leading dimensions index the
+    elements. An element is created only when it is asked for, as a view
+    of the stack. The subclass that the constructor builds is chosen from
+    the element type.
+    """
+
+    # --- class attributes ---------------------------------------------
+
+    data_fields: _FieldNames = (
+        "element_type",
+        "data",
+        "input_axes",
+        "output_axes",
+        "positions",
+    )
+
+    # --- attributes ---------------------------------------------------
+
+    _elements: Forget
+
+    data = smartproperty("data", fset=False)
+
+    # --- storage ------------------------------------------------------
+
+    def _check_storage(self) -> None:
+        self.element_type = _element_type(self.element_type)
+        if self._data is None:
+            raise ValueError(
+                f"A batch of {self.element_type.__name__} needs the data "
+                f"of its elements."
+            )
+        ndim = self.element_type._element_ndim
+        if np.ndim(self._data) <= ndim:
+            raise ValueError(
+                f"The data of a batch of {self.element_type.__name__} must "
+                f"have more than {ndim} dimensions, because its leading "
+                f"dimensions index the elements, but it has "
+                f"{np.ndim(self._data)}."
+            )
+
+    @property
+    def batch_shape(self) -> tx.Tuple[int, ...]:
+        """Number of elements along each batch axis."""
+        ndim = int(np.ndim(self.data)) - self.element_type._element_ndim
+        return tuple(int(n) for n in np.shape(self.data)[:ndim])
+
+    @property
+    def element_counts(self) -> tx.Tuple[int, int]:
+        """Numbers of input and output axes of one element."""
+        return self._element_counts(np.shape(self.data))
+
+    def _element_counts(self, shape: tx.Tuple[int, ...]) -> tx.Tuple[int, int]:
+        # The numbers of input and output axes of an element, read from the
+        # shape of the stack. A vector type maps a space to itself.
+        n = int(shape[-1])
+        return n, n
+
+    @property
+    def elements(self) -> np.ndarray:
+        """Transformations of the elements, as an array of objects.
+
+        Each element is created from a view of the stack.
+        """
+        elements = np.empty(self.batch_shape, dtype=object)
+        for index in np.ndindex(*self.batch_shape):
+            elements[index] = self._element(index)
+        return elements
+
+    def _element(self, key: tx.Tuple[int, ...]) -> Transformation:
+        return self.element_type(
+            self.data[key],
+            input=self.element_input,
+            output=self.element_output,
+        )
+
+    def _take(self, key: tx.Tuple[tx.Union[int, slice], ...]) -> tx.Any:
+        return self.data[key]
+
+    def _rebuild(self, storage: tx.Any, **changes) -> "BatchedTransformation":
+        element_type = changes.pop("element_type", self.element_type)
+        return BatchedTransformation(
+            element_type=element_type, data=storage, **changes
+        )
+
+    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
+        # A type whose name states a direction, such as `VoxelToLPS`,
+        # inverts to the type of its pair.
+        reverse = getattr(self.element_type, "_reverseof", None)
+        obj = self._rebuild(
+            self._inverse_storage(),
+            element_type=reverse or self.element_type,
+            input_axes=self.output_axes,
+            output_axes=self.input_axes,
+            positions=self._positions,
+            input=self._output,
+            output=self._input,
+        )
+        return obj.compute(**kwargs) if compute else obj
+
+    inverse.__doc__ = BatchedTransformation.inverse.__doc__
+
+    def _inverse_storage(self) -> ArrayProtocol:
+        # The data of the inverses of the elements. Each typed subclass
+        # computes it on the stack.
+        raise NotImplementedError(
+            f"The inverse of a batch of {self.element_type.__name__} is "
+            f"not implemented."
+        )
+
+    def as_backend(
+        self,
+        backend: tx.Any = None,
+        *,
+        device: tx.Any = None,
+        inplace: bool = False,
+    ) -> tx.Self:
+        # The parameters of matrix and vector types are small NumPy arrays
+        # whatever the backend, as for the types themselves.
+        return self
+
+
 class BatchedAffine(
-    BatchedTransformation[Affine],
+    _StackedBatch[Affine],
     on={"element_type": partial(_subclass_of, Affine, PLACEHOLDER)},
 ):
-    """A batch of affine transformations.
+    """A stacked batch of affine transformations.
 
     `data` has the shape `(*batch, No, Ni+1)`. Its `matrix` view gives the
     matrices of the elements, which are the exponentials of `data` when
@@ -589,17 +763,17 @@ class BatchedAffine(
     def _element_counts(self, shape: tx.Tuple[int, ...]) -> tx.Tuple[int, int]:
         return int(shape[-1]) - 1, int(shape[-2])
 
-    def _inverse_data(self) -> ArrayProtocol:
+    def _inverse_storage(self) -> ArrayProtocol:
         if _is_tangent(self.element_type):
             return -self.data
         return affine_inv(self.data)
 
 
 class BatchedLinear(
-    BatchedTransformation[Linear],
+    _StackedBatch[Linear],
     on={"element_type": partial(_subclass_of, Linear, PLACEHOLDER)},
 ):
-    """A batch of linear transformations, rotations included.
+    """A stacked batch of linear transformations, rotations included.
 
     `data` has the shape `(*batch, No, Ni)`. Its `matrix` view gives the
     matrices of the elements, which are the exponentials of `data` when
@@ -630,7 +804,7 @@ class BatchedLinear(
     def _element_counts(self, shape: tx.Tuple[int, ...]) -> tx.Tuple[int, int]:
         return int(shape[-1]), int(shape[-2])
 
-    def _inverse_data(self) -> ArrayProtocol:
+    def _inverse_storage(self) -> ArrayProtocol:
         if _is_tangent(self.element_type):
             return -self.data
         if issubclass(self.element_type, Rotation):
@@ -639,10 +813,10 @@ class BatchedLinear(
 
 
 class BatchedScaling(
-    BatchedTransformation[Scaling],
+    _StackedBatch[Scaling],
     on={"element_type": partial(_subclass_of, Scaling, PLACEHOLDER)},
 ):
-    """A batch of scalings.
+    """A stacked batch of scalings.
 
     `data` has the shape `(*batch, N)`. Its `scale` view gives the factors
     of the elements, which are the exponentials of `data` when the element
@@ -670,17 +844,17 @@ class BatchedScaling(
         tangent = _is_tangent(self.element_type)
         self._data = array_backend(value).log(value) if tangent else value
 
-    def _inverse_data(self) -> ArrayProtocol:
+    def _inverse_storage(self) -> ArrayProtocol:
         if _is_tangent(self.element_type):
             return -self.data
         return 1 / self.data
 
 
 class BatchedTranslation(
-    BatchedTransformation[Translation],
+    _StackedBatch[Translation],
     on={"element_type": partial(_subclass_of, Translation, PLACEHOLDER)},
 ):
-    """A batch of translations.
+    """A stacked batch of translations.
 
     `data` has the shape `(*batch, N)`, and its `translation` view gives the
     translations of the elements.
@@ -704,15 +878,15 @@ class BatchedTranslation(
     def translation(self, value: ArrayProtocol) -> None:
         self._data = value
 
-    def _inverse_data(self) -> ArrayProtocol:
+    def _inverse_storage(self) -> ArrayProtocol:
         return -self.data
 
 
 class BatchedPermutation(
-    BatchedTransformation[Permutation],
+    _StackedBatch[Permutation],
     on={"element_type": partial(_subclass_of, Permutation, PLACEHOLDER)},
 ):
-    """A batch of permutations of the axes.
+    """A stacked batch of permutations of the axes.
 
     `data` has the shape `(*batch, N)`, and its `permutation` view gives the
     permutations of the elements.
@@ -736,7 +910,7 @@ class BatchedPermutation(
     def permutation(self, value: ArrayProtocol) -> None:
         self._data = value
 
-    def _inverse_data(self) -> ArrayProtocol:
+    def _inverse_storage(self) -> ArrayProtocol:
         return array_backend(self.data).argsort(self.data, axis=-1)
 
 
@@ -745,15 +919,50 @@ class BatchedPermutation(
 # ----------------------------------------------------------------------
 
 
-def _element_type(element_type: tx.Any) -> tx.Type[_CompactTransformation]:
-    """Return the data-model class of the elements of a batch.
+def _object_array(elements: tx.Any) -> np.ndarray:
+    """Return the transformations of a batch as an array of objects.
 
-    The elements of a batch are matrix or vector types, which state the
-    number of dimensions of the data of one element. The class of a file
-    format is replaced by its data model, because the metadata of a
+    A nested list or tuple is read as the grid of the batch, and each of
+    its leaves must be a transformation. An array of objects is returned
+    as it is. NumPy is not asked to infer the shape, because a sequence of
+    transformations, or a batch, is itself iterable.
+    """
+    if isinstance(elements, np.ndarray) and elements.dtype == object:
+        return elements
+    shape = []
+    level = elements
+    while isinstance(level, (list, tuple)):
+        shape.append(len(level))
+        if not level:
+            break
+        level = level[0]
+    array = np.empty(tuple(shape), dtype=object)
+    for index in np.ndindex(*shape):
+        value = elements
+        for i in index:
+            if not isinstance(value, (list, tuple)):
+                raise ValueError(
+                    "The elements of a batch must form a regular grid."
+                )
+            value = value[i]
+        if not isinstance(value, Transformation):
+            raise TypeError(
+                f"The elements of a batch must be transformations, not "
+                f"{type(value).__name__}."
+            )
+        array[index] = value
+    return array
+
+
+def _element_type(element_type: tx.Any) -> tx.Type[_CompactTransformation]:
+    """Return the data-model class of the elements of a stacked batch.
+
+    The elements of a stacked batch are matrix or vector types, which
+    state the number of dimensions of the data of one element. The class of
+    a file format is replaced by its data model, because the metadata of a
     format describes a record of a file and not an element of a batch. A
-    lazy wrapper, such as an inverse, is refused, since it holds no data
-    of its own.
+    lazy wrapper, such as an inverse, is refused, since it holds no data of
+    its own.
     """
     if not isinstance(element_type, type):
         raise TypeError(
@@ -763,14 +972,11 @@ def _element_type(element_type: tx.Any) -> tx.Type[_CompactTransformation]:
     model = element_type._data_model()
     ndim = getattr(model, "_element_ndim", None)
     wrapper = getattr(model, "_operator", None) is not None
-    if (
-        not issubclass(model, _CompactTransformation)
-        or ndim is None
-        or wrapper
-    ):
+    compact = issubclass(model, _CompactTransformation)
+    if not compact or ndim is None or wrapper:
         raise TypeError(
-            f"A batch holds matrix or vector transformations, such as "
-            f"Affine or Scaling, not {element_type.__name__}."
+            f"A stacked batch holds matrix or vector transformations, such "
+            f"as Affine or Scaling, not {element_type.__name__}."
         )
     return model
 

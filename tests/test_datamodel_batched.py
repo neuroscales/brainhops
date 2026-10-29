@@ -21,8 +21,10 @@ from brainhops.datamodel.transformations import (
     Permutation,
     Rotation,
     Scaling,
+    Sequence,
     Transformation,
     Translation,
+    is_identity,
     is_kind,
 )
 
@@ -145,17 +147,19 @@ def test_a_batch_needs_a_batch_dimension() -> None:
 
 
 @pytest.mark.parametrize("element_type", [Identity, BatchedAffine])
-def test_only_matrix_and_vector_types_are_batched(
+def test_only_matrix_and_vector_types_are_stacked(
     element_type: tx.Type[Transformation],
 ) -> None:
-    with pytest.raises(TypeError, match="matrix or vector transformations"):
-        BatchedTransformation(element_type, np.zeros((2, 3, 4)))
+    with pytest.raises(TypeError, match="No stacked batch"):
+        BatchedTransformation(
+            element_type=element_type, data=np.zeros((2, 3, 4))
+        )
 
 
-def test_a_lazy_inverse_is_not_an_element_type() -> None:
+def test_a_lazy_inverse_is_not_a_stacked_element_type() -> None:
     lazy = type(Affine(np.eye(3, 4)).inverse())
     with pytest.raises(TypeError, match="matrix or vector transformations"):
-        BatchedTransformation(lazy, np.zeros((2, 3, 4)))
+        BatchedTransformation(element_type=lazy, data=np.zeros((2, 3, 4)))
 
 
 def test_a_batch_is_not_registered_as_a_kind() -> None:
@@ -284,23 +288,27 @@ def test_the_inverse_swaps_the_axes_and_the_systems() -> None:
 # --- stack ------------------------------------------------------------
 
 
-def test_stack_builds_a_batch_from_its_elements() -> None:
-    stack = _affines()
+def test_stack_builds_a_general_batch_from_its_elements() -> None:
     system = _system("xyz")
-    elements = [Affine(m, input=system, output=system) for m in stack]
+    elements = [Affine(m, input=system, output=system) for m in _affines()]
     batch = BatchedTransformation.stack(elements, batch_axis=Axis(name="t"))
-    assert isinstance(batch, BatchedAffine)
-    np.testing.assert_array_equal(batch.data, stack)
+    assert type(batch) is BatchedTransformation
+    assert batch.batch_shape == (5,)
     assert [a.name for a in batch.input.axes] == ["t", "x", "y", "z"]
-    assert batch[2].input == system
+    assert batch[2] is elements[2]
+
+
+def test_stack_accepts_elements_of_different_types() -> None:
+    elements = [Affine(np.eye(3, 4)), Linear(np.eye(3)), Scaling([1, 2, 3])]
+    batch = BatchedTransformation.stack(elements)
+    assert [type(e) for e in batch] == [Affine, Linear, Scaling]
 
 
 @pytest.mark.parametrize(
     "elements, match",
     [
         ([], "at least one element"),
-        ([Affine(np.eye(3, 4)), Linear(np.eye(3))], "same type"),
-        ([Affine(np.eye(3, 4)), Affine(np.eye(2, 3))], "same shape"),
+        ([Affine(np.eye(3, 4)), Affine(np.eye(2, 3))], "same numbers"),
         (
             [Affine(np.eye(3, 4)), Affine(np.eye(3, 4), input=_system("xyz"))],
             "same input and output systems",
@@ -323,3 +331,77 @@ def test_the_inverse_of_a_directed_type_is_the_type_of_its_pair() -> None:
     batch = VoxelToLPS.batch(_affines())
     assert batch.element_type is VoxelToLPS
     assert batch.inverse().element_type is LPSToVoxel
+
+
+# --- general form -----------------------------------------------------
+
+
+def _chains() -> tx.List[Transformation]:
+    # Chains of different lengths, which no single array can hold.
+    return [
+        Sequence([Scaling([1.0, 2.0, 3.0])]),
+        Sequence([Scaling([2.0, 2.0, 2.0]), Affine(np.eye(3, 4))]),
+        Sequence([Translation([1.0, 0.0, 0.0])]),
+    ]
+
+
+def test_a_general_batch_holds_transformations_of_any_type() -> None:
+    chains = _chains()
+    batch = BatchedTransformation(chains, input_axes=[0, 1, 2])
+    assert type(batch) is BatchedTransformation
+    assert batch.batch_shape == (3,)
+    assert batch.counts == (4, 4)
+    assert batch.batch_input_axes == batch.batch_output_axes == [3]
+    assert [element for element in batch] == chains
+    assert batch.elements.dtype == object
+
+
+def test_a_nested_list_gives_a_grid_of_elements() -> None:
+    affines = [[Affine(m) for m in _affines(3)] for _ in range(2)]
+    batch = BatchedTransformation(affines)
+    assert batch.batch_shape == (2, 3)
+    assert batch.batch_input_axes == [0, 1]
+    assert batch[1, 2] is affines[1][2]
+    part = batch[1]
+    assert part.batch_shape == (3,)
+    assert part.counts == (4, 4)
+
+
+def test_a_general_slice_keeps_its_positions() -> None:
+    batch = BatchedTransformation(_chains(), positions=[[0.0, 2.0, 4.0]])
+    part = batch[1:]
+    assert type(part) is BatchedTransformation
+    np.testing.assert_array_equal(part.positions[0], [2.0, 4.0])
+
+
+def test_the_inverse_of_a_general_batch_inverts_each_element() -> None:
+    chains = _chains()
+    inverse = BatchedTransformation(chains).inverse()
+    assert type(inverse) is BatchedTransformation
+    for element, chain in zip(inverse, chains):
+        assert is_identity((element @ chain).compute(), compute=True)
+
+
+@pytest.mark.parametrize(
+    "elements, error, match",
+    [
+        (None, ValueError, "needs the transformations"),
+        ([], ValueError, "at least one element"),
+        (
+            [Affine(np.eye(3, 4)), "affine"],
+            TypeError,
+            "must be transformations",
+        ),
+        (
+            [[Affine(np.eye(3, 4))], Affine(np.eye(3, 4))],
+            ValueError,
+            "regular",
+        ),
+        ([Identity(), Identity()], ValueError, "must be known"),
+    ],
+)
+def test_a_general_batch_refuses_elements_that_do_not_fit(
+    elements: tx.Any, error: tx.Type[Exception], match: str
+) -> None:
+    with pytest.raises(error, match=match):
+        BatchedTransformation(elements)
