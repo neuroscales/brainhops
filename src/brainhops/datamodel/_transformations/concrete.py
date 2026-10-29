@@ -90,12 +90,14 @@ def _invalidating_property(*args, **kwargs) -> property:
 
 
 def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
-    """Raise a `ValueError` if `value` holds more than one element.
+    """Raise a `ValueError` unless `value` holds exactly one element.
 
     A matrix type holds one matrix and a vector type holds one vector, so
-    their data may not have leading dimensions that stack several of them.
-    Without this check, a stack would be read as a single element, and a
-    view such as `matrix[:, :-1]` would select the wrong axis.
+    their data has exactly two or one dimensions. A stack of elements has
+    leading dimensions, and it would otherwise be read as a single
+    element, so that a view such as `matrix[:, :-1]` would select the
+    wrong axis. A scalar is refused too, because the number of axes of a
+    transformation is read from the length of its vector.
 
     The data is annotated as `npmatrix` or `npvector`, which names the
     number of dimensions, but the converter of bagof checks only the type
@@ -106,12 +108,17 @@ def _require_element(obj: "_CompactTransformation", value: tx.Any) -> None:
     if value is None or ndim is None:
         return
     value_ndim = np.ndim(value)
+    what = "matrix" if ndim == 2 else "vector"
     if value_ndim > ndim:
-        what = "matrix" if ndim == 2 else "vector"
         raise ValueError(
-            f"{type(obj).__name__} holds a single {what}, so its data may "
-            f"have at most {ndim} dimensions, but it has {value_ndim}. A "
-            f"stack of transformations is not supported yet."
+            f"{type(obj).__name__} holds a single {what}, so its data must "
+            f"have {ndim} dimensions, but it has {value_ndim}. A stack of "
+            f"transformations is not supported yet."
+        )
+    if value_ndim < ndim:
+        raise ValueError(
+            f"{type(obj).__name__} holds a {what}, so its data must have "
+            f"{ndim} dimensions, but it has {value_ndim}."
         )
 
 
@@ -1120,6 +1127,12 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- class attributes ---------------------------------------------
 
+    # The scaling factors are a vector with one factor per axis, so a
+    # scalar is refused. A scalar could stand for an isotropic scaling of
+    # a space whose number of axes is unknown, but nothing supports it:
+    # the number of axes is read from the length of the vector, and the
+    # vector would have to be expanded to the number of axes of the
+    # systems or of a neighbour before it is converted or composed.
     _element_ndim: tx.ClassVar[tx.Optional[int]] = 1
 
     map_field: _FieldNames = "scale"
