@@ -39,7 +39,7 @@ from brainhops.io.images.n5 import (  # noqa: E402
     N5MultiScaleImage,
     N5Raw,
 )
-from brainhops.io.images.n5._data import _N5Proxy, node_location  # noqa: E402
+from brainhops.io.images.n5._data import N5Proxy, node_location  # noqa: E402
 from brainhops.io.metadata import MetadataFormat  # noqa: E402
 
 _COMPRESS = {
@@ -131,7 +131,7 @@ def test_blocks_are_read_as_the_specification_writes_them(
     write_dataset(tmp_path / "d", data, (2, 2, 3), compression)
     image = io.images.load(tmp_path / "d")
     assert isinstance(image, N5Image)
-    assert isinstance(image.rawdata, _N5Proxy)
+    assert isinstance(image.rawdata, N5Proxy)
     assert image.shape == (5, 3, 4)
     assert image.rawdata.dtype == np.dtype("uint16")
     assert np.array_equal(np.asarray(image.rawdata), data)
@@ -530,7 +530,7 @@ def test_a_pyramid_is_read_whole_and_lazily(tmp_path: tx.Any) -> None:
         assert isinstance(level, N5Image)
         assert level.level == index
         assert level.metadata is pyramid.metadata
-        assert isinstance(level.rawdata, _N5Proxy)
+        assert isinstance(level.rawdata, N5Proxy)
         assert level.rawdata._store is None
     step = 4
     expected = data[::step, ::step]

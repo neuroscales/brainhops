@@ -10,15 +10,18 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import declined, no_options
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
-    SnifferContentError,
     TextFileReader,
     TextFileWriter,
 )
-from brainhops.io.common._arrays import ArrayContainerError, read_text_array
+from brainhops.io.common._internal_api import (
+    ArrayContainerError,
+    read_text_array,
+)
 
 _NDIM = 3
 """The number of spatial dimensions of an MRtrix linear transform."""
@@ -32,6 +35,9 @@ _HISTORY = "command_history"
 
 _CENTRE = "centre"
 """The key in which `mrregister` records the centre of rotation."""
+
+_OPTION_OWNER = "MRtrix linear transform"
+"""What refuses unknown options, as the error message names it."""
 
 _VERSION = "(version="
 """What MRtrix appends to every `command_history` entry (`core/app.cpp`)."""
@@ -138,9 +144,9 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
             if isinstance(text, bytes):
                 text = text.decode("utf-8")
         except UnicodeDecodeError as e:
-            return _declined(error, "The content is not text.", e)
+            return declined(error, "The content is not text.", e)
         if len(text) > _SNIFF_LIMIT:
-            return _declined(error, "The content is too long.", None)
+            return declined(error, "The content is too long.", None)
         return cls.sniff_lines(text.splitlines(), error=error)
 
     @classmethod
@@ -179,10 +185,10 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
         try:
             _matrix(lines)
         except ParserContentError as e:
-            return _declined(error, str(e), e)
+            return declined(error, str(e), e)
         score = _signature(_comment_keyval(lines))
         if not score:
-            return _declined(
+            return declined(
                 error,
                 "A text matrix without the comments that MRtrix writes. "
                 "Read it with hint='mrtrix.linear' if it is an MRtrix "
@@ -217,7 +223,7 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
         ParserContentError
             If the text does not hold a `(3, 4)` or `(4, 4)` matrix.
         """
-        _no_options(kwargs)
+        no_options(kwargs, _OPTION_OWNER)
         lines = text.splitlines()
         return cls(
             matrix=_matrix(lines),
@@ -278,7 +284,7 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
         TypeError
             If an option is given.
         """
-        _no_options(kwargs)
+        no_options(kwargs, _OPTION_OWNER)
         if self.stored is not None and _parsed(self.stored) == self:
             return self.stored
         return "".join(line + "\n" for line in self.to_lines())
@@ -303,7 +309,7 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
         TypeError
             If an option is given.
         """
-        _no_options(kwargs)
+        no_options(kwargs, _OPTION_OWNER)
         lines = []
         for key, value in self.keyval.items():
             for line in str(value).split("\n"):
@@ -349,20 +355,6 @@ class MrtrixLinearRaw(TextFileReader, TextFileWriter):
 # ----------------------------------------------------------------------
 #   HELPERS
 # ----------------------------------------------------------------------
-
-
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader or a writer that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(
-            f"Unknown MRtrix linear transform option(s): {', '.join(kwargs)}"
-        )
 
 
 def _matrix(lines: tx.List[str]) -> np.ndarray:
@@ -426,16 +418,3 @@ def _parsed(text: str) -> MrtrixLinearRaw:
     return MrtrixLinearRaw(
         matrix=_matrix(lines), keyval=_comment_keyval(lines)
     )
-
-
-def _declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    message: str,
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline sniffed content, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error(message) from failure
-    return Confidence.NO

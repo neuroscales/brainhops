@@ -6,8 +6,8 @@ from ..axes import AxisTuple
 from .base import AXIS, CoordinateSystem
 from .dispatch import is2d, is3d
 
-_2Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS]
-_3Axes: tx.TypeAlias = AxisTuple[AXIS, AXIS, AXIS]
+TwoAxes: tx.TypeAlias = AxisTuple[AXIS, AXIS]
+ThreeAxes: tx.TypeAlias = AxisTuple[AXIS, AXIS, AXIS]
 
 
 class CoordinateSystem2D(CoordinateSystem, on={"axes": is2d}):
@@ -21,7 +21,7 @@ class CoordinateSystem2D(CoordinateSystem, on={"axes": is2d}):
         The name of the system, if any.
     """
 
-    axes: Inherit[_2Axes] = Factory()
+    axes: Inherit[TwoAxes] = Factory()
 
 
 class CoordinateSystem3D(CoordinateSystem, on={"axes": is3d}):
@@ -35,4 +35,4 @@ class CoordinateSystem3D(CoordinateSystem, on={"axes": is3d}):
         The name of the system, if any.
     """
 
-    axes: Inherit[_3Axes] = Factory()
+    axes: Inherit[ThreeAxes] = Factory()

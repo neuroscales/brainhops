@@ -6,14 +6,11 @@ import typing_extensions as tx
 from bagof.magic import Alias, Inherit, NoRepr, replace
 
 # internals
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
@@ -26,20 +23,21 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
-from brainhops.io.transformations.base._conversions import affine_between
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
+from brainhops.io.transformations.base._internal_api import affine_between
 
 # this format
 from ._formats import AfniAffineFormat
 from ._geometry import cardinal_to_real_matrix
 from ._metadata import AfniAffineMetadata
-from ._raw import _COMMENT, AfniAffineRaw
+from ._raw import COMMENT, AfniAffineRaw
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
 
-_LPS = _systems.LPSmm()
-"""The DICOM world of AFNI, which is LPS in millimetres."""
 
 _BASE = ("base", "reference", "ref")
 """The names of the option that gives the base image."""
@@ -395,7 +393,7 @@ class AfniAffine(
         if record is not None:
             comment = record.comment
         else:
-            comment = _COMMENT if oneline else None
+            comment = COMMENT if oneline else None
         record = AfniAffineRaw(
             matrices=matrices, comment=comment, oneline=oneline
         )
@@ -527,7 +525,9 @@ def _encoded_matrices(
         matrix=matrix, input=xform._input, output=xform._output
     )
     try:
-        lps = affine_between(plain, _LPS, _LPS, AfniAffine)
+        lps = affine_between(
+            plain, _systems.LPSmm(), _systems.LPSmm(), AfniAffine
+        )
     except ConversionError as error:
         raise UnrepresentableTransformationError(str(error)) from error
     if xform.base is not None:

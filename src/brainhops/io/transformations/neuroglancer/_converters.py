@@ -22,18 +22,15 @@ that it converts.
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
+from brainhops.datamodel._internal_api import convert_withlog, converter
 from brainhops.io.base.parsers import UnrepresentableTransformationError
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
     format_options,
     unrepresentable,
 )
 
-from ._xform import NeuroglancerTransform, _encoded
+from ._xform import NeuroglancerTransform, encoded
 
 
 @converter(_xforms.Identity, NeuroglancerTransform)
@@ -55,7 +52,7 @@ def _(
     matrix = affine_between(t, t.input, t.output, cls)
     result = cls(matrix=matrix[:-1], input=t.input, output=t.output, **options)
     try:
-        _encoded(result)
+        encoded(result)
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     return result
@@ -68,4 +65,4 @@ def _(
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)

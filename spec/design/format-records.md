@@ -240,7 +240,7 @@ holds the values as the writer converts them, with the rounding and the
 clipping of the writer, and its record holds the header that the writer
 writes. NIfTI writes the encoded image to bytes and reads it again, so
 that `rawdata` is a lazy array of the stored voxels in memory and the
-record holds the scaling that nibabel chose (`_stored_parts` in
+record holds the scaling that nibabel chose (`stored_parts` in
 `io/common/nifti/_header.py`). MGH, AFNI and NRRD encode the voxels with
 their writer and decode them with their reader. MRtrix encodes them with
 its writer, and `rawdata` is then a lazy array of those bytes, which
@@ -813,9 +813,9 @@ of the conformance test and the toy pyramid. The later steps move
 Pillow, then Zarr and OME-Zarr, TIFF and OpenSlide, and then update the
 open pull requests of pyramid formats. Pass 4c moves TIFF: `TiffRaw`
 records one series of a TIFF file, `TiffMetadata` holds it, and the lazy
-array `_TiffProxy` reads one level. Pass 4d moves OpenSlide:
+array `TiffProxy` reads one level. Pass 4d moves OpenSlide:
 `OpenSlideRaw` records what OpenSlide reports about a slide of any
-vendor, `OpenSlideMetadata` holds it, and the lazy array `_SlideArray`
+vendor, `OpenSlideMetadata` holds it, and the lazy array `SlideArray`
 reads one level region by region. The class variable workaround of
 FLIRT is removed once it is decided whether `moving` and `reference`
 belong to the format or to the record.
@@ -887,7 +887,7 @@ its status.
    `dim_info`, `slice_*` and the extensions now survive a save, but
    `dim_info` and `slice_*` become stale when the writer transposes the
    axes. The intent of the record now also takes precedence over
-   `like=`, because `_apply_like` copies the intent only when it is 0.
+   `like=`, because `apply_like` copies the intent only when it is 0.
    Status: open.
 5. A NIfTI affine has two sources, a matrix in `rawdata` or the `sform`
    of the record, and the inverse of an affine that comes from the
@@ -987,7 +987,7 @@ its status.
     Status: resolved by pending data. Within a format, `from_instance`
     copies `_data` as it is stored, so copies stay lazy and an untouched
     object is still saved byte for byte, and the special case of
-    `_FileBasedModelMixin` that passed `data=None` is deleted. From
+    `FileBasedModelMixin` that passed `data=None` is deleted. From
     another class, it reads the decoded `data` of a format that takes
     `data` over. The data model of a transformation copies the decoded
     view of another instance (item 35), so `LtaTransformation` and the
@@ -1019,7 +1019,7 @@ its status.
     registered escapes it. `NiftiRASToVoxel` is not registered, so a
     separate test checks that it is saved byte for byte. Status: open,
     and partly addressed in pass 1c.
-22. `MetadataFormat` also inherits `_FileBasedModelMixin`, which is
+22. `MetadataFormat` also inherits `FileBasedModelMixin`, which is
     needed for `from_any(file)` and for the reset of fields when
     copying from another format. The base list of the plan did not
     include it. Status: open.
@@ -1047,12 +1047,12 @@ its status.
     stored scaling changed when the structural fields were reset.
     Status: resolved in pass 1b, where the scaling is read with
     `.item()` before the reset.
-27. `_new_nifti` builds the nibabel image twice, so that nibabel
+27. `new_nifti` builds the nibabel image twice, so that nibabel
     validates the data type and applies its policy on 64-bit integers.
     The array is not copied. Status: accepted.
 28. Code in the FSL formats and in `_like_header` reached the record
     through attributes, as in `metadata.raw.header`. Status: resolved
-    in pass 1c, where the helper `_header(obj)`
+    in pass 1c, where the helper `header_of(obj)`
     (`io/common/nifti/_header.py:174`) replaces these lookups in the
     FSL, ITK, NiftyReg and FNIRT formats. The helper still falls back on
     the `header` attribute for nibabel images and MGH images, which is
@@ -1074,7 +1074,7 @@ its status.
 32. `NiftiReaderWriter.from_filename` parses the header twice when it
     reads a local path, once for the record and once for the nibabel
     image. Status: accepted.
-33. `_reset_structural_fields` also resets `xyzt_units`, so a field
+33. `reset_structural_fields` also resets `xyzt_units`, so a field
     written from a new chain of transformations declares unknown units,
     as it did before pass 1c when the header was built from scratch.
     Status: accepted.
@@ -1278,7 +1278,7 @@ its status.
 72. A proxy that is built over a stream passed by the caller keeps that
     stream open (`io/common/mgh/_raw.py`), as NIfTI does (item 9).
     Status: accepted in the pass 3a review (4411bec).
-73. The FSL helper `_shape(obj)` (`io/transformations/fsl/_affines.py`)
+73. The FSL helper `spatial_shape(obj)` (`io/transformations/fsl/_affines.py`)
     reads `obj.shape`, and for an MGH image that decoded the voxels,
     because `shape` and `ndim` came from the data model
     (`datamodel/images.py`). This was a regression from
@@ -1298,7 +1298,7 @@ its status.
     (4411bec), as a rule for every image format: a header field that the
     data or `dtype=` decide cannot be overridden, and the writer refuses
     it with `WriterError`.
-77. The FSL helper `_best_affine`, for an `MghImage`, goes through
+77. The FSL helper `best_affine`, for an `MghImage`, goes through
     `MGHHeader.get_best_affine()`. For a flag-0 file that gives the
     stored geometry that the reader ignores, which was already wrong
     before pass 3a. The fix is to prefer `record.vox2ras` when the
@@ -1334,7 +1334,7 @@ its status.
     the stored text was discarded and the header was rewritten. Status:
     accepted in the pass 3b review (c7e2a4e), and the NaN case is
     resolved there, where the comparison of the records in
-    `_format_attributes` treats NaN as equal to NaN.
+    `format_attributes` treats NaN as equal to NaN.
 85. The conformance harness has a new field, `Exemplar.header_file`, for
     the formats that keep their header in a separate file
     (`tests/test_io_conformance.py`). AFNI uses it, because its header is
@@ -1353,7 +1353,7 @@ its status.
     once.
 87. Saving an AFNI image with a different compression of the BRIK file
     removed the old BRIK file, which the lazy array of the loaded image
-    still read, so the image lost its data (`_BrikProxy` in
+    still read, so the image lost its data (`BrikProxy` in
     `io/common/afni/_data.py`, and `io/images/afni/_image.py`). This was
     a loss of data, and the rule that a save never removes a file that a
     live proxy reads comes from it. Status: resolved in the pass 3b
@@ -1410,7 +1410,8 @@ its status.
     `.HEAD` name writes an uncompressed BRIK file. Status: open.
 98. The helpers `_declined` and `_sniffed_raw` are repeated in
     `io/common/afni/_raw.py` and `io/common/mrtrix/_raw.py`. Status:
-    open, and a shared helper in `io/base/parsers.py` is a candidate.
+    resolved by #592, which merges them into `declined` and
+    `sniffed_raw` in `io/base/_sniffing.py`.
 99. `_views.py` now exists in three copies, for MGH, AFNI and MRtrix, in
     line with the rule of explicit code in each format (item 74).
     Status: accepted in the pass 3b review (c7e2a4e).
@@ -1469,7 +1470,7 @@ its status.
      and the permutation of an OME-Zarr level is a field (`perm`), so
      that a copy still transposes the array that it reads. Status:
      resolved in the first pass of pending data. Since step 4b-i, a level
-     holds the permutation in its lazy array, `_ZarrProxy`
+     holds the permutation in its lazy array, `ZarrProxy`
      (`io/common/zarr/_data.py`), which replaces the node.
 109. An untouched object is written with its record as it is, so a NIfTI
      qform whose code is 0, or the `DISPVECT` intent of a legacy field
@@ -1480,7 +1481,7 @@ its status.
      encoded again needs a different list or a writer option. Status:
      accepted.
 110. Some readers of the record do not see what is pending. The FSL
-     helpers `_best_affine` and `_pixdim`
+     helpers `best_affine` and `_pixdim`
      (`io/transformations/fsl/_affines.py`) read `metadata.raw` of a NIfTI
      image, so after `img.transformations = ...` they still give the
      geometry of the file. `NiftiImage.system` is decoded from the
@@ -1900,7 +1901,7 @@ its status.
      and check 10 edits `row_end`, the only field of the record outside
      the matrix. Status: open, for review.
 171. `C3dAffine` repeats four short helpers of LTA (`_record`,
-     `_read_only`, `_matrix_to_model` and `_matrix_to_disk` in
+     `read_only`, `matrix_to_model` and `matrix_to_disk` in
      `io/transformations/c3d/_affine.py` and
      `io/transformations/freesurfer/lta/_xforms.py`), because the LTA
      helpers are private to their package. They could move to
@@ -1919,7 +1920,8 @@ its status.
 173. `RASToRAS` checks its systems only when it is built
      (`io/transformations/base/affines.py`), so an `input` or an `output`
      that is assigned later is not refused there. `C3dAffine.consolidate`
-     checks both systems again with the private `_check_endpoint` and
+     checks both systems again with `check_endpoint`
+     (`io/transformations/base/_endpoints.py`) and
      refuses a system that is not RAS with
      `UnrepresentableTransformationError`. `NiftyRegAffine` has no such
      check. Status: open.
@@ -2500,7 +2502,7 @@ pyramid of the conformance test and the checks P1 to P12.
      repeats all four, unchanged, in `io/transformations/c3d/_affine.py`,
      and can switch to them in a later pull request. The MNI transform,
      BigDataViewer and TrakEM2 formats repeat `_record`, but their
-     helpers `_matrix_to_model` and `_matrix_to_disk` store three rows,
+     helpers `matrix_to_model` and `matrix_to_disk` store three rows,
      or a flat row of twelve or six numbers, rather than a homogeneous
      matrix, so they are not the same helpers. Status: open.
 305. The readers refuse the options that they do not take with
@@ -2656,7 +2658,7 @@ pyramid of the conformance test and the checks P1 to P12.
      untouched transformation. Status: proposed in the elastix pass.
 325. The transform parameters of an elastix record are a read-only array,
      and the blocks decoded from the record hold read-only views of it
-     (`_read_only` in `io/transformations/elastix/_blocks.py`), so an edit
+     (`read_only` in `io/transformations/elastix/_blocks.py`), so an edit
      in place cannot change the record. SciPy refuses a read-only array, so
      `AffineLogTransform` copies the matrix before its exponential. Status:
      proposed in the elastix pass.
@@ -2676,10 +2678,13 @@ pyramid of the conformance test and the checks P1 to P12.
      `tests/test_io_elastix.py`, because the harness builds objects from
      data alone. Status: proposed in the elastix pass.
 328. The elastix formats import private names of other packages: the ITK
-     block classes and `_make_system` from `io/transformations/itk`, and
+     block classes and `make_system` from `io/transformations/itk`, and
      `_compatible` from `io/transformations/base/affines.py`, which checks
      an assigned system against LPS. ITK is moved to records at the same
-     time, so these imports may need to follow it. Status: open.
+     time, so these imports may need to follow it. Status: resolved by
+     #591, where the elastix formats import `make_system` and
+     `compatible` (now in `io/transformations/base/_endpoints.py`) from
+     the `_internal_api` modules of their packages.
 329. An elastix transformation without a record and without a chain
      raises `UnrepresentableTransformationError` when it is consolidated,
      as it did when it was written, and `ElastixMetadata` without a record
@@ -2697,7 +2702,7 @@ pyramid of the conformance test and the checks P1 to P12.
 331. Pillow encodes again whatever it writes, so an untouched raster image
      could not be saved byte for byte through Pillow. The lazy array of
      the image keeps the path or the stream of its file and gives its
-     bytes (`_PillowProxy.read_stored` in `io/images/pillow/_data.py`),
+     bytes (`PillowProxy.read_stored` in `io/images/pillow/_data.py`),
      and an image with a record, no pending data, the transformations of
      its record, and no writer option is written as those bytes when it is
      written in the format of its record. The record holds no bytes,
@@ -2813,7 +2818,7 @@ pyramid of the conformance test and the checks P1 to P12.
      1 cannot be written, and the writer asks for the option
      `zarr_version`. Status: accepted in step 4b-i.
 343. `OmeZarrImage` and `OmeZarrField` still read their group through the
-     field `node`, which the temporary parser `_ZarrNodeReaderWriter`
+     field `node`, which the temporary parser `ZarrNodeReaderWriter`
      (`io/common/zarr/_parsers.py`) keeps with its position among their
      positional fields. `OmeZarrLevel` is a `ZarrImage` whose lazy array
      permutes the stored axes, which holds the `ZarrRaw` of its own array
@@ -3057,7 +3062,7 @@ and transformations (#287).
      given by keyword would lose to the template, while a header
      override won over it before. The NIfTI writers write the
      description and the intent given by keyword again after the
-     template (`_keep_given_fields`, `io/common/nifti/_header.py`), and
+     template (`keep_given_fields`, `io/common/nifti/_header.py`), and
      the MGH writer does the same for the MRI parameters. A field that
      was only changed in the metadata still loses to the template, as
      the record did. Status: decided in pass 5a.

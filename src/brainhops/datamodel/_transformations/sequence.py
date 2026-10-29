@@ -13,14 +13,14 @@ from brainhops._core.properties import smartproperty
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _BackendsMixin
-from brainhops.datamodel.metadata._report import call_under_policy
+from brainhops.datamodel._backends import BackendsMixin
+from brainhops.datamodel.metadata._internal_api import call_under_policy
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.errors import CompositionError, ConversionError
 
 # transformations
 from . import nocycles
-from .base import Transformation, _copied
+from .base import Transformation, copied
 from .compute.check import is_kind
 from .compute.compose import compose
 from .compute.factor import factor_sequence
@@ -229,7 +229,7 @@ class Sequence(SequenceMixin, MetaTransformation):
             on_loss = kwargs.pop("on_loss", UNSET)
             on_error = kwargs.pop("on_error", UNSET)
             return call_under_policy(
-                lambda: _copied(self, _chain_to(self, cls, kwargs), copy),
+                lambda: copied(self, _chain_to(self, cls, kwargs), copy),
                 on_error,
                 on_loss=on_loss,
             )
@@ -435,7 +435,7 @@ class Sequence(SequenceMixin, MetaTransformation):
         if self.transformations is None:
             return self
         if not endpoints:
-            return self.to(transformations=_unnest(self.transformations))
+            return self.to(transformations=unnest(self.transformations))
         inp, out = self.input, self.output
         flattened = []
         for i, t in enumerate(self.transformations):
@@ -543,8 +543,8 @@ class DerivedSequence(ImmutableSequence):
 
     # The conversions of an object that stores an array, rather than
     # those of a sequence, which convert the members.
-    to_backend = _BackendsMixin.to_backend
-    as_backend = _BackendsMixin.as_backend
+    to_backend = BackendsMixin.to_backend
+    as_backend = BackendsMixin.as_backend
 
 
 # ======================================================================
@@ -613,7 +613,7 @@ def _compute_sequence(
     bridged = _insert_bridges(seq.transformations or [])
 
     # --- 2. flatten ---
-    flat = _unnest(bridged)
+    flat = unnest(bridged)
     if not flat:
         return Identity(input=seq.input, output=seq.output)
     seq = seq.to(transformations=flat)
@@ -949,33 +949,60 @@ def _is_flat(self: Sequence) -> bool:
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
-def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
-    # Flatten nested sequences without touching any endpoint (unlike
-    # `flatten()`, which may rebuild the first or last element and so read
-    # a lazy field). Generic inverses are expanded along the way.
+def unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
+    """Flatten nested chains without touching any endpoint.
+
+    Unlike `flatten()`, which may rebuild the first or the last
+    transformation and so read a lazy field, this function only unrolls
+    the nested chains. Generic inverses are expanded along the way.
+
+    Parameters
+    ----------
+    transformations : list[Transformation], optional
+        The transformations of a chain, or `None` for an empty
+        chain.
+
+    Returns
+    -------
+    list
+        The transformations, with nested chains unrolled.
+    """
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)
         if isinstance(t, Sequence):
-            flattened.extend(_unnest(t.transformations))
+            flattened.extend(unnest(t.transformations))
         else:
             flattened.append(t)
     return flattened
 
 
-def _interpolates(xform: Transformation) -> bool:
-    # Whether applying a transformation resamples through a spline, that is,
-    # whether it reaches a displacement or coordinate field. A
-    # `CartesianField` is the identity over its grid, so it does not
-    # interpolate.
+def interpolates(xform: Transformation) -> bool:
+    """Tell whether a transformation resamples through a spline.
+
+    A transformation does when it reaches a displacement field or a
+    coordinate field, possibly inside a chain, a subspace or a lazy
+    inverse. A `CartesianField` is the identity over its grid, so it
+    does not interpolate.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation, or `None`.
+
+    Returns
+    -------
+    bool
+        Whether applying `xform` interpolates a field.
+    """
     if xform is None:
         return False
     if isinstance(xform, Inverse):
-        return _interpolates(xform.forward)
+        return interpolates(xform.forward)
     if isinstance(xform, Sequence):
-        return any(_interpolates(t) for t in (xform.transformations or []))
+        return any(interpolates(t) for t in (xform.transformations or []))
     if isinstance(xform, SubspaceTransformation):
-        return _interpolates(xform.transformation)
+        return interpolates(xform.transformation)
     if isinstance(xform, CartesianField):
         return False
     if isinstance(xform, (DisplacementField, CoordinateField)):

@@ -41,7 +41,7 @@ from brainhops._core.numeric import float32_repr
 from brainhops.datamodel.metadata import ConversionReport, EncodingDirection
 
 # this format
-from ._constants import _NIFTI_FIELD_INTENTS, _NIFTI_SPECIFIC_AXES
+from ._constants import NIFTI_FIELD_INTENTS, NIFTI_SPECIFIC_AXES
 from ._raw import NiftiRaw
 
 
@@ -195,7 +195,7 @@ _XCODES = {
 
 # Intent codes that change how the axes are read; the geometry decides
 # them, never the metadata.
-_AXIS_INTENTS = frozenset(_NIFTI_SPECIFIC_AXES) | _NIFTI_FIELD_INTENTS
+_AXIS_INTENTS = frozenset(NIFTI_SPECIFIC_AXES) | NIFTI_FIELD_INTENTS
 
 # Seconds per NIfTI time unit.
 _TIME_UNITS = {"sec": 1.0, "msec": 1e-3, "usec": 1e-6}

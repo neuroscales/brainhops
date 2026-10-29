@@ -36,7 +36,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common.nifti._data import _NiftiProxy  # noqa: E402
+from brainhops.io.common.nifti._data import NiftiProxy  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinateField,
@@ -1098,11 +1098,11 @@ def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # 
 
 def test_nifti_axes_are_copies_of_the_module_templates() -> None:
     """A system read from a header never holds the shared axis templates."""
-    from brainhops.io.common.nifti._constants import _NIFTI_AXES
-    from brainhops.io.common.nifti._header import _nifti_to_axes
+    from brainhops.io.common.nifti._constants import NIFTI_AXES
+    from brainhops.io.common.nifti._header import nifti_to_axes
 
     header = nb.Nifti1Image(np.zeros((2, 3, 4, 5)), np.eye(4)).header
-    for axis, template in zip(_nifti_to_axes(header), _NIFTI_AXES):
+    for axis, template in zip(nifti_to_axes(header), NIFTI_AXES):
         assert axis == template
         assert axis is not template
 
@@ -1113,12 +1113,12 @@ def test_nifti_axes_are_copies_of_the_module_templates() -> None:
 )
 def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
     from brainhops.datamodel.units import IndexUnit
-    from brainhops.io.common.nifti._header import _nifti_to_axes
+    from brainhops.io.common.nifti._header import nifti_to_axes
 
     image = nb.Nifti1Image(np.zeros(shape, dtype="float32"), np.eye(4))
     if intent:
         image.header.set_intent(intent)
-    axes = _nifti_to_axes(image.header)
+    axes = nifti_to_axes(image.header)
     assert len(axes) == len(shape)
     assert all(isinstance(axis.unit, IndexUnit) for axis in axes)
 
@@ -1181,7 +1181,7 @@ def test_a_nibabel_image_becomes_a_proxy_and_a_record(tmp_path) -> None:  # noqa
     nifti = nb.load(str(source))
     image = NiftiImage.from_nibabel(nifti)
     # The proxy of nibabel is replaced by the lazy array of the same file.
-    assert isinstance(image.rawdata, _NiftiProxy)
+    assert isinstance(image.rawdata, NiftiProxy)
     assert image.rawdata.source == Path(source)
     assert np.array_equal(np.asarray(image.rawdata), nifti.dataobj)
     assert image.metadata.raw.header is not nifti.header

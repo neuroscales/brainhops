@@ -49,14 +49,11 @@ from brainhops._core.backends import array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.transformations import Identity
 
 # io
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     FieldParts,
     cardinal_parts,
@@ -71,8 +68,8 @@ from brainhops.io.transformations.base._conversions import (
 
 # this format
 from . import _map
-from ._axes import _to_axis
-from ._xforms import OmeZarrField, _dataset_placement
+from ._axes import to_axis
+from ._xforms import OmeZarrField, dataset_placement
 
 RAS = _systems.RASmm()
 """The world that the converter writes a field in."""
@@ -215,12 +212,12 @@ def _field(
     )
     dataset = ome.multiscales[0].datasets[0]
     spatial = list(range(1, ndim + 1))
-    voxel2world = _dataset_placement(dataset, spatial, ndim + 1)
+    voxel2world = dataset_placement(dataset, spatial, ndim + 1)
     return OmeZarrField(
         raw_levels=[stored],
         voxel2world=voxel2world,
         level_transforms=[Identity()],
-        axes=[_to_axis(axis) for axis in axes],
+        axes=[to_axis(axis) for axis in axes],
         ome=ome,
         input=RAS,
         output=RAS,

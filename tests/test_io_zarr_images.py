@@ -975,19 +975,19 @@ def test_multiscale_to_node_writes_into_a_group(tmp_path: Path) -> None:
 def test_opening_a_pyramid_does_not_read_its_levels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from brainhops.io.common.zarr._data import _ZarrProxy
+    from brainhops.io.common.zarr._data import ZarrProxy
 
     path = str(tmp_path / "lazy.zarr")
     _small_pyramid().save(path)
     reads = []
-    read = _ZarrProxy._read
+    read = ZarrProxy._read
 
     def recording(self, index):  # noqa: ANN001, ANN202
         values = read(self, index)
         reads.append(values.size)
         return values
 
-    monkeypatch.setattr(_ZarrProxy, "_read", recording)
+    monkeypatch.setattr(ZarrProxy, "_read", recording)
     back = OmeZarrImage.from_store(path)
 
     # No level is read yet: the data of each level is a lazy array.

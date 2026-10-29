@@ -16,7 +16,7 @@ from brainhops._core import path
 # internals
 from brainhops.datamodel.systems import LPSmm
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     embed_affine,
     ras_conversion,
     reduce_to_affine,
@@ -24,10 +24,10 @@ from brainhops.io.common._geometry import (
 
 # this format
 from ._constants import (
-    _ORIENT_CODE,
-    _ORIENT_SIGN,
-    _VIEW_NAMES,
     DICOM_TO_RAS,
+    ORIENT_CODE,
+    ORIENT_SIGN,
+    VIEW_NAMES,
 )
 
 # ----------------------------------------------------------------------
@@ -103,8 +103,8 @@ def afni_geometry_from_matrix(
     origin = []
     delta = []
     for column, row in enumerate(best):
-        code = _ORIENT_CODE[row, bool(unit[row, column] >= 0)]
-        sign = _ORIENT_SIGN[code]
+        code = ORIENT_CODE[row, bool(unit[row, column] >= 0)]
+        sign = ORIENT_SIGN[code]
         orient.append(code)
         delta.append(float(sign * norms[column]))
         origin.append(float(sign * (unit[:, column] @ translation)))
@@ -185,7 +185,7 @@ def afni_view(name: tx.Any) -> tx.Optional[str]:
     key = base.lower()
     if key.endswith(_CARDINAL):
         key = key[: -len(_CARDINAL)]
-    return _VIEW_NAMES.get(key)
+    return VIEW_NAMES.get(key)
 
 
 _CARDINAL = "-cardinal"

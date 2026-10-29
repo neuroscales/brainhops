@@ -30,7 +30,7 @@ from brainhops.datamodel.systems import (  # noqa: E402
 )
 from brainhops.datamodel.transformations import Affine  # noqa: E402
 from brainhops.io.base.parsers import WriterError  # noqa: E402
-from brainhops.io.common.nifti._geometry import _voxel_to_ras  # noqa: E402
+from brainhops.io.common.nifti._geometry import voxel_to_ras  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 
 CS = CoordinateSystem
@@ -55,8 +55,8 @@ def _affine(output: tx.Optional[CS]) -> Affine:
 )
 def test_nifti_closes_an_open_world_space_from_the_matrix(axes: list) -> None:
     # Wherever `...` sits, a 3-row matrix closes it to the three LPS axes.
-    closed = _voxel_to_ras(_affine(LPSCoordinateSystem()))
-    assert np.allclose(_voxel_to_ras(_affine(CS(axes=axes))), closed)
+    closed = voxel_to_ras(_affine(LPSCoordinateSystem()))
+    assert np.allclose(voxel_to_ras(_affine(CS(axes=axes))), closed)
     assert np.allclose(closed, LPS_FLIP @ np.diag([2.0, 3.0, 4.0, 1.0]))
 
 
@@ -66,13 +66,13 @@ def test_nifti_reads_an_unknown_world_space_as_unoriented(
 ) -> None:
     # Axes that `...` stands for carry no orientation, so there is no flip.
     assert np.allclose(
-        _voxel_to_ras(_affine(output)), np.diag([2.0, 3.0, 4.0, 1.0])
+        voxel_to_ras(_affine(output)), np.diag([2.0, 3.0, 4.0, 1.0])
     )
 
 
 def test_nifti_refuses_a_world_space_larger_than_the_matrix() -> None:
     with pytest.raises(WriterError, match="states more axes"):
-        _voxel_to_ras(_affine(CS(axes=[L(), P(), S(), Axis(name="t"), ...])))
+        voxel_to_ras(_affine(CS(axes=[L(), P(), S(), Axis(name="t"), ...])))
 
 
 def test_nifti_writes_an_open_world_space_as_its_closed_form(

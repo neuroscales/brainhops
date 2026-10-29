@@ -81,10 +81,10 @@ from brainhops.errors import (
 
 from .utils import (
     UNREADABLE,
-    _preserves_count,
     axis_counts,
     axis_list,
     boundary_disagrees,
+    preserves_count,
     systems_disagree,
 )
 
@@ -245,7 +245,7 @@ def _delta(t: "Transformation") -> tx.Optional[int]:
         return total
     ni, no = axis_counts(t)
     if ni is None or no is None:
-        return 0 if _preserves_count(t) else None
+        return 0 if preserves_count(t) else None
     return no - ni
 
 
@@ -358,15 +358,15 @@ def close_counts(
     from ..meta import (
         Projection,
         SubspaceTransformation,
-        _close_projection,
-        _close_subspace,
+        close_projection,
+        close_subspace,
     )
 
     try:
         if isinstance(t, Projection):
-            return _close_projection(t, n_in, n_out)
+            return close_projection(t, n_in, n_out)
         if isinstance(t, SubspaceTransformation):
-            return _close_subspace(t, n_in, n_out)
+            return close_subspace(t, n_in, n_out)
     except CompositionError:
         return None
     own_in, own_out = counts_of(t)
@@ -849,7 +849,7 @@ class _Pruning:
         # merge consecutive projections.
         from ..concrete import Identity
         from ..meta import Projection
-        from .simplifiers import _merge_projections
+        from .simplifiers import merge_projections
 
         frozen = {id(t) for t, f in zip(self.leaves, self.frozen) if f}
         chain: tx.List[Transformation] = []
@@ -869,7 +869,7 @@ class _Pruning:
                 and id(t) not in frozen
                 and id(previous) not in frozen
             ):
-                merged = _merge_projections(previous, t)
+                merged = merge_projections(previous, t)
                 if merged is not None:
                     chain.pop()
                     dropped, created, at = merged

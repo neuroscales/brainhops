@@ -22,7 +22,7 @@ _SNIFF_SIZE = 4096
 """Number of leading bytes that are enough to find the root element."""
 
 
-class _Element:
+class Element:
     """An element of the XML tree, with where it lies in the bytes.
 
     The tree is built by [`parse_xml`][] and is private to the parsing of
@@ -41,21 +41,21 @@ class _Element:
         self.start = start
         self.end = start
         self.parts: tx.List[str] = []
-        self.children: tx.List[_Element] = []
+        self.children: tx.List[Element] = []
 
     @property
     def text(self) -> str:
         """The text that the element holds, without surrounding spaces."""
         return "".join(self.parts).strip()
 
-    def child(self, name: str) -> tx.Optional["_Element"]:
+    def child(self, name: str) -> tx.Optional["Element"]:
         """Return the first child of a given name, or `None`."""
         for child in self.children:
             if child.name == name:
                 return child
         return None
 
-    def all(self, name: str) -> tx.List["_Element"]:
+    def all(self, name: str) -> tx.List["Element"]:
         """Return the children of a given name, in order."""
         return [child for child in self.children if child.name == name]
 
@@ -97,7 +97,7 @@ def root_name(head: bytes) -> tx.Optional[str]:
     return None
 
 
-def parse_xml(content: bytes) -> _Element:
+def parse_xml(content: bytes) -> Element:
     """Parse an XML document into a tree that knows its byte spans.
 
     Parameters
@@ -107,7 +107,7 @@ def parse_xml(content: bytes) -> _Element:
 
     Returns
     -------
-    _Element
+    Element
         The root element.
 
     Raises
@@ -116,11 +116,11 @@ def parse_xml(content: bytes) -> _Element:
         If the content is not well-formed XML.
     """
     parser = expat.ParserCreate()
-    stack: tx.List[_Element] = []
-    roots: tx.List[_Element] = []
+    stack: tx.List[Element] = []
+    roots: tx.List[Element] = []
 
     def start(name: str, attrs: tx.Dict[str, str]) -> None:
-        element = _Element(name, attrs, parser.CurrentByteIndex)
+        element = Element(name, attrs, parser.CurrentByteIndex)
         if stack:
             stack[-1].children.append(element)
         else:

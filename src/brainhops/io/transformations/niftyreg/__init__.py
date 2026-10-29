@@ -82,7 +82,7 @@ These conventions were checked against KCL-BMEIS/niftyreg at commit 79a1762
 __all__ = ["NiftyRegAffine", "NiftyRegAffineMetadata", "NiftyRegAffineRaw"]
 
 from brainhops._core.dependencies import HAS_NIBABEL
-from brainhops.io.base._dispatch import register_missing_format
+from brainhops.io.base._internal_api import register_missing_format
 
 from ._affine import NiftyRegAffine
 from ._metadata import NiftyRegAffineMetadata

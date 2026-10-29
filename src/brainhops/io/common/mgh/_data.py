@@ -11,14 +11,13 @@ import typing_extensions as tx
 from nibabel.arrayproxy import ArrayProxy as _NibabelArrayProxy
 from nibabel.freesurfer import mghformat as _mgh
 
-from brainhops._core.path import Path, is_same_file
-
 # internals
+from brainhops._core.path import Path, is_same_file
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.strided import StridedProxy
 
 
-class _MghProxy(StridedProxy):
+class MghProxy(StridedProxy):
     """A lazy array of the voxels of an MGH or MGZ file.
 
     The proxy reads the voxels as the file stores them. A read gets only
@@ -40,7 +39,7 @@ class _MghProxy(StridedProxy):
         header: _mgh.MGHHeader,
         start: int = 0,
         mmap: bool = True,
-    ) -> "_MghProxy":
+    ) -> "MghProxy":
         """Return the lazy array of the voxels that an MGH header describes.
 
         The shape, the stored type and the offset of the voxels are read
@@ -60,7 +59,7 @@ class _MghProxy(StridedProxy):
 
         Returns
         -------
-        _MghProxy
+        MghProxy
             The lazy array of the voxels.
         """
         return cls.contiguous(
@@ -125,7 +124,7 @@ def reads_mgh(raw: tx.Any, file: Path) -> bool:
     """
     root = raw.root if isinstance(raw, ArrayProxy) else raw
     return (
-        isinstance(root, _MghProxy)
+        isinstance(root, MghProxy)
         and isinstance(root.source, Path)
         and is_same_file(root.source, file)
     )

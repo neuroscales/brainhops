@@ -23,7 +23,7 @@ an HDF5 file that the caller opened.
 """
 
 
-class _ImarisProxy(StoredProxy):
+class ImarisProxy(StoredProxy):
     """A lazy array of the voxels of one resolution level of an Imaris file.
 
     An Imaris file stores each channel at each time point of a level as
@@ -112,7 +112,7 @@ class _ImarisProxy(StoredProxy):
 
 def read_imaris_level(
     source: _Source, record: ImarisRaw, level: int
-) -> _ImarisProxy:
+) -> ImarisProxy:
     """Return a lazy array of the voxels of one level of an Imaris file.
 
     Parameters
@@ -141,7 +141,7 @@ def read_imaris_level(
             f"The Imaris file has {len(record.levels)} resolution levels, "
             f"so it has no level {level}."
         )
-    return _ImarisProxy(source, record, level)
+    return ImarisProxy(source, record, level)
 
 
 # ----------------------------------------------------------------------

@@ -177,7 +177,7 @@ class PillowHeader(Magic, frozen=True):
 # ----------------------------------------------------------------------
 
 
-def _open(
+def open_with_pillow(
     file: tx.Any, formats: tx.Optional[tx.Sequence[str]] = None
 ) -> "Image.Image":
     """Open a file with Pillow, raising a `ParserContentError` if it cannot be
@@ -352,7 +352,7 @@ def read_pillow(
             start = file.tell()
         except Exception:
             start = None
-    with _open(file, formats) as im:
+    with open_with_pillow(file, formats) as im:
         n_frames = int(getattr(im, "n_frames", 1) or 1)
         index = int(frame)
         if index < 0:
@@ -377,7 +377,7 @@ def read_pillow(
         array, axes = pillow_to_array(im, palette=palette)
         fmt = im.format
     if fmt == "PNG" and "sCAL" not in info:
-        scal = _png_scal(file, start)
+        scal = png_scal(file, start)
         if scal is not None:
             info["sCAL"] = scal
     return PillowRaster(
@@ -475,14 +475,14 @@ def read_pillow_header(file: tx.Any, palette: bool = True) -> PillowHeader:
             start = file.tell()
         except Exception:
             start = None
-    with _open(file) as im:
+    with open_with_pillow(file) as im:
         n_frames = int(getattr(im, "n_frames", 1) or 1)
         mode = im.mode
         info = dict(im.info)
         width, height = im.size
         fmt = im.format
     if fmt == "PNG" and "sCAL" not in info:
-        scal = _png_scal(file, start)
+        scal = png_scal(file, start)
         if scal is not None:
             info["sCAL"] = scal
     dtype, samples = pillow_layout(mode, info, palette)
@@ -504,7 +504,7 @@ def read_pillow_header(file: tx.Any, palette: bool = True) -> PillowHeader:
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def _png_scal(
+def png_scal(
     file: tx.Any, start: tx.Optional[int] = None
 ) -> tx.Optional[tx.Tuple[int, float, float]]:
     """Return the PNG `sCAL` chunk, which Pillow skips, as

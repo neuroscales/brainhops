@@ -14,20 +14,18 @@ from bagof.magic import Inherit, NoRepr, replace
 
 # internals
 from brainhops._core import path
-from brainhops._core.properties import (
-    smartproperty,
-)
+from brainhops._core.properties import smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -36,6 +34,7 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -44,52 +43,46 @@ from brainhops.io.base.parsers import (
     WriterError,
     disabled,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.common.afni import AfniFormat, AfniMetadata, AfniRaw
-from brainhops.io.common.afni._constants import AFNI_VIEWS
-from brainhops.io.common.afni._data import (
-    _BrikProxy,
+from brainhops.io.common.afni._internal_api import (
+    AFNI_VIEWS,
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
+    BrikProxy,
+    afni_cardinal_matrix,
+    afni_dataset_files,
+    afni_geometry_from_matrix,
+    afni_view,
+    afni_voxel_to_dicom,
+    afni_world,
+    afni_written_files,
     brick_code,
     brick_dtype,
     brik_proxy,
     decode_bricks,
     encode_bricks,
+    format_attributes,
+    looks_like_head,
     read_afni,
+    read_validated_header,
     reads_brik,
+    sniffed_raw_at,
     stores_brik,
     whole_brik,
     write_brik,
 )
-from brainhops.io.common.afni._files import (
-    afni_dataset_files,
-    afni_written_files,
-)
-from brainhops.io.common.afni._geometry import (
-    afni_cardinal_matrix,
-    afni_geometry_from_matrix,
-    afni_view,
-    afni_voxel_to_dicom,
-    afni_world,
-)
-from brainhops.io.common.afni._raw import (
-    _declined,
-    _format_attributes,
-    _looks_like_head,
-    _no_options,
-    _sniffed_raw,
-    _sniffed_raw_at,
-)
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -303,7 +296,7 @@ class AfniImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -395,9 +388,9 @@ class AfniImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(read_validated_header, file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -426,9 +419,9 @@ class AfniImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw_at(filename)
+        raw, failure = sniffed_raw_at(filename)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -459,7 +452,7 @@ class AfniImage(
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
 
@@ -504,14 +497,14 @@ class AfniImage(
         ParserContentError
             If the stream has no file name.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         name = getattr(file, "name", None)
         named = isinstance(name, (str, bytes, os.PathLike))
         with preserve_position(file):
             start = file.read(256)
             if isinstance(start, str):
                 start = start.encode("latin-1")
-            head = _looks_like_head(bytes(start).decode("latin-1"))
+            head = looks_like_head(bytes(start).decode("latin-1"))
             rest = file.read() if head and named else b""
         if not named:
             raise ParserContentError(
@@ -916,7 +909,7 @@ def _stored_data(
         If the data have no dimension or more than four.
     """
     if image._data is not None:
-        raw = _image_to_disk(image._data)
+        raw = image_to_disk(image._data)
     else:
         raw = image.rawdata
     whole = whole_brik(raw)
@@ -927,7 +920,7 @@ def _stored_data(
         native = [dtype.newbyteorder("=") for dtype in whole.record.dtypes]
         if all(dtype == stored for dtype in native):
             return raw
-    if isinstance(raw, ArrayProxy) and isinstance(raw.root, _BrikProxy):
+    if isinstance(raw, ArrayProxy) and isinstance(raw.root, BrikProxy):
         # The lazy array is read here rather than through `data`, so that
         # no cached view of the old file outlives a write over that file.
         raw = np.asarray(raw)
@@ -1048,7 +1041,7 @@ def _geometry(
 
 def _written(record: AfniRaw) -> str:
     """Return the attributes of a record as written, sorted by name."""
-    return _format_attributes(OrderedDict(sorted(record.attributes.items())))
+    return format_attributes(OrderedDict(sorted(record.attributes.items())))
 
 
 def _is_latin1(value: str) -> bool:

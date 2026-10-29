@@ -3,13 +3,13 @@
 NRRD_MAGIC = b"NRRD000"
 """The first seven bytes of every NRRD file, before the version."""
 
-_MAX_HEADER_LINES = 1_000_000
+MAX_HEADER_LINES = 1_000_000
 
 # ----------------------------------------------------------------------
 #   VOCABULARY
 # ----------------------------------------------------------------------
 
-_TYPES = {}
+TYPES = {}
 for _names, _code in (
     (("signed char", "int8", "int8_t"), "i1"),
     (("uchar", "unsigned char", "uint8", "uint8_t"), "u1"),
@@ -62,9 +62,9 @@ for _names, _code in (
     (("double",), "f8"),
 ):
     for _name in _names:
-        _TYPES[_name] = _code
+        TYPES[_name] = _code
 
-_TYPE_NAMES = {
+TYPE_NAMES = {
     "i1": "int8",
     "u1": "uint8",
     "i2": "int16",
@@ -78,7 +78,7 @@ _TYPE_NAMES = {
 }
 """NRRD type name written for each NumPy type code."""
 
-_ENCODINGS = {
+ENCODINGS = {
     "raw": "raw",
     "txt": "ascii",
     "text": "ascii",
@@ -90,7 +90,7 @@ _ENCODINGS = {
     "bzip2": "bzip2",
 }
 
-_ALIASES = {
+ALIASES = {
     "datafile": "data file",
     "lineskip": "line skip",
     "byteskip": "byte skip",
@@ -103,7 +103,7 @@ _ALIASES = {
     "blocksize": "block size",
 }
 
-_FIELDS = (
+FIELDS = (
     "content",
     "type",
     "block size",
@@ -153,12 +153,12 @@ SPACES = {
 }
 """Canonical space names, mapped to abbreviation and dimension."""
 
-_SPACE_NAMES = {abbr.lower(): name for name, (abbr, _) in SPACES.items()}
+SPACE_NAMES = {abbr.lower(): name for name, (abbr, _) in SPACES.items()}
 
-_NONE = ("none", "???")
+NONE = ("none", "???")
 
 
-_DATA_EXTENSIONS = {
+DATA_EXTENSIONS = {
     "raw": ".raw",
     "gzip": ".raw.gz",
     "bzip2": ".raw.bz2",

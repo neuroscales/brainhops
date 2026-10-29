@@ -144,11 +144,11 @@ class Indexed(DataModelBase, frozen=True, eq=False, repr=False, kw_only=False):
         ):
             return None
         # Not at the top: see the docstring of the module.
-        from ..geometry import _index2transform
+        from brainhops.datamodel._internal_api import index2transform
 
         # The map of the index goes from the new voxels to the old ones;
         # its pseudo-inverse goes back.
-        sub2full, _ = _index2transform(self.index, self.shape, self.system)
+        sub2full, _ = index2transform(self.index, self.shape, self.system)
         matrix = np.asarray(sub2full.matrix, dtype=float)
         return np.linalg.pinv(matrix[:, :-1])
 
@@ -385,7 +385,7 @@ def _expand_index(
 ) -> tx.Tuple[tx.Any, ...]:
     """Return an index with its `...` replaced by as many full slices as
     the axes it stands for, and the axes it leaves out filled at the
-    end, as `_index2transform` expands it."""
+    end, as `index2transform` expands it."""
     # Compared by identity, so that an array in the index is not compared
     # with `...` element by element.
     at = next((i for i, c in enumerate(index) if c is ...), None)

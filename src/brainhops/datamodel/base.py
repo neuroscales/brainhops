@@ -1,6 +1,6 @@
 """Base class of the data models and its converter."""
 
-__all__ = ["DataModelBase", "DataModelConverter", "_ComparesByIdMixin"]
+__all__ = ["DataModelBase", "DataModelConverter"]
 
 # stdlib
 import re
@@ -220,25 +220,6 @@ class DataModelBase(SharedOptions):
         if type(self) is target and not kwargs and not copy:
             return self
         return target.from_instance(self, **kwargs)
-
-
-class _ComparesByIdMixin:
-    """Mixin that makes a class and all its subclasses compare by identity.
-
-    Equality never raises, and instances are hashable. Identity comparison
-    is restored on every subclass, because a subclass that also derives
-    from another data model may otherwise receive a value-based `__eq__`
-    and `__hash__`.
-    """
-
-    __eq__ = object.__eq__
-    __ne__ = object.__ne__
-    __hash__ = object.__hash__
-
-    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
-        super().__init_subclass__(**kwargs)
-        for name in ("__eq__", "__ne__", "__hash__"):
-            setattr(cls, name, getattr(object, name))
 
 
 # --- helpers ----------------------------------------------------------

@@ -15,7 +15,7 @@ from brainhops._core import path
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._internal_api import FIELDS
 from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
@@ -23,20 +23,20 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._constants import (
-    _NIFTI1_MAX_DIM,
-    _NIFTI_AXES,
-    _NIFTI_INTENT_NAME_MAPPING,
-    _NIFTI_INTENT_VECTOR,
-    _NIFTI_SPECIFIC_AXES,
+    NIFTI1_MAX_DIM,
+    NIFTI_AXES,
+    NIFTI_INTENT_NAME_MAPPING,
+    NIFTI_INTENT_VECTOR,
+    NIFTI_SPECIFIC_AXES,
 )
-from ._data import _NiftiProxy, stored_dtype, whole_file
+from ._data import NiftiProxy, stored_dtype, whole_file
 from ._raw import NiftiRaw
 from ._vocabulary import encode
 
-_NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
+NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
 
-def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
+def nifti_intent(header: "NiftiObject") -> tx.Optional[int]:
     """Return the intent code of a header, or `None` if unreadable."""
     try:
         if isinstance(header, nb.Nifti1Image):
@@ -46,7 +46,7 @@ def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
         return None
 
 
-def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
+def nifti_intent_name(header: "NiftiObject") -> tx.Optional[str]:
     """Return the intent name of a header, or `None` if unreadable."""
     try:
         if isinstance(header, nb.Nifti1Image):
@@ -56,7 +56,7 @@ def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
         return None
 
 
-def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
+def nifti_shape(header: "NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
     """Return the data shape of a header, or `None` if unreadable."""
     try:
         if isinstance(header, nb.Nifti1Image):
@@ -66,7 +66,7 @@ def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
         return None
 
 
-def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
+def nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
     """Return the voxel axes described by a header.
 
     The intent code can change the names and types of the axes. Every axis
@@ -75,13 +75,13 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 
     ndim = len(header.get_data_shape())
 
-    axes = _NIFTI_AXES[:ndim]
+    axes = NIFTI_AXES[:ndim]
 
     # Indexing the header gives an unhashable 0-d array, so the intent is read
-    # with `_nifti_intent`.
-    intent = _nifti_intent(header)
-    if intent in _NIFTI_SPECIFIC_AXES:
-        axes_map = _NIFTI_SPECIFIC_AXES[intent]
+    # with `nifti_intent`.
+    intent = nifti_intent(header)
+    if intent in NIFTI_SPECIFIC_AXES:
+        axes_map = NIFTI_SPECIFIC_AXES[intent]
         axes = [axes_map.get(i, axis) for i, axis in enumerate(axes)]
 
     # Copy the shared templates so that no system can mutate them.
@@ -98,11 +98,11 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 _REFUSED_DTYPES = (np.dtype("int64"), np.dtype("uint64"))
 
 
-def _new_nifti(
+def new_nifti(
     data: ArrayProtocol,
     affine: tx.Optional[np.ndarray],
     header: tx.Optional[nb.Nifti1Header] = None,
-) -> _NiftiObject:
+) -> NiftiObject:
     """Build a nibabel image, as NIfTI-2 if an extent exceeds NIfTI-1.
 
     The array is stored as given, so lazy and device arrays are not
@@ -136,7 +136,7 @@ def _new_nifti(
     shape = tuple(int(d) for d in getattr(data, "shape", ()) or ())
     image_cls = nb.Nifti1Image
     if isinstance(header, nb.Nifti2Header) or any(
-        d > _NIFTI1_MAX_DIM for d in shape
+        d > NIFTI1_MAX_DIM for d in shape
     ):
         image_cls = nb.Nifti2Image
     try:
@@ -154,8 +154,8 @@ def _new_nifti(
     return image_cls(data, affine, header)
 
 
-def _set_other_axes(
-    image: _NiftiObject,
+def set_other_axes(
+    image: NiftiObject,
     others: tx.Sequence[tx.Optional[tx.Tuple[float, float]]],
     timed: bool = True,
 ) -> None:
@@ -203,7 +203,7 @@ def _set_other_axes(
         header["toffset"] = others[0][1]
 
 
-def _header(obj: tx.Any) -> tx.Any:
+def header_of(obj: tx.Any) -> tx.Any:
     """Return the header of an object, or `None` when it has none.
 
     The formats that hold a record, such as a `NiftiImage`, a
@@ -228,7 +228,7 @@ def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
         return None
     if isinstance(like, (nb.Nifti1Header, nb.Nifti2Header)):
         return like
-    header = _header(like)
+    header = header_of(like)
     if header is not None:
         return header
     if isinstance(like, (str, path.PathLike)):
@@ -267,10 +267,10 @@ _STRUCTURAL_FIELDS = (
 
 # Overrides that change how the voxels are stored, so that a proxy cannot be
 # copied as it is stored.
-_STORAGE_OVERRIDES = frozenset({"dtype", "scl_slope", "scl_inter"})
+STORAGE_OVERRIDES = frozenset({"dtype", "scl_slope", "scl_inter"})
 
 
-def _reset_structural_fields(header: nb.Nifti1Header) -> None:
+def reset_structural_fields(header: nb.Nifti1Header) -> None:
     """Give the structural fields of a header their values in a new header.
 
     The fields are listed in [`_STRUCTURAL_FIELDS`][]. A header reset in
@@ -282,8 +282,8 @@ def _reset_structural_fields(header: nb.Nifti1Header) -> None:
         header[name] = fresh[name]
 
 
-def _stored_scaling(
-    header: tx.Optional[nb.Nifti1Header], proxy: _NiftiProxy
+def stored_scaling(
+    header: tx.Optional[nb.Nifti1Header], proxy: NiftiProxy
 ) -> tx.Tuple[tx.Any, tx.Any]:
     """Return the `scl_slope` and `scl_inter` to write with unscaled voxels.
 
@@ -303,12 +303,12 @@ def _stored_scaling(
     return proxy.slope, proxy.inter
 
 
-def _record_image(
+def record_image(
     raw: ArrayProtocol,
     record: tx.Optional[NiftiRaw],
     affine: tx.Optional[np.ndarray] = None,
     overrides: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-) -> _NiftiObject:
+) -> NiftiObject:
     """Build the nibabel image that encodes an array over a record.
 
     The header of the record is the base of the new header, so that its
@@ -326,7 +326,7 @@ def _record_image(
     The array of the image is `raw` as it is given. The lazy array of a
     whole NIfTI file keeps the data type and the scaling that its file
     stored, so the header records how the file stores it and
-    [`_written_nifti`][] writes it unscaled, byte for byte. When the
+    [`written_nifti`][] writes it unscaled, byte for byte. When the
     `overrides`, which the caller applies afterwards, change the data
     type or the scaling, the lazy array is read and scaled again when it
     is written instead.
@@ -335,26 +335,26 @@ def _record_image(
     scaling = None
     whole = whole_file(raw)
     if whole is not None and not (
-        _STORAGE_OVERRIDES.intersection(overrides or {})
+        STORAGE_OVERRIDES.intersection(overrides or {})
     ):
-        scaling = _stored_scaling(header, whole)
+        scaling = stored_scaling(header, whole)
     if header is None:
         affine = np.eye(4) if affine is None else affine
-        image = _new_nifti(raw, affine)
+        image = new_nifti(raw, affine)
     elif affine is None:
         # The scaling of the record describes the array that the file
         # stored. Another array is scaled again by nibabel.
         header.set_slope_inter(None, None)
-        image = _new_nifti(raw, None, header)
+        image = new_nifti(raw, None, header)
     else:
-        _reset_structural_fields(header)
-        image = _new_nifti(raw, affine, header)
+        reset_structural_fields(header)
+        image = new_nifti(raw, affine, header)
     if scaling is not None:
         image.header["scl_slope"], image.header["scl_inter"] = scaling
     return image
 
 
-def _stores_proxy(header: nb.Nifti1Header, proxy: _NiftiProxy) -> bool:
+def _stores_proxy(header: nb.Nifti1Header, proxy: NiftiProxy) -> bool:
     """Tell whether a header stores the voxels of a proxy as they are.
 
     The header must have the data type of the stored voxels, and a slope
@@ -387,7 +387,7 @@ def _stores_array(header: nb.Nifti1Header, array: ArrayProtocol) -> bool:
     )
 
 
-def _stored_parts(image: _NiftiObject) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
+def stored_parts(image: NiftiObject) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
     """Return the array and the record that a file of an image holds.
 
     An encoder builds a nibabel image whose header may store the array in
@@ -402,11 +402,11 @@ def _stored_parts(image: _NiftiObject) -> tx.Tuple[ArrayProtocol, NiftiRaw]:
         return image.dataobj, NiftiRaw(header=image.header)
     content = image.to_bytes()
     record = NiftiRaw.from_bytes(content)
-    proxy = _NiftiProxy.from_header(BytesIO(content), record.header, 0)
+    proxy = NiftiProxy.from_header(BytesIO(content), record.header, 0)
     return proxy, record
 
 
-def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:
+def written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> NiftiObject:
     """Build the nibabel image that writes an array over its record.
 
     The record is written as it is, since it already encodes the layout
@@ -438,21 +438,19 @@ def _written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> _NiftiObject:
     return image
 
 
-def _set_coordinates_intent(header: nb.Nifti1Header) -> None:
+def set_coordinates_intent(header: nb.Nifti1Header) -> None:
     """Give a header the intent of a field of coordinates.
 
     The intent is `VECTOR` (1007) with the intent name `"Mapping"`. A
     header that already has this intent is left as it is, so that its
     intent parameters are kept.
     """
-    intent = (_nifti_intent(header), _nifti_intent_name(header))
-    if intent != (_NIFTI_INTENT_VECTOR, _NIFTI_INTENT_NAME_MAPPING):
-        header.set_intent(
-            _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
-        )
+    intent = (nifti_intent(header), nifti_intent_name(header))
+    if intent != (NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING):
+        header.set_intent(NIFTI_INTENT_VECTOR, name=NIFTI_INTENT_NAME_MAPPING)
 
 
-def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
+def apply_like(image: NiftiObject, like: tx.Any) -> NiftiObject:
     """Copy the description and intent of a template onto an image.
 
     The intent is copied only if the image has none. Fields that change the
@@ -499,7 +497,7 @@ _VOCABULARY_SLOTS = {
 }
 
 
-def _split_options(
+def split_options(
     options: tx.Mapping[str, tx.Any],
 ) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
     """Split the options of a NIfTI writer into fields and header overrides.
@@ -532,7 +530,7 @@ def _split_options(
     return fields, overrides
 
 
-def _storage_override(
+def storage_override(
     fields: tx.Mapping[str, tx.Any],
     metadata: tx.Any,
     data: tx.Any,
@@ -555,9 +553,9 @@ def _storage_override(
     return dtype
 
 
-def _keep_given_fields(
-    image: _NiftiObject, fields: tx.Mapping[str, tx.Any]
-) -> _NiftiObject:
+def keep_given_fields(
+    image: NiftiObject, fields: tx.Mapping[str, tx.Any]
+) -> NiftiObject:
     """Write again the fields given by keyword that a template copies over.
 
     A writer encodes the metadata into the record that is the base of the
@@ -577,9 +575,7 @@ def _keep_given_fields(
     return image
 
 
-def _apply_overrides(
-    image: _NiftiObject, overrides: tx.Mapping
-) -> _NiftiObject:
+def apply_overrides(image: NiftiObject, overrides: tx.Mapping) -> NiftiObject:
     """Apply header overrides and return the image.
 
     The keys `dtype`, `intent` and `descrip` set the stored data type, the

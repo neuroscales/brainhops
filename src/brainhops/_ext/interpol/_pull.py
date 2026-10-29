@@ -14,15 +14,15 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._backend import _asarray, _BufferPool, _get_namespace, _is_dask
-from ._bounds import _normalize_bound
+from ._backend import BufferPool, get_namespace, is_dask, to_namespace
+from ._bounds import normalize_bound
 from ._coeff import (
-    _normalize_dtype,
-    _normalize_order,
-    _normalize_per_axis,
+    normalize_dtype,
+    normalize_order,
+    normalize_per_axis,
     spline_coeff,
 )
-from ._taps import _axis_taps
+from ._taps import axis_taps
 
 _TOLERANCE = 1e-5
 """Distance, in voxels, by which the mask of `clip` widens each margin.
@@ -208,10 +208,10 @@ def pull(
     ------
     ValueError
     """
-    if _is_dask(input) or _is_dask(grid):
-        from ._dask import _pull_dask
+    if is_dask(input) or is_dask(grid):
+        from ._dask import pull_dask
 
-        return _pull_dask(
+        return pull_dask(
             input,
             grid,
             order,
@@ -221,22 +221,24 @@ def pull(
             strategy,
             block_size,
         )
-    xp = _get_namespace(input, grid)
-    input = _asarray(xp, input)
-    grid = _asarray(xp, grid)
-    orders, bounds, margin, blocked = _check_arguments(
+    xp = get_namespace(input, grid)
+    input = to_namespace(xp, input)
+    grid = to_namespace(xp, grid)
+    orders, bounds, margin, blocked = check_arguments(
         xp, input, grid, order, bound, clip, strategy, block_size
     )
-    dtype = _normalize_dtype(input.dtype)
+    dtype = normalize_dtype(input.dtype)
     if prefilter and max(orders) > 1:
         input = spline_coeff(input, orders, bounds, len(orders))
     input = input.astype(dtype, copy=False)
     if grid.dtype.kind != "f":
         grid = grid.astype(np.float64)
-    return _pull(xp, input, grid, orders, bounds, margin, blocked, block_size)
+    return pull_arrays(
+        xp, input, grid, orders, bounds, margin, blocked, block_size
+    )
 
 
-def _check_arguments(
+def check_arguments(
     xp: ModuleType,
     input: tx.Any,
     grid: tx.Any,
@@ -295,10 +297,10 @@ def _check_arguments(
             f"they have {input.ndim} and {grid.ndim}."
         )
     orders = [
-        _normalize_order(o) for o in _normalize_per_axis(order, ndim, "order")
+        normalize_order(o) for o in normalize_per_axis(order, ndim, "order")
     ]
     bounds = [
-        _normalize_bound(b) for b in _normalize_per_axis(bound, ndim, "bound")
+        normalize_bound(b) for b in normalize_per_axis(bound, ndim, "bound")
     ]
     margin = _normalize_clip(clip, ndim)
     blocked = _select_strategy(xp, strategy) == "blocked"
@@ -307,7 +309,7 @@ def _check_arguments(
     return orders, bounds, margin, blocked
 
 
-def _pull(
+def pull_arrays(
     xp: ModuleType,
     input: tx.Any,
     grid: tx.Any,
@@ -381,7 +383,7 @@ def _pull(
     # The flat index of a voxel is the sum of its indices in the window
     # times these.
     strides = [int(math.prod(window[d + 1 :])) for d in range(ndim)]
-    pool = _BufferPool(xp)
+    pool = BufferPool(xp)
 
     # When NumPy's `take` writes into an output array and checks the
     # indices, it goes through a buffer, which `mode="clip"` avoids. The
@@ -608,7 +610,7 @@ def _block_taps(
     dtype: tx.Any,
     strides: tx.List[int],
     margin: tx.Optional[_Margins],
-    pool: _BufferPool,
+    pool: BufferPool,
     origin: tx.Sequence[int],
 ) -> tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]]:
     """Return the indices and the weights of the taps of a block.
@@ -634,7 +636,7 @@ def _block_taps(
         the window that is read.
     margin : tuple of tuple of float, or None
         The margins of [`_inside`][], or None to keep every point.
-    pool : _BufferPool
+    pool : BufferPool
         The pool that provides the arrays.
     origin : sequence of int
         The index of the first sample of the window along each spatial
@@ -650,7 +652,7 @@ def _block_taps(
     taps = []
     for d in range(len(spatial)):
         taps.append(
-            _axis_taps(
+            axis_taps(
                 xp,
                 coords[..., d],
                 spatial[d],
@@ -725,7 +727,7 @@ def _inside(
     coords: tx.Any,
     shape: tx.Sequence[int],
     margin: _Margins,
-    pool: _BufferPool,
+    pool: BufferPool,
 ) -> tx.Any:
     """Return where coordinates lie inside an array, up to margins.
 
@@ -747,7 +749,7 @@ def _inside(
         The spatial shape of the array.
     margin : tuple of tuple of float
         The pair `(lower, upper)` of each axis, in voxels.
-    pool : _BufferPool
+    pool : BufferPool
         The pool that provides the arrays.
 
     Returns
@@ -882,7 +884,7 @@ def _accumulate(
     taps: tx.List[tx.List[tx.Tuple[tx.Any, tx.Any]]],
     out: tx.Any,
     gather: tx.Callable[[tx.Any, tx.Any], tx.Any],
-    pool: _BufferPool,
+    pool: BufferPool,
 ) -> None:
     """Write the sum of the weighted samples of every tap into `out`.
 
@@ -912,7 +914,7 @@ def _accumulate(
         points and the batch items of the block, with the shape of
         `out`. It writes them into the array that it receives when it
         can, and returns that array.
-    pool : _BufferPool
+    pool : BufferPool
         The pool that provides the arrays.
     """
     # The recursion over the axes is a loop over the combinations of

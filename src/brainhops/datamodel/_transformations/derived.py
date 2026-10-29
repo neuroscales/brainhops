@@ -32,13 +32,13 @@ from bagof.magic import Forget, NotKwOnly, fields
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.errors import UNSET
 from brainhops._core.properties import alias, smartproperty
-from brainhops.datamodel.metadata._report import call_under_policy
+from brainhops.datamodel.metadata._internal_api import call_under_policy
 from brainhops.errors import ConversionError, ErrorAction, ErrorPolicy
 
 from . import nocycles
 from .base import (
     Transformation,
-    _copied,
+    copied,
 )
 from .compute.simplify import SimplifyLike
 from .compute.simplify import simplify as _simplify
@@ -204,7 +204,7 @@ class DerivedTransformation(MetaTransformation):
         place of the wrapper rather than taken for its forward.
         """
         return call_under_policy(
-            lambda: _copied(self, self._to(cls, kwargs), copy),
+            lambda: copied(self, self._to(cls, kwargs), copy),
             on_error,
             on_loss=on_loss,
             scope=(ConversionError,),

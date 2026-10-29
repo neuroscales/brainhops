@@ -15,8 +15,8 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
-    _data2coeffs,
-    _data2values,
+    data2coeffs,
+    data2values,
 )
 from .derived import DerivedTransformation
 from .nocycles import register_derived
@@ -126,12 +126,12 @@ class _FieldInverseMixin(_ConcreteInverseMixin):
     @property
     def values(self) -> _OptionalArray:
         """Inverse field as values."""
-        return _data2values(self.data, self.store, self.degree, self.bound)
+        return data2values(self.data, self.store, self.degree, self.bound)
 
     @property
     def coefficients(self) -> _OptionalArray:
         """Inverse field as spline coefficients."""
-        return _data2coeffs(self.data, self.store, self.degree, self.bound)
+        return data2coeffs(self.data, self.store, self.degree, self.bound)
 
 
 # ----------------------------------------------------------------------

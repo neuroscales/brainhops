@@ -12,8 +12,8 @@ from bagof.magic import Magic, NoRepr, replace
 # internals
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -25,7 +25,7 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._xml import (
-    _Element,
+    Element,
     indent_before,
     newline_of,
     parse_xml,
@@ -617,7 +617,7 @@ def _parse(content: bytes) -> BdvRaw:
         ) from error
 
 
-def _required(parent: _Element, name: str) -> _Element:
+def _required(parent: Element, name: str) -> Element:
     """Return a child that BigDataViewer requires.
 
     Raises
@@ -634,13 +634,13 @@ def _required(parent: _Element, name: str) -> _Element:
     return child
 
 
-def _relative(element: _Element) -> bool:
+def _relative(element: Element) -> bool:
     """Tell whether a path element is relative, as `XmlHelpers.loadPath`
     decides: only when its `type` attribute is `"relative"`."""
     return element.attrs.get("type") == "relative"
 
 
-def _setups(element: tx.Optional[_Element]) -> tx.Tuple[BdvRaw.Setup, ...]:
+def _setups(element: tx.Optional[Element]) -> tx.Tuple[BdvRaw.Setup, ...]:
     """Read the `<ViewSetup>` elements of `<ViewSetups>`."""
     if element is None:
         return ()
@@ -662,7 +662,7 @@ def _setups(element: tx.Optional[_Element]) -> tx.Tuple[BdvRaw.Setup, ...]:
     return tuple(setups)
 
 
-def _timepoints(element: _Element) -> _Ints:
+def _timepoints(element: Element) -> _Ints:
     """Read the ids of `<Timepoints>`, as `XmlIoTimePoints.fromXml` does.
 
     Raises
@@ -717,7 +717,7 @@ def _integer_pattern(text: str) -> tx.List[int]:
     return ids
 
 
-def _missing(element: tx.Optional[_Element]) -> tx.Tuple[_Ints, ...]:
+def _missing(element: tx.Optional[Element]) -> tx.Tuple[_Ints, ...]:
     """Read the views of `<MissingViews>`, as pairs of time point and
     setup."""
     if element is None:
@@ -728,7 +728,7 @@ def _missing(element: tx.Optional[_Element]) -> tx.Tuple[_Ints, ...]:
     )
 
 
-def _registration(element: _Element) -> BdvRaw.Registration:
+def _registration(element: Element) -> BdvRaw.Registration:
     """Read a `<ViewRegistration>`, as `XmlIoViewRegistration.fromXml`."""
     return BdvRaw.Registration(
         timepoint=int(element.attrs["timepoint"]),
@@ -740,7 +740,7 @@ def _registration(element: _Element) -> BdvRaw.Registration:
     )
 
 
-def _transform(element: _Element) -> BdvRaw.Transform:
+def _transform(element: Element) -> BdvRaw.Transform:
     """Read a `<ViewTransform>`, as `XmlIoViewTransform.fromXml` does.
 
     An affine transform holds twelve values, the first three rows of its

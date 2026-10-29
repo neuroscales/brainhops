@@ -16,12 +16,12 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    MetadataLossError,
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._report import MetadataLossError
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -32,20 +32,23 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from . import _utils as backend
-from ._data import _TiffProxy
+from ._data import TiffProxy
 from ._geometry import level_geometry, record_transformations
 from ._metadata import TiffMetadata
 from ._raw import read_record
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 from ._writer import (
     Plan,
     copy_source,
@@ -62,7 +65,7 @@ from ._writer import (
 # ----------------------------------------------------------------------
 
 
-class _TiffReader:
+class TiffReader:
     """The entry points through which TIFF images and pyramids are read.
 
     This base holds no state. It sniffs the magic number of a file and
@@ -138,7 +141,7 @@ class _TiffReader:
 
 @register_format
 class TiffImage(
-    _TiffReader,
+    TiffReader,
     BinaryFileReader,
     BinaryFileWriter,
     ImageFormat,
@@ -249,7 +252,7 @@ class TiffImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -384,7 +387,7 @@ class TiffImage(
             record = read_record(tif, series)
         index %= len(record.levels)
         image = cls(
-            rawdata=_TiffProxy(source, record, index, mmap=mmap, lazy=lazy),
+            rawdata=TiffProxy(source, record, index, mmap=mmap, lazy=lazy),
             metadata=TiffMetadata.from_raw(record),
             series=record.series,
             level=index,
@@ -615,7 +618,7 @@ class TiffImage(
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
         reading = (
-            isinstance(stored, _TiffProxy)
+            isinstance(stored, TiffProxy)
             and stored.source.filename is not None
             and is_same_file(stored.source.filename, filename)
         )
@@ -643,7 +646,7 @@ class TiffImage(
             source = backend.TiffSource.from_file(filename)
             with source.open() as tif:
                 record = read_record(tif, 0)
-            self.rawdata = _TiffProxy(source, record, 0, raw.mmap, raw.lazy)
+            self.rawdata = TiffProxy(source, record, 0, raw.mmap, raw.lazy)
             self.metadata = TiffMetadata.from_raw(record)
             self.series = record.series
             self.level = 0
@@ -694,7 +697,7 @@ class TiffImage(
         raw = self.rawdata
         return (
             self._untouched(dialect, name, bigtiff)
-            and isinstance(raw, _TiffProxy)
+            and isinstance(raw, TiffProxy)
             and raw.level == 0
             and raw.record is self.metadata.raw
         )
@@ -716,7 +719,7 @@ class TiffImage(
             If the image has no data or cannot be written.
         """
         if self._data is not None:
-            raw = _image_to_disk(self._data)
+            raw = image_to_disk(self._data)
         else:
             raw = self.rawdata
         if raw is None:

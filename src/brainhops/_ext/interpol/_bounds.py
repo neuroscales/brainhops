@@ -55,7 +55,7 @@ _REFUSED = {
 }
 
 
-def _normalize_bound(bound: tx.Any) -> str:
+def normalize_bound(bound: tx.Any) -> str:
     """Return the name that the package uses for a boundary condition.
 
     Parameters
@@ -81,7 +81,7 @@ def _normalize_bound(bound: tx.Any) -> str:
     return _ALIASES[key]
 
 
-def _bound_index(
+def bound_index(
     xp: ModuleType,
     i: tx.Any,
     n: int,

@@ -3,18 +3,18 @@
 MRTRIX_MAGIC = "mrtrix image"
 """The first line of every MRtrix header."""
 
-_MAGIC_BYTES = MRTRIX_MAGIC.encode("ascii")
+MAGIC_BYTES = MRTRIX_MAGIC.encode("ascii")
 
-_END = "END"
+END = "END"
 """The last line of every MRtrix header."""
 
-_RESERVED = ("dim", "vox", "layout", "datatype", "transform", "scaling")
+RESERVED = ("dim", "vox", "layout", "datatype", "transform", "scaling")
 """The keys MRtrix decodes itself, which are case-insensitive."""
 
-_FILE = "file"
+FILE = "file"
 """The key that gives the location of the data."""
 
-_MAX_HEADER_LINES = 1_000_000
+MAX_HEADER_LINES = 1_000_000
 """
 A bound on the header length, so that a stray binary file is not read
 whole in search of `END`.
@@ -25,7 +25,7 @@ whole in search of `END`.
 #   DATA TYPES
 # ----------------------------------------------------------------------
 
-_DTYPES = {
+DTYPES = {
     "int8": "i1",
     "uint8": "u1",
     "int16": "i2",
@@ -41,7 +41,7 @@ _DTYPES = {
 }
 """The NumPy type of each MRtrix data type, without byte order."""
 
-_NAMES = {
+NAMES = {
     "int8": "Int8",
     "uint8": "UInt8",
     "int16": "Int16",
@@ -57,4 +57,4 @@ _NAMES = {
 }
 """The spelling MRtrix writes for each data type."""
 
-_BIT = "bit"
+BIT = "bit"

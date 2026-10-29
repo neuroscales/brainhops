@@ -32,20 +32,17 @@ import numpy as np
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
-from brainhops.io.transformations.base._conversions import (
+from brainhops.datamodel._internal_api import convert_withlog, converter
+from brainhops.datamodel.systems import RASmm
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
     format_options,
     register_converter,
     unrepresentable,
 )
-from brainhops.io.transformations.base.affines import _RAS
+from brainhops.io.transformations.fsl._internal_api import ImageGeometry
 
-from .._affines import _ImageGeometry
 from ._xform import FlirtTransform
 
 OPTIONS = ("reference", "moving")
@@ -73,7 +70,7 @@ def _(
             f"moving=mov), or conversion={{'reference': ref, 'moving': "
             f"mov}} to io.save.",
         )
-    world = affine_between(t, _RAS, _RAS, cls)
+    world = affine_between(t, RASmm(), RASmm(), cls)
     if world.shape != (4, 4):
         raise unrepresentable(
             t,
@@ -82,8 +79,8 @@ def _(
             f"{len(world) - 1} dimensions.",
         )
     try:
-        reference = _ImageGeometry(options["reference"])
-        moving = _ImageGeometry(options["moving"])
+        reference = ImageGeometry(options["reference"])
+        moving = ImageGeometry(options["moving"])
         flirt = reference.ras2fsl @ np.linalg.inv(world) @ moving.fsl2ras
     except (ValueError, TypeError, np.linalg.LinAlgError) as error:
         raise unrepresentable(
@@ -102,4 +99,4 @@ def _(
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)

@@ -453,7 +453,7 @@ def test_subspace_inverse_wraps_inner_transform() -> None:
 
 def test_interpolates_truth_table() -> None:
     # Check whether applying a transformation interpolates data with splines.
-    from brainhops.datamodel._transformations.sequence import _interpolates
+    from brainhops.datamodel._transformations.sequence import interpolates
 
     affine = Affine(matrix=np.eye(3, 4))
     translation = Translation(translation=[1.0, 2.0, 3.0])
@@ -462,24 +462,24 @@ def test_interpolates_truth_table() -> None:
     coords = CoordinateField(field=np.zeros((4, 5, 6, 3)))
 
     # Neither non-fields nor grids interpolate.
-    assert _interpolates(None) is False
-    assert _interpolates(Identity()) is False
-    assert _interpolates(affine) is False
-    assert _interpolates(translation) is False
-    assert _interpolates(grid) is False
+    assert interpolates(None) is False
+    assert interpolates(Identity()) is False
+    assert interpolates(affine) is False
+    assert interpolates(translation) is False
+    assert interpolates(grid) is False
 
     # Displacement fields and non-grid coordinate fields do.
-    assert _interpolates(disp) is True
-    assert _interpolates(coords) is True
+    assert interpolates(disp) is True
+    assert interpolates(coords) is True
 
     # A sequence does when any element does.
-    assert _interpolates(Sequence([affine, translation])) is False
-    assert _interpolates(Sequence([affine, disp])) is True
+    assert interpolates(Sequence([affine, translation])) is False
+    assert interpolates(Sequence([affine, disp])) is True
 
     # A subspace interpolates exactly when its inner transformation does.
     axes = np.asarray([0, 1, 2])
     assert (
-        _interpolates(
+        interpolates(
             SubspaceTransformation(
                 transformation=affine, input_axes=axes, output_axes=axes
             )
@@ -487,7 +487,7 @@ def test_interpolates_truth_table() -> None:
         is False
     )
     assert (
-        _interpolates(
+        interpolates(
             SubspaceTransformation(
                 transformation=disp, input_axes=axes, output_axes=axes
             )
@@ -496,8 +496,8 @@ def test_interpolates_truth_table() -> None:
     )
 
     # An inverse does when the inverted transformation does.
-    assert _interpolates(affine.inverse()) is False
-    assert _interpolates(disp.inverse()) is True
+    assert interpolates(affine.inverse()) is False
+    assert interpolates(disp.inverse()) is True
 
 
 # ----------------------------------------------------------------------

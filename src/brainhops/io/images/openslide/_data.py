@@ -23,10 +23,10 @@ from bagof.magic import NoRepr
 
 # core
 from brainhops._core import path
-from brainhops._core.backends import has_dask, is_lazy
-from brainhops._core.dependencies import openslide
 
 # io
+from brainhops._core.backends import has_dask, is_lazy
+from brainhops._core.dependencies import openslide
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.io.base.parsers import ParserContentError
@@ -117,11 +117,11 @@ def detect(filename: path.Path) -> tx.Tuple[str, int]:
     return _detect(os.path.abspath(filename), stat.st_mtime_ns, stat.st_size)
 
 
-class _Slide:
+class Slide:
     """A slide that OpenSlide reads, opened on first use.
 
     A slide is the local file that OpenSlide opens. The lazy arrays of the
-    levels of the slide share one `_Slide`, which opens the file once and
+    levels of the slide share one `Slide`, which opens the file once and
     keeps it open. The file is closed, and a temporary copy is deleted,
     when the last object that uses the slide is garbage-collected. A record
     never holds a slide, so that metadata keeps no open file.
@@ -138,7 +138,7 @@ class _Slide:
     @classmethod
     def from_content(
         cls, content: bytes, name: tx.Optional[str] = None
-    ) -> "_Slide":
+    ) -> "Slide":
         """Return a slide whose content is written to a temporary file.
 
         OpenSlide opens slides by name only, so content without a local file
@@ -157,7 +157,7 @@ class _Slide:
 
         Returns
         -------
-        _Slide
+        Slide
             The slide, which deletes the temporary directory when it is
             garbage-collected.
         """
@@ -212,12 +212,12 @@ def open_handle(filename: path.Path) -> tx.Any:
         ) from e
 
 
-def read_associated(slide: _Slide, name: str) -> np.ndarray:
+def read_associated(slide: Slide, name: str) -> np.ndarray:
     """Read an associated image of a slide, composited onto white.
 
     Parameters
     ----------
-    slide : _Slide
+    slide : Slide
         The slide.
     name : str
         The name of the associated image, such as `"label"`.
@@ -245,7 +245,7 @@ def read_associated(slide: _Slide, name: str) -> np.ndarray:
 # ----------------------------------------------------------------------
 
 
-class _SlideArray(StoredProxy):
+class SlideArray(StoredProxy):
     """A lazy array of one level of a slide, which reads only what is selected.
 
     The array holds the slide, the record of the slide and the index of the
@@ -311,7 +311,7 @@ class _SlideArray(StoredProxy):
 
         Returns
         -------
-        _SlideArray or dask.array.Array
+        SlideArray or dask.array.Array
             The data of the level.
         """
         lazy = self.lazy
@@ -387,7 +387,7 @@ def _detect(filename: str, mtime: int, size: int) -> tx.Tuple[str, int]:
 
 
 def _release(state: tx.Dict[str, tx.Any]) -> None:
-    """Close the slide of a `_Slide` and delete its temporary directory."""
+    """Close the slide of a `Slide` and delete its temporary directory."""
     handle = state.pop("handle", None)
     if handle is not None:
         handle.close()

@@ -7,9 +7,16 @@ import typing_extensions as tx
 from bagof.magic import InitVar, replace
 
 # core
-from brainhops._core.affines import expm as affine_expm
-from brainhops._core.affines import logm as affine_logm
-from brainhops._core.affines import to_compact, to_homogeneous
+from brainhops._core.affines import (
+    expm as affine_expm,
+)
+from brainhops._core.affines import (
+    logm as affine_logm,
+)
+from brainhops._core.affines import (
+    to_compact,
+    to_homogeneous,
+)
 from brainhops._core.backends import array_backend
 from brainhops._core.linalg import expm, logm, require_positive
 from brainhops._core.properties import alias, lazyproperty
@@ -30,8 +37,8 @@ from .concrete import (
     Rotation,
     Scaling,
     StoreEnum,
-    _data2values,
-    _invalidating_property,
+    data2values,
+    invalidating_property,
     require_endomorphism,
 )
 
@@ -143,7 +150,7 @@ class StationaryVelocityField(
 
     # --- attribute views ----------------------------------------------
 
-    steps = _invalidating_property("steps")
+    steps = invalidating_property("steps")
 
     # --- views --------------------------------------------------------
 
@@ -235,8 +242,8 @@ class AffineExponential(_TangentMixin, Affine, on={"_log": True}):
 
     # --- attribute views ----------------------------------------------
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
 
     # --- views --------------------------------------------------------
 
@@ -327,8 +334,8 @@ class LinearExponential(
     _logmatrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Logarithm of the matrix, an init-only alias of `data`."""
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
 
     logmatrix = alias("data")
 
@@ -348,8 +355,8 @@ class RotationExponential(MatrixTangentMixin, Rotation, on={"_log": True}):
     _logmatrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Antisymmetric logarithm of the matrix, an init-only alias of `data`."""
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
 
     logmatrix = alias("data")
 
@@ -372,8 +379,8 @@ class ScalingExponential(_TangentMixin, Scaling, on={"_log": True}):
     _logscale: InitVar[tx.Optional[npvector[Real]]] = None
     """Logarithm of the scaling factors, an init-only alias of `data`."""
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
 
     logscale = alias("data")
 
@@ -428,7 +435,7 @@ def _integrate_field(
     if data is None:
         return None
     if steps is None:
-        steps = _squaring_steps(_data2values(data, store, degree, bound))
+        steps = _squaring_steps(data2values(data, store, degree, bound))
     if isinstance(steps, bool) or not isinstance(steps, Integral) or steps < 0:
         raise ValueError(
             f"The number of squaring steps must be a non-negative integer, "

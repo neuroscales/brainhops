@@ -31,7 +31,7 @@ else:
 AXIS = tx.TypeVar("AXIS", bound=Axis, default=Axis)
 _EllipsisOr: tx.TypeAlias = tx.Union[AXIS, _Ellipsis]
 
-_VariadicAxes: tx.TypeAlias = AxisList[_EllipsisOr[AXIS]]
+VariadicAxes: tx.TypeAlias = AxisList[_EllipsisOr[AXIS]]
 
 
 class CoordinateSystem(
@@ -85,7 +85,7 @@ class CoordinateSystem(
         The name of the system, if any.
     """
 
-    axes: NotKwOnly[tx.Optional[_VariadicAxes]] = None
+    axes: NotKwOnly[tx.Optional[VariadicAxes]] = None
     """
     The axes, in order.
     """

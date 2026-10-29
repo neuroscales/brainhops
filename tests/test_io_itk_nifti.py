@@ -32,7 +32,7 @@ from brainhops.io.transformations.base.fields import (  # noqa: E402
     LPSCoordinateField,
 )
 from brainhops.io.transformations.itk._systems import (  # noqa: E402
-    _make_system,
+    make_system,
 )
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
     ItkNiftiCoordinateField,
@@ -161,8 +161,8 @@ def itk_warp(tmp_path, ndim):  # noqa: ANN001, ANN201
 
 def test_the_field_maps_lps_to_lps(itk_warp, ndim) -> None:  # noqa: ANN001
     field = ItkNiftiDisplacementField.from_file(itk_warp)
-    assert field.input == _make_system(ndim)
-    assert field.output == _make_system(ndim)
+    assert field.input == make_system(ndim)
+    assert field.output == make_system(ndim)
     assert len(field.input.axes) == ndim
     assert list(field) == [
         field.lps2voxel,
@@ -305,11 +305,11 @@ def test_coordinates_and_displacements_agree(tmp_path, ndim) -> None:  # noqa: A
     coords = _write(tmp_path / "coords.nii.gz", positions.astype("float32"))
     disp = ItkNiftiDisplacementField.from_file(disp)
     coords = ItkNiftiCoordinateField.from_file(coords)
-    assert coords.input == _make_system(ndim)
-    assert coords.output == _make_system(ndim)
+    assert coords.input == make_system(ndim)
+    assert coords.output == make_system(ndim)
     assert isinstance(coords.lps2voxel, LPSToVoxel)
     assert isinstance(coords.coordinates, LPSCoordinateField)
-    assert coords.coordinates.output == _make_system(ndim)
+    assert coords.coordinates.output == make_system(ndim)
     points = _all_nodes_ras(ndim)
     np.testing.assert_allclose(
         _apply_ras(coords, points),
@@ -679,7 +679,7 @@ def test_the_fields_round_trip(tmp_path, cls, ndim) -> None:  # noqa: ANN001
 def test_a_field_built_in_memory_is_written_in_itks_encoding(ndim) -> None:  # noqa: ANN001
     """Without a header to copy, the grid comes from the chain itself."""
     vox2lps = _vox2lps(ndim)
-    world = _make_system(ndim)
+    world = make_system(ndim)
     vectors = _ramp(ndim)
     field = ItkNiftiDisplacementField(
         transformations=[

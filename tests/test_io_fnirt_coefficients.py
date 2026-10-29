@@ -18,7 +18,7 @@ nb = pytest.importorskip("nibabel")
 
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
-    _ImageGeometry,
+    ImageGeometry,
 )
 from brainhops.io.transformations.fsl.fnirt import FnirtWarpField  # noqa: E402
 
@@ -110,8 +110,8 @@ def _fsl_world(coef, ksp, degree, premat, reference, stored_pixdim):  # noqa: AN
     (`FnirtFileReader::add_affine_part` in
     `src/warpfns/fnirt_file_reader.cpp`).
     """
-    ref = _ImageGeometry(reference)
-    mov = _ImageGeometry(_image(MOV_AFFINE, (10, 10, 10)))
+    ref = ImageGeometry(reference)
+    mov = ImageGeometry(_image(MOV_AFFINE, (10, 10, 10)))
     voxels = _grid(ref.shape)
     scaled = _apply(ref.vox2fsl, voxels)
     disp = _fsl_displacements(
@@ -174,7 +174,7 @@ def _coefficient_file(coef, degree, ksp, premat=None):  # noqa: ANN001, ANN202
 
 def _world(warp, reference):  # noqa: ANN001, ANN202
     """Map every voxel of the reference to the moving RAS space."""
-    ref = _ImageGeometry(reference)
+    ref = ImageGeometry(reference)
     ras = _apply(ref.vox2ras, _grid(ref.shape)).reshape(ref.shape + (3,))
     sequence = _xforms.Sequence(
         transformations=[_xforms.CoordinateField(field=ras)]

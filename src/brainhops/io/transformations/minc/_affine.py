@@ -14,7 +14,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
@@ -27,7 +27,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
@@ -40,7 +40,7 @@ from brainhops.io.transformations.base import (
 # this format
 from ._formats import XfmFormat
 from ._metadata import XfmMetadata
-from ._raw import XfmRaw, _decode, _read_bytes, sniff_transforms
+from ._raw import XfmRaw, decode, read_bytes, sniff_transforms
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -62,7 +62,7 @@ def _record(xform: "XfmAffine") -> tx.Optional[XfmRaw]:
     return None if metadata is None else metadata.raw
 
 
-def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
+def matrix_to_model(matrix: tx.Any) -> np.ndarray:
     """Return the data of an affine from the matrix that a record stores.
 
     The record stores the three rows of the `(3, 4)` matrix, which are
@@ -71,7 +71,7 @@ def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
     return np.asarray(matrix, dtype=np.float64)
 
 
-def _matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
+def matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
     """Return the matrix that a record stores for the data of an affine.
 
     The record stores the three rows of the `(3, 4)` matrix as tuples of
@@ -111,7 +111,7 @@ def _decoded(block: XfmRaw.Linear) -> np.ndarray:
     writer reads the record and not the cached matrix, so an edit in
     place would be lost. A new matrix is assigned as data instead.
     """
-    matrix = _matrix_to_model(block.matrix)
+    matrix = matrix_to_model(block.matrix)
     if block.inverted:
         homogeneous = np.eye(4)
         homogeneous[:3] = matrix
@@ -315,7 +315,7 @@ class XfmAffine(
         float
             The confidence, between 0 and 1.
         """
-        text = _decode(content, kwargs.get("encoding", "utf-8"))
+        text = decode(content, kwargs.get("encoding", "utf-8"))
         return cls.sniff_text(text, error=error)
 
     @classmethod
@@ -344,7 +344,7 @@ class XfmAffine(
         float
             The confidence, between 0 and 1.
         """
-        content = _read_bytes(filename)
+        content = read_bytes(filename)
         if content is None:
             return super().sniff_filename(filename, error=error, **kwargs)
         return cls.sniff_bytes(content, error=error, **kwargs)
@@ -759,7 +759,7 @@ def _encode(xform: XfmAffine, old: tx.Optional[XfmRaw]) -> XfmRaw:
             f"An MNI transform file stores a 3-D affine, of shape (3, 4), "
             f"but the matrix has shape {shape}."
         )
-    linear = XfmRaw.Linear(matrix=_matrix_to_disk(matrix))
+    linear = XfmRaw.Linear(matrix=matrix_to_disk(matrix))
     comments = () if old is None else old.comments
     return XfmRaw(comments=comments, transforms=(linear,))
 

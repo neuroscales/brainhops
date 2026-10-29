@@ -12,11 +12,10 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Affine, Transformation
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -24,28 +23,31 @@ from brainhops.io.base.parsers import (
     SnifferTypeError,
     disabled,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.base._utils_raster import (
+from brainhops.io.images.base._internal_api import (
     default_axes,
     physical_system,
     pixel_system,
 )
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._data import (
     READABLE_ENCODINGS,
-    _PrecomputedProxy,
+    PrecomputedProxy,
     read_precomputed,
     stream_location,
 )
 from ._metadata import PrecomputedMetadata
-from ._raw import PrecomputedRaw, _no_options
-from ._views import _image_to_disk, _image_to_model
+from ._raw import OPTION_OWNER, PrecomputedRaw
+from ._views import image_to_disk, image_to_model
 
 _UNIT = "nm"
 """The unit of the resolution of a scale, and of the physical space."""
@@ -152,7 +154,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -250,7 +252,7 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -407,10 +409,10 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the `info` file breaks the specification, if there is no
             such scale, or if the encoding of the scale cannot be read.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_precomputed(filename)
         metadata = PrecomputedMetadata.from_raw(record)
-        return _read_scale(cls, location, metadata, level)
+        return read_scale(cls, location, metadata, level)
 
     @classmethod
     def from_fileobj(
@@ -445,10 +447,10 @@ class PrecomputedImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         ParserTypeError
             If the stream has no file name.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_precomputed(stream_location(file))
         metadata = PrecomputedMetadata.from_raw(record)
-        return _read_scale(cls, location, metadata, level)
+        return read_scale(cls, location, metadata, level)
 
     from_bytes = disabled(
         ParserContentError,
@@ -470,7 +472,7 @@ if HAS_TENSORSTORE:
 # ----------------------------------------------------------------------
 
 
-def _read_scale(
+def read_scale(
     cls: type,
     location: path.Path,
     metadata: PrecomputedMetadata,
@@ -493,7 +495,7 @@ def _read_scale(
             f"cannot decode. The encodings that it reads are "
             f"{', '.join(READABLE_ENCODINGS)}."
         )
-    proxy = _PrecomputedProxy(location, record, scale)
+    proxy = PrecomputedProxy(location, record, scale)
     return cls(rawdata=proxy, metadata=metadata, level=index)
 
 

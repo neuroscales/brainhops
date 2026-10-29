@@ -19,11 +19,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis, is_component_type
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -33,51 +33,46 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     RAS_FROM_ORIENTATION,
     held_transformations,
     reduce_to_affine,
     same_transformations,
 )
 from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
-from brainhops.io.common.nrrd._codecs import (
-    _format_float,
-    _format_strings,
-    _format_vectors,
-    dtype_to_nrrd,
-)
-from brainhops.io.common.nrrd._constants import (
-    _DATA_EXTENSIONS,
-    _ENCODINGS,
-    _SPACE_NAMES,
+from brainhops.io.common.nrrd._internal_api import (
+    DATA_EXTENSIONS,
+    DECLINE_MESSAGE,
+    ENCODINGS,
+    OPTION_OWNER,
+    SPACE_NAMES,
     SPACES,
-)
-from brainhops.io.common.nrrd._data import (
-    _decode,
-    _NrrdProxy,
+    NrrdProxy,
+    axis_roles,
+    decode,
+    dtype_to_nrrd,
     encode_data,
+    format_float,
+    format_strings,
+    format_vectors,
+    image_order,
     read_nrrd,
 )
-from brainhops.io.common.nrrd._layout import axis_roles, image_order
-from brainhops.io.common.nrrd._raw import (
-    _declined,
-    _no_options,
-    _sniffed_raw,
-)
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _INDEX = "index"
 
@@ -452,7 +447,7 @@ class NrrdImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -543,13 +538,13 @@ class NrrdImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(NrrdRaw.from_fileobj, file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         score = cls._score_header(raw)
         if score:
             return score
-        return _declined(error, None)
+        return declined(error, DECLINE_MESSAGE, None)
 
     @classmethod
     def from_filename(
@@ -587,7 +582,7 @@ class NrrdImage(
             If the file is not a NRRD image, or a local file of raw
             samples is too short.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_nrrd(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=NrrdMetadata.from_raw(raw))
 
@@ -621,7 +616,7 @@ class NrrdImage(
             If the stream is not a NRRD image, or its header names data
             files and the stream has no name.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_nrrd(file, mmap=False)
         return cls(rawdata=proxy, metadata=NrrdMetadata.from_raw(raw))
 
@@ -854,7 +849,7 @@ class NrrdImage(
         if data_file is None and not attached:
             held = None if self.metadata is None else self.metadata.raw
             encoding = _target_encoding(held, options["encoding"])
-            data_file = name[: -len(".nhdr")] + _DATA_EXTENSIONS[encoding]
+            data_file = name[: -len(".nhdr")] + DATA_EXTENSIONS[encoding]
         if attached:
             written = [filename]
         else:
@@ -932,9 +927,9 @@ def _target_encoding(
     if encoding is None:
         return held.encoding if held is not None else "gzip"
     key = str(encoding).lower()
-    if key not in _ENCODINGS:
+    if key not in ENCODINGS:
         raise WriterError(f"Unknown NRRD encoding: {encoding!r}")
-    return _ENCODINGS[key]
+    return ENCODINGS[key]
 
 
 def _encoded(
@@ -966,7 +961,7 @@ def _encoded(
         held = _record_transformations(image.metadata)
     image = replace(image, transformations=held)
     if image._data is not None:
-        raw = _image_to_disk(image._data)
+        raw = image_to_disk(image._data)
     else:
         raw = image.rawdata
     if raw is None:
@@ -1108,7 +1103,7 @@ def _copies_samples(
     encoding, the type and the byte order that its record stores, or are
     not given.
     """
-    if not isinstance(raw, _NrrdProxy) or not raw.copyable:
+    if not isinstance(raw, NrrdProxy) or not raw.copyable:
         return False
     record = raw.record
     if list(image_order(record)) != list(order):
@@ -1165,7 +1160,7 @@ def _keeps_geometry(
     """
     if space is not None:
         key = str(space).lower()
-        if _SPACE_NAMES.get(key, key) != held.space:
+        if SPACE_NAMES.get(key, key) != held.space:
             return False
     decoded = _nrrd_to_transformations(held)
     current = list(image.transformations)
@@ -1249,7 +1244,7 @@ def _geometry_fields(
             directions = [None] * ndim
             for i, v in zip(spatial, values["directions"]):
                 directions[i] = v
-            fields["space directions"] = _format_vectors(directions)
+            fields["space directions"] = format_vectors(directions)
             # Spatial axes are described by their directions alone.
             for name in ("spacings", "axis mins", "axis maxs", "units"):
                 if name in per_axis:
@@ -1262,10 +1257,10 @@ def _geometry_fields(
             centers = per_axis.get("centers", ["???"] * ndim)
             units = per_axis.get("units", ['""'] * ndim)
             for i, s, t, u in zip(spatial, *values):
-                spacings[i] = _format_float(s)
+                spacings[i] = format_float(s)
                 cell = centers[i].lower() != "node"
-                mins[i] = _format_float(t - s / 2 if cell else t)
-                units[i] = _format_strings([u])
+                mins[i] = format_float(t - s / 2 if cell else t)
+                units[i] = format_strings([u])
             if any(m != "nan" for m in mins):
                 per_axis["axis mins"] = mins
                 per_axis.pop("axis maxs", None)
@@ -1349,7 +1344,7 @@ def _stored_samples(record: NrrdRaw, samples: ArrayProtocol) -> ArrayProtocol:
     order = image_order(record)
     values = np.asarray(samples).transpose(np.argsort(order))
     content = BytesIO(encode_data(record, values))
-    return _decode(record, [(content, 0)], mmap=False).transpose(order)
+    return decode(record, [(content, 0)], mmap=False).transpose(order)
 
 
 def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
@@ -1378,7 +1373,7 @@ def _nrrd_written(image: NrrdImage, data_files: tx.Tuple[str, ...]) -> NrrdRaw:
 def _reads_from(raw: tx.Any, written: tx.Sequence[path.Path]) -> bool:
     """Tell whether a lazy array reads one of the files just written."""
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _NrrdProxy):
+    if not isinstance(raw, NrrdProxy):
         return False
     return any(
         isinstance(read, path.Path) and is_same_file(read, file)
@@ -1439,7 +1434,7 @@ def _target_space(
     """
     if requested is not None:
         key = str(requested).lower()
-        key = _SPACE_NAMES.get(key, key)
+        key = SPACE_NAMES.get(key, key)
         if key not in _FLIPS:
             raise WriterError(
                 f"NRRD writes an anatomical geometry in "
@@ -1515,10 +1510,10 @@ def _geometry(
         target = _target_space(space, source, to_ras)
         convert = np.diag(_FLIPS[target]) @ to_ras
         fields = {"space": target}
-        fields["space origin"] = _format_vectors([convert @ shift])
+        fields["space origin"] = format_vectors([convert @ shift])
         units = [_unit_symbol(a) for a in world_axes]
         if all(units):
-            fields["space units"] = _format_strings(units)
+            fields["space units"] = format_strings(units)
         frame = _measurement_frame(source, target)
         if frame is not None:
             fields["measurement frame"] = frame
@@ -1543,10 +1538,10 @@ def _geometry(
         return "spacings", (list(scale), list(shift), units)
     fields = {
         "space dimension": str(len(rows)),
-        "space origin": _format_vectors([shift]),
+        "space origin": format_vectors([shift]),
     }
     if all(units):
-        fields["space units"] = _format_strings(units)
+        fields["space units"] = format_strings(units)
     return "space", {"fields": fields, "directions": list(linear.T)}
 
 
@@ -1586,7 +1581,7 @@ def _measurement_frame(
     if space not in _FLIPS:
         return None
     flips = _FLIPS[target] * _FLIPS[space]
-    return _format_vectors(list((flips[:, None] * frame).T))
+    return format_vectors(list((flips[:, None] * frame).T))
 
 
 # ----------------------------------------------------------------------

@@ -5,20 +5,15 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
+from brainhops.datamodel._internal_api import convert_withlog, converter
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
+from brainhops.datamodel.systems import RASmm
 from brainhops.errors import (
     IncompatibleSystemError,
 )
@@ -29,28 +24,23 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
-from brainhops.io.metadata._base import (
+from brainhops.io.common._internal_api import TxtArrayReader, is_numeric_array
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
+    check_endpoint,
     format_options,
-)
-from brainhops.io.transformations.base._records import (
     matrix_to_disk,
     matrix_to_model,
     read_only,
     record_of,
 )
-from brainhops.io.transformations.base.affines import (
-    _RAS,
-    RASToRAS,
-    _check_endpoint,
-)
+from brainhops.io.transformations.base.affines import RASToRAS
 
 from ._formats import NiftyRegAffineFormat
 from ._metadata import NiftyRegAffineMetadata
@@ -409,7 +399,7 @@ def _(
     # endpoints of a NiftyReg affine accept unknown systems.
     cls = NiftyRegAffine
     format_options(t, cls, kwargs)
-    matrix = affine_between(t, _RAS, _RAS, cls)
+    matrix = affine_between(t, RASmm(), RASmm(), cls)
     return cls(matrix=matrix[:-1])
 
 
@@ -420,7 +410,7 @@ def _(
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -441,7 +431,7 @@ def _check_systems(xform: NiftyRegAffine) -> None:
     """
     for name in ("input", "output"):
         try:
-            _check_endpoint(xform, name, _RAS)
+            check_endpoint(xform, name, RASmm())
         except IncompatibleSystemError as e:
             raise UnrepresentableTransformationError(
                 f"A NiftyReg affine maps RAS to RAS, but the {name} of the "

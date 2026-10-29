@@ -16,15 +16,15 @@ def nearest_level(
 ) -> int:
     # Return the index of the scale whose resolution is closest to the
     # grid of `voxel2world`. The comparison is done by
-    # `_nearest_resolution_index`, which the multiscale image also uses.
+    # `nearest_resolution_index`, which the multiscale image also uses.
     scales = multiscale.scales
     resolutions = [multiscale._level_resolution(i) for i in range(len(scales))]
-    return _nearest_resolution_index(
+    return nearest_resolution_index(
         resolutions, voxel2world.to_affine(include="affine", on_error=None)
     )
 
 
-def _nearest_resolution_index(
+def nearest_resolution_index(
     resolutions: tx.Sequence[tx.Optional[ArrayProtocol]],
     voxel2world: tx.Optional[Affine],
 ) -> int:

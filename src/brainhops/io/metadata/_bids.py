@@ -33,12 +33,13 @@ from brainhops.datamodel.metadata import (
     EncodingDirection,
     Metadata,
 )
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    GROUPS,
+    VOCABULARY,
     apply_loss_policy,
     call_under_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import GROUPS, VOCABULARY
 from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (

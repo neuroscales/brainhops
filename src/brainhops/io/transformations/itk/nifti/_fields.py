@@ -23,9 +23,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.errors import (
     ParserContentError,
     WriterError,
@@ -35,29 +33,27 @@ from brainhops.errors import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.nifti import NiftiMetadata
-from brainhops.io.common.nifti._constants import (
-    _NIFTI_INTENT_DISPVECT,
-    _NIFTI_INTENT_NAME_ITK_COORDINATES,
-    _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
-    _NIFTI_INTENT_NAME_MAPPING,
-    _NIFTI_INTENT_NAME_NIFTYREG,
-    _NIFTI_INTENT_VECTOR,
+from brainhops.io.common.nifti._internal_api import (
+    NIFTI_INTENT_DISPVECT,
+    NIFTI_INTENT_NAME_ITK_COORDINATES,
+    NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
+    NIFTI_INTENT_NAME_MAPPING,
+    NIFTI_INTENT_NAME_NIFTYREG,
+    NIFTI_INTENT_VECTOR,
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    embed_nifti_affine,
+    header_of,
+    keep_given_fields,
+    nifti_intent,
+    nifti_intent_name,
+    nifti_shape,
+    record_image,
+    split_options,
+    stored_parts,
 )
-from brainhops.io.common.nifti._geometry import _embed_affine
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _nifti_intent,
-    _nifti_intent_name,
-    _nifti_shape,
-    _NiftiObject,
-    _record_image,
-    _split_options,
-    _stored_parts,
-)
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,
@@ -68,12 +64,15 @@ from brainhops.io.transformations.base.fields import (
     DISPLACEMENT_HINTS,
     LPSCoordinateField,
 )
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
 
 # this_format
-from .._systems import _make_system
-from ._views import _itk_field_to_disk, _itk_field_to_model
+from brainhops.io.transformations.itk._internal_api import make_system
+from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti._internal_api import (
+    consolidated_metadata,
+)
+
+from ._views import itk_field_to_disk, itk_field_to_model
 
 _NDIMS = (2, 3)
 """
@@ -120,7 +119,7 @@ def _itk_ndim(shape: tx.Optional[tx.Sequence[int]]) -> tx.Optional[int]:
     return ndim
 
 
-def _check_layout(header: _NiftiObject) -> None:
+def _check_layout(header: NiftiObject) -> None:
     """Refuse a header whose array is not in the layout of an ITK field.
 
     Raises
@@ -128,7 +127,7 @@ def _check_layout(header: _NiftiObject) -> None:
     ParserContentError
         If the shape is neither (X, Y, Z, 1, 3) nor (X, Y, 1, 1, 2).
     """
-    shape = _nifti_shape(header)
+    shape = nifti_shape(header)
     if _itk_ndim(shape) is None:
         raise ParserContentError(
             f"An ITK field is stored as a (X, Y, Z, 1, 3) or "
@@ -188,7 +187,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         super().__post_init__(arguments)
         # A file that is not in the ITK layout is refused from its header
         # alone, rather than when the chain is built.
-        header = _header(self)
+        header = header_of(self)
         if header is not None:
             _check_layout(header)
 
@@ -218,7 +217,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         """
         if self.rawdata is None:
             return None
-        return _itk_field_to_model(self.rawdata)
+        return itk_field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -252,9 +251,9 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
             return int(np.asarray(chain[0].matrix).shape[0])
         if self._data is not None:
             return int(self._data.shape[-1])
-        header = _header(self)
+        header = header_of(self)
         if header is not None:
-            return _itk_ndim(_nifti_shape(header))
+            return _itk_ndim(nifti_shape(header))
         if self.rawdata is not None:
             return _itk_ndim(tuple(self.rawdata.shape))
         return None
@@ -263,13 +262,13 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The ITK physical space that the field maps from."""
         ndim = self._ndim()
-        return None if ndim is None else _make_system(ndim)
+        return None if ndim is None else make_system(ndim)
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The ITK physical space that the field maps to."""
         ndim = self._ndim()
-        return None if ndim is None else _make_system(ndim)
+        return None if ndim is None else make_system(ndim)
 
     # --- decoding -----------------------------------------------------
 
@@ -288,7 +287,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
                 "This field has no ITK NIfTI header or array to read its "
                 "grid from."
             )
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             vox2ras = np.eye(4)
         else:
@@ -314,7 +313,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         shape = tuple(int(d) for d in data.shape)
         if len(shape) != ndim + 1:
             data = xp.reshape(data, (*shape[:ndim], ndim))
-        dispvect = _nifti_intent(_header(self)) == _NIFTI_INTENT_DISPVECT
+        dispvect = nifti_intent(header_of(self)) == NIFTI_INTENT_DISPVECT
         if dispvect and ndim == 3:
             flip = np.diag(_RAS_LPS)[:ndim]
             data = data * xp.asarray(flip, dtype=data.dtype)
@@ -324,7 +323,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
     def _spaces(
         ndim: int,
     ) -> tx.Tuple[_systems.CoordinateSystem, _systems.CoordinateSystem]:
-        return _make_system(ndim), _voxel_system(ndim)
+        return make_system(ndim), _voxel_system(ndim)
 
     # --- slots --------------------------------------------------------
 
@@ -385,7 +384,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -412,9 +411,9 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
             if metadata is self.metadata
             else replace(self, metadata=metadata)
         )
-        image = _keep_given_fields(source._encoded(like, **overrides), fields)
-        raw, record = _stored_parts(image)
-        metadata = _consolidated_metadata(self, record)
+        image = keep_given_fields(source._encoded(like, **overrides), fields)
+        raw, record = stored_parts(image)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -447,7 +446,7 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         The codes come from the header when either is set, and each falls back
         on the other. Otherwise both are `NIFTI_XFORM_SCANNER_ANAT`.
         """
-        header = _header(self)
+        header = header_of(self)
         if header is not None:
             _, scode = header.get_sform(coded=True)
             _, qcode = header.get_qform(coded=True)
@@ -468,16 +467,16 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         was assigned.
         """
         if self._data is not None:
-            stored = _itk_field_to_disk(self._data)
+            stored = itk_field_to_disk(self._data)
         else:
             stored = self.rawdata
         if self.metadata is None or stored is None:
             return None
         if self._transformations is not None:
             return None
-        image = _record_image(stored, self._record(), overrides=overrides)
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
+        image = record_image(stored, self._record(), overrides=overrides)
+        apply_like(image, like)
+        apply_overrides(image, overrides)
         return image
 
     def _write_vectors(
@@ -511,15 +510,15 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
                 f"A {ndim}-D field needs a {ndim}-D grid, and its affine "
                 f"is {vox2lps.shape[0] - 1}x{vox2lps.shape[1] - 1}."
             )
-        vox2ras = _RAS_LPS @ _embed_affine(vox2lps)
-        vectors = _itk_field_to_disk(vectors)
-        image = _record_image(vectors, self._record(), vox2ras, overrides)
-        image.header.set_intent(_NIFTI_INTENT_VECTOR, name=self.INTENT_NAME)
+        vox2ras = _RAS_LPS @ embed_nifti_affine(vox2lps)
+        vectors = itk_field_to_disk(vectors)
+        image = record_image(vectors, self._record(), vox2ras, overrides)
+        image.header.set_intent(NIFTI_INTENT_VECTOR, name=self.INTENT_NAME)
         scode, qcode = self._xform_codes()
         image.header.set_sform(vox2ras, code=scode)
         image.header.set_qform(vox2ras, code=qcode)
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
+        apply_like(image, like)
+        apply_overrides(image, overrides)
         return image
 
 
@@ -551,10 +550,10 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     HINTS = DISPLACEMENT_HINTS
 
-    INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_DISPLACEMENT
+    INTENT_NAME: tx.ClassVar[str] = NIFTI_INTENT_NAME_ITK_DISPLACEMENT
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as an ITK displacement field.
 
@@ -565,18 +564,18 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         ITK never writes, is not claimed, and neither is the NiftyReg name
         `"NREG_TRANS"`.
         """
-        if _itk_ndim(_nifti_shape(header)) is None:
+        if _itk_ndim(nifti_shape(header)) is None:
             return Confidence.NO
-        if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
+        if nifti_intent(header) != NIFTI_INTENT_VECTOR:
             return Confidence.NO
-        name = _nifti_intent_name(header)
-        if name == _NIFTI_INTENT_NAME_ITK_DISPLACEMENT:
+        name = nifti_intent_name(header)
+        if name == NIFTI_INTENT_NAME_ITK_DISPLACEMENT:
             # Only this reader claims the name that brainhops writes on it.
             return Confidence.CERTAIN
         if name in (
-            _NIFTI_INTENT_NAME_MAPPING,
-            _NIFTI_INTENT_NAME_NIFTYREG,
-            _NIFTI_INTENT_NAME_ITK_COORDINATES,
+            NIFTI_INTENT_NAME_MAPPING,
+            NIFTI_INTENT_NAME_NIFTYREG,
+            NIFTI_INTENT_NAME_ITK_COORDINATES,
         ):
             return Confidence.NO
         return Confidence.CERTAIN
@@ -714,7 +713,7 @@ class ItkNiftiCoordinateField(ItkNiftiField):
 
     HINTS = COORDINATE_HINTS
 
-    INTENT_NAME: tx.ClassVar[str] = _NIFTI_INTENT_NAME_ITK_COORDINATES
+    INTENT_NAME: tx.ClassVar[str] = NIFTI_INTENT_NAME_ITK_COORDINATES
 
     PRIORITY: tx.ClassVar[int] = -1
     """
@@ -726,7 +725,7 @@ class ItkNiftiCoordinateField(ItkNiftiField):
     """
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Claim only the files that brainhops writes as such fields.
 
@@ -735,11 +734,11 @@ class ItkNiftiCoordinateField(ItkNiftiField):
         layout that carries the intent name `"ITKCoordinates"`, which
         brainhops writes on it.
         """
-        if _itk_ndim(_nifti_shape(header)) is None:
+        if _itk_ndim(nifti_shape(header)) is None:
             return Confidence.NO
-        if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
+        if nifti_intent(header) != NIFTI_INTENT_VECTOR:
             return Confidence.NO
-        if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_ITK_COORDINATES:
+        if nifti_intent_name(header) == NIFTI_INTENT_NAME_ITK_COORDINATES:
             return Confidence.CERTAIN
         return Confidence.NO
 

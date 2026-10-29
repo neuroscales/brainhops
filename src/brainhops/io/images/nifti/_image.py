@@ -15,9 +15,7 @@ from brainhops._core.typing import ArrayProtocol
 # datamodel
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -38,7 +36,7 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
@@ -47,32 +45,30 @@ from brainhops.io.common.nifti import (
     NiftiRaw,
     NiftiReaderWriter,
 )
-from brainhops.io.common.nifti._constants import (
-    _NIFTI_FIELD_INTENTS,
-    _NIFTI_INTENT_NONE,
-    _NIFTI_XCODES,
+from brainhops.io.common.nifti._internal_api import (
+    NIFTI_FIELD_INTENTS,
+    NIFTI_INTENT_NONE,
+    NIFTI_XCODES,
+    NiftiObject,
+    image_with_geometry,
+    keep_given_fields,
+    nifti_intent,
+    nifti_shape,
+    nifti_to_axes,
+    nifti_to_unit,
+    split_options,
+    storage_override,
+    stored_parts,
 )
-from brainhops.io.common.nifti._geometry import _image_with_geometry
-from brainhops.io.common.nifti._header import (
-    _keep_given_fields,
-    _nifti_intent,
-    _nifti_shape,
-    _nifti_to_axes,
-    _NiftiObject,
-    _split_options,
-    _storage_override,
-    _stored_parts,
-)
-from brainhops.io.common.nifti._units import nifti_to_unit
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 # typing
 if tx.TYPE_CHECKING:
@@ -171,7 +167,7 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -224,7 +220,7 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
             return None
         axes = [
             axis
-            for axis in _nifti_to_axes(self.metadata.raw.header)
+            for axis in nifti_to_axes(self.metadata.raw.header)
             if axis.name is not None
         ]
         # In F order, the first axis changes fastest.
@@ -233,7 +229,7 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
     # --- reading ------------------------------------------------------
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """Return how well a valid NIfTI header matches a plain image.
 
         Any NIfTI file can be read as an image, but a displacement-field
@@ -250,17 +246,17 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        intent = _nifti_intent(header)
+        intent = nifti_intent(header)
         if intent is None:
             return Confidence.MAYBE
-        if intent in _NIFTI_FIELD_INTENTS:
+        if intent in NIFTI_FIELD_INTENTS:
             return Confidence.WEAK
         # The intent is often unset, so the shape is checked too: a trailing
         # axis of length 3 on a 4D or larger image may be a deformation.
-        shape = _nifti_shape(header)
+        shape = nifti_shape(header)
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.WEAK
-        if intent == _NIFTI_INTENT_NONE:
+        if intent == NIFTI_INTENT_NONE:
             return Confidence.LIKELY
         return Confidence.MAYBE
 
@@ -345,7 +341,7 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
         MetadataLossError
             If metadata is lost under the `"raise"` policy.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         report = ConversionReport(source="NiftiImage", target="NiftiImage")
         requested = requested_fields(self.metadata, fields)
         metadata = metadata_to_write(
@@ -429,7 +425,7 @@ def _nifti_to_transformations(
 
     # --- preliminaries ------------------------------------------------
 
-    axes = _nifti_to_axes(header)
+    axes = nifti_to_axes(header)
     # Units go through the single NIfTI-to-brainhops converter, which reads
     # an unknown spatial unit as millimeters and leaves an unknown time
     # unit unspecified (see `brainhops.io.common.nifti._units`).
@@ -590,7 +586,7 @@ def _nifti_to_transformations(
     qmatrix, qcode = header.get_qform(coded=True)
     qform = None
     if qmatrix is not None:
-        qname = _NIFTI_XCODES.get(qcode, "unknown")
+        qname = NIFTI_XCODES.get(qcode, "unknown")
         qform = _coded_affine(qmatrix, "qform")
         xforms.append(qform)
 
@@ -598,7 +594,7 @@ def _nifti_to_transformations(
     smatrix, scode = header.get_sform(coded=True)
     sform = None
     if smatrix is not None:
-        sname = _NIFTI_XCODES.get(scode, "unknown")
+        sname = NIFTI_XCODES.get(scode, "unknown")
         sform = _coded_affine(smatrix, "sform")
         xforms.append(sform)
 
@@ -641,7 +637,7 @@ def _nifti_encoded(
     new header when the data have the shape that it records, so that they
     are kept as they are stored. When an override changes the data type
     or the scaling, `rawdata` is a proxy of the voxels as the file stores
-    them, as `_stored_parts` returns it.
+    them, as `stored_parts` returns it.
 
     Raises
     ------
@@ -649,7 +645,7 @@ def _nifti_encoded(
         If the image has no data.
     """
     if image._data is not None:
-        source = _image_to_disk(image._data)
+        source = image_to_disk(image._data)
     else:
         source = image.rawdata
     if source is None:
@@ -660,14 +656,14 @@ def _nifti_encoded(
         header = None
     else:
         header = metadata.raw.copy().header
-    dtype = _storage_override(fields, image.metadata, source)
+    dtype = storage_override(fields, image.metadata, source)
     if dtype is not None:
         overrides = {**overrides, "dtype": dtype}
     transformations = held_transformations(image)
     if transformations is None:
         transformations = _header_transformations(image.metadata)
     preferred = transformations[-1] if transformations else Identity()
-    nifti = _image_with_geometry(
+    nifti = image_with_geometry(
         source,
         preferred,
         transformations,
@@ -675,11 +671,11 @@ def _nifti_encoded(
         like=like,
         overrides=overrides,
     )
-    _keep_given_fields(nifti, fields)
+    keep_given_fields(nifti, fields)
     stored = None if image.metadata is None else image.metadata.raw
     if kept and header is not None and stored is not None:
         _keep_geometry(nifti.header, stored.header, overrides)
-    return _stored_parts(nifti)
+    return stored_parts(nifti)
 
 
 def _header_transformations(

@@ -11,7 +11,7 @@ from bagof.magic import Inherit, NoRepr, replace
 from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     ParserContentError,
@@ -19,7 +19,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.metadata._base import requested_fields
+from brainhops.io.metadata._internal_api import requested_fields
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
@@ -331,7 +331,7 @@ class NeuroglancerTransform(
                 self.metadata = metadata
                 return self
             return replace(self, metadata=metadata)
-        record = _encoded(self)
+        record = encoded(self)
         if metadata is None:
             metadata = NeuroglancerTransformMetadata.from_raw(record)
         else:
@@ -405,7 +405,7 @@ def _record(
     return None if metadata is None else metadata.raw
 
 
-def _encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
+def encoded(xform: NeuroglancerTransform) -> NeuroglancerTransformRaw:
     """Encode the matrix and the systems of a transformation as a record.
 
     See `NeuroglancerTransform._consolidate`.

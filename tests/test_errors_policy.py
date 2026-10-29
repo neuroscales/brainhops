@@ -663,7 +663,7 @@ def test_the_policy_of_a_generator_is_checked_when_it_is_called() -> None:
 # The methods of the formats that apply a policy themselves. Every other
 # method of a format runs under the policy of its caller.
 _ENTRY_POINTS = {
-    ("brainhops.io.base._base", "_FileBasedModelMixin", "consolidate"),
+    ("brainhops.io.base._base", "FileBasedModelMixin", "consolidate"),
     ("brainhops.io.metadata._base", "MetadataFormat", "from_instance"),
 }
 
@@ -701,14 +701,15 @@ def _io_classes() -> tx.Set[type]:
 
     import brainhops.io
     from brainhops.io.base import FileFormat
-    from brainhops.io.base.parsers import FileReader, _WriterMixin
+    from brainhops.io.base._parsers import WriterMixin
+    from brainhops.io.base.parsers import FileReader
 
     for module in pkgutil.walk_packages(
         brainhops.io.__path__, "brainhops.io."
     ):
         importlib.import_module(module.name)
     classes = set()
-    for base in (FileFormat, FileReader, _WriterMixin):
+    for base in (FileFormat, FileReader, WriterMixin):
         classes.add(base)
         for cls in _subclasses(base):
             classes.update(cls.__mro__)
@@ -742,12 +743,12 @@ def test_no_method_of_a_format_declares_a_policy() -> None:
 def test_every_entry_point_of_a_writer_takes_a_policy() -> None:
     import inspect
 
-    from brainhops.io.base.parsers import _WriterMixin
+    from brainhops.io.base._parsers import WriterMixin
 
     decorated = 0
     forgotten = []
     for cls in _io_classes():
-        if not issubclass(cls, _WriterMixin):
+        if not issubclass(cls, WriterMixin):
             continue
         for name in _WRITER_ENTRY_POINTS:
             member = vars(cls).get(name)

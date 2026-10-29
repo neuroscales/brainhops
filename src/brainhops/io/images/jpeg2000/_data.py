@@ -17,20 +17,20 @@ from bagof.magic import NoRepr
 from PIL import Image, ImageFile
 
 from brainhops._core import path
-from brainhops._core.path import is_same_file
-from brainhops._core.properties import alias
 
 # internals
+from brainhops._core.path import is_same_file
+from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
-from brainhops.io.images.pillow._utils import pillow_to_array
+from brainhops.io.images.pillow._internal_api import pillow_to_array
 
 # this format
 from ._raw import Jpeg2000Raw, read_record
 
 
-class _Jpeg2000Source:
+class Jpeg2000Source:
     """Where a JPEG 2000 file lies, so that it can be decoded again.
 
     The source is the path of a local file, which is opened each time a
@@ -83,11 +83,11 @@ class _Jpeg2000Source:
 
     def __repr__(self) -> str:
         if self.filename is not None:
-            return f"_Jpeg2000Source({str(self.filename)!r})"
-        return f"_Jpeg2000Source(<{len(self.content)} bytes>)"
+            return f"Jpeg2000Source({str(self.filename)!r})"
+        return f"Jpeg2000Source(<{len(self.content)} bytes>)"
 
 
-class _Jpeg2000Proxy(StoredProxy):
+class Jpeg2000Proxy(StoredProxy):
     """A lazy array of the samples of one resolution level.
 
     The proxy holds the source of the file, the record that the file was
@@ -102,7 +102,7 @@ class _Jpeg2000Proxy(StoredProxy):
 
     # --- magic attributes ----
 
-    source: _Jpeg2000Source
+    source: Jpeg2000Source
     """Where the file lies: the path of a local file, or its bytes."""
 
     record: NoRepr[Jpeg2000Raw]
@@ -160,7 +160,7 @@ class _Jpeg2000Proxy(StoredProxy):
         return self.read_samples()[index]
 
 
-def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:
+def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, Jpeg2000Source]:
     """Read the record of a JPEG 2000 file and where it lies.
 
     A local path is read for its header alone, and the samples are
@@ -178,7 +178,7 @@ def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:
     -------
     raw : Jpeg2000Raw
         The record.
-    source : _Jpeg2000Source
+    source : Jpeg2000Source
         Where the file lies.
 
     Raises
@@ -190,7 +190,7 @@ def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:
     """
     if isinstance(file, (bytes, bytearray)):
         content = bytes(file)
-        return read_record(content), _Jpeg2000Source(content=content)
+        return read_record(content), Jpeg2000Source(content=content)
     file = path.as_path_or_stream(file)
     if isinstance(file, path.Path):
         if not file.exists():
@@ -198,17 +198,17 @@ def read_jpeg2000(file: tx.Any) -> tx.Tuple[Jpeg2000Raw, _Jpeg2000Source]:
         if file.is_local():
             with file.open("rb") as f:
                 record = Jpeg2000Raw.from_fileobj(f)
-            return record, _Jpeg2000Source(filename=file)
+            return record, Jpeg2000Source(filename=file)
         with file.open("rb") as f:
             content = f.read()
-        return read_record(content), _Jpeg2000Source(content=content)
+        return read_record(content), Jpeg2000Source(content=content)
     with preserve_position(file):
         content = file.read()
-    return read_record(content), _Jpeg2000Source(content=content)
+    return read_record(content), Jpeg2000Source(content=content)
 
 
 def _decode_level(
-    source: _Jpeg2000Source, record: Jpeg2000Raw, level: int
+    source: Jpeg2000Source, record: Jpeg2000Raw, level: int
 ) -> np.ndarray:
     """Decode one resolution level with Pillow.
 

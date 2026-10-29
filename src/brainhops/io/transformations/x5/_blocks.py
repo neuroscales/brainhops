@@ -69,7 +69,7 @@ _BSPLINE_DEGREE = 3
 """The degree of X5 B-splines, which is 3 because nitransforms only
 evaluates cubic B-splines."""
 
-_KINDS = ("space",) * _NDIM + ("vector",)
+KINDS = ("space",) * _NDIM + ("vector",)
 
 
 # ----------------------------------------------------------------------
@@ -414,7 +414,7 @@ def _read_only_field(xform: _X5RASDisplacements) -> _X5RASDisplacements:
     return xform
 
 
-def _field_to_model(
+def field_to_model(
     stored: tx.Any, kinds: tx.Optional[tx.Sequence[str]]
 ) -> ArrayProtocol:
     """Return a field with its `vector` axis last, from the stored array.
@@ -432,19 +432,19 @@ def _field_to_model(
     return field
 
 
-def _field_to_disk(field: ArrayProtocol) -> ArrayProtocol:
+def field_to_disk(field: ArrayProtocol) -> ArrayProtocol:
     """Return the array that a node stores for a field.
 
     The writer declares the vector axis last in `DimensionKinds`, so the
     field, whose vector axis is last, is stored as it is. With these
-    kinds, `_field_to_model` returns the field unchanged.
+    kinds, `field_to_model` returns the field unchanged.
     """
     return field
 
 
 def _vector_last(node: X5Node) -> ArrayProtocol:
     """Return the node's field with its `vector` axis moved last."""
-    return _field_to_model(node.transform, node.dimension_kinds)
+    return field_to_model(node.transform, node.dimension_kinds)
 
 
 # ----------------------------------------------------------------------
@@ -460,7 +460,24 @@ def _name(system: tx.Optional[_systems.CoordinateSystem]) -> str:
     return "an unspecified system"
 
 
-def _check_ras(xform: _xforms.Transformation, what: str) -> None:
+def check_ras(xform: _xforms.Transformation, what: str) -> None:
+    """Refuse a transformation that does not map RAS to RAS.
+
+    X5 stores transformations between RAS world coordinates, so both
+    systems of the transformation must be `RASmm`.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation to store.
+    what : str
+        What the transformation is, as the error message names it.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the input or the output of `xform` is not `RASmm`.
+    """
     src, dst = xform.input, xform.output
     if isinstance(src, _systems.RASmm) and isinstance(dst, _systems.RASmm):
         return
@@ -543,7 +560,7 @@ def _chain(
 def _encode_affine(
     xform: _xforms.Transformation, affine: _xforms.Affine
 ) -> X5Node:
-    _check_ras(xform, "affine")
+    check_ras(xform, "affine")
     matrix = affine.homogeneous_matrix
     matrix = np.eye(_NDIM + 1) if matrix is None else np.asarray(matrix)
     if matrix.shape != (_NDIM + 1, _NDIM + 1):
@@ -556,14 +573,14 @@ def _encode_affine(
         subtype="affine",
         representation="matrix",
         transform=np.asarray(matrix, dtype=np.float64),
-        dimension_kinds=_KINDS,
+        dimension_kinds=KINDS,
     )
 
 
 def _encode_displacements(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
-    _check_ras(xform, "displacement field")
+    check_ras(xform, "displacement field")
     vox2ras, vectors = split_ras_displacement_chain(
         chain, "An X5 displacement field", ndim=_NDIM
     )
@@ -573,7 +590,7 @@ def _encode_displacements(
 def _encode_bspline(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
-    _check_ras(xform, "B-spline field")
+    check_ras(xform, "B-spline field")
     # Fields that are not cubic with a zero boundary are refitted.
     vox2ras, coefficients = split_ras_displacement_chain(
         chain,
@@ -596,7 +613,7 @@ def _encode_bspline(
 def _encode_coordinates(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
-    _check_ras(xform, "coordinate field")
+    check_ras(xform, "coordinate field")
     what = "An X5 coordinate field"
     ras2vox = homogeneous_matrix(chain[0], what, ndim=_NDIM)
     field = chain[1].to(store=StoreEnum.values)
@@ -625,8 +642,8 @@ def _field_node(
         type="nonlinear",
         subtype="densefield",
         representation=representation,
-        transform=_field_to_disk(field),
-        dimension_kinds=_KINDS,
+        transform=field_to_disk(field),
+        dimension_kinds=KINDS,
         domain=X5Domain(
             grid=True,
             size=shape[:-1],

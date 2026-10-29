@@ -3,7 +3,7 @@
 Reading, writing and format dispatch have separate APIs. `FileReader`
 provides `sniff*`, `load` and `from_*` for one format; `FileWriter` provides
 `save` and `to_*`. `FileFormat` selects among registered formats.
-Readers take their default methods from private mixins, which
+Readers take their default methods from internal mixins, which
 dispatchers do not inherit, and neither inherits the other's public
 API. In particular, a reader's `sniff*` returns
 a confidence score; a dispatcher's `sniff*` returns a selected class or

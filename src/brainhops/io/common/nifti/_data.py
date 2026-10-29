@@ -21,7 +21,7 @@ from brainhops._core.strided import StridedProxy
 _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
 
 
-class _NiftiProxy(StridedProxy):
+class NiftiProxy(StridedProxy):
     """A lazy array of the stored voxels of a NIfTI file.
 
     The proxy reads the voxels of a `.nii` or `.nii.gz` file, or of the
@@ -85,7 +85,7 @@ class _NiftiProxy(StridedProxy):
 
         Returns
         -------
-        _NiftiProxy or ScaledProxy
+        NiftiProxy or ScaledProxy
             The lazy array of the voxels.
 
         Raises
@@ -164,7 +164,7 @@ class _NiftiProxy(StridedProxy):
         return ScaledProxy(self, self.slope, self.inter)
 
 
-def whole_file(raw: tx.Any) -> tx.Optional[_NiftiProxy]:
+def whole_file(raw: tx.Any) -> tx.Optional[NiftiProxy]:
     """Return the lazy array of a whole NIfTI file that an array reads.
 
     A writer copies the stored voxels of such a lazy array as they are.
@@ -181,12 +181,12 @@ def whole_file(raw: tx.Any) -> tx.Optional[_NiftiProxy]:
 
     Returns
     -------
-    _NiftiProxy or None
+    NiftiProxy or None
         The proxy of the stored voxels, or `None`.
     """
     scaled = isinstance(raw, ScaledProxy)
     proxy = raw.base if scaled else raw
-    if not isinstance(proxy, _NiftiProxy):
+    if not isinstance(proxy, NiftiProxy):
         return None
     if scaled != proxy.is_scaled:
         return None

@@ -82,7 +82,7 @@ def test_an_lta_transform_reads_its_systems_from_its_volumes(
 
 
 @pytest.mark.parametrize(
-    "name", ["_get_vox2vox", "_get_phys2phys", "_get_ras2ras"]
+    "name", ["get_vox2vox", "get_phys2phys", "get_ras2ras"]
 )
 def test_an_unsupported_lta_type_names_the_type(name: str) -> None:
     """A non-linear LTA type is reported by name in every helper."""

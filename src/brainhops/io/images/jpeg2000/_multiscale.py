@@ -10,7 +10,7 @@ from brainhops._core.properties import cached_value, smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -19,21 +19,21 @@ from brainhops.io.base.parsers import (
     Confidence,
     WriterError,
 )
-from brainhops.io.common._geometry import held_transformations
+from brainhops.io.common._internal_api import held_transformations
 from brainhops.io.images.base import ImageFormat
 
 # this format
-from ._data import _Jpeg2000Proxy, _Jpeg2000Source, read_jpeg2000
+from ._data import Jpeg2000Proxy, Jpeg2000Source, read_jpeg2000
 from ._image import (
-    _EXTENSIONS,
-    _HINTS,
+    JPEG2000_EXTENSIONS,
+    JPEG2000_HINTS,
     Jpeg2000Image,
-    _container_for_name,
-    _no_options,
-    _reads_file,
-    _record_transformations,
-    _written,
+    container_for_name,
     level_transformation,
+    no_options,
+    reads_file,
+    record_transformations,
+    written,
 )
 from ._metadata import Jpeg2000Metadata
 from ._raw import Jpeg2000Raw
@@ -68,8 +68,8 @@ class Jpeg2000MultiScaleImage(
     without changes gives the same bytes.
     """
 
-    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = _EXTENSIONS
-    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = _HINTS
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = JPEG2000_EXTENSIONS
+    HINTS: tx.ClassVar[tx.Tuple[str, ...]] = JPEG2000_HINTS
 
     rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
     """The full-resolution samples as Pillow decodes them, or `None`.
@@ -251,7 +251,7 @@ class Jpeg2000MultiScaleImage(
         ParserContentError
             If the file is not a JPEG 2000 file.
         """
-        _no_options(cls, kwargs)
+        no_options(cls, kwargs)
         raw, source = read_jpeg2000(filename)
         return _read_pyramid(cls, raw, source, pixel_size, unit)
 
@@ -291,7 +291,7 @@ class Jpeg2000MultiScaleImage(
         ParserContentError
             If the stream is not a JPEG 2000 file.
         """
-        _no_options(cls, kwargs)
+        no_options(cls, kwargs)
         raw, source = read_jpeg2000(file)
         return _read_pyramid(cls, raw, source, pixel_size, unit)
 
@@ -419,7 +419,7 @@ class Jpeg2000MultiScaleImage(
         WriterError
             If the pyramid cannot be encoded, as in [`consolidate`][].
         """
-        return _written(self.consolidate(**kwargs))
+        return written(self.consolidate(**kwargs))
 
     @takes_error_policy
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -436,7 +436,7 @@ class Jpeg2000MultiScaleImage(
             The options of [`consolidate`][].
         """
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(path.base_name(file))
+            kwargs["container"] = container_for_name(path.base_name(file))
         file.write(self.to_bytes(**kwargs))
 
     @takes_error_policy
@@ -461,16 +461,16 @@ class Jpeg2000MultiScaleImage(
         """
         filename = path.Path(filename)
         if kwargs.get("container") is None:
-            kwargs["container"] = _container_for_name(filename)
-        if not _reads_file(self.rawdata, filename):
+            kwargs["container"] = container_for_name(filename)
+        if not reads_file(self.rawdata, filename):
             filename.write_bytes(
                 self.to_bytes(**kwargs), atomic=filename.is_local()
             )
             return
         self.consolidate(inplace=True, **kwargs)
-        filename.write_bytes(_written(self), atomic=filename.is_local())
-        self.rawdata = _Jpeg2000Proxy(
-            _Jpeg2000Source(filename=filename),
+        filename.write_bytes(written(self), atomic=filename.is_local())
+        self.rawdata = Jpeg2000Proxy(
+            Jpeg2000Source(filename=filename),
             self.metadata.raw,
             0,
         )
@@ -485,7 +485,7 @@ class Jpeg2000MultiScaleImage(
 def _read_pyramid(
     cls: type,
     record: Jpeg2000Raw,
-    source: _Jpeg2000Source,
+    source: Jpeg2000Source,
     pixel_size: tx.Any,
     unit: tx.Any,
 ) -> Jpeg2000MultiScaleImage:
@@ -495,7 +495,7 @@ def _read_pyramid(
     overrides the one of the file, in which case they are built with the
     transformations that it gives.
     """
-    raw = _Jpeg2000Proxy(source, record, 0)
+    raw = Jpeg2000Proxy(source, record, 0)
     metadata = Jpeg2000Metadata.from_raw(record)
     if pixel_size is None and unit is None:
         return cls(rawdata=raw, metadata=metadata)
@@ -503,7 +503,7 @@ def _read_pyramid(
         Jpeg2000Image(
             rawdata=raw
             if level == 0
-            else _Jpeg2000Proxy(source, record, level),
+            else Jpeg2000Proxy(source, record, level),
             metadata=metadata,
             transformations=[
                 level_transformation(record, level, pixel_size, unit)
@@ -522,7 +522,7 @@ def _record_levels(
     A pyramid without a lazy array of a file has no level.
     """
     stored = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(stored, _Jpeg2000Proxy):
+    if not isinstance(stored, Jpeg2000Proxy):
         return []
     # The full-resolution level reads the lazy array of the pyramid itself,
     # so that consolidating an untouched pyramid through that level shares
@@ -531,7 +531,7 @@ def _record_levels(
         Jpeg2000Image(
             rawdata=raw
             if level == 0
-            else _Jpeg2000Proxy(stored.source, stored.record, level),
+            else Jpeg2000Proxy(stored.source, stored.record, level),
             metadata=metadata,
         )
         for level in range(stored.record.n_levels)
@@ -600,7 +600,7 @@ def _preferred(level: Jpeg2000Image) -> tx.Optional[Transformation]:
     """
     transformations = level._transformations
     if transformations is None:
-        transformations = _record_transformations(level.metadata, level.level)
+        transformations = record_transformations(level.metadata, level.level)
     return transformations[-1] if transformations else None
 
 
@@ -611,6 +611,6 @@ def _file_levels(level: Jpeg2000Image) -> tx.Optional[int]:
     """
     raw = level.rawdata
     stored = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(stored, _Jpeg2000Proxy):
+    if not isinstance(stored, Jpeg2000Proxy):
         return None
     return stored.record.n_levels - stored.level

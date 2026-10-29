@@ -709,9 +709,9 @@ def test_similarity_3d_composes_the_expected_affine() -> None:
 def test_itk_systems_are_lps_millimetres_in_every_dimension(ndim: int) -> None:
     # Oriented axes leave the unit open, so every dimension states it.
     from brainhops.datamodel.units import Unit
-    from brainhops.io.transformations.itk._systems import _make_system
+    from brainhops.io.transformations.itk._systems import make_system
 
-    system = _make_system(ndim)
+    system = make_system(ndim)
     assert len(system.axes) == ndim
     assert all(axis.unit is Unit("mm") for axis in system.axes)
     expected = [

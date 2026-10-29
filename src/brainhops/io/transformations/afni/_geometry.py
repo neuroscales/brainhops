@@ -21,8 +21,8 @@ import typing_extensions as tx
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.common.afni import AfniRaw
-from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.afni._geometry import (
+from brainhops.io.common.afni._internal_api import (
+    DICOM_TO_RAS,
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
     afni_voxel_to_dicom,
@@ -91,9 +91,9 @@ def image_grids(image: tx.Any) -> tx.Tuple[np.ndarray, np.ndarray]:
     if isinstance(record, AfniRaw):
         return record.voxel_to_dicom, record.cardinal_matrix
 
-    nifti = _nifti_matrix(image)
+    nifti = nifti_matrix(image)
     if nifti is None:
-        nifti = _nifti_matrix(getattr(record, "header", None))
+        nifti = nifti_matrix(getattr(record, "header", None))
     if nifti is not None:
         real = DICOM_TO_RAS @ nifti
         return real, nifti_cardinal_matrix(real)
@@ -191,7 +191,7 @@ def _record(image: tx.Any) -> tx.Any:
     return image
 
 
-def _nifti_matrix(header: tx.Any) -> tx.Optional[np.ndarray]:
+def nifti_matrix(header: tx.Any) -> tx.Optional[np.ndarray]:
     """
     Return the voxel-to-RAS matrix that AFNI reads from a NIfTI header.
 

@@ -19,7 +19,7 @@ from bagof.magic import replace
 from brainhops._core.backends import array_backend, backend, resolve_backend
 from brainhops._core.typing import ArrayProtocol, Shape
 
-from ._axes.components import _batched, _inv, is_component_type
+from ._axes.components import batched, inv, is_component_type
 from ._sugar import get_axes
 from .axes import Axis, AxisSequence
 from .enums import ReframeMethod, ReframeMethodLike
@@ -786,13 +786,13 @@ def change_matrix(
     if source is None:
         matrix = target
     else:
-        inverse = _batched(_inv, source)
+        inverse = batched(inv, source)
         xp = array_backend(inverse)
         matrix = xp.matmul(_backend_of(target, inverse), inverse)
     if method == ReframeMethod.jacobian:
         return matrix
     if method == ReframeMethod.rotation:
-        return _batched(_rotation, matrix)
+        return batched(_rotation, matrix)
     if callable(method):
         return method(matrix)
     raise ValueError(

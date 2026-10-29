@@ -18,11 +18,14 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
+    takes_error_policy,
+)
 
 # io
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -32,25 +35,24 @@ from brainhops.io.base.parsers import (
     WriterError,
     disabled,
 )
-from brainhops.io.common._geometry import ras_conversion
+from brainhops.io.common._internal_api import ras_conversion
 from brainhops.io.common.afni import AfniMetadata, AfniRaw
-from brainhops.io.common.afni._constants import DICOM_TO_RAS
-from brainhops.io.common.afni._data import (
+from brainhops.io.common.afni._internal_api import (
+    DECLINE_MESSAGE,
+    DICOM_TO_RAS,
+    OPTION_OWNER,
+    afni_view,
+    afni_world,
+    afni_written_files,
     brik_proxy,
     read_afni,
+    read_validated_header,
     reads_brik,
+    sniffed_raw_at,
     write_brik,
 )
-from brainhops.io.common.afni._files import afni_written_files
-from brainhops.io.common.afni._geometry import afni_view, afni_world
-from brainhops.io.common.afni._raw import (
-    _declined,
-    _no_options,
-    _sniffed_raw,
-    _sniffed_raw_at,
-)
 from brainhops.io.images.afni import AfniImage
-from brainhops.io.metadata._base import requested_fields
+from brainhops.io.metadata._internal_api import requested_fields
 from brainhops.io.transformations.base.fields import (
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -58,7 +60,7 @@ from brainhops.io.transformations.base.fields import (
 
 # this format
 from ._formats import AfniWarpFormat
-from ._views import _warp_to_disk, _warp_to_model
+from ._views import warp_to_disk, warp_to_model
 
 WARP_LABELS: tx.Tuple[str, str, str] = ("x_delta", "y_delta", "z_delta")
 """The labels that AFNI gives the three sub-bricks of a warp
@@ -162,7 +164,7 @@ class AfniBrikWarp(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     # --- reading ------------------------------------------------------
 
@@ -204,9 +206,9 @@ class AfniBrikWarp(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(read_validated_header, file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -235,9 +237,9 @@ class AfniBrikWarp(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw_at(filename)
+        raw, failure = sniffed_raw_at(filename)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -273,7 +275,7 @@ class AfniBrikWarp(
         ParserContentError
             If the header is invalid, or the BRIK cannot be read.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_afni(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
 
@@ -346,7 +348,7 @@ class AfniBrikWarp(
         """
         record = _record(self)
         vox2dicom = np.eye(4) if record is None else record.cardinal_matrix
-        return _dicom_chain(_dicom_vectors(self.data), vox2dicom)
+        return dicom_chain(dicom_vectors(self.data), vox2dicom)
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:
@@ -457,7 +459,7 @@ class AfniBrikWarp(
         options = dict(view=view, datatype=datatype, attributes=attributes)
         declared = self._input is not None or self._output is not None
         if declared:
-            _check_ras(self.input, self.output, what)
+            check_ras(self.input, self.output, what)
         if (
             self._data is None
             and self._transformations is None
@@ -609,7 +611,7 @@ def is_warp_labels(labels: tx.Optional[tx.Sequence[str]]) -> bool:
     return tuple(label.strip() for label in labels[:_NDIM]) == WARP_LABELS
 
 
-def _dicom_vectors(data: tx.Optional[ArrayProtocol]) -> ArrayProtocol:
+def dicom_vectors(data: tx.Optional[ArrayProtocol]) -> ArrayProtocol:
     """Return the (X, Y, Z, 3) DICOM displacements of the sub-bricks.
 
     Raises
@@ -633,7 +635,7 @@ def _dicom_vectors(data: tx.Optional[ArrayProtocol]) -> ArrayProtocol:
     return data[..., :_NDIM]
 
 
-def _dicom_chain(
+def dicom_chain(
     vectors: ArrayProtocol, vox2dicom: np.ndarray
 ) -> tx.Tuple[_xforms.Transformation, ...]:
     """Return the RAS chain of DICOM displacements on a voxel-to-DICOM grid.
@@ -657,7 +659,7 @@ def _dicom_chain(
     return chain
 
 
-def _dicom_field(
+def dicom_field(
     chain: tx.Sequence[_xforms.Transformation], what: str
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
     """Return the cardinal grid and the DICOM displacements of a chain.
@@ -677,7 +679,7 @@ def _dicom_field(
     """
     chain = tuple(chain or ())
     if chain:
-        _check_ras(chain[0].input, chain[-1].output, what)
+        check_ras(chain[0].input, chain[-1].output, what)
     vox2world, vectors = split_ras_displacement_chain(chain, what, _NDIM)
     to_dicom = DICOM_TO_RAS @ ras_conversion(getattr(chain[2], "output", None))
     vox2dicom = to_dicom @ vox2world
@@ -693,7 +695,7 @@ def _dicom_field(
     return vox2dicom, vectors
 
 
-def _check_ras(
+def check_ras(
     src: tx.Optional[_systems.CoordinateSystem],
     dst: tx.Optional[_systems.CoordinateSystem],
     what: str,
@@ -761,11 +763,11 @@ def _warp_image(xform: AfniBrikWarp, what: str) -> AfniImage:
             raise WriterError(
                 "This warp has no values, so there is nothing to write."
             )
-        data = None if xform._data is None else _warp_to_disk(xform._data)
+        data = None if xform._data is None else warp_to_disk(xform._data)
         return AfniImage(
             data=data, rawdata=xform.rawdata, metadata=xform.metadata
         )
-    vox2dicom, vectors = _dicom_field(xform.transformations, what)
+    vox2dicom, vectors = dicom_field(xform.transformations, what)
     record = _record(xform)
     world = afni_world(record.view if record is not None else "orig")
     affine = _xforms.Affine(

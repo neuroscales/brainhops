@@ -18,9 +18,7 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -31,20 +29,23 @@ from brainhops.io.base.parsers import (
     SnifferExistsError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
+    held_images,
     held_transformations,
     same_transformations,
 )
-from brainhops.io.common._pyramids import held_images
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
-from ._data import _Slide, _SlideArray, detect, local_path, read_associated
+from ._data import Slide, SlideArray, detect, local_path, read_associated
 from ._geometry import level_geometry, record_transformations
 from ._metadata import OpenSlideMetadata
 from ._raw import read_record
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 # ----------------------------------------------------------------------
 #   READING ADAPTERS
@@ -155,12 +156,12 @@ class OpenSlideReader(BinaryFileReader):
         filename = path.Path(filename)
         local = local_path(filename)
         if local is not None:
-            return cls.from_source(_Slide(local), **kwargs)
+            return cls.from_source(Slide(local), **kwargs)
         if not filename.exists():
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open("rb") as f:
             content = f.read()
-        slide = _Slide.from_content(content, path.base_name(filename))
+        slide = Slide.from_content(content, path.base_name(filename))
         return cls.from_source(slide, **kwargs)
 
     @classmethod
@@ -179,10 +180,10 @@ class OpenSlideReader(BinaryFileReader):
         """
         local = local_path(file)
         if local is not None:
-            return cls.from_source(_Slide(local), **kwargs)
+            return cls.from_source(Slide(local), **kwargs)
         with preserve_position(file):
             content = file.read()
-        slide = _Slide.from_content(content, path.base_name(file))
+        slide = Slide.from_content(content, path.base_name(file))
         return cls.from_source(slide, **kwargs)
 
     @classmethod
@@ -196,7 +197,7 @@ class OpenSlideReader(BinaryFileReader):
         **kwargs : Any
             The options of `from_source`.
         """
-        return cls.from_source(_Slide.from_content(bytes(content)), **kwargs)
+        return cls.from_source(Slide.from_content(bytes(content)), **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -296,7 +297,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -363,7 +364,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
     @classmethod
     def from_source(
         cls,
-        slide: _Slide,
+        slide: Slide,
         level: tx.Optional[int] = None,
         pixel_size: tx.Any = None,
         unit: tx.Any = None,
@@ -378,7 +379,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
 
         Parameters
         ----------
-        slide : _Slide
+        slide : Slide
             The slide.
         level : int, optional
             The level, 0 (the full resolution) by default. A negative level
@@ -422,7 +423,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
             )
         index %= count
         image = cls(
-            rawdata=_SlideArray(slide, record, index, lazy=lazy),
+            rawdata=SlideArray(slide, record, index, lazy=lazy),
             metadata=OpenSlideMetadata.from_raw(record),
             level=index,
         )
@@ -500,7 +501,7 @@ class OpenSlideImage(OpenSlideReader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -699,7 +700,7 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
     @classmethod
     def from_source(
         cls,
-        slide: _Slide,
+        slide: Slide,
         pixel_size: tx.Any = None,
         unit: tx.Any = None,
         lazy: tx.Optional[bool] = None,
@@ -714,7 +715,7 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
 
         Parameters
         ----------
-        slide : _Slide
+        slide : Slide
             The slide.
         pixel_size : float or Sequence[float] or Mapping[str, float], optional
             The full-resolution pixel size, which overrides the one of the
@@ -747,7 +748,7 @@ class OpenSlideMultiScaleImage(OpenSlideReader, ImageFormat, MultiScaleImage):
         cls.sniff_filename(slide.filename, error=ParserContentError)
         record = read_record(slide.handle)
         raw = tuple(
-            _SlideArray(slide, record, index, lazy=lazy)
+            SlideArray(slide, record, index, lazy=lazy)
             for index in range(len(record.levels))
         )
         pyramid = cls(rawdata=raw, metadata=OpenSlideMetadata.from_raw(record))
@@ -1071,7 +1072,7 @@ def _associated(
         raise KeyError(name)
     for array in arrays:
         stored = array.root if isinstance(array, ArrayProxy) else array
-        if isinstance(stored, _SlideArray):
+        if isinstance(stored, SlideArray):
             return read_associated(stored.slide, name)
     raise KeyError(name)
 
@@ -1123,7 +1124,7 @@ def _consolidated_levels(
                 f"describe it."
             )
         if image._data is not None:
-            array = _image_to_disk(image._data)
+            array = image_to_disk(image._data)
         else:
             array = image.rawdata
         if array is None:

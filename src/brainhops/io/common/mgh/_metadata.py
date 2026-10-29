@@ -13,11 +13,11 @@ from bagof.magic import NoRepr, replace
 from brainhops._core import path
 from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
-from brainhops.io.metadata._base import consolidated
+from brainhops.io.metadata._internal_api import consolidated
 
 # this format
 from ._raw import MghRaw
@@ -129,7 +129,7 @@ class MghMetadata(MetadataReader, BinaryFileWriter, MetadataFormat):
         """
         return consolidated(
             self,
-            _encode,
+            encode,
             MghRaw,
             inplace=inplace,
             fields=fields,
@@ -224,7 +224,7 @@ def _decode(raw: tx.Optional[MghRaw]) -> tx.Dict[str, tx.Any]:
     return out
 
 
-def _encode(
+def encode(
     raw: MghRaw, changed: tx.Dict[str, tx.Any], report: ConversionReport
 ) -> MghRaw:
     """Write the changed fields into a record, which is already a copy.

@@ -53,29 +53,29 @@ import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
+from brainhops.datamodel._internal_api import (
+    convert_withlog,
+    converter,
     smart_replace,
 )
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import Image
 from brainhops.io.base.parsers import UnrepresentableTransformationError
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     affine_between,
+    compatible,
     format_options,
     register_converter,
     unrepresentable,
 )
-from brainhops.io.transformations.base.affines import _compatible
 
-from ._matrix_utils import _volume_info
+from ._matrix_utils import volume_info
 from ._metadata import LtaMetadata
 from ._raw import LtaRaw
 from ._systems import LtaPhysicalSystem, LtaVoxelSystem
-from ._xforms import LtaTransformation, _as_block, _build_raw
+from ._xforms import LtaTransformation, as_block, build_raw
 
 OPTIONS = ("reference", "moving")
 """What a conversion to an LTA file takes: the geometries of the volume
@@ -105,7 +105,7 @@ def _(
         if isinstance(src, kind) and isinstance(dst, kind):
             matrix = affine_between(t, src, dst, cls)
             return _held(t, cls, matrix, src, dst, None)
-    _check_tkr(t, cls, src, dst)
+    check_tkr(t, cls, src, dst)
     if _is_voxels(src) and _is_voxels(dst):
         return _voxels(t, cls, options)
     matrix = affine_between(t, RAS, RAS, cls)
@@ -128,7 +128,7 @@ def _(
     # the record of `t`, when it has one, in its own systems. A matrix of
     # its own is converted as the matrix of any affine.
     if type(t) is cls:
-        return _convert_withlog(t, cls, "matrix", **kwargs)
+        return convert_withlog(t, cls, "matrix", **kwargs)
     if t._data is None:
         return _view(t, cls, **kwargs)
     plain = _xforms.Affine(matrix=t.matrix, input=t.input, output=t.output)
@@ -187,7 +187,7 @@ def _block(
     # The geometry block of a volume, from a geometry, an image or a block,
     # or an invalid block when the geometry is not given.
     if value is None or isinstance(value, LtaRaw.VolumeInfo):
-        return _as_block(value, kind)
+        return as_block(value, kind)
     if isinstance(value, Image):
         value = value.geometry
     if not isinstance(value, Geometry):
@@ -198,7 +198,7 @@ def _block(
             f"LtaRaw.VolumeInfo, not a {type(value).__name__}.",
         )
     try:
-        return _volume_info(value, kind)
+        return volume_info(value, kind)
     except (TypeError, ValueError) as error:
         raise unrepresentable(t, cls, str(error)) from error
 
@@ -226,7 +226,7 @@ def _held(
         matrix=matrix[:-1], input=src, output=dst, metadata=metadata
     )
     try:
-        record = _build_raw(pending)
+        record = build_raw(pending)
     except UnrepresentableTransformationError as error:
         raise unrepresentable(t, cls, str(error)) from error
     _check_view(t, cls, src, dst)
@@ -251,7 +251,7 @@ def _check_view(
     view = cls()
     for side, system in (("input", src), ("output", dst)):
         own = getattr(view, side)
-        if own is not None and not _compatible(system, own):
+        if own is not None and not compatible(system, own):
             raise unrepresentable(
                 t,
                 cls,
@@ -261,15 +261,35 @@ def _check_view(
             )
 
 
-def _check_tkr(
+def check_tkr(
     t: _xforms.Transformation,
     cls: type,
     src: tx.Optional[_systems.CoordinateSystem],
     dst: tx.Optional[_systems.CoordinateSystem],
 ) -> None:
-    # A tkregister space has the axes of RAS but another origin, which
-    # only the geometry of its volume gives, so it is never read as the
-    # scanner RAS of the other side.
+    """Refuse an affine between a tkregister space and another space.
+
+    A tkregister space has the axes of RAS but another origin, which
+    only the geometry of its volume gives. It is therefore never read as
+    the scanner RAS of the other side of the affine.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation being converted, which the error names.
+    cls : type
+        The class of the format, which the error names.
+    src : CoordinateSystem, optional
+        The input system of the affine.
+    dst : CoordinateSystem, optional
+        The output system of the affine.
+
+    Raises
+    ------
+    ConversionError
+        If one of the systems is a tkregister space and the other is
+        not.
+    """
     tkr = [isinstance(system, FreesurferTkrSystem) for system in (src, dst)]
     if any(tkr) and not all(tkr):
         raise unrepresentable(

@@ -15,65 +15,60 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.afni._constants import DICOM_TO_RAS
+from brainhops.io.common.afni._internal_api import DICOM_TO_RAS
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _nifti_shape,
-    _NiftiObject,
-    _record_image,
-    _split_options,
-    _stored_parts,
+from brainhops.io.common.nifti._internal_api import (
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    header_of,
+    keep_given_fields,
+    nifti_shape,
+    record_image,
+    sniffed_header,
+    split_options,
+    stored_parts,
 )
-from brainhops.io.common.nifti._raw import _sniffed_header
 from brainhops.io.images.afni import AfniImage
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     format_options,
     held,
     register_converter,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import (
-    _check_single_field,
-    _field_to_disk,
-    _field_to_model,
+from brainhops.io.transformations.nifti._internal_api import (
+    check_single_field,
+    consolidated_metadata,
+    field_to_disk,
+    field_to_model,
 )
 
 # this format
 from ._converters import afni_chain, afni_displacement
 from ._formats import AfniWarpFormat
-from ._geometry import _nifti_matrix, nifti_cardinal_matrix
+from ._geometry import nifti_cardinal_matrix, nifti_matrix
 from ._warp import (
     WARP_LABELS,
-    _check_ras,
-    _dicom_chain,
-    _dicom_field,
-    _dicom_vectors,
+    check_ras,
+    dicom_chain,
+    dicom_field,
+    dicom_vectors,
     is_warp_labels,
 )
 
@@ -184,7 +179,7 @@ class AfniNiftiWarp(
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -232,10 +227,10 @@ class AfniNiftiWarp(
         float
             The confidence, between 0 and 1.
         """
-        header = _sniffed_header(file, kwargs.get("version"))
+        header = sniffed_header(file, kwargs.get("version"))
         if header is None:
             return NiftiRaw.sniff_fileobj(file, error=error, **kwargs)
-        bricks = _bricks(_nifti_shape(header))
+        bricks = _bricks(nifti_shape(header))
         if bricks is None or bricks < 3:
             return Confidence.NO
         try:
@@ -294,7 +289,7 @@ class AfniNiftiWarp(
         return _checked(super().from_fileobj(file, **kwargs))
 
     @classmethod
-    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> "AfniNiftiWarp":
+    def from_nibabel(cls, nifti: NiftiObject, **kwargs) -> "AfniNiftiWarp":
         """Build a warp from a nibabel image or header.
 
         Parameters
@@ -317,14 +312,14 @@ class AfniNiftiWarp(
         return _checked(super().from_nibabel(nifti, **kwargs))
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """Score a header as an AFNI warp.
 
         The layout of AFNI, with an AFNI extension that labels the
         sub-bricks as those of a warp, scores `Confidence.CERTAIN`, and
         any other header `Confidence.NO`.
         """
-        bricks = _bricks(_nifti_shape(header))
+        bricks = _bricks(nifti_shape(header))
         if bricks is None or bricks < 3:
             return Confidence.NO
         if is_warp_labels(_extension_labels(header)):
@@ -355,7 +350,7 @@ class AfniNiftiWarp(
         Assigning a chain overrides the decoded one, and the chain is
         pending until [`consolidate`][] or a write encodes it.
         """
-        return _dicom_chain(_dicom_vectors(self.data), _vox2dicom(self))
+        return dicom_chain(dicom_vectors(self.data), _vox2dicom(self))
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:
@@ -393,7 +388,7 @@ class AfniNiftiWarp(
             If the grid of the chain is oblique, since AFNI places a warp
             on a cardinal grid.
         """
-        vox2dicom, vectors = _dicom_field(self.transformations, _WHAT)
+        vox2dicom, vectors = dicom_field(self.transformations, _WHAT)
         affine = _xforms.Affine(
             matrix=vox2dicom[:3],
             input=_systems.VoxelCoordinateSystem(),
@@ -471,7 +466,7 @@ class AfniNiftiWarp(
             If the chain, or an assigned `input` or `output`, does not map
             RAS to RAS, or the grid of the chain is oblique.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         report = ConversionReport(
             source="AfniNiftiWarp", target="AfniNiftiWarp"
         )
@@ -481,7 +476,7 @@ class AfniNiftiWarp(
         )
         declared = self._input is not None or self._output is not None
         if declared:
-            _check_ras(self.input, self.output, _WHAT)
+            check_ras(self.input, self.output, _WHAT)
         if (
             self._data is None
             and self._transformations is None
@@ -492,16 +487,16 @@ class AfniNiftiWarp(
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _encoded(self, like, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -537,7 +532,7 @@ def _checked(xform: AfniNiftiWarp) -> AfniNiftiWarp:
         If the file does not hold at least three sub-bricks in the layout
         of AFNI.
     """
-    shape = _nifti_shape(_header(xform))
+    shape = nifti_shape(header_of(xform))
     bricks = _bricks(shape)
     if bricks is None or bricks < 3:
         raise ParserContentError(
@@ -553,10 +548,10 @@ def _vox2dicom(xform: AfniNiftiWarp) -> np.ndarray:
     The matrix is derived from the qform, or else the sform, of the
     header, and is the identity for a warp without a header.
     """
-    header = _header(xform)
+    header = header_of(xform)
     if header is None:
         return np.eye(4)
-    real = DICOM_TO_RAS @ _nifti_matrix(header)
+    real = DICOM_TO_RAS @ nifti_matrix(header)
     return nifti_cardinal_matrix(real)
 
 
@@ -582,30 +577,30 @@ def _encoded(
     """
     if xform._transformations is None:
         if xform._data is not None:
-            stored = _field_to_disk(xform._data)
+            stored = field_to_disk(xform._data)
         else:
             stored = xform.rawdata
         if stored is None:
             raise WriterError(
                 "This warp has no values, so there is nothing to write."
             )
-        _check_single_field(stored, WriterError)
+        check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
-        image = _record_image(stored, record, overrides=overrides)
+        image = record_image(stored, record, overrides=overrides)
     else:
-        vox2dicom, vectors = _dicom_field(xform.transformations, _WHAT)
+        vox2dicom, vectors = dicom_field(xform.transformations, _WHAT)
         spatial = tuple(int(d) for d in vectors.shape[:3])
         data = np.asarray(vectors, dtype=np.float32).reshape(spatial + (1, 3))
         vox2ras = DICOM_TO_RAS @ vox2dicom
         record = None if base is None else base.copy()
         scode, qcode = _xform_codes(None if record is None else record.header)
-        image = _record_image(data, record, vox2ras, overrides)
+        image = record_image(data, record, vox2ras, overrides)
         image.header.set_sform(vox2ras, code=scode)
         image.header.set_qform(vox2ras, code=qcode)
         image.header.set_xyzt_units("mm")
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     _set_afni_extension(image.header)
     return image
 
@@ -624,7 +619,7 @@ def _xform_codes(header: tx.Any) -> tx.Tuple[int, int]:
     return _XFORM_SCANNER_ANAT, _XFORM_SCANNER_ANAT
 
 
-def _afni_extension(header: _NiftiObject) -> tx.Optional[str]:
+def _afni_extension(header: NiftiObject) -> tx.Optional[str]:
     """Return the text of the AFNI extension of a header, or `None`."""
     for extension in getattr(header, "extensions", None) or ():
         try:
@@ -639,7 +634,7 @@ def _afni_extension(header: _NiftiObject) -> tx.Optional[str]:
     return None
 
 
-def _extension_labels(header: _NiftiObject) -> tx.Optional[tx.List[str]]:
+def _extension_labels(header: NiftiObject) -> tx.Optional[tx.List[str]]:
     """Return the sub-brick labels that the AFNI extension stores, or `None`.
 
     The labels are the `BRICK_LABS` attribute, in which the NUL

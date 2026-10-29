@@ -300,7 +300,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> tx.List[tx.Any]:
 def test_regions_are_read_lazily(svs: Path, calls: tx.List[tx.Any]) -> None:
     image = load(svs, lazy=False)
     data = image.images[1].data
-    assert isinstance(data, slides._SlideArray)
+    assert isinstance(data, slides.SlideArray)
     assert calls == []
     region = data[10:20, 30:35]
     assert region.shape == (10, 5, 3)
@@ -562,7 +562,7 @@ def test_a_level_consolidates_its_data_only(svs: Path) -> None:
     assert consolidated._data is None
     assert consolidated.metadata is image.metadata
     assert consolidated.level == 2
-    assert isinstance(image.rawdata, slides._SlideArray)
+    assert isinstance(image.rawdata, slides.SlideArray)
     # The associated images are still read from the slide of the record.
     assert image.associated_image("label").shape == (50, 40, 3)
     with pytest.raises(KeyError):

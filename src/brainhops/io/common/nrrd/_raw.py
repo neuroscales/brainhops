@@ -12,35 +12,45 @@ from bagof.magic import Factory, NoRepr
 
 # internals
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import (
+    Raw,
+    declined,
+    no_options,
+    sniffed_raw,
+)
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # this format
 from ._codecs import (
-    _escape,
-    _float,
-    _parse_strings,
-    _parse_vectors,
-    _unescape,
+    escape,
     nrrd_dtype,
+    parse_float,
+    parse_strings,
+    parse_vectors,
+    unescape,
 )
 from ._constants import (
-    _ALIASES,
-    _ENCODINGS,
-    _FIELDS,
-    _MAX_HEADER_LINES,
-    _NONE,
-    _SPACE_NAMES,
+    ALIASES,
+    ENCODINGS,
+    FIELDS,
+    MAX_HEADER_LINES,
+    NONE,
     NRRD_MAGIC,
+    SPACE_NAMES,
     SPACES,
 )
+
+OPTION_OWNER = "NRRD reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not a NRRD image"
+"""The message of the error raised when a sniffer declines a stream."""
 
 # ----------------------------------------------------------------------
 #   RECORD
@@ -120,9 +130,9 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
     def encoding(self) -> str:
         """Canonical encoding: `raw`, `ascii`, `hex`, `gzip` or `bzip2`."""
         value = (self._field("encoding") or "").lower()
-        if value not in _ENCODINGS:
+        if value not in ENCODINGS:
             raise ParserContentError(f"Unsupported NRRD encoding: {value!r}")
-        return _ENCODINGS[value]
+        return ENCODINGS[value]
 
     @property
     def endian(self) -> tx.Optional[str]:
@@ -187,7 +197,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         if value is None:
             return None
         key = value.lower()
-        key = _SPACE_NAMES.get(key, key)
+        key = SPACE_NAMES.get(key, key)
         if key not in SPACES:
             raise ParserContentError(f"Unknown NRRD space: {value!r}")
         return key
@@ -212,7 +222,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         value = self._field("space directions")
         if value is None:
             return None
-        vectors = _parse_vectors(value)
+        vectors = parse_vectors(value)
         if len(vectors) != self.dimension:
             raise ParserContentError(
                 f"The NRRD header has {len(vectors)} space directions for "
@@ -237,7 +247,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         value = self._field("space origin")
         if value is None:
             return None
-        vectors = _parse_vectors(value)
+        vectors = parse_vectors(value)
         if len(vectors) != 1 or vectors[0] is None:
             return None
         return np.asarray(vectors[0], dtype=float)
@@ -248,7 +258,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         value = self._field("measurement frame")
         if value is None:
             return None
-        vectors = [v for v in _parse_vectors(value) if v is not None]
+        vectors = [v for v in parse_vectors(value) if v is not None]
         return np.asarray(vectors, dtype=float).T
 
     def _per_axis(self, name: str, parse: tx.Callable) -> tx.List[tx.Any]:
@@ -267,13 +277,13 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         return [
             math.nan if v is None else v
             for v in self._per_axis(
-                name, lambda s: [_float(t) for t in s.split()]
+                name, lambda s: [parse_float(t) for t in s.split()]
             )
         ]
 
     def _words(self, name: str) -> tx.List[tx.Optional[str]]:
         return [
-            None if v is None or v.lower() in _NONE else v.lower()
+            None if v is None or v.lower() in NONE else v.lower()
             for v in self._per_axis(name, str.split)
         ]
 
@@ -305,7 +315,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
     @property
     def units(self) -> tx.List[tx.Optional[str]]:
         """Unit of each axis, or `None`."""
-        return [v or None for v in self._per_axis("units", _parse_strings)]
+        return [v or None for v in self._per_axis("units", parse_strings)]
 
     @property
     def space_units(self) -> tx.List[tx.Optional[str]]:
@@ -313,7 +323,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         value = self._field("space units")
         if value is None:
             return [None] * (self.space_dimension or 0)
-        return [v or None for v in _parse_strings(value)]
+        return [v or None for v in parse_strings(value)]
 
     @classmethod
     def from_lines(
@@ -358,10 +368,10 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
             name = None
             if field is not None:
                 name = " ".join(field.group(1).split()).lower()
-                name = _ALIASES.get(name, name)
+                name = ALIASES.get(name, name)
             if (
                 field is not None
-                and name in _FIELDS
+                and name in FIELDS
                 and ":=" not in line[: field.end(1) + 2]
             ):
                 value = field.group(2)
@@ -371,7 +381,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
                     data_files.extend(files)
             elif ":=" in line:
                 key, value = line.split(":=", 1)
-                keyvalue[_unescape(key)] = _unescape(value)
+                keyvalue[unescape(key)] = unescape(value)
             else:
                 raise ParserContentError(f"Not a NRRD header line: {line!r}")
         for name in ("type", "dimension", "sizes", "encoding"):
@@ -413,7 +423,7 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         ParserContentError
             If the stream does not hold a NRRD header.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             return _read_header(file)
 
@@ -449,10 +459,10 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         SnifferContentError
             If the stream holds no header and `error` is `True`.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(NrrdRaw.from_fileobj, file)
         if raw is not None:
             return Confidence.LIKELY
-        return _declined(error, failure)
+        return declined(error, DECLINE_MESSAGE, failure)
 
     @takes_error_policy
     def to_text(self) -> str:
@@ -464,11 +474,11 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
             The text, from the magic line to the last field.
         """
         lines = [f"NRRD000{self.version}"]
-        for name in _FIELDS:
+        for name in FIELDS:
             if name in self.fields and name != "data file":
                 lines.append(f"{name}: {self.fields[name]}")
         for key, value in self.keyvalue.items():
-            lines.append(f"{_escape(key)}:={_escape(value)}")
+            lines.append(f"{escape(key)}:={escape(value)}")
         if self.data_files:
             if len(self.data_files) == 1:
                 lines.append(f"data file: {self.data_files[0]}")
@@ -532,18 +542,6 @@ class NrrdRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
     __hash__ = None
 
 
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(f"Unknown NRRD reader option(s): {', '.join(kwargs)}")
-
-
 def _read_header(file: tx.BinaryIO) -> NrrdRaw:
     """Read a header from a stream positioned at its magic line.
 
@@ -566,7 +564,7 @@ def _read_header(file: tx.BinaryIO) -> NrrdRaw:
     version = int(magic[7:8])
     stored = [magic]
     lines = []
-    for _ in range(_MAX_HEADER_LINES):
+    for _ in range(MAX_HEADER_LINES):
         line = file.readline()
         stored.append(line)
         if not line or line in (b"\n", b"\r\n"):
@@ -590,32 +588,6 @@ def _read_header(file: tx.BinaryIO) -> NrrdRaw:
 def _parsed(stored: bytes) -> NrrdRaw:
     """Parse the bytes of a header."""
     return _read_header(BytesIO(stored))
-
-
-def _sniffed_raw(
-    file: tx.IO,
-) -> tx.Tuple[tx.Optional[NrrdRaw], tx.Optional[Exception]]:
-    """Read the record of a stream for sniffing.
-
-    The position of the stream is restored. The result is the record, or
-    `None` with the error that refused it.
-    """
-    try:
-        return NrrdRaw.from_fileobj(file), None
-    except Exception as e:  # noqa: BLE001
-        return None, e
-
-
-def _declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline a sniffed input, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error("Content is not a NRRD image") from failure
-    return Confidence.NO
 
 
 def _data_files(value: str) -> tx.Tuple[tx.List[str], bool]:

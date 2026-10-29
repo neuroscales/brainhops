@@ -81,6 +81,13 @@ and this is wanted:
 - Every enum class has, in its docstring, a table of all its members with
   their values, so that the values appear on the documentation site. RST
   grid tables and Markdown pipe tables both render.
+- An overriding method usually needs no docstring of its own, because it
+  inherits the docstring of the base method, which is general enough to
+  describe every override. Give an override its own docstring only when
+  it adds something important for the caller, such as a new parameter or
+  keyword argument. A more specific return type, which the type hints
+  already state, is not enough, and neither is a description of how the
+  override works internally, which belongs in a comment.
 
 ### Line length
 
@@ -137,7 +144,15 @@ Every name has one of three levels of visibility, which
 - A private name starts with an underscore. Only the module that
   defines it uses it, and no other module imports it, tests included.
 
+A test may import an internal name directly from the module that
+defines it, so an `_internal_api.py` module never re-exports a name
+that only tests use.
+
+The package `_core` holds internal names that any module of
+`brainhops` may import from the module of `_core` that defines them,
+and it has no `_internal_api.py` module.
+
 When another module needs a private name, promote the name to internal
-or public instead of importing it with its underscore. Existing code
-does not follow these rules everywhere yet, and new code must not add
-to the imports that break them.
+or public instead of importing it with its underscore. The test
+`tests/test_visibility.py` checks these rules on every import of
+`src/` and `tests/`, without exceptions.

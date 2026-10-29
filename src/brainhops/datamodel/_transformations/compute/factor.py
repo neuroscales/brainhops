@@ -206,7 +206,7 @@ def factor_sequence(
     [[0], [1]]
     ```
     """
-    from ..sequence import _unnest
+    from ..sequence import unnest
 
     if cache is None:
         cache = PatternCache()
@@ -214,7 +214,7 @@ def factor_sequence(
     if table.is_noop():
         table = ANALYTIC_FLOOR
 
-    xforms = _unnest(seq.transformations)
+    xforms = unnest(seq.transformations)
     if not xforms:
         return seq
 
@@ -532,11 +532,11 @@ def _inner_is_identity(
     # turns out to be the identity, such as Scaling([1]), is dropped. A
     # field and a chain are checked by structure, because checking them
     # by value would sample the field or compose the chain.
-    from ..sequence import Sequence, _interpolates
+    from ..sequence import Sequence, interpolates
 
     if inner is None:
         return True
-    if _interpolates(inner) or isinstance(inner, Sequence):
+    if interpolates(inner) or isinstance(inner, Sequence):
         return inner.is_identity(compute=False)
     numeric = policy.resolve(inner) is SimplifyPolicy.numeric
     return inner.is_identity(compute=numeric)
@@ -676,11 +676,11 @@ def _split_ends(
     # outputs at its end. The pairs that cancel at no cost collapse
     # first, so that a lazy inverse is not cut, and maybe
     # computed, before it meets its forward transformation.
-    from .simplifiers import _settle
+    from .simplifiers import settle
 
     chain = list(body)
     if may_prune(chain, policy):
-        chain = _settle(chain, policy)
+        chain = settle(chain, policy)
         pruned = prune_chain(chain, policy, ends=True)
         if pruned is not None:
             chain = pruned

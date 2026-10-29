@@ -12,8 +12,8 @@ from bagof.magic import Factory
 # internals
 from brainhops._core.magic import replace
 from brainhops._core.streams import open_compressed, preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -23,10 +23,10 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._files import (
-    _NIFTI_HEADER_SIZES,
-    _NIFTI_HEADERS,
-    _has_nifti_magic,
-    _nifti_version,
+    NIFTI_HEADER_SIZES,
+    NIFTI_HEADERS,
+    has_nifti_magic,
+    nifti_version,
 )
 
 _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
@@ -109,7 +109,7 @@ class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
         SnifferContentError
             If the stream holds no NIfTI header and `error` is `True`.
         """
-        if _sniffed_header(file, version) is not None:
+        if sniffed_header(file, version) is not None:
             return Confidence.CERTAIN
         if error:
             if error is True:
@@ -148,7 +148,7 @@ class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
             raise TypeError(
                 f"Unknown NIfTI header option(s): {', '.join(kwargs)}"
             )
-        read = _NIFTI_HEADERS[_nifti_version(file)].from_fileobj
+        read = NIFTI_HEADERS[nifti_version(file)].from_fileobj
         return cls(header=read(open_compressed(file), check=check))
 
     @takes_error_policy
@@ -163,7 +163,7 @@ class NiftiRaw(Raw, BinaryFileReader, BinaryFileWriter):
         return buffer.getvalue()
 
 
-def _sniffed_header(
+def sniffed_header(
     file: tx.IO, version: tx.Optional[int] = None
 ) -> tx.Optional[_NiftiHeader]:
     """Return the NIfTI header at the start of a stream, or `None`.
@@ -176,14 +176,14 @@ def _sniffed_header(
     """
     for candidate in (1, 2) if version is None else (version,):
         try:
-            size = _NIFTI_HEADER_SIZES[candidate]
+            size = NIFTI_HEADER_SIZES[candidate]
             with preserve_position(file):
                 head = open_compressed(file).read(size)
-            if not _has_nifti_magic(head, candidate):
+            if not has_nifti_magic(head, candidate):
                 continue
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                read = _NIFTI_HEADERS[candidate].from_fileobj
+                read = NIFTI_HEADERS[candidate].from_fileobj
                 return read(BytesIO(head), check=False)
         except Exception:
             continue

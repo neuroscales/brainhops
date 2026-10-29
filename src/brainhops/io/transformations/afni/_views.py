@@ -6,14 +6,14 @@ applies the scale factors of the header when its values are read. Both
 depend on the record, so they belong to the lazy array and not to the
 pair of functions below, which is therefore the identity. The two
 functions are pure and invert each other, so that
-`_warp_to_model(_warp_to_disk(data))` gives `data` back.
+`warp_to_model(warp_to_disk(data))` gives `data` back.
 """
 
 # internals
 from brainhops._core.typing import ArrayProtocol
 
 
-def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the sub-bricks of a warp from the array that the BRIK stores.
 
     The array is returned as it is, so that the lazy array of a file
@@ -23,7 +23,7 @@ def _warp_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return raw
 
 
-def _warp_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def warp_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the array that the BRIK of a warp stores from its sub-bricks.
 
     A warp stores its sub-bricks as they are, so the array is returned

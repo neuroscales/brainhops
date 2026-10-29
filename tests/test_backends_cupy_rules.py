@@ -10,8 +10,8 @@ setting.
 import fake_cupy
 import numpy as np
 import pytest
-from test_computation_backends import FIELD, ROTATION, VOLUME, _target
-from test_core_proxy import _Recording
+from test_computation_backends import FIELD, ROTATION, VOLUME, rotated_target
+from test_core_proxy import RecordingProxy
 
 from brainhops._core.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
@@ -23,8 +23,8 @@ def cp(monkeypatch: pytest.MonkeyPatch) -> object:
     return fake_cupy.install(monkeypatch)
 
 
-def _proxy(values: np.ndarray) -> _Recording:
-    return _Recording(np.asarray(values))
+def _proxy(values: np.ndarray) -> RecordingProxy:
+    return RecordingProxy(np.asarray(values))
 
 
 def _on_gpu(cp: object, result: object, expected: np.ndarray) -> None:
@@ -82,16 +82,16 @@ def test_conversions_follow_the_setting(cp) -> None:  # noqa: ANN001
 
 @pytest.mark.parametrize("lazy", [False, True])
 def test_a_reslice_follows_the_setting(cp, lazy: bool) -> None:  # noqa: ANN001
-    expected = SingleScaleImage(VOLUME).reslice(_target()).data
+    expected = SingleScaleImage(VOLUME).reslice(rotated_target()).data
     data = _proxy(VOLUME) if lazy else VOLUME
     with backend("cupy"):
-        moved = SingleScaleImage(data).reslice(_target())
+        moved = SingleScaleImage(data).reslice(rotated_target())
     _on_gpu(cp, moved.data, expected)
 
 
 def test_a_cupy_image_is_resliced_on_the_gpu(cp) -> None:  # noqa: ANN001
-    expected = SingleScaleImage(VOLUME).reslice(_target()).data
-    moved = SingleScaleImage(cp.asarray(VOLUME)).reslice(_target())
+    expected = SingleScaleImage(VOLUME).reslice(rotated_target()).data
+    moved = SingleScaleImage(cp.asarray(VOLUME)).reslice(rotated_target())
     _on_gpu(cp, moved.data, expected)
 
 

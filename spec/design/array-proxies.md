@@ -47,19 +47,19 @@ proxy, which asks nibabel to read them.
 
 | Format    | Class                  | Partial reads | Scaling         |
 |-----------|------------------------|---------------|-----------------|
-| MRtrix    | `_MrtrixProxy`         | yes, except `Bit` | yes, global |
-| NRRD      | `_NrrdProxy`           | yes, for raw, gzip and bzip2 in one file | no |
-| AFNI      | `_BrikProxy`           | yes, for sub-bricks of one type | yes, per volume |
-| MINC      | `_MincProxy` (nibabel) | yes, for a local file that is not compressed | yes, per slice |
-| NIfTI     | `_NiftiProxy`          | yes           | yes, global     |
-| MGH       | `_MghProxy`            | yes           | no              |
+| MRtrix    | `MrtrixProxy`          | yes, except `Bit` | yes, global |
+| NRRD      | `NrrdProxy`            | yes, for raw, gzip and bzip2 in one file | no |
+| AFNI      | `BrikProxy`            | yes, for sub-bricks of one type | yes, per volume |
+| MINC      | `MincProxy` (nibabel)  | yes, for a local file that is not compressed | yes, per slice |
+| NIfTI     | `NiftiProxy`           | yes           | yes, global     |
+| MGH       | `MghProxy`             | yes           | no              |
 
 The second group wraps a library that already reads chunks or tiles:
-Zarr (`_ZarrProxy`), N5 (`_N5Proxy`), Neuroglancer precomputed
-(`_PrecomputedProxy`), HDF5 (`H5ArrayProxy`, `_BdvProxy`,
-`_ImarisProxy`), OpenSlide (`_SlideArray`), TIFF (`_TiffProxy`), image
-stacks (`_StackProxy`), JPEG 2000 (`_Jpeg2000Proxy`) and Pillow
-(`_PillowProxy`). Most of these proxies read only the part of the file
+Zarr (`ZarrProxy`), N5 (`N5Proxy`), Neuroglancer precomputed
+(`PrecomputedProxy`), HDF5 (`H5ArrayProxy`, `BdvProxy`,
+`ImarisProxy`), OpenSlide (`SlideArray`), TIFF (`TiffProxy`), image
+stacks (`StackProxy`), JPEG 2000 (`Jpeg2000Proxy`) and Pillow
+(`PillowProxy`). Most of these proxies read only the part of the file
 that an index selects. TIFF does so only when it memory-maps the file
 or reads it as a Dask array, and JPEG 2000 and Pillow always decode the
 whole image.

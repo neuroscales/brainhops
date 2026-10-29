@@ -60,7 +60,7 @@ from brainhops.errors import CompositionError, ConversionError
 from ..base import Transformation
 from ..concrete import Affine, CartesianField, Permutation
 from ..meta import SubspaceTransformation
-from ..sequence import Sequence, _interpolates
+from ..sequence import Sequence, interpolates
 from .utils import axis_list
 
 # typing
@@ -317,7 +317,7 @@ def _classify(
     unit = False
     discrete = _discrete_axis(group, grid_system, data_system)[0]
     line = None
-    if k == 1 and not _interpolates(inner):
+    if k == 1 and not interpolates(inner):
         line = _line(inner)
     if line is not None:
         scale, shift = line

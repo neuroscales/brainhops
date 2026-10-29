@@ -10,7 +10,7 @@ from brainhops._core import path
 
 # internals
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -293,7 +293,7 @@ class ZarrReaderWriter(ZarrReader, BinaryFileWriter):
     )
 
 
-class _ZarrNodeReaderWriter(DataModelBase, ZarrReaderWriter):
+class ZarrNodeReaderWriter(DataModelBase, ZarrReaderWriter):
     """The stateful parser that the OME-Zarr formats still inherit.
 
     `OmeZarrImage` and `OmeZarrField` do not follow the design of format
@@ -319,7 +319,7 @@ def opened_node(source: tx.Any) -> ZarrNode:
     ParserTypeError
         If `source` is a path, or an object that cannot be wrapped.
     """
-    opened = _as_node(source)
+    opened = as_node(source)
     if opened is None:
         raise ParserTypeError(
             "from_node expects an opened Zarr array or group; pass a "
@@ -341,7 +341,7 @@ def absolute_location(location: tx.Any) -> tx.Any:
     return location
 
 
-def _as_node(source: tx.Any) -> tx.Optional[ZarrNode]:
+def as_node(source: tx.Any) -> tx.Optional[ZarrNode]:
     """Return `source` as an `abczarr` node, or `None` for a location.
 
     A native array or group is wrapped, and a string or path gives `None`.

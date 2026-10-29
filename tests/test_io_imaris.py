@@ -36,7 +36,7 @@ from brainhops.io.images.imaris import (  # noqa: E402
     ImarisRaw,
 )
 from brainhops.io.images.imaris._data import (  # noqa: E402
-    _ImarisProxy,
+    ImarisProxy,
     read_imaris_level,
 )
 from brainhops.io.images.imaris._raw import attribute_text  # noqa: E402
@@ -373,7 +373,7 @@ def test_the_padding_is_cropped(single_file) -> None:  # noqa: ANN001
 
 def test_loading_reads_no_voxels(single_file) -> None:  # noqa: ANN001
     image = ImarisImage.load(single_file[0])
-    assert isinstance(image.rawdata, _ImarisProxy)
+    assert isinstance(image.rawdata, ImarisProxy)
     assert "_cache_data" not in vars(image)
     assert image.shape == (8, 6, 3, 2, 3)
     assert "_cache_data" not in vars(image)
@@ -635,4 +635,4 @@ def test_consolidating_moves_pending_data_only(single_file) -> None:  # noqa: AN
     # in the cache of the image.
     assert same_transformations(copy.transformations, transformations)
     assert np.array_equal(copy.rawdata, value.T)
-    assert isinstance(image.rawdata, _ImarisProxy)
+    assert isinstance(image.rawdata, ImarisProxy)

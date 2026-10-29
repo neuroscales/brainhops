@@ -16,11 +16,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -31,6 +31,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -38,50 +39,43 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     Arrangement,
     declared_axes,
     held_transformations,
     same_transformations,
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
-from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
-from brainhops.io.common.mrtrix._data import (
-    _MrtrixProxy,
-    read_mrtrix,
-    whole_file,
-)
-from brainhops.io.common.mrtrix._files import (
+from brainhops.io.common.mrtrix._internal_api import (
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
+    MrtrixProxy,
+    dtype_to_mrtrix,
     file_entry,
     keeps_storage,
     merged_keyval,
     mrtrix_bytes,
     placed_record,
+    read_mrtrix,
     reads_from,
+    split_voxel_to_scanner,
     stored_voxels,
     stores_as_recorded,
+    voxel_to_ras,
+    whole_file,
     write_mrtrix,
     writer_options,
     writer_strides,
     written_files,
 )
-from brainhops.io.common.mrtrix._geometry import (
-    split_voxel_to_scanner,
-    voxel_to_ras,
-)
-from brainhops.io.common.mrtrix._raw import (
-    _declined,
-    _no_options,
-    _sniffed_raw,
-)
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -209,7 +203,7 @@ class MrtrixImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -303,9 +297,9 @@ class MrtrixImage(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(MrtrixRaw.from_fileobj, file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
     @classmethod
@@ -343,7 +337,7 @@ class MrtrixImage(
         ParserContentError
             If the file is not an MRtrix image, or its data is too short.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -388,7 +382,7 @@ class MrtrixImage(
             If the stream is not an MRtrix image, or its header names a
             separate data file and the stream has no name.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_mrtrix(file, mmap=False)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -660,7 +654,7 @@ def _encoded(
     held = None if image.metadata is None else image.metadata.raw
     merged = merged_keyval(held, options["keyval"])
     if image._data is not None:
-        raw = _image_to_disk(image._data)
+        raw = image_to_disk(image._data)
     else:
         raw = image.rawdata
     # The list of the image is read without being stored, so that a write
@@ -690,7 +684,7 @@ def _encoded(
         # A lazy array is read here rather than through `data`, so that no
         # cached view of the old file outlives a write over that file.
         reads = isinstance(raw, ArrayProxy) and isinstance(
-            raw.root, _MrtrixProxy
+            raw.root, MrtrixProxy
         )
         source = np.asarray(raw) if reads else raw
         if moved:

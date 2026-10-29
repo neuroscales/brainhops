@@ -16,15 +16,13 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
+from brainhops.datamodel.systems import RASmm
 from brainhops.errors import (
     IncompatibleSystemError,
 )
@@ -34,17 +32,14 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
-from brainhops.io.transformations.base.affines import (
-    _RAS,
-    RASToRAS,
-    _check_endpoint,
-)
+from brainhops.io.transformations.base._internal_api import check_endpoint
+from brainhops.io.transformations.base.affines import RASToRAS
 
 # this format
 from ._formats import MrtrixTransformationFormat
@@ -431,7 +426,7 @@ def _check_ras(xform: MrtrixLinearTransform) -> None:
     """
     for side in ("input", "output"):
         try:
-            _check_endpoint(xform, side, _RAS)
+            check_endpoint(xform, side, RASmm())
         except IncompatibleSystemError as error:
             raise UnrepresentableTransformationError(
                 f"An MRtrix linear transform maps scanner RAS to scanner "

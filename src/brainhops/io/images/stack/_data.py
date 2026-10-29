@@ -20,7 +20,7 @@ from brainhops.io.base.parsers import ParserContentError
 from ._raw import StackMember, StackRaw
 
 
-class _StackProxy(StoredProxy):
+class StackProxy(StoredProxy):
     """A lazy array of the pixels of an image stack.
 
     The proxy holds the path of the folder and the record of the stack.
@@ -248,6 +248,6 @@ def _read_file(filename: str, member: StackMember) -> np.ndarray:
                 tiff.TiffSource(filename=filename), mmap=False, lazy=False
             )
         )
-    from brainhops.io.images.pillow._utils import read_pillow
+    from brainhops.io.images.pillow._internal_api import read_pillow
 
     return read_pillow(filename).array

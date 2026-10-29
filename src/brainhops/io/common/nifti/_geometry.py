@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel._internal_api import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
@@ -19,7 +19,7 @@ from brainhops.datamodel.units import (
     is_timeunit,
 )
 from brainhops.io.base.parsers import UnrepresentableTransformationError
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     AxisLayout,
     arrange_voxel_to_ras,
     declared_axes,
@@ -28,32 +28,32 @@ from brainhops.io.common._geometry import (
 
 # this format
 from ._constants import (
-    _NIFTI_DEFAULT_XFORM_CODE,
-    _NIFTI_XFORM_CODE_BY_NAME,
-    _QFORM_NAME,
+    NIFTI_DEFAULT_XFORM_CODE,
+    NIFTI_XFORM_CODE_BY_NAME,
+    QFORM_NAME,
 )
 from ._data import whole_file
 from ._header import (
-    _STORAGE_OVERRIDES,
-    _apply_like,
-    _apply_overrides,
-    _new_nifti,
-    _NiftiObject,
-    _reset_structural_fields,
-    _set_other_axes,
-    _stored_scaling,
+    STORAGE_OVERRIDES,
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    new_nifti,
+    reset_structural_fields,
+    set_other_axes,
+    stored_scaling,
 )
 from ._units import nifti_unit_meters, unit_to_nifti
 
 
-def _embed_affine(matrix: np.ndarray) -> np.ndarray:
+def embed_nifti_affine(matrix: np.ndarray) -> np.ndarray:
     """Embed a voxel-to-world matrix in the `(4, 4)` matrix that NIfTI stores,
     with [`embed_affine`][].
     """
     return embed_affine(matrix, "NIfTI")
 
 
-def _voxel_to_ras(
+def voxel_to_ras(
     xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
 ) -> np.ndarray:
     """Return the `(4, 4)` voxel-to-RAS matrix of a transformation."""
@@ -176,8 +176,8 @@ def _reference_code(system: tx.Optional[CoordinateSystem]) -> int:
     stored as `aligned`.
     """
     name = getattr(system, "name", None)
-    code = _NIFTI_XFORM_CODE_BY_NAME.get(name, _NIFTI_DEFAULT_XFORM_CODE)
-    return code or _NIFTI_DEFAULT_XFORM_CODE
+    code = NIFTI_XFORM_CODE_BY_NAME.get(name, NIFTI_DEFAULT_XFORM_CODE)
+    return code or NIFTI_DEFAULT_XFORM_CODE
 
 
 def _sform_and_qform(
@@ -209,14 +209,14 @@ def _sform_and_qform(
             continue
         output = getattr(xform, "output", None)
         name = getattr(output, "name", None)
-        if _NIFTI_XFORM_CODE_BY_NAME.get(name):
+        if NIFTI_XFORM_CODE_BY_NAME.get(name):
             matrix = _placed(xform)
             if matrix is not None:
-                return matrix, _NIFTI_XFORM_CODE_BY_NAME[name], output
+                return matrix, NIFTI_XFORM_CODE_BY_NAME[name], output
 
     for xform in transformations:
         output = getattr(xform, "output", None)
-        if getattr(output, "name", None) == _QFORM_NAME:
+        if getattr(output, "name", None) == QFORM_NAME:
             matrix = _placed(xform)
             if matrix is not None:
                 return matrix, scode, output
@@ -268,7 +268,7 @@ def _xyzt_labels(
     return space or "unknown", time or "unknown"
 
 
-def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
+def unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
     """Return the factor that converts a world space to the unit of a NIfTI
     label, or 1 if either unit is unknown.
     """
@@ -281,7 +281,7 @@ def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
     return meters / stored
 
 
-def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
+def scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     """Scale the spatial rows of a `(4, 4)` matrix by `factor`."""
     if factor == 1.0:
         return matrix
@@ -290,19 +290,19 @@ def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     return scaled
 
 
-def _image_with_geometry(
+def image_with_geometry(
     data: ArrayProtocol,
     transformation: Transformation,
     transformations: tx.Sequence[Transformation],
     header: tx.Optional[nb.Nifti1Header] = None,
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
-) -> _NiftiObject:
+) -> NiftiObject:
     """Build a NIfTI image from data and their voxel-to-world geometry.
 
     The header is built in a fixed order. The `header` of a record, when
     it is given, is the starting point: its structural fields are reset
-    with [`_reset_structural_fields`][], and its other fields and
+    with [`reset_structural_fields`][], and its other fields and
     extensions are kept. The header is changed in place, so the caller
     passes a copy. Without a header, the header starts empty. The geometry
     is then encoded over the header, header fields are copied from `like`,
@@ -345,25 +345,25 @@ def _image_with_geometry(
     if layout is not None:
         data = layout.apply(data)
 
-    sform = _scale_spatial(sform_raw, _unit_scale(preferred_output, space))
-    qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
+    sform = scale_spatial(sform_raw, unit_scale(preferred_output, space))
+    qform = scale_spatial(qform_raw, unit_scale(qform_output, space))
 
     scaling = None
     whole = whole_file(data)
-    if whole is not None and not _STORAGE_OVERRIDES.intersection(overrides):
-        scaling = _stored_scaling(header, whole)
+    if whole is not None and not STORAGE_OVERRIDES.intersection(overrides):
+        scaling = stored_scaling(header, whole)
     if header is not None:
         if space == "mm" and header.get_xyzt_units()[0] == "unknown":
             space = "unknown"
-        _reset_structural_fields(header)
+        reset_structural_fields(header)
 
-    image = _new_nifti(data, sform, header)
-    _set_other_axes(image, others, timed)
-    _apply_like(image, like)
+    image = new_nifti(data, sform, header)
+    set_other_axes(image, others, timed)
+    apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)
-    _apply_overrides(image, overrides)
+    apply_overrides(image, overrides)
     if scaling is not None:
         image.header["scl_slope"], image.header["scl_inter"] = scaling
     return image

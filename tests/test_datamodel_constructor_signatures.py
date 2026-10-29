@@ -126,6 +126,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.transformations.c3d._affine": {
         "C3dAffine": ("data",),
     },
+    "brainhops.io.transformations.elastix._blocks": {
+        "ElastixBSplineStruct": ("transformations",),
+    },
     "brainhops.io.transformations.elastix._xform": {
         "ElastixParameterTransform": ("transformations",),
         "ElastixTomlTransform": ("transformations",),

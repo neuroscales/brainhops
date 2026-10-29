@@ -11,12 +11,12 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._backend import _BufferPool
-from ._bounds import _bound_index
-from ._splines import _first_tap, _tap_weight
+from ._backend import BufferPool
+from ._bounds import bound_index
+from ._splines import first_tap, tap_weight
 
 
-def _axis_taps(
+def axis_taps(
     xp: ModuleType,
     coords: tx.Any,
     n: int,
@@ -24,7 +24,7 @@ def _axis_taps(
     bound: str,
     dtype: tx.Any,
     stride: int = 1,
-    pool: tx.Optional[_BufferPool] = None,
+    pool: tx.Optional[BufferPool] = None,
     axis: int = 0,
     origin: int = 0,
 ) -> tx.List[tx.Tuple[tx.Any, tx.Any]]:
@@ -57,7 +57,7 @@ def _axis_taps(
     stride : int, default=1
         The factor by which the indices are multiplied, which turns
         them into offsets in the flattened spatial axes.
-    pool : _BufferPool, optional
+    pool : BufferPool, optional
         The pool that provides the arrays. By default, a new pool is
         created, and the arrays are new.
     axis : int, default=0
@@ -80,10 +80,10 @@ def _axis_taps(
         overwritten by the next call with the same axis.
     """
     if pool is None:
-        pool = _BufferPool(xp)
+        pool = BufferPool(xp)
     shape = coords.shape
     real = np.finfo(dtype).dtype
-    offset = _first_tap(order)
+    offset = first_tap(order)
     # The first sample is floor(x - offset), and t is the distance from
     # it to x, computed in the precision of the coordinates and then
     # rounded to the precision of the weights.
@@ -103,9 +103,9 @@ def _axis_taps(
     for tap in range(order + 1):
         index = pool.get(("index", axis, tap), shape, np.intp)
         weight = pool.get(("weight", axis, tap), shape, real)
-        _tap_weight(xp, order, tap, t, out=weight, scratch=scratch)
+        tap_weight(xp, order, tap, t, out=weight, scratch=scratch)
         xp.add(base, tap, out=index)
-        _bound_index(xp, index, n, bound, weight, integer_scratch, scratch)
+        bound_index(xp, index, n, bound, weight, integer_scratch, scratch)
         if origin:
             xp.subtract(index, origin, out=index)
         if stride != 1:

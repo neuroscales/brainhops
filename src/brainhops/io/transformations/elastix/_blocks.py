@@ -28,11 +28,13 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.transformations.base.affines import VoxelToLPS
 from brainhops.io.transformations.itk._common import (
-    ItkBSplineStruct,
     ItkStruct,
     ItkTransformClass,
 )
-from brainhops.io.transformations.itk._systems import _make_system
+from brainhops.io.transformations.itk._internal_api import (
+    ItkBSplineStruct,
+    make_system,
+)
 
 from ._parser import ParameterMap, get_bool, get_floats, get_string
 
@@ -59,26 +61,26 @@ SUPPORTED = (
 # per degree.
 
 
-class _ElastixBSplineStruct(ItkBSplineStruct):
+class ElastixBSplineStruct(ItkBSplineStruct):
     """elastix B-spline block of the default degree, 3."""
 
 
-class _ElastixLinearBSplineStruct(_ElastixBSplineStruct):
+class _ElastixLinearBSplineStruct(ElastixBSplineStruct):
     """elastix B-spline block of degree 1."""
 
     degree: tx.ClassVar[int] = 1
 
 
-class _ElastixQuadraticBSplineStruct(_ElastixBSplineStruct):
+class _ElastixQuadraticBSplineStruct(ElastixBSplineStruct):
     """elastix B-spline block of degree 2."""
 
     degree: tx.ClassVar[int] = 2
 
 
-_BSPLINES = {
+BSPLINES = {
     1: _ElastixLinearBSplineStruct,
     2: _ElastixQuadraticBSplineStruct,
-    3: _ElastixBSplineStruct,
+    3: ElastixBSplineStruct,
 }
 
 
@@ -163,7 +165,7 @@ def fixed_geometry(pmap: ParameterMap) -> tx.Optional[Geometry]:
         vox2lps = _xforms.Affine(
             matrix=matrix,
             input=_systems.VoxelCoordinateSystem(),
-            output=_make_system(ndim),
+            output=make_system(ndim),
         )
     return Geometry(transformation=vox2lps, shape=shape)
 
@@ -231,24 +233,47 @@ def _check_length(name: str, params: np.ndarray, expected: int) -> None:
         )
 
 
-def _struct(
+def itk_struct(
     type: ItkTransformClass,
     ndim: int,
     parameters: np.ndarray,
     fixed_parameters: tx.Sequence[float] = (),
     cls: tx.Type[ItkStruct] = ItkStruct,
 ) -> ItkStruct:
+    """Build the ITK block that stores a transformation.
+
+    The block is in double precision and maps a space of `ndim`
+    dimensions to itself. Its parameters are stored as read-only arrays.
+
+    Parameters
+    ----------
+    type : ItkTransformClass
+        The ITK class of the transformation.
+    ndim : int
+        The number of dimensions.
+    parameters : np.ndarray
+        The parameters of the transformation.
+    fixed_parameters : Sequence[float], default=()
+        The fixed parameters of the transformation.
+    cls : type[ItkStruct], default=ItkStruct
+        The class of the block.
+
+    Returns
+    -------
+    ItkStruct
+        The block.
+    """
     return cls(
         type=type,
         precision="double",
         ndim_input=ndim,
         ndim_output=ndim,
-        parameters=_read_only(parameters),
-        fixed_parameters=_read_only(fixed_parameters),
+        parameters=read_only(parameters),
+        fixed_parameters=read_only(fixed_parameters),
     )
 
 
-def _read_only(values: tx.Any) -> np.ndarray:
+def read_only(values: tx.Any) -> np.ndarray:
     """Return values as a read-only float64 array.
 
     The transform parameters of a block decoded from a record are a view
@@ -271,7 +296,7 @@ def _affine_struct(
     keeps the center as its fixed parameters.
     """
     params = np.concatenate([np.asarray(matrix).ravel(), translation])
-    return _struct(_ITKT.AffineTransform, ndim, params, center)
+    return itk_struct(_ITKT.AffineTransform, ndim, params, center)
 
 
 def _dti_matrix(params: np.ndarray, ndim: int) -> np.ndarray:
@@ -316,7 +341,7 @@ def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
             "Cyclic elastix B-splines (UseCyclicTransform) are not supported."
         )
     degree = int(get_string(pmap, "BSplineTransformSplineOrder", "3"))
-    if degree not in _BSPLINES:
+    if degree not in BSPLINES:
         raise ParserContentError(
             f"Unsupported elastix B-spline degree {degree}: elastix only "
             f"writes degrees 1, 2 and 3."
@@ -336,8 +361,8 @@ def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
     # The ITK fixed parameters are the size, the origin and the spacing,
     # followed by the direction matrix row by row.
     fixed = np.concatenate([size, origin, spacing, direction.ravel()])
-    return _struct(
-        _ITKT.BSplineTransform, ndim, params, fixed, cls=_BSPLINES[degree]
+    return itk_struct(
+        _ITKT.BSplineTransform, ndim, params, fixed, cls=BSPLINES[degree]
     )
 
 
@@ -362,7 +387,7 @@ def map_to_block(pmap: ParameterMap) -> ItkStruct:
 
     if name == "TranslationTransform":
         _check_length(name, params, ndim)
-        return _struct(_ITKT.TranslationTransform, ndim, params)
+        return itk_struct(_ITKT.TranslationTransform, ndim, params)
 
     if name in ("BSplineTransform", "RecursiveBSplineTransform"):
         return _bspline(pmap, ndim, params)
@@ -372,7 +397,7 @@ def map_to_block(pmap: ParameterMap) -> ItkStruct:
     if name == "EulerTransform":
         if ndim == 2:
             _check_length(name, params, 3)
-            return _struct(_ITKT.Euler2DTransform, 2, params, center)
+            return itk_struct(_ITKT.Euler2DTransform, 2, params, center)
         if ndim == 3:
             _check_length(name, params, 6)
             if "ComputeZYX" in pmap:
@@ -381,19 +406,19 @@ def map_to_block(pmap: ParameterMap) -> ItkStruct:
                 itk = get_floats(pmap, "ITKTransformFixedParameters")
                 zyx = itk is not None and itk.size > 3 and bool(itk[3])
             fixed = np.append(center, 1.0 if zyx else 0.0)
-            return _struct(_ITKT.Euler3DTransform, 3, params, fixed)
+            return itk_struct(_ITKT.Euler3DTransform, 3, params, fixed)
 
     if name == "SimilarityTransform":
         if ndim == 2:
             _check_length(name, params, 4)
-            return _struct(_ITKT.Similarity2DTransform, 2, params, center)
+            return itk_struct(_ITKT.Similarity2DTransform, 2, params, center)
         if ndim == 3:
             _check_length(name, params, 7)
-            return _struct(_ITKT.Similarity3DTransform, 3, params, center)
+            return itk_struct(_ITKT.Similarity3DTransform, 3, params, center)
 
     if name == "AffineTransform":
         _check_length(name, params, ndim * (ndim + 1))
-        return _struct(_ITKT.AffineTransform, ndim, params, center)
+        return itk_struct(_ITKT.AffineTransform, ndim, params, center)
 
     if name == "AffineLogTransform":
         # The matrix is the exponential of the first D * D parameters
@@ -457,7 +482,22 @@ _ELASTIX_NAMES = {
 }
 
 
-def _column_major(direction: np.ndarray) -> tx.Tuple[float, ...]:
+def column_major(direction: np.ndarray) -> tx.Tuple[float, ...]:
+    """Return a matrix of directions in column-major order.
+
+    elastix stores the directions of a grid column by column, while
+    NumPy stores a matrix row by row.
+
+    Parameters
+    ----------
+    direction : np.ndarray
+        The matrix of directions.
+
+    Returns
+    -------
+    tuple[float, ...]
+        The values of the matrix, column after column.
+    """
     return tuple(np.asarray(direction, dtype=np.float64).T.ravel().tolist())
 
 
@@ -486,7 +526,7 @@ def _block_map(block: ItkStruct) -> tx.Optional[ParameterMap]:
             "GridIndex": (0,) * ndim,
             "GridSpacing": _floats(fixed[2 * ndim : 3 * ndim]),
             "GridOrigin": _floats(fixed[ndim : 2 * ndim]),
-            "GridDirection": _column_major(direction),
+            "GridDirection": column_major(direction),
             "BSplineTransformSplineOrder": (int(block.degree),),
             "UseCyclicTransform": ("false",),
         }
@@ -536,7 +576,7 @@ def _affine_map(xform: _xforms.Transformation) -> ParameterMap:
             f"dimension, of shape (D, D + 1), but the matrix has shape "
             f"{matrix.shape}."
         )
-    space = _make_system(ndim)
+    space = make_system(ndim)
     for end in ("input", "output"):
         system = getattr(affine, end)
         if system is not None and system != space:

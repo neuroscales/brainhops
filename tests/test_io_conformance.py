@@ -81,8 +81,9 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base._base import FileFormat, _takes_over, register_format
-from brainhops.io.base._save import _model
+from brainhops.io.base._base import FileFormat, register_format, takes_over
+from brainhops.io.base._parsers import overrides_from_fileobj
+from brainhops.io.base._save import data_model_of
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -93,35 +94,34 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     UnrepresentableTransformationError,
     WriterError,
-    _overrides_from_fileobj,
 )
 from brainhops.io.common._geometry import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.common._pyramids import held_images, own_level, own_levels
-from brainhops.io.common.afni._data import _BrikProxy
+from brainhops.io.common.afni._data import BrikProxy
 from brainhops.io.common.afni._files import afni_dataset_files
 from brainhops.io.common.afni._geometry import afni_voxel_to_dicom
 from brainhops.io.common.bdv import BdvMetadata, BdvRaw
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.common.mrtrix._data import _MrtrixProxy
-from brainhops.io.common.nrrd._data import _NrrdProxy
+from brainhops.io.common.mrtrix._data import MrtrixProxy
+from brainhops.io.common.nrrd._data import NrrdProxy
 from brainhops.io.images.afni import AfniImage, AfniMetadata
 from brainhops.io.images.afni._views import (
-    _image_to_disk as _afni_to_disk,
+    image_to_disk as _afni_to_disk,
 )
 from brainhops.io.images.afni._views import (
-    _image_to_model as _afni_to_model,
+    image_to_model as _afni_to_model,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.mrtrix import MrtrixImage, MrtrixMetadata
 from brainhops.io.images.mrtrix._views import (
-    _image_to_disk as _mrtrix_to_disk,
+    image_to_disk as _mrtrix_to_disk,
 )
 from brainhops.io.images.mrtrix._views import (
-    _image_to_model as _mrtrix_to_model,
+    image_to_model as _mrtrix_to_model,
 )
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,
@@ -129,10 +129,10 @@ from brainhops.io.images.nrrd import (
     NrrdMetadata,
 )
 from brainhops.io.images.nrrd._views import (
-    _image_to_disk as _nrrd_to_disk,
+    image_to_disk as _nrrd_to_disk,
 )
 from brainhops.io.images.nrrd._views import (
-    _image_to_model as _nrrd_to_model,
+    image_to_model as _nrrd_to_model,
 )
 from brainhops.io.metadata import MetadataFormat
 from brainhops.io.metadata._base import metadata_to_write, requested_fields
@@ -142,10 +142,10 @@ from brainhops.io.transformations.afni import (
     AfniBrikWarp,
 )
 from brainhops.io.transformations.afni._views import (
-    _warp_to_disk as _afni_warp_to_disk,
+    warp_to_disk as _afni_warp_to_disk,
 )
 from brainhops.io.transformations.afni._views import (
-    _warp_to_model as _afni_warp_to_model,
+    warp_to_model as _afni_warp_to_model,
 )
 from brainhops.io.transformations.base._records import (
     matrix_to_disk,
@@ -155,17 +155,17 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import RASCoordinateField
 from brainhops.io.transformations.bdv import BdvViewRegistration
 from brainhops.io.transformations.bdv._xform import (
-    _matrix_to_disk as _bdv_matrix_to_disk,
+    matrix_to_disk as _bdv_matrix_to_disk,
 )
 from brainhops.io.transformations.bdv._xform import (
-    _matrix_to_model as _bdv_matrix_to_model,
+    matrix_to_model as _bdv_matrix_to_model,
 )
 from brainhops.io.transformations.c3d import C3dAffine, C3dAffineMetadata
 from brainhops.io.transformations.c3d._affine import (
-    _matrix_to_disk as _c3d_to_disk,
+    matrix_to_disk as _c3d_to_disk,
 )
 from brainhops.io.transformations.c3d._affine import (
-    _matrix_to_model as _c3d_to_model,
+    matrix_to_model as _c3d_to_model,
 )
 from brainhops.io.transformations.elastix import (
     ElastixMetadata,
@@ -173,9 +173,9 @@ from brainhops.io.transformations.elastix import (
     ElastixTomlTransform,
 )
 from brainhops.io.transformations.elastix._blocks import (
-    _ElastixBSplineStruct,
-    _read_only,
-    _struct,
+    ElastixBSplineStruct,
+    itk_struct,
+    read_only,
 )
 from brainhops.io.transformations.freesurfer.lta import (
     LtaMetadata,
@@ -192,8 +192,8 @@ from brainhops.io.transformations.freesurfer.m3z import (
     M3zMorph,
 )
 from brainhops.io.transformations.freesurfer.m3z._xform import (
-    _positions_to_disk,
-    _positions_to_model,
+    positions_to_disk,
+    positions_to_model,
 )
 from brainhops.io.transformations.freesurfer.regdat import (
     RegisterDatMetadata,
@@ -228,10 +228,10 @@ from brainhops.io.transformations.minc import (
     XfmTransform,
 )
 from brainhops.io.transformations.minc._affine import (
-    _matrix_to_disk as _xfm_matrix_to_disk,
+    matrix_to_disk as _xfm_matrix_to_disk,
 )
 from brainhops.io.transformations.minc._affine import (
-    _matrix_to_model as _xfm_matrix_to_model,
+    matrix_to_model as _xfm_matrix_to_model,
 )
 from brainhops.io.transformations.mrtrix import (
     MrtrixCoordinateField,
@@ -241,8 +241,8 @@ from brainhops.io.transformations.mrtrix import (
     MrtrixWarpFull,
 )
 from brainhops.io.transformations.mrtrix._views import (
-    _warp_to_disk,
-    _warp_to_model,
+    warp_to_disk,
+    warp_to_model,
 )
 from brainhops.io.transformations.neuroglancer import (
     NeuroglancerTransform,
@@ -258,28 +258,28 @@ from brainhops.io.transformations.trakem2 import (
     TrakEM2Raw,
 )
 from brainhops.io.transformations.trakem2._xform import (
-    _matrix_to_disk as _trakem2_matrix_to_disk,
+    matrix_to_disk as _trakem2_matrix_to_disk,
 )
 from brainhops.io.transformations.trakem2._xform import (
-    _matrix_to_model as _trakem2_matrix_to_model,
+    matrix_to_model as _trakem2_matrix_to_model,
 )
 
 try:
     import nibabel as nb
 
-    from brainhops.io.common.mgh._data import _MghProxy
-    from brainhops.io.common.nifti._data import _NiftiProxy
+    from brainhops.io.common.mgh._data import MghProxy
+    from brainhops.io.common.nifti._data import NiftiProxy
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
-        _image_to_disk as _mgh_to_disk,
+        image_to_disk as _mgh_to_disk,
     )
     from brainhops.io.images.freesurfer.mgh._views import (
-        _image_to_model as _mgh_to_model,
+        image_to_model as _mgh_to_model,
     )
     from brainhops.io.images.nifti import NiftiImage, NiftiMetadata
     from brainhops.io.images.nifti._views import (
-        _image_to_disk,
-        _image_to_model,
+        image_to_disk,
+        image_to_model,
     )
     from brainhops.io.transformations.afni import AfniNiftiWarp
     from brainhops.io.transformations.fsl.flirt import (
@@ -293,8 +293,8 @@ try:
         ItkNiftiDisplacementField,
     )
     from brainhops.io.transformations.itk.nifti._views import (
-        _itk_field_to_disk,
-        _itk_field_to_model,
+        itk_field_to_disk,
+        itk_field_to_model,
     )
     from brainhops.io.transformations.nifti import (
         NiftiRASCoordinateField,
@@ -303,10 +303,10 @@ try:
         NiftiVoxelToRAS,
     )
     from brainhops.io.transformations.nifti._views import (
-        _affine_to_disk,
-        _affine_to_model,
-        _field_to_disk,
-        _field_to_model,
+        affine_to_disk,
+        affine_to_model,
+        field_to_disk,
+        field_to_model,
     )
     from brainhops.io.transformations.niftyreg import (
         NiftyRegControlPointGrid,
@@ -322,14 +322,14 @@ except ImportError:
 try:
     from scipy.io import netcdf_file
 
-    from brainhops.io.common.minc._data import _MincProxy
+    from brainhops.io.common.minc._data import MincProxy
     from brainhops.io.common.minc._netcdf import read_netcdf_header
     from brainhops.io.images.minc import Minc1Image, Minc2Image, MincMetadata
     from brainhops.io.images.minc._views import (
-        _image_to_disk as _minc_to_disk,
+        image_to_disk as _minc_to_disk,
     )
     from brainhops.io.images.minc._views import (
-        _image_to_model as _minc_to_model,
+        image_to_model as _minc_to_model,
     )
 
     minc_needs = netcdf_file
@@ -337,13 +337,13 @@ except ImportError:
     minc_needs = None
 
 try:
-    from brainhops.io.common.zarr._data import _ZarrProxy
+    from brainhops.io.common.zarr._data import ZarrProxy
     from brainhops.io.images.zarr import ZarrImage, ZarrMetadata
     from brainhops.io.images.zarr._views import (
-        _image_to_disk as _zarr_to_disk,
+        image_to_disk as _zarr_to_disk,
     )
     from brainhops.io.images.zarr._views import (
-        _image_to_model as _zarr_to_model,
+        image_to_model as _zarr_to_model,
     )
 except ImportError:
     ZarrImage = None
@@ -353,12 +353,12 @@ try:
 
     from brainhops.io.images.base import _utils_raster as raster
     from brainhops.io.images.pillow import PillowImage, PillowMetadata
-    from brainhops.io.images.pillow._data import _PillowProxy
+    from brainhops.io.images.pillow._data import PillowProxy
     from brainhops.io.images.pillow._views import (
-        _image_to_disk as _pillow_to_disk,
+        image_to_disk as _pillow_to_disk,
     )
     from brainhops.io.images.pillow._views import (
-        _image_to_model as _pillow_to_model,
+        image_to_model as _pillow_to_model,
     )
 except ImportError:
     PILImage = None
@@ -367,24 +367,24 @@ try:
     import tifffile
 
     from brainhops.io.images.stack import StackImage, StackMetadata
-    from brainhops.io.images.stack._data import _StackProxy
+    from brainhops.io.images.stack._data import StackProxy
     from brainhops.io.images.stack._views import (
-        _image_to_disk as _stack_to_disk,
+        image_to_disk as _stack_to_disk,
     )
     from brainhops.io.images.stack._views import (
-        _image_to_model as _stack_to_model,
+        image_to_model as _stack_to_model,
     )
     from brainhops.io.images.tiff import (
         TiffImage,
         TiffMetadata,
         TiffMultiScaleImage,
     )
-    from brainhops.io.images.tiff._data import _TiffProxy
+    from brainhops.io.images.tiff._data import TiffProxy
     from brainhops.io.images.tiff._views import (
-        _image_to_disk as _tiff_to_disk,
+        image_to_disk as _tiff_to_disk,
     )
     from brainhops.io.images.tiff._views import (
-        _image_to_model as _tiff_to_model,
+        image_to_model as _tiff_to_model,
     )
 except ImportError:
     tifffile = None
@@ -400,12 +400,12 @@ try:
         GenericTiffMultiScaleImage,
         OpenSlideMetadata,
     )
-    from brainhops.io.images.openslide._data import _SlideArray
+    from brainhops.io.images.openslide._data import SlideArray
     from brainhops.io.images.openslide._views import (
-        _image_to_disk as _slide_to_disk,
+        image_to_disk as _slide_to_disk,
     )
     from brainhops.io.images.openslide._views import (
-        _image_to_model as _slide_to_model,
+        image_to_model as _slide_to_model,
     )
 except (ImportError, OSError):
     openslide = None
@@ -414,23 +414,23 @@ try:
     import tensorstore as ts
 
     from brainhops.io.images.n5 import N5Image, N5Metadata
-    from brainhops.io.images.n5._data import _N5Proxy
+    from brainhops.io.images.n5._data import N5Proxy
     from brainhops.io.images.n5._views import (
-        _image_to_disk as _n5_to_disk,
+        image_to_disk as _n5_to_disk,
     )
     from brainhops.io.images.n5._views import (
-        _image_to_model as _n5_to_model,
+        image_to_model as _n5_to_model,
     )
     from brainhops.io.images.precomputed import (
         PrecomputedImage,
         PrecomputedMetadata,
     )
-    from brainhops.io.images.precomputed._data import _PrecomputedProxy
+    from brainhops.io.images.precomputed._data import PrecomputedProxy
     from brainhops.io.images.precomputed._views import (
-        _image_to_disk as _precomputed_to_disk,
+        image_to_disk as _precomputed_to_disk,
     )
     from brainhops.io.images.precomputed._views import (
-        _image_to_model as _precomputed_to_model,
+        image_to_model as _precomputed_to_model,
     )
 
     n5_needs = ts
@@ -441,22 +441,22 @@ except ImportError:
 try:
     import h5py
 
-    from brainhops.io.common.bdv._hdf5 import _BdvProxy
+    from brainhops.io.common.bdv._hdf5 import BdvProxy
     from brainhops.io.common.hdf5 import H5ArrayProxy
     from brainhops.io.images.bdv import BdvImage
     from brainhops.io.images.bdv._views import (
-        _image_to_disk as _bdv_to_disk,
+        image_to_disk as _bdv_to_disk,
     )
     from brainhops.io.images.bdv._views import (
-        _image_to_model as _bdv_to_model,
+        image_to_model as _bdv_to_model,
     )
     from brainhops.io.images.imaris import ImarisImage, ImarisMetadata
-    from brainhops.io.images.imaris._data import _ImarisProxy
+    from brainhops.io.images.imaris._data import ImarisProxy
     from brainhops.io.images.imaris._views import (
-        _image_to_disk as _imaris_to_disk,
+        image_to_disk as _imaris_to_disk,
     )
     from brainhops.io.images.imaris._views import (
-        _image_to_model as _imaris_to_model,
+        image_to_model as _imaris_to_model,
     )
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
@@ -468,13 +468,13 @@ try:
         X5Transform,
     )
     from brainhops.io.transformations.x5._blocks import (
-        _KINDS as _X5_KINDS,
+        KINDS as _X5_KINDS,
     )
     from brainhops.io.transformations.x5._blocks import (
-        _field_to_disk as _x5_field_to_disk,
+        field_to_disk as _x5_field_to_disk,
     )
     from brainhops.io.transformations.x5._blocks import (
-        _field_to_model as _x5_field_to_model,
+        field_to_model as _x5_field_to_model,
     )
 except ImportError:
     h5py = None
@@ -482,12 +482,12 @@ except ImportError:
 try:
     from brainhops.io.images.base import _utils_raster as raster
     from brainhops.io.images.jpeg2000 import Jpeg2000Image, Jpeg2000Metadata
-    from brainhops.io.images.jpeg2000._data import _Jpeg2000Proxy
+    from brainhops.io.images.jpeg2000._data import Jpeg2000Proxy
     from brainhops.io.images.jpeg2000._views import (
-        _image_to_disk as _jpeg2000_to_disk,
+        image_to_disk as _jpeg2000_to_disk,
     )
     from brainhops.io.images.jpeg2000._views import (
-        _image_to_model as _jpeg2000_to_model,
+        image_to_model as _jpeg2000_to_model,
     )
 except ImportError:
     Jpeg2000Image = None
@@ -2135,9 +2135,9 @@ if nb is not None:
     _NIFTI = Exemplar(
         metadata=NiftiMetadata,
         suffix=".nii",
-        proxies=(_NiftiProxy, ScaledProxy),
-        to_model=_image_to_model,
-        to_disk=_image_to_disk,
+        proxies=(NiftiProxy, ScaledProxy),
+        to_model=image_to_model,
+        to_disk=image_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
         edit_record=_nifti_edit_record,
         record_edited=lambda raw: raw.header["descrip"].item() == b"edited",
@@ -2146,8 +2146,8 @@ if nb is not None:
         vocabulary={"description": "a vocabulary edit"},
     )
     _NIFTI_FIELD = _NIFTI._replace(
-        to_model=_field_to_model,
-        to_disk=_field_to_disk,
+        to_model=field_to_model,
+        to_disk=field_to_disk,
         sample=_vectors,
         geometry=_chain_geometry,
         change_geometry=_chain_change_geometry,
@@ -2156,7 +2156,7 @@ if nb is not None:
     )
     _NIFTYREG = _NIFTI_FIELD
     _ITK = _NIFTI_FIELD._replace(
-        to_model=_itk_field_to_model, to_disk=_itk_field_to_disk
+        to_model=itk_field_to_model, to_disk=itk_field_to_disk
     )
 
     EXEMPLARS[NiftiImage] = _NIFTI._replace(
@@ -2169,8 +2169,8 @@ if nb is not None:
         # The matrix of an affine lives in the header, so a read affine has
         # no array, and its stored matrix is decoded from the header.
         proxies=(np.ndarray,),
-        to_model=_affine_to_model,
-        to_disk=_affine_to_disk,
+        to_model=affine_to_model,
+        to_disk=affine_to_disk,
         sample=lambda: _VOXEL_TO_RAS,
         geometry=_matrix_geometry,
         change_geometry=_matrix_change_geometry,
@@ -2186,13 +2186,13 @@ if nb is not None:
     )
     EXEMPLARS[NiftiRASDisplacementField] = _NIFTI_FIELD._replace(
         build=lambda data: NiftiRASDisplacementField(
-            rawdata=_field_to_disk(data)
+            rawdata=field_to_disk(data)
         ),
         foreign=_ras_displacements,
         options=frozenset({"log", "steps"}),
     )
     EXEMPLARS[SpmCoordinateField] = _NIFTI_FIELD._replace(
-        build=lambda data: SpmCoordinateField(rawdata=_field_to_disk(data)),
+        build=lambda data: SpmCoordinateField(rawdata=field_to_disk(data)),
         foreign=_spm_coordinates,
         prefix="y_",
     )
@@ -2204,11 +2204,11 @@ if nb is not None:
         NiftyRegVelocityGrid,
     ):
         EXEMPLARS[_cls] = _NIFTYREG._replace(
-            build=lambda data, cls=_cls: cls(rawdata=_field_to_disk(data))
+            build=lambda data, cls=_cls: cls(rawdata=field_to_disk(data))
         )
     for _cls in (ItkNiftiCoordinateField, ItkNiftiDisplacementField):
         EXEMPLARS[_cls] = _ITK._replace(
-            build=lambda data, cls=_cls: cls(rawdata=_itk_field_to_disk(data))
+            build=lambda data, cls=_cls: cls(rawdata=itk_field_to_disk(data))
         )
     _FNIRT = _NIFTI._replace(
         sample=_vectors,
@@ -2637,8 +2637,8 @@ _M3Z = Exemplar(
     # A morph is parsed in one pass and has no lazy data, so the positions
     # are an array of the record just after a read.
     proxies=(np.ndarray,),
-    to_model=_positions_to_model,
-    to_disk=_positions_to_disk,
+    to_model=positions_to_model,
+    to_disk=positions_to_disk,
     sample=_vectors,
     edit_record=_m3z_edit_record,
     record_edited=lambda raw: raw.exp_k == 7.5,
@@ -2815,7 +2815,7 @@ EXEMPLARS[Mat73MatrixAffine] = _MATRIX._replace(
 def _elastix_affine(
     data: tx.Any, center: tx.Sequence[float] = (0.0, 0.0, 0.0)
 ) -> tx.Any:
-    return _struct("AffineTransform", 3, data, center)
+    return itk_struct("AffineTransform", 3, data, center)
 
 
 def _elastix_bspline(
@@ -2826,8 +2826,8 @@ def _elastix_bspline(
     grid = np.concatenate(
         [[2, 3, 4], origin, [1.0, 1.0, 1.0], np.eye(3).ravel()]
     )
-    return _struct(
-        "BSplineTransform", 3, data, grid, cls=_ElastixBSplineStruct
+    return itk_struct(
+        "BSplineTransform", 3, data, grid, cls=ElastixBSplineStruct
     )
 
 
@@ -2880,7 +2880,7 @@ def _elastix_exemplar(cls: type, suffix: str) -> Exemplar:
         # the transform parameters are an array of the record just after
         # a read.
         proxies=(np.ndarray,),
-        to_model=_read_only,
+        to_model=read_only,
         to_disk=lambda data: np.asarray(data, dtype=np.float64),
         sample=lambda: np.arange(12.0),
         edit_record=_elastix_edit_record,
@@ -2998,7 +2998,7 @@ if nb is not None:
     EXEMPLARS[MghImage] = _NIFTI._replace(
         metadata=MghMetadata,
         suffix=".mgh",
-        proxies=(_MghProxy,),
+        proxies=(MghProxy,),
         to_model=_mgh_to_model,
         to_disk=_mgh_to_disk,
         edit_record=_mgh_edit_record,
@@ -3032,7 +3032,7 @@ def _afni_geometry(image: tx.Any) -> np.ndarray:
 _AFNI = Exemplar(
     metadata=AfniMetadata,
     suffix=".HEAD",
-    proxies=(_BrikProxy,),
+    proxies=(BrikProxy,),
     to_model=_afni_to_model,
     to_disk=_afni_to_disk,
     sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3136,7 +3136,7 @@ def _mrtrix_edit_record(record: tx.Any) -> tx.Any:
 _MRTRIX = Exemplar(
     metadata=MrtrixMetadata,
     suffix=".mif",
-    proxies=(_MrtrixProxy,),
+    proxies=(MrtrixProxy,),
     to_model=_mrtrix_to_model,
     to_disk=_mrtrix_to_disk,
     sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3170,8 +3170,8 @@ def _warpfull_change_geometry(xform: tx.Any) -> None:
 
 
 _MRTRIX_WARP = _MRTRIX._replace(
-    to_model=_warp_to_model,
-    to_disk=_warp_to_disk,
+    to_model=warp_to_model,
+    to_disk=warp_to_disk,
     sample=_vectors,
     geometry=_chain_geometry,
     change_geometry=_chain_change_geometry,
@@ -3251,7 +3251,7 @@ def _nrrd_edit_record(record: tx.Any) -> tx.Any:
 _NRRD = Exemplar(
     metadata=NrrdMetadata,
     suffix=".nrrd",
-    proxies=(_NrrdProxy,),
+    proxies=(NrrdProxy,),
     to_model=_nrrd_to_model,
     to_disk=_nrrd_to_disk,
     sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3335,7 +3335,7 @@ if minc_needs is not None:
     _MINC = Exemplar(
         metadata=MincMetadata,
         suffix=".mnc",
-        proxies=(_MincProxy,),
+        proxies=(MincProxy,),
         to_model=_minc_to_model,
         to_disk=_minc_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3382,7 +3382,7 @@ if ZarrImage is not None:
     EXEMPLARS[ZarrImage] = Exemplar(
         metadata=ZarrMetadata,
         suffix=".zarr",
-        proxies=(_ZarrProxy,),
+        proxies=(ZarrProxy,),
         to_model=_zarr_to_model,
         to_disk=_zarr_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3516,7 +3516,7 @@ if tifffile is not None:
     _TIFF = Exemplar(
         metadata=TiffMetadata,
         suffix=".tif",
-        proxies=(_TiffProxy,),
+        proxies=(TiffProxy,),
         to_model=_tiff_to_model,
         to_disk=_tiff_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -3623,7 +3623,7 @@ if openslide is not None:
     EXEMPLARS[GenericTiffImage] = Exemplar(
         metadata=OpenSlideMetadata,
         suffix=".slide",
-        proxies=(_SlideArray,),
+        proxies=(SlideArray,),
         to_model=_slide_to_model,
         to_disk=_slide_to_disk,
         sample=_slide_sample,
@@ -3702,7 +3702,7 @@ if PILImage is not None:
     _PILLOW = Exemplar(
         metadata=PillowMetadata,
         suffix=".png",
-        proxies=(_PillowProxy,),
+        proxies=(PillowProxy,),
         to_model=_pillow_to_model,
         to_disk=_pillow_to_disk,
         sample=lambda: np.arange(24, dtype="uint8").reshape(4, 6),
@@ -4030,7 +4030,7 @@ if tifffile is not None:
     EXEMPLARS[StackImage] = Exemplar(
         metadata=StackMetadata,
         suffix="",
-        proxies=(_StackProxy,),
+        proxies=(StackProxy,),
         to_model=_stack_to_model,
         to_disk=_stack_to_disk,
         sample=lambda: np.arange(24, dtype="uint16").reshape(2, 3, 4),
@@ -4179,7 +4179,7 @@ if h5py is not None:
     EXEMPLARS[BdvImage] = Exemplar(
         metadata=BdvMetadata,
         suffix=".xml",
-        proxies=(_BdvProxy,),
+        proxies=(BdvProxy,),
         to_model=_bdv_to_model,
         to_disk=_bdv_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -4219,7 +4219,7 @@ if Jpeg2000Image is not None:
     EXEMPLARS[Jpeg2000Image] = Exemplar(
         metadata=Jpeg2000Metadata,
         suffix=".jp2",
-        proxies=(_Jpeg2000Proxy,),
+        proxies=(Jpeg2000Proxy,),
         to_model=_jpeg2000_to_model,
         to_disk=_jpeg2000_to_disk,
         sample=lambda: np.arange(24, dtype=np.uint8).reshape(4, 6),
@@ -4302,7 +4302,7 @@ if n5_needs is not None:
     _N5 = Exemplar(
         metadata=N5Metadata,
         suffix=os.sep + "attributes.json",
-        proxies=(_N5Proxy,),
+        proxies=(N5Proxy,),
         to_model=_n5_to_model,
         to_disk=_n5_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -4373,7 +4373,7 @@ if h5py is not None:
     EXEMPLARS[ImarisImage] = Exemplar(
         metadata=ImarisMetadata,
         suffix=".ims",
-        proxies=(_ImarisProxy,),
+        proxies=(ImarisProxy,),
         to_model=_imaris_to_model,
         to_disk=_imaris_to_disk,
         sample=lambda: np.arange(48, dtype="float32").reshape(4, 3, 2, 2, 1),
@@ -4461,7 +4461,7 @@ if ts is not None:
     EXEMPLARS[PrecomputedImage] = Exemplar(
         metadata=PrecomputedMetadata,
         suffix=os.sep + "info",
-        proxies=(_PrecomputedProxy,),
+        proxies=(PrecomputedProxy,),
         to_model=_precomputed_to_model,
         to_disk=_precomputed_to_disk,
         sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
@@ -5361,7 +5361,7 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     names = _init_names
     # A format whose data model is a chain may still take its stored data
     # as `data`, which is pending until the object is consolidated.
-    allowed = names(_model(cls)) | {"rawdata", "metadata", "data"}
+    allowed = names(data_model_of(cls)) | {"rawdata", "metadata", "data"}
     allowed |= exemplar.options
     assert names(cls) <= allowed
     assert not names(cls) & _PARSER_STATE
@@ -5569,7 +5569,7 @@ def test_09_copies_keep_rawdata_and_metadata(
         converted = cls.from_instance(foreign)
     # The metadata of a data model is converted into the metadata of the
     # format, without the record of another format.
-    if _takes_over(cls, "metadata") and foreign.metadata is not None:
+    if takes_over(cls, "metadata") and foreign.metadata is not None:
         assert isinstance(converted.metadata, Metadata)
         assert converted.metadata.raw is None
     elif foreign.metadata is None:
@@ -5578,7 +5578,7 @@ def test_09_copies_keep_rawdata_and_metadata(
         assert np.array_equal(np.asarray(converted.data), value)
         _refuses_encoding(converted, _path(tmp_path, exemplar, "converted"))
         return
-    if "data" in _init_names(_model(cls)):
+    if "data" in _init_names(data_model_of(cls)):
         assert getattr(converted, "rawdata", None) is None
         assert np.array_equal(np.asarray(converted.data), value)
         consolidated = converted.consolidate()
@@ -5643,7 +5643,7 @@ def test_12_adapter_contract(
         assert not klass._is_dispatcher()
         if exemplar.binary:
             # `from_bytes` reads through a real `from_fileobj` only.
-            assert _overrides_from_fileobj(klass)
+            assert overrides_from_fileobj(klass)
             assert klass._READ_MODE == "rb"
         else:
             assert klass._READ_MODE == "rt"
@@ -5742,7 +5742,7 @@ def test_14_copies_between_classes_carry_the_decoded_transformations(
     # The data model and another format read the decoded transformations,
     # since the record of this format means nothing to them.
     for copy in (
-        _model(cls).from_instance(loaded),
+        data_model_of(cls).from_instance(loaded),
         _ForeignImage.from_instance(loaded),
     ):
         assert np.allclose(exemplar.geometry(copy), decoded)
@@ -7111,7 +7111,7 @@ def test_an_untouched_nifti_keeps_its_extensions_and_description(
 def test_a_nifti_image_holds_a_proxy_and_a_record(tmp_path) -> None:  # noqa: ANN001
     source = _saved(NiftiImage, EXEMPLARS[NiftiImage], tmp_path)
     loaded = NiftiImage.load(source)
-    assert isinstance(loaded.rawdata, _NiftiProxy)
+    assert isinstance(loaded.rawdata, NiftiProxy)
     assert isinstance(loaded.metadata.raw.header, nb.Nifti1Header)
     assert MetadataFormat.load(source).raw.header == loaded.metadata.raw.header
     # Other metadata gives other transformations.

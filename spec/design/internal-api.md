@@ -1,11 +1,11 @@
 # Design: public, internal and private names
 
-Status: decided, not implemented (#591, and #592 for the merge of copied
-helpers). This memo records which names of `brainhops` other code may
-import, and from where. It defines three levels of visibility, a module
-named `_internal_api.py` through which a package offers its internal
-names to other packages, and a test that enforces the rules. Decisions
-are tagged `V1` to `V6`.
+Status: implemented (#591, and #592 for the merge of copied helpers).
+This memo records which names of `brainhops` other code may import, and
+from where. It defines three levels of visibility, a module named
+`_internal_api.py` through which a package offers its internal names to
+other packages, and a test that enforces the rules. Decisions are tagged
+`V1` to `V6`.
 
 ## 1. The problem
 
@@ -45,6 +45,12 @@ has a docstring and a signature that serves more than one caller,
 because other modules depend on it. A private name is
 never imported by another module, including tests.
 
+A module counts as private when its name, or the name of a package that
+holds it, starts with an underscore: the plain names of
+`brainhops._core.path` are internal. A name that a public module lists
+in its `__all__` is public, even when a private module defines it, as
+`brainhops.backends` does for the names of `brainhops._core.backends`.
+
 V2. A name that another module needs is promoted, not imported with its
 underscore. It becomes internal when only `brainhops` needs it and
 public when users need it too. `_as_affine` becomes the public
@@ -63,26 +69,113 @@ contract between packages is written in one place. The name says that
 the module is an interface, which `_internal` alone would not, and
 that it is not public.
 
+The package `_core` is the exception: it holds internal names that any
+module of `brainhops` may import from the module of `_core` that
+defines them, and it has no `_internal_api.py` module.
+
+A package is a directory that holds an `__init__.py` file, and two
+sibling subpackages, such as `io/common/nifti` and `io/images/nifti`,
+are different packages. A subpackage whose name starts with an
+underscore, below the top-level packages of `brainhops`, is part of the
+package that holds it: `datamodel/_transformations/compute` is part of
+`datamodel`, while `_core` is a package of its own.
+
+A test may import an internal name directly from the module that
+defines it, so an `_internal_api.py` module never re-exports a name
+that only tests use.
+
 V4. A package has an `_internal_api.py` module only when another
-package imports its internal names. The first ones are those of
-`datamodel`, `_core`, `io/base`, `io/transformations/base`,
-`io/transformations/itk`, and each package under `io/common/` whose
-names are used by both the images and the transformations of its
-format. The modules of a package never import from their own
-`_internal_api.py`, which only re-exports, so the module cannot create
-a circular import inside its package.
+package imports its internal names. The modules of a package never
+import from their own `_internal_api.py`, which only re-exports, so the
+module cannot create a circular import inside its package.
 
 V5. The helpers that were copied in several packages under `io/common/`
 are merged into one internal function in `io/base` and offered through
-`io/base/_internal_api.py`.
+`io/base/_internal_api.py`. The module `io/base/_sniffing.py` defines
+them:
+
+- `no_options(kwargs, owner)` refuses the options given to a reader
+  that takes none;
+- `declined(error, message, failure=None)` declines sniffed content,
+  and raises the error that the caller asks for;
+- `checked_score(score, error, message)` returns a score, or raises
+  when the score is zero and the caller asks for an error;
+- `sniffed_raw(read, file)` reads the record of a stream for a sniffer,
+  and returns the error instead of raising it.
+
+The copies differed only in the words of their messages, which each
+format now gives as the constants `OPTION_OWNER` and `DECLINE_MESSAGE`.
+The AFNI sniffer also validates the record and restores the position of
+the stream, which its function `read_validated_header` does before
+`sniffed_raw` is called. The AFNI and MRtrix transformations, the N5
+images and the precomputed images use the shared functions too.
+
+Some helpers with the same names differ in behaviour and keep their own
+definitions. The `no_options` of Imaris sorts the names of the options,
+and its `_declined` raises without replacing the context of the error.
+The other helpers named `no_options` or `_no_options`, in the
+BigDataViewer, JPEG 2000, OpenSlide, Pillow and Zarr image formats and
+in the MINC, c3d, NiftyReg and TrakEM2 transformation formats, word
+their messages differently, and most of them name the class or the
+method that refuses the options. The helpers named `score` or `_score`
+of the BigDataViewer images and of the AFNI and MINC transformations
+compute the score themselves.
 
 ## 4. Enforcement
 
-V6. Two checks keep the rules true. The ruff rule `PLC2701`
-(import-private-name) rejects an import of a name that starts with an
-underscore from another module. A test under `tests/` reads the import
-statements of every module with `ast` and rejects an import of an
-internal name from a module of another package that is not that
-package's `_internal_api.py`. Ruff cannot express the second rule,
-because its list of banned imports applies to the whole repository and
-not to one package. The rule is also stated in `CLAUDE.md`.
+V6. The test `tests/test_visibility.py` reads the import statements of
+every module of `src/` and `tests/` with `ast`. It rejects an import of
+a private name from another module, an import by a module of `src/` of
+an internal name of another package from any module but that package's
+`_internal_api.py`, or of an internal name of `_core` from any module
+but the one that defines it, an import of the `_internal_api.py` module
+of the importing package, and an `_internal_api.py` module that re-exports a
+name that no module of another package imports. The rules are also
+stated in `CLAUDE.md`.
+
+The ruff rule `PLC2701` (import-private-name) is not enabled, for three
+reasons. It is a preview rule, which needs the preview mode of the
+linter. Ruff treats `brainhops` as one package, so the rule reports no
+import between the modules of `src/`. In `tests/`, it rejects the
+imports from private modules such as `brainhops._core`, which the
+internal level allows.
+
+## 5. Implementation
+
+The 27 packages that have an `_internal_api.py` module are
+`_ext/invfield`, `datamodel`, `datamodel/metadata`, `io/base`,
+`io/metadata`, `io/common`, and its subpackages `afni`, `bdv`,
+`freesurfer`, `hdf5`, `mgh`, `minc`, `mrtrix`, `nifti`, `nrrd` and
+`zarr`, `io/images/base`, `io/images/nifti`, `io/images/pillow`,
+`io/images/tiff`, `io/transformations/base`,
+`io/transformations/freesurfer`, `io/transformations/freesurfer/lta`,
+`io/transformations/fsl`, `io/transformations/itk`,
+`io/transformations/nifti` and `io/transformations/zarr`.
+
+When the plain spelling of a promoted name was already used by the
+module or by one that imports it, the name says what the object is
+instead, for example `header_of` for `_header` in `io/common/nifti`,
+`parse_float` for `_float` in `io/common/nrrd`, and `TwoAxes` and
+`ThreeAxes` for the type aliases `_2Axes` and `_3Axes`.
+
+Public modules used to define private names that other modules
+imported, which removing the underscore would not have made internal.
+These names moved into private modules:
+
+- `ComparesByIdMixin`, which `datamodel/base.py` listed in its
+  `__all__`, is in `_core/compare.py`, since it does not depend on
+  `datamodel`;
+- `index2transform`, from `datamodel/geometry.py`, is in
+  `datamodel/_indexing.py`, and `match_resolution`, from
+  `datamodel/images.py`, is in `datamodel/_resolution.py`;
+- the implementation of `io/base/parsers.py` is in `io/base/_parsers.py`,
+  where its mixins and the helpers that mark how a `from_fileobj` reads
+  its stream are internal, and `parsers.py` only re-exports the public
+  classes of its `__all__` and the errors that they raise;
+- `check_endpoint` and `compatible`, from
+  `io/transformations/base/affines.py`, are in
+  `io/transformations/base/_endpoints.py`. The constants `_VOXEL`,
+  `_RAS` and `_LPS` are gone, and each use builds the system that it
+  needs, since these systems compare by value.
+
+The test therefore checks the rules without exceptions.

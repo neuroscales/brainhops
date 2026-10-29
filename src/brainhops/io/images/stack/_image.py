@@ -12,12 +12,12 @@ from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    MetadataLossError,
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._report import MetadataLossError
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -27,15 +27,18 @@ from brainhops.io.base.parsers import (
     WriterError,
     disabled,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
-from ._data import _StackProxy
+from ._data import StackProxy
 from ._files import (
     DEFAULT_NAME,
     name_parts,
@@ -57,7 +60,7 @@ from ._raw import (
     refuse_path,
     refuse_stream,
 )
-from ._views import _image_to_disk, _image_to_model, _permutation
+from ._views import image_to_disk, image_to_model, permutation
 
 
 @register_format
@@ -162,7 +165,7 @@ class StackImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata, _axis(self.metadata))
+        return image_to_model(self.rawdata, _axis(self.metadata))
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -195,7 +198,7 @@ class StackImage(
         if self.rawdata is None:
             return self.data.shape
         stored = tuple(int(d) for d in self.rawdata.shape)
-        order = _permutation(len(stored), _axis(self.metadata))
+        order = permutation(len(stored), _axis(self.metadata))
         return tuple(stored[i] for i in order)
 
     # --- writing ------------------------------------------------------
@@ -367,7 +370,7 @@ class StackImage(
         read = []
         raw = self.rawdata
         stored = raw.root if isinstance(raw, ArrayProxy) else raw
-        if isinstance(stored, _StackProxy):
+        if isinstance(stored, StackProxy):
             read = stored.filenames()
         image = self.consolidate(axis=axis, **fields)
         reading = reads_from(self.rawdata, target, image.metadata.raw)
@@ -400,7 +403,7 @@ class StackImage(
                 spacing=record.spacing,
                 unit=record.unit,
             )
-        self.rawdata = _StackProxy(written.folder, fresh, fill)
+        self.rawdata = StackProxy(written.folder, fresh, fill)
         self.metadata = StackMetadata.from_raw(fresh)
         self.data = None
 
@@ -576,7 +579,7 @@ class StackImage(
         )
         folder = path.Path(filename).absolute()
         return cls(
-            rawdata=_StackProxy(folder, record, fill),
+            rawdata=StackProxy(folder, record, fill),
             metadata=StackMetadata.from_raw(record),
         )
 
@@ -643,7 +646,7 @@ def _encoded(image: StackImage, axis: str) -> tx.Tuple[StackRaw, tx.Any]:
     else:
         data = image._data
         if data is None and image.rawdata is not None:
-            data = _image_to_model(image.rawdata, _axis(image.metadata))
+            data = image_to_model(image.rawdata, _axis(image.metadata))
         if data is None:
             raise WriterError(
                 "This image has no data, so there is nothing to write."
@@ -655,7 +658,7 @@ def _encoded(image: StackImage, axis: str) -> tx.Tuple[StackRaw, tx.Any]:
                 f"channel axis, but this image has {ndim} axes (shape "
                 f"{tuple(data.shape)})."
             )
-        raw = _image_to_disk(data, axis)
+        raw = image_to_disk(data, axis)
         members = _new_members(old, axis, tuple(raw.shape), raw.dtype)
     fmt = members[0].format if members else None
     pixel_size, spacing, unit = stored_geometry(

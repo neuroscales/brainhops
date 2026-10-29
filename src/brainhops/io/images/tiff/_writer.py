@@ -28,7 +28,7 @@ from brainhops.io.images.base import _utils_raster as raster
 
 # this format
 from . import _utils as backend
-from ._data import _TiffProxy
+from ._data import TiffProxy
 from ._geometry import Geometry, write_geometry
 from ._raw import TiffRaw, read_record
 
@@ -422,7 +422,7 @@ def write_plan(
     def go() -> None:
         with tf.TiffWriter(target, **plan.opener) as writer:
             for index, array in enumerate(plan.arrays):
-                if isinstance(array, _TiffProxy):
+                if isinstance(array, TiffProxy):
                     # The lazy array is read as tifffile reads it, a
                     # memory map or a dask array, and transposed once.
                     array = array.read()

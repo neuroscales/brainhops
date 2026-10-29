@@ -25,7 +25,7 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     call_under_policy,
 )
@@ -36,11 +36,11 @@ from brainhops.errors import (
     ErrorPolicy,
     LossyConversionError,
 )
-from brainhops.io.base._base import FileFormat, _takes_over
+from brainhops.io.base._base import FileFormat, takes_over
 from brainhops.io.base._dispatch import (
-    _match_name,
-    _normalize_hints,
-    _tiers,
+    group_tiers,
+    match_name,
+    normalize_hints,
 )
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
@@ -232,14 +232,14 @@ def save(
             f"file, or build the format you want and save that."
         )
 
-    hints = _normalize_hints((), hint)
+    hints = normalize_hints((), hint)
     registry = (
         fmt
         for fmt in FileFormat._REGISTRY
         if issubclass(fmt, FileWriter)
         and (not hints or format_hints(fmt) & hints)
     )
-    matches = [(fmt, _match_name(name, fmt)) for fmt in registry]
+    matches = [(fmt, match_name(name, fmt)) for fmt in registry]
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
     if not claimed and hints:
         # A hint names the formats, which are written whatever the name.
@@ -363,10 +363,10 @@ def _convert(
     """
     # The transformation formats import this package, so their helpers are
     # imported when they are used.
-    from brainhops.io.transformations.base._conversions import (
+    from brainhops.io.transformations.base._internal_api import (
         UnusedOptionError,
+        relabels,
     )
-    from brainhops.io.transformations.base._converters import relabels
 
     if not own and relabels(obj, fmt):
         raise ConversionError(
@@ -580,7 +580,7 @@ def _write_first(
     OSError
         If building or writing a candidate raises it.
     """
-    for tier in _tiers(candidates):
+    for tier in group_tiers(candidates):
         writers = []
         for fmt in tier:
             report = ConversionReport(
@@ -631,8 +631,8 @@ def _write_once(
     """
     # The metadata formats import this package, so their helpers are
     # imported when they are used.
-    from brainhops.io.metadata._base import (
-        MetadataFormat,
+    from brainhops.io.metadata._base import MetadataFormat
+    from brainhops.io.metadata._internal_api import (
         lost_fields,
         unsupported_values,
     )
@@ -641,7 +641,7 @@ def _write_once(
     source = getattr(obj, "metadata", None)
     if source is not None and getattr(writer, "metadata", None) is None:
         lost_fields(unsupported_values(MetadataFormat, source), report)
-    if _takes_over(type(writer), "metadata"):
+    if takes_over(type(writer), "metadata"):
         with metadata_loss_policy(report):
             writer.save(file, **options)
     else:
@@ -689,7 +689,7 @@ def _act_on_loss(
     return call_under_policy(act, policy, stacklevel=3)
 
 
-def _model(cls: type) -> tx.Optional[type]:
+def data_model_of(cls: type) -> tx.Optional[type]:
     """Return the data model that `cls` instantiates, or `None`.
 
     This is the first class in the MRO that is a data model but not I/O,
@@ -721,8 +721,8 @@ def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:
     differently, such as OME-Zarr keeping the arrays it read rather than a list
     of scales, would be built with content missing.
     """
-    model = _model(type(obj))
-    if model is None or _model(fmt) is not model:
+    model = data_model_of(type(obj))
+    if model is None or data_model_of(fmt) is not model:
         return False
     missing = _init_fields(model) - _init_fields(fmt)
     if missing:

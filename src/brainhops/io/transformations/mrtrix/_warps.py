@@ -29,11 +29,12 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -44,33 +45,28 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
-from brainhops.io.common.mrtrix._codecs import dtype_to_mrtrix
-from brainhops.io.common.mrtrix._data import (
-    _MrtrixProxy,
-    read_mrtrix,
-    whole_file,
-)
-from brainhops.io.common.mrtrix._files import (
+from brainhops.io.common.mrtrix._internal_api import (
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
+    MrtrixProxy,
+    dtype_to_mrtrix,
     file_entry,
     keeps_storage,
     merged_keyval,
     mrtrix_bytes,
     placed_record,
+    read_mrtrix,
     reads_from,
+    split_voxel_to_scanner,
     stored_voxels,
     stores_as_recorded,
+    whole_file,
     write_mrtrix,
     writer_options,
     writer_strides,
     written_files,
 )
-from brainhops.io.common.mrtrix._geometry import split_voxel_to_scanner
-from brainhops.io.common.mrtrix._raw import (
-    _declined,
-    _no_options,
-    _sniffed_raw,
-)
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
@@ -88,7 +84,7 @@ from brainhops.io.transformations.base.fields import (
 
 # this format
 from ._formats import MrtrixTransformationFormat
-from ._views import _warp_to_disk, _warp_to_model
+from ._views import warp_to_disk, warp_to_model
 
 _NDIM = 3
 """The number of spatial dimensions of an MRtrix warp."""
@@ -226,9 +222,9 @@ class MrtrixWarp(
         float
             The confidence, between 0 and 1.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(MrtrixRaw.from_fileobj, file)
         if raw is None:
-            return _declined(error, failure)
+            return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw, file)
 
     @classmethod
@@ -265,7 +261,7 @@ class MrtrixWarp(
         ParserContentError
             If the file is not an MRtrix image, or its data is too short.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_mrtrix(filename, mmap=mmap)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -303,7 +299,7 @@ class MrtrixWarp(
             If the stream is not an MRtrix image, or its header names a
             separate data file and the stream has no name.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_mrtrix(file, mmap=False)
         return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
 
@@ -477,7 +473,7 @@ class MrtrixCoordinateField(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
         "metadata", default=None
@@ -766,7 +762,7 @@ class MrtrixDisplacementField(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
         "metadata", default=None
@@ -1063,7 +1059,7 @@ class MrtrixWarpFull(
         """
         if self.rawdata is None:
             return None
-        return _warp_to_model(self.rawdata)
+        return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
         "metadata", default=None
@@ -1616,7 +1612,7 @@ def _warpfull_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
         for name in ("from_image", "midway")
         if name in kwargs
     }
-    _no_options(kwargs)
+    no_options(kwargs, OPTION_OWNER)
     return options
 
 
@@ -1789,7 +1785,7 @@ def _stored(xform: MrtrixWarp) -> ArrayProtocol:
         If the warp has no values.
     """
     if xform._data is not None:
-        return _warp_to_disk(xform._data)
+        return warp_to_disk(xform._data)
     if xform.rawdata is None:
         raise WriterError(
             "This warp has no values, so there is nothing to write."
@@ -1873,7 +1869,7 @@ def _encoded(
         )
     else:
         if isinstance(source, ArrayProxy) and isinstance(
-            source.root, _MrtrixProxy
+            source.root, MrtrixProxy
         ):
             # A lazy array is read here rather than through `data`, so that
             # no cached view of the old file outlives a write over that file.

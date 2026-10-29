@@ -10,13 +10,13 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.streams import open_compressed, preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
-    SnifferContentError,
 )
 
 # this format
@@ -27,14 +27,20 @@ from ._codecs import (
     parse_layout,
 )
 from ._constants import (
-    _BIT,
-    _END,
-    _FILE,
-    _MAGIC_BYTES,
-    _MAX_HEADER_LINES,
-    _RESERVED,
+    BIT,
+    END,
+    FILE,
+    MAGIC_BYTES,
+    MAX_HEADER_LINES,
     MRTRIX_MAGIC,
+    RESERVED,
 )
+
+OPTION_OWNER = "MRtrix reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not an MRtrix image"
+"""The message of the error raised when a sniffer declines a stream."""
 
 # ----------------------------------------------------------------------
 #   RECORD
@@ -141,7 +147,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
     @property
     def is_bit(self) -> bool:
         """Whether the values are packed bits."""
-        return self.datatype.strip().lower() == _BIT
+        return self.datatype.strip().lower() == BIT
 
     @property
     def count(self) -> int:
@@ -252,7 +258,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         ended = False
         for line in lines:
             line = line.split("#", 1)[0].strip()
-            if line == _END:
+            if line == END:
                 ended = True
                 break
             if not line:
@@ -319,8 +325,8 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
             )
 
         file = None
-        if _FILE in keyval:
-            entry = keyval.pop(_FILE)[0].split()
+        if FILE in keyval:
+            entry = keyval.pop(FILE)[0].split()
             name = entry[0]
             try:
                 offset = int(entry[1]) if len(entry) > 1 else 0
@@ -372,7 +378,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         ParserContentError
             If the text is not an MRtrix header.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         return cls.from_lines(text.splitlines())
 
     @classmethod
@@ -402,7 +408,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         ParserContentError
             If the stream does not hold an MRtrix header.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             return _read_header(open_compressed(file))
 
@@ -438,10 +444,10 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         SnifferContentError
             If the stream holds no header and `error` is `True`.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(MrtrixRaw.from_fileobj, file)
         if raw is not None:
             return Confidence.LIKELY
-        return _declined(error, failure)
+        return declined(error, DECLINE_MESSAGE, failure)
 
     @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
@@ -506,7 +512,7 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
                 "scaling: " + ",".join(_format_float(v) for v in self.scaling)
             )
         for key, value in self.keyval.items():
-            if key.lower() in _RESERVED or key == _FILE:
+            if key.lower() in RESERVED or key == FILE:
                 continue
             for line in str(value).split("\n"):
                 lines.append(f"{key}: {line}")
@@ -514,8 +520,8 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
         if file is not None:
             name, offset = file
             entry = name if offset is None else f"{name} {int(offset)}"
-            lines.append(f"{_FILE}: {entry}")
-        lines.append(_END)
+            lines.append(f"{FILE}: {entry}")
+        lines.append(END)
         return lines
 
     @takes_error_policy
@@ -598,20 +604,6 @@ class MrtrixRaw(BinaryFileReader, BinaryFileWriter):
     __hash__ = None
 
 
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(
-            f"Unknown MRtrix reader option(s): {', '.join(kwargs)}"
-        )
-
-
 def _read_header(file: tx.BinaryIO) -> MrtrixRaw:
     """Read a header from a decompressed stream, keeping its bytes.
 
@@ -625,17 +617,17 @@ def _read_header(file: tx.BinaryIO) -> MrtrixRaw:
         If the stream does not hold an MRtrix header.
     """
     first = file.readline()
-    if not first.startswith(_MAGIC_BYTES):
+    if not first.startswith(MAGIC_BYTES):
         raise ParserContentError(
             f"Not an MRtrix image: the first line is not {MRTRIX_MAGIC!r}."
         )
     lines = [first]
-    for _ in range(_MAX_HEADER_LINES):
+    for _ in range(MAX_HEADER_LINES):
         line = file.readline()
         if not line:
             break
         lines.append(line)
-        if line.split(b"#", 1)[0].strip() == _END.encode():
+        if line.split(b"#", 1)[0].strip() == END.encode():
             break
     stored = b"".join(lines)
     raw = MrtrixRaw.from_text(stored.decode("utf-8", "replace"))
@@ -648,29 +640,3 @@ def _read_header(file: tx.BinaryIO) -> MrtrixRaw:
 def _parsed(stored: bytes) -> MrtrixRaw:
     """Parse the header of stored bytes, which may hold padding."""
     return MrtrixRaw.from_text(stored.decode("utf-8", "replace"))
-
-
-def _sniffed_raw(
-    file: tx.IO,
-) -> tx.Tuple[tx.Optional[MrtrixRaw], tx.Optional[Exception]]:
-    """Read the record of a stream for sniffing.
-
-    The position of the stream is restored. The result is the record, or
-    `None` with the error that refused it.
-    """
-    try:
-        return MrtrixRaw.from_fileobj(file), None
-    except Exception as e:  # noqa: BLE001
-        return None, e
-
-
-def _declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline a sniffed input, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error("Content is not an MRtrix image") from failure
-    return Confidence.NO

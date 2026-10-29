@@ -154,7 +154,7 @@ def axis_counts(
     from ..inverse import Inverse
     from ..meta import Projection
     from ..sequence import Sequence
-    from .checkers import _matrix_dims
+    from .checkers import matrix_dims
 
     if not isinstance(t, Transformation):
         return None, None
@@ -173,7 +173,7 @@ def axis_counts(
     elif isinstance(t, Sequence):
         ni, no = _sequence_ends(list(t.transformations or []))
     elif isinstance(t, (Affine, Linear)):
-        dims = _matrix_dims(t)
+        dims = matrix_dims(t)
         if dims is not None:
             ni, no = dims
     elif isinstance(t, Projection):
@@ -235,24 +235,37 @@ def _first_count(
             return counts[side]
         if counts[1 - side] is not None or isinstance(member, Sequence):
             return None
-        if not _preserves_count(member):
+        if not preserves_count(member):
             return None
     return None
 
 
-def _preserves_count(t: "Transformation") -> bool:
-    # Tell whether `t` is known to have as many output axes as input
-    # axes without stating either number: an identity, a subspace, a
-    # field that interpolates, an affine-like map without parameters, or
-    # the lazy inverse of one of them.
+def preserves_count(t: "Transformation") -> bool:
+    """Tell whether a transformation keeps its number of axes.
+
+    A transformation does when it is known to have as many output axes
+    as input axes, without stating either number: an identity, a
+    subspace, a field that interpolates, an affine-like map without
+    parameters, or the lazy inverse of one of them.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation.
+
+    Returns
+    -------
+    bool
+        Whether `t` has as many output axes as input axes.
+    """
     from ..concrete import Identity
     from ..inverse import Inverse
     from ..meta import SubspaceTransformation
-    from ..sequence import _interpolates
+    from ..sequence import interpolates
 
     if isinstance(t, Inverse):
-        return t.forward is None or _preserves_count(t.forward)
-    if isinstance(t, (SubspaceTransformation, Identity)) or _interpolates(t):
+        return t.forward is None or preserves_count(t.forward)
+    if isinstance(t, (SubspaceTransformation, Identity)) or interpolates(t):
         return True
     return affine_matrix(t) is None
 
@@ -327,7 +340,7 @@ def refuse_free_axes(t: "Transformation") -> None:
     # These imports stay local because the modules `concrete`, `meta` and
     # `sequence` import this module when they load.
     from ..concrete import Affine
-    from ..meta import Projection, SubspaceTransformation, _has_free_axes
+    from ..meta import Projection, SubspaceTransformation, has_free_axes
     from ..sequence import Sequence
 
     def depends(leaf: "Transformation") -> bool:
@@ -336,7 +349,7 @@ def refuse_free_axes(t: "Transformation") -> None:
         if isinstance(leaf, SubspaceTransformation):
             return depends(leaf.transformation)
         if isinstance(leaf, Projection):
-            return _has_free_axes(leaf)
+            return has_free_axes(leaf)
         if type(leaf) is Affine and leaf.matrix is not None:
             xp = array_backend(leaf.matrix)
             return bool(xp.any(xp.isnan(leaf.matrix)))

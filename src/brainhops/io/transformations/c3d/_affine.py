@@ -7,16 +7,14 @@ import typing_extensions as tx
 from bagof.magic import Inherit, NoRepr, replace
 
 from brainhops._core import path
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
+from brainhops.datamodel.systems import RASmm
 from brainhops.errors import (
     IncompatibleSystemError,
 )
@@ -26,7 +24,7 @@ from brainhops.io.base.parsers import (
     TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
@@ -35,11 +33,8 @@ from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
-from brainhops.io.transformations.base.affines import (
-    _RAS,
-    RASToRAS,
-    _check_endpoint,
-)
+from brainhops.io.transformations.base._internal_api import check_endpoint
+from brainhops.io.transformations.base.affines import RASToRAS
 
 from ._metadata import C3dAffineMetadata
 from ._raw import C3dAffineRaw
@@ -144,7 +139,7 @@ class C3dAffine(
         record = _record(self)
         if record is None:
             return None
-        return _read_only(_matrix_to_model(record.matrix))
+        return _read_only(matrix_to_model(record.matrix))
 
     # --- sniff --------------------------------------------------------
 
@@ -468,7 +463,7 @@ def _read_only(matrix: np.ndarray) -> np.ndarray:
     return matrix
 
 
-def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
+def matrix_to_model(matrix: tx.Any) -> np.ndarray:
     """Return the data of a transformation from the matrix of a record.
 
     The record stores the homogeneous matrix, whose last row is dropped.
@@ -476,7 +471,7 @@ def _matrix_to_model(matrix: tx.Any) -> np.ndarray:
     return np.asarray(matrix, dtype=np.float64)[:-1]
 
 
-def _matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
+def matrix_to_disk(data: tx.Optional[ArrayProtocol]) -> tx.Tuple:
     """Return the matrix that a record stores for the data of a model.
 
     The record stores the homogeneous matrix as a tuple of rows of floats.
@@ -506,7 +501,7 @@ def _check_systems(xform: C3dAffine) -> None:
     """
     for name in ("input", "output"):
         try:
-            _check_endpoint(xform, name, _RAS)
+            check_endpoint(xform, name, RASmm())
         except IncompatibleSystemError as e:
             raise UnrepresentableTransformationError(
                 f"A Convert3D matrix maps RAS to RAS, but the {name} of the "
@@ -535,7 +530,7 @@ def _build_raw(
             f"but the matrix has shape {shape}."
         )
     return C3dAffineRaw(
-        matrix=_matrix_to_disk(data),
+        matrix=matrix_to_disk(data),
         row_end="" if old is None else old.row_end,
     )
 

@@ -11,25 +11,25 @@ from brainhops._core import backends, path
 from brainhops._core.errors import UNSET
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import Image
-from brainhops.datamodel.metadata._report import (
-    ConversionReport,
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     call_under_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
+from brainhops.datamodel.metadata._report import ConversionReport
 from brainhops.errors import ErrorAction, ErrorPolicy
 from brainhops.io.base._dispatch import Source, parse, sniff
-from brainhops.io.base.parsers import (
-    FileReader,
-    FileWriter,
-    _FileNamesMixin,
-    _passthrough_from_fileobj,
-    _ReaderMixin,
-    _SnifferMixin,
-    _TextReaderMixin,
-    _WriterMixin,
-)
+from brainhops.io.base.parsers import FileReader, FileWriter
 from brainhops.io.base.specs import SourceSpec
+
+from ._parsers import (
+    FileNamesMixin,
+    ReaderMixin,
+    SnifferMixin,
+    TextReaderMixin,
+    WriterMixin,
+    passthrough_from_fileobj,
+)
 
 _T = tx.TypeVar("_T")
 
@@ -147,7 +147,7 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 
 
 @format_registry
-class FileFormat(_FileNamesMixin):
+class FileFormat(FileNamesMixin):
     """Dispatch between the formats registered under a dispatcher.
 
     On a class decorated with [`format_registry`][], the `sniff*` methods
@@ -215,7 +215,7 @@ class FileFormat(_FileNamesMixin):
         defaults of the reader mixins are export-only and must not be
         selected by sniffing or loading.
         """
-        adapters = (FileFormat, _ReaderMixin, _TextReaderMixin)
+        adapters = (FileFormat, ReaderMixin, TextReaderMixin)
         routes = (
             "load",
             "from_spec",
@@ -468,7 +468,7 @@ class FileFormat(_FileNamesMixin):
         )
 
     @classmethod
-    @_passthrough_from_fileobj
+    @passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """Same as [`from_file`][], for an open file object."""
         cls._check_dispatcher("from_fileobj")
@@ -546,7 +546,7 @@ class FileFormat(_FileNamesMixin):
 # ----------------------------------------------------------------------
 
 
-class _FileBasedModelMixin:
+class FileBasedModelMixin:
     """Give file-based data models a `from_any` that reads files first.
 
     A path, an open file, binary content or a [`SourceSpec`][] is read with
@@ -798,7 +798,7 @@ class _FileBasedModelMixin:
         # here. A pyramid that takes `images` over reads its levels from
         # the file, so the levels of another pyramid are read here.
         for name in ("data", "images"):
-            if not isinstance(other, cls) and _takes_over(cls, name):
+            if not isinstance(other, cls) and takes_over(cls, name):
                 # The data are read as the other object stores them, not
                 # converted with the backend setting in effect.
                 with backends.backend("native"):
@@ -808,7 +808,7 @@ class _FileBasedModelMixin:
         # The metadata of a data model, generic or of another format, is
         # given to the field that this format takes it over with, which
         # converts it into the metadata of this format.
-        if not isinstance(other, cls) and _takes_over(cls, "metadata"):
+        if not isinstance(other, cls) and takes_over(cls, "metadata"):
             metadata = getattr(other, "metadata", None)
             if metadata is not None:
                 kwargs.setdefault("metadata", metadata)
@@ -868,7 +868,7 @@ def _check_base_order(cls: type) -> None:
             f"the format decides whether to convert another object before "
             f"the data model copies its fields."
         )
-    io_bases = (_ReaderMixin, _SnifferMixin, _WriterMixin)
+    io_bases = (ReaderMixin, SnifferMixin, WriterMixin)
     late = []
     after_format = False
     for base in cls.__bases__:
@@ -930,7 +930,7 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     ]
 
 
-def _takes_over(cls: type, name: str) -> bool:
+def takes_over(cls: type, name: str) -> bool:
     """Tell whether a format stores a field of its data model privately.
 
     A format takes a field over when it declares the field `_<name>` with

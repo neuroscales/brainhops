@@ -11,11 +11,10 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import checked_score, no_options
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -23,30 +22,33 @@ from brainhops.io.base.parsers import (
     SnifferTypeError,
     disabled,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.images.base._utils_raster import (
+from brainhops.io.images.base._internal_api import (
     axis_group,
     default_axes,
     level_transformation,
 )
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._data import (
     READABLE_COMPRESSIONS,
-    _N5Proxy,
+    N5Proxy,
     dataset_location,
     read_node,
     stream_location,
 )
 from ._metadata import N5Metadata
-from ._raw import N5Raw, no_options, score
+from ._raw import DECLINE_MESSAGE, OPTION_OWNER, N5Raw
 from ._spatial import placement
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 
 class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
@@ -150,7 +152,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -244,7 +246,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -299,7 +301,7 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         try:
             _, record = read_node(filename)
         except Exception:  # noqa: BLE001
-            return score(Confidence.NO, error)
+            return checked_score(Confidence.NO, error, DECLINE_MESSAGE)
         if record.levels and level is None:
             return Confidence.LIKELY
         return Confidence.CERTAIN
@@ -401,9 +403,9 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the node is neither a dataset nor a pyramid, if there is no
             such level, or if the samples cannot be read.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_node(filename)
-        return _read_dataset(cls, location, N5Metadata.from_raw(record), level)
+        return read_dataset(cls, location, N5Metadata.from_raw(record), level)
 
     @classmethod
     def from_fileobj(
@@ -438,9 +440,9 @@ class N5Image(BinaryFileReader, ImageFormat, SingleScaleImage):
         ParserTypeError
             If the stream has no file name.
         """
-        no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         location, record = read_node(stream_location(file))
-        return _read_dataset(cls, location, N5Metadata.from_raw(record), level)
+        return read_dataset(cls, location, N5Metadata.from_raw(record), level)
 
     from_bytes = disabled(
         ParserContentError,
@@ -462,7 +464,7 @@ if HAS_TENSORSTORE:
 # ----------------------------------------------------------------------
 
 
-def _read_dataset(
+def read_dataset(
     cls: type,
     location: path.Path,
     metadata: N5Metadata,
@@ -495,7 +497,7 @@ def _read_dataset(
             f"{', '.join(READABLE_COMPRESSIONS)}, given as a compression "
             f"object."
         )
-    proxy = _N5Proxy(where, dataset)
+    proxy = N5Proxy(where, dataset)
     return cls(
         rawdata=proxy,
         metadata=metadata,

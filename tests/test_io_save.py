@@ -618,11 +618,11 @@ def test_a_multiscale_image_round_trips_through_ome_zarr(
 @needs_zarr
 def test_an_ome_zarr_field_round_trips(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.transformations.zarr import OmeZarrField
-    from tests.test_io_zarr_fields import _write_field_store
+    from tests.test_io_zarr_fields import write_field_store
 
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 7.0
-    source = _write_field_store(
+    source = write_field_store(
         tmp_path,
         field,
         [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],

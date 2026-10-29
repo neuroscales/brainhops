@@ -19,15 +19,10 @@ from brainhops._core.typing import ArrayProtocol
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.errors import (
     ConversionError,
     ParserContentError,
@@ -38,29 +33,27 @@ from brainhops.errors import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.nifti import NiftiMetadata
-from brainhops.io.common.nifti._constants import (
-    _NIFTI_INTENT_NAME_NIFTYREG,
-    _NIFTI_INTENT_VECTOR,
+from brainhops.io.common.nifti._internal_api import (
+    NIFTI_INTENT_NAME_NIFTYREG,
+    NIFTI_INTENT_VECTOR,
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    header_of,
+    keep_given_fields,
+    nifti_intent,
+    nifti_intent_name,
+    nifti_shape,
+    record_image,
+    split_options,
+    stored_parts,
 )
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _nifti_intent,
-    _nifti_intent_name,
-    _nifti_shape,
-    _NiftiObject,
-    _record_image,
-    _split_options,
-    _stored_parts,
-)
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,
 )
-from brainhops.io.transformations.base._converters import (
+from brainhops.io.transformations.base._internal_api import (
     relabel,
     relabelling,
 )
@@ -74,11 +67,11 @@ from brainhops.io.transformations.base.fields import (
     voxel_grid_coordinates,
 )
 from brainhops.io.transformations.nifti import NiftiBasedTransformation
-from brainhops.io.transformations.nifti._base import _consolidated_metadata
-from brainhops.io.transformations.nifti._views import (
-    _check_single_field,
-    _field_to_disk,
-    _field_to_model,
+from brainhops.io.transformations.nifti._internal_api import (
+    check_single_field,
+    consolidated_metadata,
+    field_to_disk,
+    field_to_model,
 )
 
 # this format
@@ -117,7 +110,7 @@ _MAT44_BYTES = 64
 """Size of a `mat44`, made of 16 row-major `float32` values."""
 
 
-def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
+def _niftyreg_type(header: NiftiObject) -> tx.Optional[int]:
     """
     Return the NiftyReg transformation type stored in `intent_p1`.
 
@@ -126,9 +119,9 @@ def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
     """
     if isinstance(header, nb.Nifti1Image):
         header = header.header
-    if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
+    if nifti_intent(header) != NIFTI_INTENT_VECTOR:
         return None
-    if _nifti_intent_name(header) != _NIFTI_INTENT_NAME_NIFTYREG:
+    if nifti_intent_name(header) != NIFTI_INTENT_NAME_NIFTYREG:
         return None
     try:
         value = float(header["intent_p1"])
@@ -139,7 +132,7 @@ def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
     return int(value)
 
 
-def _vox2world(header: _NiftiObject) -> np.ndarray:
+def _vox2world(header: NiftiObject) -> np.ndarray:
     """
     Return the (4, 4) voxel-to-world affine that NiftyReg uses.
 
@@ -156,7 +149,7 @@ def _vox2world(header: _NiftiObject) -> np.ndarray:
     return np.diag([*pixdim, 1.0])
 
 
-def _extension_affines(header: _NiftiObject) -> tx.List[np.ndarray]:
+def _extension_affines(header: NiftiObject) -> tx.List[np.ndarray]:
     """
     Return the affines that NiftyReg keeps in the header extensions.
 
@@ -179,7 +172,7 @@ def _extension_affines(header: _NiftiObject) -> tx.List[np.ndarray]:
     return affines
 
 
-def _check_shape(header: _NiftiObject) -> None:
+def _check_shape(header: NiftiObject) -> None:
     """Refuse a header whose array is not a 3-D NiftyReg field.
 
     A NiftyReg field is stored with shape (X, Y, Z, 1, 3). Any other shape,
@@ -190,7 +183,7 @@ def _check_shape(header: _NiftiObject) -> None:
     ParserContentError
         If the shape is not that of a 3-D NiftyReg field.
     """
-    shape = _nifti_shape(header)
+    shape = nifti_shape(header)
     if shape is None or len(shape) != 5 or shape[3] != 1 or shape[4] != _NDIM:
         raise ParserContentError(
             f"A three-dimensional NiftyReg field is stored as a "
@@ -286,7 +279,7 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
     """The `intent_p1` values that the reader decodes."""
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score `Confidence.CERTAIN` for a NiftyReg file of one of the `TYPES`.
         """
@@ -297,13 +290,13 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
     @property
     def niftyreg_type(self) -> tx.Optional[int]:
         """The NiftyReg transformation type that the header records."""
-        header = _header(self)
+        header = header_of(self)
         return None if header is None else _niftyreg_type(header)
 
     @property
     def extension_affines(self) -> tx.List[np.ndarray]:
         """The (4, 4) affines stored in the extensions of the header."""
-        header = _header(self)
+        header = header_of(self)
         return [] if header is None else _extension_affines(header)
 
     def _vox2world(self) -> np.ndarray:
@@ -312,7 +305,7 @@ class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
         A field without metadata has no grid of its own, and its grid is
         placed by the identity.
         """
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return np.eye(4)
         return _vox2world(header)
@@ -364,7 +357,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         super().__post_init__(arguments)
         # A field read from a file is refused from its header alone, before
         # its data is read.
-        header = _header(self)
+        header = header_of(self)
         if header is not None:
             _check_shape(header)
 
@@ -395,7 +388,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -553,7 +546,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             If the stored array holds a field for each of several
             volumes.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -569,7 +562,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
@@ -581,9 +574,9 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             if metadata is self.metadata
             else replace(self, metadata=metadata)
         )
-        image = _keep_given_fields(source._encoded(like, **overrides), fields)
-        raw, record = _stored_parts(image)
-        metadata = _consolidated_metadata(self, record)
+        image = keep_given_fields(source._encoded(like, **overrides), fields)
+        raw, record = stored_parts(image)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -638,17 +631,17 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         was assigned.
         """
         if self._data is not None:
-            stored = _field_to_disk(self._data)
+            stored = field_to_disk(self._data)
         else:
             stored = self.rawdata
         if stored is None or self.niftyreg_type not in type(self).TYPES:
             return None
         if self._transformations is not None:
             return None
-        _check_single_field(stored, WriterError)
-        image = _record_image(stored, self._record(), overrides=overrides)
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
+        check_single_field(stored, WriterError)
+        image = record_image(stored, self._record(), overrides=overrides)
+        apply_like(image, like)
+        apply_overrides(image, overrides)
         return image
 
     def _write(
@@ -675,19 +668,17 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         deformation fields in single precision, and refuses a grid of
         control points whose type differs from that of the field.
         """
-        vectors = _field_to_disk(vectors)
-        image = _record_image(vectors, self._record(), vox2world, overrides)
+        vectors = field_to_disk(vectors)
+        image = record_image(vectors, self._record(), vox2world, overrides)
         header = image.header
-        header.set_intent(
-            _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_NIFTYREG
-        )
+        header.set_intent(NIFTI_INTENT_VECTOR, name=NIFTI_INTENT_NAME_NIFTYREG)
         header["intent_p1"] = kind
         header.set_data_dtype(np.float32)
         del header.extensions[:]
         for matrix in extensions:
             header.extensions.append(_extension(matrix))
-        _apply_like(image, like)
-        _apply_overrides(image, overrides)
+        apply_like(image, like)
+        apply_overrides(image, overrides)
         return image
 
 
@@ -989,7 +980,7 @@ class NiftyRegVelocity(NiftyRegSequence):
     @property
     def squaring_steps(self) -> tx.Optional[int]:
         """The stored squaring steps, negative for a backward field."""
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return None
         return int(round(float(header["intent_p2"])))

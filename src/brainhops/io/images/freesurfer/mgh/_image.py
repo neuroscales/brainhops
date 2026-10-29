@@ -17,11 +17,11 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
@@ -34,7 +34,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     Arrangement,
     arrange_voxel_to_ras,
     declared_axes,
@@ -45,26 +45,30 @@ from brainhops.io.common.freesurfer import (
     FreesurferFormat,
     FreesurferTkrSystem,
 )
-from brainhops.io.common.freesurfer._geometry import fs_geometry_from_vox2ras
+from brainhops.io.common.freesurfer._internal_api import (
+    fs_geometry_from_vox2ras,
+)
 from brainhops.io.common.mgh import MghMetadata, MghRaw
-from brainhops.io.common.mgh._constants import _MGH_AXES, _MRI_PARAMS
-from brainhops.io.common.mgh._data import _MghProxy, reads_mgh
-from brainhops.io.common.mgh._metadata import _encode as _encode_vocabulary
-from brainhops.io.common.mgh._raw import (
-    _compressed_name,
+from brainhops.io.common.mgh._internal_api import (
+    MGH_AXES,
+    MRI_PARAMS,
+    MghProxy,
+    compressed_name,
     encode_mgh,
     read_mgh,
+    reads_mgh,
 )
-from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
+from brainhops.io.common.mgh._internal_api import encode as _encode_vocabulary
+from brainhops.io.common.nifti._internal_api import scale_spatial, unit_scale
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _SCANNER = "scanner"
 """Name of the scanner RAS space, the preferred world space."""
@@ -202,7 +206,7 @@ class MghImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -384,7 +388,7 @@ class MghImage(
             If `mgh` is neither an MGH image nor an MGH header.
         """
         if isinstance(mgh, _mgh.MGHImage):
-            raw, header = _MghProxy.from_nibabel(mgh.dataobj), mgh.header
+            raw, header = MghProxy.from_nibabel(mgh.dataobj), mgh.header
         elif isinstance(mgh, _mgh.MGHHeader):
             raw, header = None, mgh
         else:
@@ -625,7 +629,7 @@ class MghImage(
             options of [`consolidate`][].
         """
         filename = path.Path(filename)
-        compress = kwargs.pop("compress", _compressed_name(filename))
+        compress = kwargs.pop("compress", compressed_name(filename))
         if not _reads_file(self.rawdata, filename):
             filename.write_bytes(
                 self.to_bytes(compress=compress, **kwargs),
@@ -664,7 +668,7 @@ def _record_transformations(
 
 def _mgh_system(record: MghRaw) -> CoordinateSystem:
     """Return the voxel coordinate system of a record."""
-    axes = _MGH_AXES[: len(record.shape)]
+    axes = MGH_AXES[: len(record.shape)]
     return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 
@@ -809,7 +813,7 @@ def _encoded(
     them, with `_stored_voxels`.
     """
     if image._data is not None:
-        source = _image_to_disk(image._data)
+        source = image_to_disk(image._data)
     else:
         source = image.rawdata
     if source is None:
@@ -849,7 +853,7 @@ def _encoded(
     # overrides.
     template = _like_header(like)
     if template is not None:
-        for name in _MRI_PARAMS:
+        for name in MRI_PARAMS:
             header[name] = template[name]
         # The parameters given by keyword take precedence over the
         # template, so they are encoded again.
@@ -967,7 +971,7 @@ def _scanner_geometry(
         chosen, voxel_axes, "MGH", "scanner", **_MGH_POLICY
     )
     output = getattr(chosen, "output", None)
-    matrix = _scale_spatial(arranged.matrix, _unit_scale(output, "mm"))
+    matrix = scale_spatial(arranged.matrix, unit_scale(output, "mm"))
     return matrix, arranged.layout, _frame_tr(arranged)
 
 

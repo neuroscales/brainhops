@@ -7,7 +7,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.geometry import Geometry
 
 # internals
-from brainhops.io.common.freesurfer._geometry import (
+from brainhops.io.common.freesurfer._internal_api import (
     code2orient,
     fs_geometry_from_vox2ras,
     fs_phys2ras,
@@ -15,8 +15,8 @@ from brainhops.io.common.freesurfer._geometry import (
     fs_vox2tkr,
     mat2code,
     mat2orient,
+    scanner_vox2ras,
 )
-from brainhops.io.common.freesurfer._tkr import scanner_vox2ras
 
 from ._enums import LtaType, LtaValidity
 from ._raw import LtaRaw
@@ -32,7 +32,20 @@ def _get_phys2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
     )
 
 
-def _get_vox2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
+def get_vox2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
+    """Return the voxel-to-RAS matrix of a volume of an LTA file.
+
+    Parameters
+    ----------
+    vol_info : LtaRaw.VolumeInfo
+        The description of the volume.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the voxels of the volume to
+        scanner RAS.
+    """
     return _get_phys2ras(vol_info) @ _get_vox2phys(vol_info)
 
 
@@ -42,7 +55,7 @@ def _get_vox2tkr(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
 
 def _get_tkr2ras(vol_info: LtaRaw.VolumeInfo) -> np.ndarray:
     # The tkregister RAS space of the volume, placed in its scanner RAS.
-    return _get_vox2ras(vol_info) @ np.linalg.inv(_get_vox2tkr(vol_info))
+    return get_vox2ras(vol_info) @ np.linalg.inv(_get_vox2tkr(vol_info))
 
 
 # RSA lists the RAS axes in the order R, S, A (see `RSAmm`), so swapping
@@ -56,7 +69,32 @@ def _rsa2ras(matrix: np.ndarray) -> np.ndarray:
     return matrix[_RAS_RSA, :][:, _RAS_RSA]
 
 
-def _get_ras2ras(lta: LtaRaw) -> np.ndarray:
+def get_ras2ras(lta: LtaRaw) -> np.ndarray:
+    """Return the RAS-to-RAS matrix of an LTA record, whatever its type.
+
+    A matrix of another type is expressed between the scanner RAS spaces
+    of the source and destination volumes, which their descriptions
+    give.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the RAS of the source to that of
+        the destination.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    AssertionError
+        If the type of the record is not a linear type.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_RAS_TO_RAS:
         return matrix
@@ -67,8 +105,8 @@ def _get_ras2ras(lta: LtaRaw) -> np.ndarray:
             "cannot compute RAS-to-RAS matrix without src and dst volume info"
         )
     if lta.type == LtaType.LINEAR_VOX_TO_VOX:
-        src_vox2ras = _get_vox2ras(lta.src)
-        dst_vox2ras = _get_vox2ras(lta.dst)
+        src_vox2ras = get_vox2ras(lta.src)
+        dst_vox2ras = get_vox2ras(lta.dst)
         return dst_vox2ras @ matrix @ np.linalg.inv(src_vox2ras)
     if lta.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         src_phys2ras = _get_phys2ras(lta.src)
@@ -86,7 +124,32 @@ def _get_ras2ras(lta: LtaRaw) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {enum_name(lta.type)}")
 
 
-def _get_phys2phys(lta: LtaRaw) -> np.ndarray:
+def get_phys2phys(lta: LtaRaw) -> np.ndarray:
+    """Return the physical-to-physical matrix of an LTA record.
+
+    The physical space of a volume is its voxels scaled by the voxel
+    size. A matrix of another type is expressed between the physical
+    spaces of the source and destination volumes.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the physical space of the source
+        to that of the destination.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    AssertionError
+        If the type of the record is not a linear type.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return matrix
@@ -106,12 +169,36 @@ def _get_phys2phys(lta: LtaRaw) -> np.ndarray:
     ):
         src_phys2ras = _get_phys2ras(lta.src)
         dst_phys2ras = _get_phys2ras(lta.dst)
-        ras2ras = _get_ras2ras(lta)
+        ras2ras = get_ras2ras(lta)
         return np.linalg.inv(dst_phys2ras) @ ras2ras @ src_phys2ras
     raise AssertionError(f"unsupported LTA type: {enum_name(lta.type)}")
 
 
-def _get_vox2vox(lta: LtaRaw) -> np.ndarray:
+def get_vox2vox(lta: LtaRaw) -> np.ndarray:
+    """Return the voxel-to-voxel matrix of an LTA record.
+
+    A matrix of another type is expressed between the voxels of the
+    source and destination volumes.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix from the voxels of the source to
+        those of the destination.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    AssertionError
+        If the type of the record is not a linear type.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.LINEAR_VOX_TO_VOX:
         return matrix
@@ -124,9 +211,9 @@ def _get_vox2vox(lta: LtaRaw) -> np.ndarray:
         dst_vox2phys = _get_vox2phys(lta.dst)
         return np.linalg.inv(dst_vox2phys) @ matrix @ src_vox2phys
     if lta.type in (LtaType.LINEAR_RAS_TO_RAS, LtaType.LINEAR_RSA_TO_RSA):
-        src_vox2ras = _get_vox2ras(lta.src)
-        dst_vox2ras = _get_vox2ras(lta.dst)
-        ras2ras = _get_ras2ras(lta)
+        src_vox2ras = get_vox2ras(lta.src)
+        dst_vox2ras = get_vox2ras(lta.dst)
+        ras2ras = get_ras2ras(lta)
         return np.linalg.inv(dst_vox2ras) @ ras2ras @ src_vox2ras
     if lta.type == LtaType.REGISTER_DAT:
         # The scanner geometries cancel, as in `TransformRegDat2LTA` of
@@ -138,9 +225,30 @@ def _get_vox2vox(lta: LtaRaw) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {enum_name(lta.type)}")
 
 
-def _get_tkr2tkr(lta: LtaRaw) -> np.ndarray:
-    # The affine from the tkregister RAS space of `src` to that of `dst`.
-    # A REGISTER_DAT record stores its inverse.
+def get_tkr2tkr(lta: LtaRaw) -> np.ndarray:
+    """Return the tkregister-to-tkregister matrix of an LTA record.
+
+    The matrix maps the tkregister RAS space of the source volume to
+    that of the destination volume. A `REGISTER_DAT` record stores its
+    inverse.
+
+    Parameters
+    ----------
+    lta : LtaRaw
+        The record.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix between the two tkregister RAS
+        spaces.
+
+    Raises
+    ------
+    ValueError
+        If the record needs the descriptions of its volumes and
+        lacks one.
+    """
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LtaType.REGISTER_DAT:
         return np.linalg.inv(matrix)
@@ -154,7 +262,7 @@ def _get_tkr2tkr(lta: LtaRaw) -> np.ndarray:
         return dst_vox2tkr @ matrix @ np.linalg.inv(src_vox2tkr)
     src_tkr2ras = _get_tkr2ras(lta.src)
     dst_tkr2ras = _get_tkr2ras(lta.dst)
-    return np.linalg.inv(dst_tkr2ras) @ _get_ras2ras(lta) @ src_tkr2ras
+    return np.linalg.inv(dst_tkr2ras) @ get_ras2ras(lta) @ src_tkr2ras
 
 
 # Orientation helpers shared with the other FreeSurfer formats.
@@ -163,8 +271,20 @@ _code2orient = code2orient
 _mat2orient = mat2orient
 
 
-def _get_orient(vol_info: LtaRaw.VolumeInfo) -> str:
-    vox2ras = _get_vox2ras(vol_info)
+def get_orient(vol_info: LtaRaw.VolumeInfo) -> str:
+    """Return the orientation of the voxel axes of a volume.
+
+    Parameters
+    ----------
+    vol_info : LtaRaw.VolumeInfo
+        The description of the volume.
+
+    Returns
+    -------
+    str
+        The orientation, as three letters such as `"LIA"`.
+    """
+    vox2ras = get_vox2ras(vol_info)
     return _mat2orient(vox2ras)
 
 
@@ -173,11 +293,11 @@ def _get_orient(vol_info: LtaRaw.VolumeInfo) -> str:
 # ----------------------------------------------------------------------
 
 
-def _volume_geometry(vol_info: LtaRaw.VolumeInfo) -> Geometry:
+def volume_geometry(vol_info: LtaRaw.VolumeInfo) -> Geometry:
     """Return the geometry of the volume that a geometry block describes.
 
     The geometry maps the F-ordered voxels of the volume to scanner RAS,
-    as `_get_vox2ras` does. The name of the file of the volume is not
+    as `get_vox2ras` does. The name of the file of the volume is not
     kept.
 
     Raises
@@ -193,7 +313,7 @@ def _volume_geometry(vol_info: LtaRaw.VolumeInfo) -> Geometry:
             "cannot place the volume in space. Set valid to "
             "LtaValidity.VOLUME_INFO_VALID if the fields are known."
         )
-    vox2ras = _get_vox2ras(vol_info)
+    vox2ras = get_vox2ras(vol_info)
     voxel = _systems.FVoxelCoordinateSystem(name="voxel")
     vox2ras = _xforms.Affine(vox2ras[:3], input=voxel, output=_systems.RASmm())
     return Geometry(
@@ -202,7 +322,7 @@ def _volume_geometry(vol_info: LtaRaw.VolumeInfo) -> Geometry:
     )
 
 
-def _volume_info(
+def volume_info(
     geometry: Geometry, cls: tx.Type[LtaRaw.VolumeInfo]
 ) -> LtaRaw.VolumeInfo:
     """Return the geometry block of type `cls` of a data model geometry.

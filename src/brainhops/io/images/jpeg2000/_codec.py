@@ -9,7 +9,10 @@ import typing_extensions as tx
 
 # internals
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.images.pillow._utils import array_to_pillow, encode_pillow
+from brainhops.io.images.pillow._internal_api import (
+    array_to_pillow,
+    encode_pillow,
+)
 
 _DEFAULT_RESOLUTIONS = 6
 """The number of resolution levels that OpenJPEG writes by default."""

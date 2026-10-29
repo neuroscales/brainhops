@@ -17,7 +17,7 @@ from brainhops.datamodel.axes import (
     is_component_type,
 )
 from brainhops.datamodel.enums import AxisType, TensorLayout, Valence
-from brainhops.io.transformations.zarr._axes import _to_axis
+from brainhops.io.transformations.zarr._axes import to_axis
 
 _J = np.array([[0.0, -2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.5, 3.0]])
 _K = np.linalg.inv(_J)
@@ -47,7 +47,7 @@ def test_a_component_axis_is_built_from_its_type(kind: str, cls: type) -> None:
     assert isinstance(axis, cls)
     assert axis.type == AxisType(kind)
     assert is_component_type(kind)
-    assert isinstance(_to_axis({"name": "c", "type": kind}), cls)
+    assert isinstance(to_axis({"name": "c", "type": kind}), cls)
 
 
 @pytest.mark.parametrize(
@@ -358,12 +358,12 @@ def test_a_diagonal_explicit_layout_accepts_a_mixed_valence() -> None:
 
 
 def test_indexing_part_of_a_component_axis_gives_a_channel_axis() -> None:
-    from brainhops.datamodel.geometry import _index2transform
+    from brainhops.datamodel._indexing import index2transform
     from brainhops.datamodel.systems import CoordinateSystem
 
     system = CoordinateSystem([Axis("i", "space"), TensorAxis("c")])
 
-    sub2full, _ = _index2transform((slice(None), slice(0, 4)), (2, 9), system)
+    sub2full, _ = index2transform((slice(None), slice(0, 4)), (2, 9), system)
 
     assert isinstance(sub2full.input.axes[1], ChannelAxis)
     assert sub2full.input.axes[1].name == "c"

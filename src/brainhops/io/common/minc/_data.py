@@ -17,13 +17,13 @@ from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 
 # this format
 from ._raw import MincRaw
-from ._utils import _read_minc, _read_voxels
+from ._utils import apply_to_minc, read_minc_voxels
 
 _CHUNK_BYTES = 128 * 2**20
 """The size of a block when Dask is not installed to give its own."""
 
 
-class _MincProxy(StoredProxy):
+class MincProxy(StoredProxy):
     """A lazy array of the voxels of a MINC image.
 
     The proxy holds where the file lies, which is a path or the bytes of
@@ -85,8 +85,8 @@ class _MincProxy(StoredProxy):
             If the file cannot be read, or its voxels no longer have the
             shape of the record.
         """
-        values = _read_minc(
-            _opened(self.source), self.record.version, _read_voxels
+        values = apply_to_minc(
+            _opened(self.source), self.record.version, read_minc_voxels
         )
         if tuple(values.shape) != self.shape:
             raise ParserContentError(
@@ -103,9 +103,9 @@ class _MincProxy(StoredProxy):
                     f"but the header that the image was read with says "
                     f"{self.shape}."
                 )
-            return _read_voxels(container, mfile, version, index)
+            return read_minc_voxels(container, mfile, version, index)
 
-        return _read_minc(_opened(self.source), self.record.version, read)
+        return apply_to_minc(_opened(self.source), self.record.version, read)
 
 
 def _opened(source: tx.Union[path.Path, bytes]) -> tx.Union[path.Path, bytes]:
@@ -124,7 +124,7 @@ def _opened(source: tx.Union[path.Path, bytes]) -> tx.Union[path.Path, bytes]:
         return bytes(open_compressed(f).read())
 
 
-def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
+def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, MincProxy]:
     """Read the record and a lazy array of the voxels of a MINC image.
 
     The file is a path or a stream, gzipped or not. A path is read for
@@ -158,11 +158,11 @@ def read_minc(file: tx.Any) -> tx.Tuple[MincRaw, _MincProxy]:
             raise ParserExistsError(f"No such file: {file}")
         with file.open("rb") as f:
             record = MincRaw.from_fileobj(f)
-        return record, _MincProxy(file, record)
+        return record, MincProxy(file, record)
     with preserve_position(file):
         content = bytes(open_compressed(file).read())
     record = MincRaw.from_fileobj(BytesIO(content))
-    return record, _MincProxy(content, record)
+    return record, MincProxy(content, record)
 
 
 def _chunk_bytes() -> int:

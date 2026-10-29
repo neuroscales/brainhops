@@ -59,18 +59,18 @@ from dask.base import tokenize
 from dask.highlevelgraph import HighLevelGraph
 
 # internals
-from ._backend import _asarray, _get_namespace, _is_dask
-from ._bounds import _bound_index, _normalize_bound
+from ._backend import get_namespace, is_dask, to_namespace
+from ._bounds import bound_index, normalize_bound
 from ._coeff import (
-    _horizon,
-    _normalize_dtype,
-    _normalize_order,
-    _poles,
+    normalize_dtype,
+    normalize_order,
+    pole_horizon,
+    prefilter_poles,
     spline_coeff,
     spline_coeff1d,
 )
-from ._pull import _check_arguments, _pull
-from ._splines import _first_tap
+from ._pull import check_arguments, pull_arrays
+from ._splines import first_tap
 
 _Slices = tx.Tuple[slice, ...]
 
@@ -95,7 +95,7 @@ def _namespace(*arrays: tx.Any) -> ModuleType:
         The module `cupy` when the blocks of one of the arrays are CuPy
         arrays, and `numpy` otherwise.
     """
-    return _get_namespace(*[getattr(a, "_meta", a) for a in arrays])
+    return get_namespace(*[getattr(a, "_meta", a) for a in arrays])
 
 
 def _to_namespace(xp: ModuleType, array: tx.Any) -> tx.Any:
@@ -113,8 +113,8 @@ def _to_namespace(xp: ModuleType, array: tx.Any) -> tx.Any:
     array
         The array, whose blocks belong to `xp` when it is a dask array.
     """
-    if not _is_dask(array):
-        return _asarray(xp, array)
+    if not is_dask(array):
+        return to_namespace(xp, array)
     if _namespace(array) is xp:
         return array
     meta = xp.empty((0,) * array.ndim, dtype=array.dtype)
@@ -188,7 +188,7 @@ def _assemble(
     """
     if len(parts) == 1:
         return parts[0][pieces[0][0]]
-    xp = _get_namespace(*parts)
+    xp = get_namespace(*parts)
     window = xp.empty(shape, dtype=parts[0].dtype)
     for part, (source, target) in zip(parts, pieces):
         window[target] = part[source]
@@ -247,8 +247,8 @@ def _halo(order: int) -> int:
         The horizon of the largest pole of the prefilter, which is 0 for
         the orders 0 and 1, that have no prefilter, and 63 at order 7.
     """
-    poles = _poles(order)
-    return _horizon(poles[0]) if poles else 0
+    poles = prefilter_poles(order)
+    return pole_horizon(poles[0]) if poles else 0
 
 
 def _runs(edges: np.ndarray, start: int, stop: int) -> tx.List[_Piece]:
@@ -373,11 +373,11 @@ def _coeff_block(
     """
     window = _assemble(parts, pieces, shape)
     coeff = spline_coeff1d(window, order, bound, axis)
-    xp = _get_namespace(coeff)
+    xp = get_namespace(coeff)
     return xp.ascontiguousarray(coeff[(slice(None),) * axis + (keep,)])
 
 
-def _spline_coeff1d_dask(
+def spline_coeff1d_dask(
     input: tx.Any, order: tx.Any, bound: tx.Any, axis: int
 ) -> tx.Any:
     """Compute the spline coefficients of a dask array along one axis.
@@ -409,9 +409,9 @@ def _spline_coeff1d_dask(
     dask.array.Array
         The coefficients, with the shape and the chunks of the input.
     """
-    order = _normalize_order(order)
-    bound = _normalize_bound(bound)
-    dtype = _normalize_dtype(input.dtype)
+    order = normalize_order(order)
+    bound = normalize_bound(bound)
+    dtype = normalize_dtype(input.dtype)
     input = input.astype(dtype)
     if order < 2 or input.size == 0:
         return input
@@ -456,12 +456,12 @@ def _axis_window(
 
     The coordinate `x` reads the samples `floor(x - offset)` to
     `floor(x - offset) + order`, with the offset of
-    [`_first_tap`][brainhops._ext.interpol._splines._first_tap], before
+    [`first_tap`][brainhops._ext.interpol._splines.first_tap], before
     the boundary condition brings them inside the axis. The samples
     read by a group of coordinates are therefore those of a run of
     consecutive indices, from the smallest coordinate to the largest,
     brought inside the axis. The run is computed in the precision of the
-    coordinates, as [`_axis_taps`][brainhops._ext.interpol._taps._axis_taps]
+    coordinates, as [`axis_taps`][brainhops._ext.interpol._taps.axis_taps]
     computes it, and extended by one sample on each side, which guards
     against any difference in rounding. A run that covers a period of
     every boundary condition reads the whole axis, and so do coordinates
@@ -490,7 +490,7 @@ def _axis_window(
     """
     if coords.size == 0:
         return 0, min(n, 1)
-    offset = coords.dtype.type(_first_tap(order))
+    offset = coords.dtype.type(first_tap(order))
     first = float(xp.floor(xp.min(coords) - offset))
     last = float(xp.floor(xp.max(coords) - offset))
     if not (math.isfinite(first) and math.isfinite(last)):
@@ -502,7 +502,7 @@ def _axis_window(
     if stop - start >= 2 * n + 2:
         return 0, n
     index = np.arange(start, stop, dtype=np.intp)
-    _bound_index(np, index, n, bound, np.ones(index.shape))
+    bound_index(np, index, n, bound, np.ones(index.shape))
     return int(index.min()), int(index.max()) + 1
 
 
@@ -583,7 +583,7 @@ class _Source:
         """
         combinations = list(itertools.product(*axes))
         parts = [self.array[tuple(s for s, _ in c)] for c in combinations]
-        if _is_dask(self.array):
+        if is_dask(self.array):
             parts = list(dask.compute(*parts, scheduler="sync"))
         shape = tuple(axis[-1][1].stop for axis in axes)
         whole = tuple(slice(None) for _ in shape)
@@ -616,16 +616,16 @@ def _pull_parts(
         axis.
     options : dict
         The other keyword arguments of
-        [`_pull`][brainhops._ext.interpol._pull._pull].
+        [`pull_arrays`][brainhops._ext.interpol._pull.pull_arrays].
 
     Returns
     -------
     array
         The interpolated values of the block.
     """
-    xp = _get_namespace(grid)
+    xp = get_namespace(grid)
     window = _assemble(parts, pieces, shape)
-    return _pull(xp, window, grid, origin=origin, **options)
+    return pull_arrays(xp, window, grid, origin=origin, **options)
 
 
 def _pull_source(
@@ -657,14 +657,14 @@ def _pull_source(
         here, rather than coefficients.
     options : dict
         The other keyword arguments of
-        [`_pull`][brainhops._ext.interpol._pull._pull].
+        [`pull_arrays`][brainhops._ext.interpol._pull.pull_arrays].
 
     Returns
     -------
     array
         The interpolated values of the block.
     """
-    xp = _get_namespace(grid)
+    xp = get_namespace(grid)
     shape = options["shape"]
     orders = options["orders"]
     bounds = options["bounds"]
@@ -683,7 +683,7 @@ def _pull_source(
         axes.append([(s, t) for _, s, t in runs])
         keep.append(slice(start - first, stop - first))
         filters.append(bound)
-    window = _asarray(xp, source.read(axes))
+    window = to_namespace(xp, source.read(axes))
     if prefilter:
         for d in reversed(range(len(windows))):
             if orders[d] > 1:
@@ -692,7 +692,7 @@ def _pull_source(
                 )
         window = window[tuple(keep)]
     origin = [start for start, _ in windows]
-    return _pull(xp, window, grid, origin=origin, **options)
+    return pull_arrays(xp, window, grid, origin=origin, **options)
 
 
 def _batch_chunks(
@@ -726,7 +726,7 @@ def _batch_chunks(
         for array, nbatch in ((input, input.ndim - ndim), (grid, None)):
             nbatch = grid.ndim - ndim - 1 if nbatch is None else nbatch
             axis = k - (len(batch) - nbatch)
-            if axis >= 0 and array.shape[axis] > 1 and _is_dask(array):
+            if axis >= 0 and array.shape[axis] > 1 and is_dask(array):
                 chunk = tuple(array.chunks[axis])
                 break
         chunks.append(chunk)
@@ -762,7 +762,7 @@ def _rechunk_batch(
     return array.rechunk(new) if new else array
 
 
-def _pull_dask(
+def pull_dask(
     input: tx.Any,
     grid: tx.Any,
     order: tx.Any,
@@ -794,7 +794,7 @@ def _pull_dask(
       depends on the chunks of the input that its window overlaps, which
       dask computes once for all the tasks. With the prefilter, these
       chunks are those of the coefficients from
-      [`_spline_coeff1d_dask`][], computed once per chunk.
+      [`spline_coeff1d_dask`][], computed once per chunk.
     - When the grid is a dask array, the windows are only known when the
       tasks run. Each task then computes the part of the input that its
       window covers, with the synchronous scheduler, so that a chunk of
@@ -841,16 +841,16 @@ def _pull_dask(
     xp = _namespace(input, grid)
     input = _to_namespace(xp, input)
     grid = _to_namespace(xp, grid)
-    orders, bounds, margin, blocked = _check_arguments(
+    orders, bounds, margin, blocked = check_arguments(
         xp, input, grid, order, bound, clip, strategy, block_size
     )
     blocked = blocked and strategy != "auto"
     ndim = len(orders)
-    dtype = _normalize_dtype(input.dtype)
+    dtype = normalize_dtype(input.dtype)
     # With a concrete grid and a dask input, each task depends on the
     # chunks of the input that its window overlaps. Otherwise, it reads
     # its window from the whole input when it runs.
-    explicit = _is_dask(input) and not _is_dask(grid)
+    explicit = is_dask(input) and not is_dask(grid)
     prefilter = bool(prefilter) and max(orders) > 1
     if prefilter and explicit:
         # The coefficients of each chunk are computed once.
@@ -872,12 +872,12 @@ def _pull_dask(
     batch_chunks = _batch_chunks(input, grid, batch, ndim)
     meta = xp.empty((0,) * (nbatch + ndim), dtype=dtype)
 
-    if not explicit and _is_dask(grid):
+    if not explicit and is_dask(grid):
         grid = _rechunk_batch(grid, nbatch_grid, batch_chunks)
         grid = grid.rechunk({grid.ndim - 1: -1})
     else:
         concrete = grid
-        if _is_dask(input) and spatial_in == spatial_out:
+        if is_dask(input) and spatial_in == spatial_out:
             spatial_chunks = tuple(input.chunks[-ndim:])
         else:
             spatial_chunks = ("auto",) * ndim
@@ -895,7 +895,7 @@ def _pull_dask(
         grid = da.from_array(
             grid, chunks=chunks, asarray=False, meta=meta_grid
         )
-    if _is_dask(input):
+    if is_dask(input):
         input = _rechunk_batch(input, nbatch_input, batch_chunks)
     out_chunks = tuple(batch_chunks) + tuple(grid.chunks[nbatch_grid:-1])
     if math.prod(batch) * math.prod(spatial_out) == 0:

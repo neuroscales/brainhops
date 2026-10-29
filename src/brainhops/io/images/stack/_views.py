@@ -10,7 +10,7 @@ first axis of the files is, and which axes their rows and columns are,
 depends on the stacking axis of the record (`StackRaw.axes`), which the
 functions take as an argument. With the default stacking axis, z, the
 stored volume is `(z, y, x[, c])`. The functions are pure and invert each
-other, so that `_image_to_model(_image_to_disk(data, axis), axis)` gives
+other, so that `image_to_model(image_to_disk(data, axis), axis)` gives
 `data` back.
 """
 
@@ -26,7 +26,7 @@ from brainhops.io.images.base import _utils_raster as raster
 from ._raw import PLANES
 
 
-def _image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
+def image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     """Return the data of an image from the stacked files.
 
     The axes are permuted with a transpose, so that the lazy array of
@@ -34,19 +34,19 @@ def _image_to_model(raw: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     returns that lazy array, which reads its values only when a
     computation needs them.
     """
-    return raw.transpose(_permutation(raw.ndim, axis))
+    return raw.transpose(permutation(raw.ndim, axis))
 
 
-def _image_to_disk(data: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
+def image_to_disk(data: ArrayProtocol, axis: str = "z") -> ArrayProtocol:
     """Return the stacked files of an image from its data.
 
     The spatial axes are permuted into the order of the stored volume, and
     the channel axis stays last.
     """
-    return data.transpose(np.argsort(_permutation(data.ndim, axis)).tolist())
+    return data.transpose(np.argsort(permutation(data.ndim, axis)).tolist())
 
 
-def _permutation(ndim: int, axis: str = "z") -> tx.List[int]:
+def permutation(ndim: int, axis: str = "z") -> tx.List[int]:
     """Return the permutation from the stacked files to the data.
 
     Element `i` is the axis of the stored volume that becomes axis `i` of

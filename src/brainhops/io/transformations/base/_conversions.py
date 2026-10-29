@@ -98,11 +98,7 @@ from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.adaptors import bridge
-from brainhops.datamodel._transformations.compute.convert import (
-    convert,
-    converter,
-)
+from brainhops.datamodel._internal_api import bridge, convert, converter
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.systems import CoordinateSystem, VoxelCoordinateSystem
 from brainhops.errors import (
@@ -148,8 +144,6 @@ A field of displacements, a velocity, a field of coordinates and a chain
 that holds one of them all reach the converter of the format, which
 turns the field into what the format stores.
 """
-
-_VOXEL = VoxelCoordinateSystem()
 
 
 def register_converter(
@@ -342,11 +336,11 @@ def affine_between(
         chain that holds one).
     """
     chain = [
-        _bridge(input, t.input, t, cls),
+        bridge_systems(input, t.input, t, cls),
         t,
-        _bridge(t.output, output, t, cls),
+        bridge_systems(t.output, output, t, cls),
     ]
-    return _matrix(chain, t, cls)
+    return chain_matrix(chain, t, cls)
 
 
 def split_field_chain(
@@ -379,11 +373,11 @@ def split_field_chain(
         or what is on either side of it is not an affine.
     """
     leaves = [
-        _bridge(input, t.input, t, cls),
-        *_leaves(t),
-        _bridge(t.output, output, t, cls),
+        bridge_systems(input, t.input, t, cls),
+        *chain_leaves(t),
+        bridge_systems(t.output, output, t, cls),
     ]
-    found = [i for i, leaf in enumerate(leaves) if _is_field(leaf)]
+    found = [i for i, leaf in enumerate(leaves) if is_field(leaf)]
     if len(found) != 1:
         raise unrepresentable(
             t,
@@ -393,16 +387,19 @@ def split_field_chain(
         )
     i = found[0]
     field = leaves[i]
-    before = [*leaves[:i], _bridge(leaves[i - 1].output, field.input, t, cls)]
+    before = [
+        *leaves[:i],
+        bridge_systems(leaves[i - 1].output, field.input, t, cls),
+    ]
     after = [
-        _bridge(field.output, leaves[i + 1].input, t, cls),
+        bridge_systems(field.output, leaves[i + 1].input, t, cls),
         *leaves[i + 1 :],
     ]
     ndim = _field_ndim(field)
     return (
-        _matrix(before, t, cls, ndim),
+        chain_matrix(before, t, cls, ndim),
         field,
-        _matrix(after, t, cls, ndim),
+        chain_matrix(after, t, cls, ndim),
     )
 
 
@@ -453,12 +450,43 @@ def apply_affine(matrix: np.ndarray, values: ArrayProtocol) -> ArrayProtocol:
 # ----------------------------------------------------------------------
 
 
-def _bridge(
+def bridge_systems(
     source: tx.Optional[CoordinateSystem],
     target: tx.Optional[CoordinateSystem],
     t: _xforms.Transformation,
     cls: type,
 ) -> _xforms.Transformation:
+    """Return the exact transformation between two systems.
+
+    The converters of the formats call this function to place a
+    transformation between the systems that a format stores. The bridge
+    is built as a composition builds it, pairing the axes that are still
+    unmatched by their position within their type, as `Sequence.compute`
+    does. A system that declares a distinct origin, such as a tkregister
+    space, has the axes of another space but is not that space, so it is
+    bridged only to a system of its own class.
+
+    Parameters
+    ----------
+    source : CoordinateSystem, optional
+        The system to start from, or `None` when it is not known.
+    target : CoordinateSystem, optional
+        The system to reach, or `None` when it is not known.
+    t : Transformation
+        The transformation being converted, which the error names.
+    cls : type
+        The class of the format, which the error names.
+
+    Returns
+    -------
+    Transformation
+        The transformation from `source` to `target`.
+
+    Raises
+    ------
+    ConversionError
+        If there is no exact bridge between the two systems.
+    """
     # The exact bridge between two systems, built as a composition builds
     # it (pairing still-unmatched axes by position within their type, as
     # `Sequence.compute` does), or the reason why there is none. A system
@@ -490,16 +518,44 @@ def _bridge(
         raise unrepresentable(t, cls, str(error)) from error
 
 
-def _leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
-    # The transformations a chain is made of, nested chains unrolled.
+def chain_leaves(t: _xforms.Transformation) -> tx.List[_xforms.Transformation]:
+    """Return the transformations that a chain is made of.
+
+    Nested chains are unrolled, and a transformation that is not a chain
+    is returned alone.
+
+    Parameters
+    ----------
+    t : Transformation
+        The chain, or any other transformation.
+
+    Returns
+    -------
+    list[Transformation]
+        The transformations of the chain, in order.
+    """
     if not isinstance(t, _xforms.Sequence):
         return [t]
     return [
-        leaf for piece in t.transformations or () for leaf in _leaves(piece)
+        leaf
+        for piece in t.transformations or ()
+        for leaf in chain_leaves(piece)
     ]
 
 
-def _is_field(t: _xforms.Transformation) -> bool:
+def is_field(t: _xforms.Transformation) -> bool:
+    """Tell whether a transformation is a field of vectors or points.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation.
+
+    Returns
+    -------
+    bool
+        Whether `t` is a `DisplacementField` or a `CoordinateField`.
+    """
     return isinstance(t, (_xforms.DisplacementField, _xforms.CoordinateField))
 
 
@@ -509,14 +565,39 @@ def _field_ndim(field: _Field) -> tx.Optional[int]:
     return None if data is None else int(data.shape[-1])
 
 
-def _matrix(
+def chain_matrix(
     chain: tx.List[_xforms.Transformation],
     t: _xforms.Transformation,
     cls: type,
     ndim: tx.Optional[int] = None,
 ) -> np.ndarray:
-    # The homogeneous matrix of a chain of affines. A chain of identities
-    # between unknown systems has no size of its own, and takes `ndim`.
+    """Return the homogeneous matrix of a chain of affines.
+
+    A chain of identities between unknown systems has no size of its
+    own, so its matrix is the identity of `ndim` dimensions.
+
+    Parameters
+    ----------
+    chain : list[Transformation]
+        The transformations of the chain.
+    t : Transformation
+        The transformation being converted, which the error names.
+    cls : type
+        The class of the format, which the error names.
+    ndim : int, optional
+        The number of dimensions of a chain whose size is not known.
+
+    Returns
+    -------
+    np.ndarray
+        The homogeneous matrix of the chain, in float64.
+
+    Raises
+    ------
+    ConversionError
+        If the chain is not an affine, or if its size is not known
+        and `ndim` is not given.
+    """
     try:
         affine = _xforms.Sequence(transformations=chain).to(_xforms.Affine)
     except ConversionError as error:
@@ -686,7 +767,11 @@ def displacement_parts(
     ):
         # The field is already what the format stores, and is kept as it
         # is, with its data still unread.
-        field = replace(field, input=_VOXEL, output=_VOXEL)
+        field = replace(
+            field,
+            input=VoxelCoordinateSystem(),
+            output=VoxelCoordinateSystem(),
+        )
         return FieldParts(world2grid, field, grid2world)
     data, store, bound, loss = _node_data(field, degree, keep_log=velocity)
     if data is None and not undoes(before, after):
@@ -699,7 +784,9 @@ def displacement_parts(
             "node of a grid.",
         )
     if data is None:
-        result = _xforms.DisplacementField(input=_VOXEL, output=_VOXEL)
+        result = _xforms.DisplacementField(
+            input=VoxelCoordinateSystem(), output=VoxelCoordinateSystem()
+        )
         return FieldParts(world2grid, result, grid2world, loss)
     if sandwich:
         displacements = data
@@ -719,8 +806,8 @@ def displacement_parts(
         degree=degree,
         store=store,
         bound=bound,
-        input=_VOXEL,
-        output=_VOXEL,
+        input=VoxelCoordinateSystem(),
+        output=VoxelCoordinateSystem(),
     )
     return FieldParts(world2grid, result, grid2world, loss)
 
@@ -804,10 +891,18 @@ def split_affine(
         world, place = output, np.linalg.inv(after)
     chain = _xforms.Sequence(
         transformations=[
-            _xforms.Affine(matrix=place[:-1], input=world, output=_VOXEL),
-            replace(field, input=_VOXEL, output=_VOXEL),
             _xforms.Affine(
-                matrix=np.linalg.inv(place)[:-1], input=_VOXEL, output=world
+                matrix=place[:-1], input=world, output=VoxelCoordinateSystem()
+            ),
+            replace(
+                field,
+                input=VoxelCoordinateSystem(),
+                output=VoxelCoordinateSystem(),
+            ),
+            _xforms.Affine(
+                matrix=np.linalg.inv(place)[:-1],
+                input=VoxelCoordinateSystem(),
+                output=world,
             ),
         ]
     )
@@ -891,7 +986,7 @@ def coordinate_parts(
         degree=degree,
         store=store,
         bound=bound,
-        input=_VOXEL,
+        input=VoxelCoordinateSystem(),
         output=output,
     )
     return FieldParts(before, result, np.linalg.inv(before), loss)
@@ -965,10 +1060,12 @@ def sample_on_grid(
     nodes = _xforms.CartesianField(shape=shape).field
     points = apply_affine(grid2world, nodes)
     chain = [
-        _xforms.CoordinateField(field=points, input=_VOXEL, output=input),
-        _bridge(input, t.input, t, cls),
+        _xforms.CoordinateField(
+            field=points, input=VoxelCoordinateSystem(), output=input
+        ),
+        bridge_systems(input, t.input, t, cls),
         t,
-        _bridge(t.output, output, t, cls),
+        bridge_systems(t.output, output, t, cls),
     ]
     try:
         mapped = _xforms.Sequence(transformations=chain).compute()
@@ -985,7 +1082,10 @@ def sample_on_grid(
             "same dimension.",
         )
     result = _xforms.CoordinateField(
-        field=mapped.values, degree=degree, input=_VOXEL, output=output
+        field=mapped.values,
+        degree=degree,
+        input=VoxelCoordinateSystem(),
+        output=output,
     )
     loss = (
         f"it is evaluated on the grid of the format, and is read back with "
@@ -1110,8 +1210,8 @@ def world_pieces(
         If a bridge does not exist, or what lies between the fields is
         not an affine.
     """
-    leaves = _leaves(t)
-    fields = [i for i, leaf in enumerate(leaves) if _is_field(leaf)]
+    leaves = chain_leaves(t)
+    fields = [i for i, leaf in enumerate(leaves) if is_field(leaf)]
     ndim = next(
         (
             _field_ndim(leaves[i])
@@ -1129,21 +1229,21 @@ def world_pieces(
         # spaces, for example, are made of pieces without systems.
         chain = []
         if lo == 0:
-            chain.append(_bridge(world, t.input, t, cls))
+            chain.append(bridge_systems(world, t.input, t, cls))
             source = t.input
         else:
             source = leaves[lo - 1].output
         for leaf in leaves[lo:hi]:
-            chain += [_bridge(source, leaf.input, t, cls), leaf]
+            chain += [bridge_systems(source, leaf.input, t, cls), leaf]
             source = leaf.output
         if hi == len(leaves):
             chain += [
-                _bridge(source, t.output, t, cls),
-                _bridge(t.output, world, t, cls),
+                bridge_systems(source, t.output, t, cls),
+                bridge_systems(t.output, world, t, cls),
             ]
         else:
-            chain.append(_bridge(source, leaves[hi].input, t, cls))
-        return _matrix(chain, t, cls, ndim)
+            chain.append(bridge_systems(source, leaves[hi].input, t, cls))
+        return chain_matrix(chain, t, cls, ndim)
 
     def affine(
         matrix: np.ndarray,
@@ -1160,15 +1260,18 @@ def world_pieces(
         # the leaf just before the field when that leaf is an affine from
         # a world system, or `None`. This keeps the field on the grid that
         # it was placed on.
-        if i - 1 < lo or _is_field(leaves[i - 1]):
+        if i - 1 < lo or is_field(leaves[i - 1]):
             return None
         leaf = leaves[i - 1]
         to_leaf = _world_bridge(world, leaf.input, ndim)
         if to_leaf is None:
             return None
         try:
-            chain = [leaf, _bridge(leaf.output, leaves[i].input, t, cls)]
-            return _matrix(chain, t, cls, ndim) @ to_leaf
+            chain = [
+                leaf,
+                bridge_systems(leaf.output, leaves[i].input, t, cls),
+            ]
+            return chain_matrix(chain, t, cls, ndim) @ to_leaf
         except ConversionError:
             return None
 
@@ -1477,8 +1580,8 @@ def displacements_of(parts: FieldParts) -> FieldParts:
     result = _xforms.DisplacementField(
         field=displacements,
         degree=int(field.degree),
-        input=_VOXEL,
-        output=_VOXEL,
+        input=VoxelCoordinateSystem(),
+        output=VoxelCoordinateSystem(),
     )
     return parts._replace(field=result)
 

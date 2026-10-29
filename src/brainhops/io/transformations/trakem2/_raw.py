@@ -12,8 +12,8 @@ from bagof.magic import Magic, NoRepr
 
 # internals
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -24,7 +24,7 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._xml import _Element, attribute_span, document_name, parse_xml
+from ._xml import Element, attribute_span, document_name, parse_xml
 
 _ROOT = "trakem2"
 """The name of the root element of a TrakEM2 project file."""
@@ -445,8 +445,8 @@ def _parse(content: bytes) -> TrakEM2Raw:
 
 def _collect(
     content: bytes,
-    element: _Element,
-    layer: tx.Optional[_Element],
+    element: Element,
+    layer: tx.Optional[Element],
     calibration: tx.Optional[TrakEM2Raw.Calibration],
     patches: tx.List[TrakEM2Raw.Patch],
 ) -> None:
@@ -470,8 +470,8 @@ def _collect(
 
 def _patch(
     content: bytes,
-    element: _Element,
-    layer: tx.Optional[_Element],
+    element: Element,
+    layer: tx.Optional[Element],
     calibration: tx.Optional[TrakEM2Raw.Calibration],
 ) -> TrakEM2Raw.Patch:
     """Read a `<t2_patch>` and the layer that holds it."""
@@ -523,7 +523,7 @@ def _matrix(text: str, oid: int) -> _Floats:
     return tuple(float(v) for v in values)
 
 
-def _calibration(element: _Element) -> TrakEM2Raw.Calibration:
+def _calibration(element: Element) -> TrakEM2Raw.Calibration:
     """Read a `<t2_calibration>`, whose missing fields keep their default."""
     attrs = element.attrs
     names = {
@@ -543,7 +543,7 @@ def _calibration(element: _Element) -> TrakEM2Raw.Calibration:
 
 
 def _coordinate_transform(
-    element: _Element,
+    element: Element,
 ) -> TrakEM2Raw.CoordinateTransform:
     """Read a coordinate transform, and the transforms of a list."""
     return TrakEM2Raw.CoordinateTransform(

@@ -54,6 +54,7 @@ import typing_extensions as tx
 from brainhops._core import path
 from brainhops._core.peek import peekable_lines
 from brainhops._core.streams import preserve_position
+from brainhops.io.base._internal_api import not_text
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -62,7 +63,6 @@ from brainhops.io.base.parsers import (
     ParserNotImplementedError,
     SnifferContentError,
     TextFileReader,
-    _not_text,
 )
 
 
@@ -230,10 +230,10 @@ def read_mat(content: bytes) -> tx.Dict[str, np.ndarray]:
     """
     if detect_container(content) in _MAT73_KINDS:
         return read_mat73(content)
-    return _read_mat_legacy(content)
+    return read_mat_legacy(content)
 
 
-def _read_mat_legacy(content: bytes) -> tx.Dict[str, np.ndarray]:
+def read_mat_legacy(content: bytes) -> tx.Dict[str, np.ndarray]:
     """
     Read the numeric arrays of MATLAB v4 to v7 content.
 
@@ -605,7 +605,7 @@ class TextArrayReader(ArrayReader, TextFileReader):
         try:
             return super().sniff_fileobj(file, error=error, **kwargs)
         except UnicodeDecodeError as e:  # a binary file opened as text
-            return _not_text(cls, error, e)
+            return not_text(cls, error, e)
 
     @classmethod
     def sniff_lines(
@@ -824,12 +824,12 @@ class MatLegacyArrayReader(MatArrayReader):
         **kwargs,
     ) -> float:
         return cls._sniff_array(
-            _read_mat_legacy, bytes(content), error, **kwargs
+            read_mat_legacy, bytes(content), error, **kwargs
         )
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        name, array = cls._read_array(_read_mat_legacy, bytes(content), kwargs)
+        name, array = cls._read_array(read_mat_legacy, bytes(content), kwargs)
         return cls.from_array(array, key=name, **kwargs)
 
 

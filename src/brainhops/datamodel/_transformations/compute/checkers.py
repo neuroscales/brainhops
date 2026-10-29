@@ -648,7 +648,7 @@ def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
 # ======================================================================
 
 
-def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
+def matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
     """Return the dimensions `(ni, no)` of a matrix transformation, or None.
 
     The dimensions are read from the shape of the stored matrix, which is
@@ -699,7 +699,7 @@ def _matrix_rank(linear: ArrayProtocol) -> int:
 
 @identity_from("matrix")
 def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
-    dims = _matrix_dims(t)
+    dims = matrix_dims(t)
     if dims is None:
         return False
     ni, no = dims
@@ -715,7 +715,7 @@ def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
 
 @identity_from("matrix")
 def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
-    dims = _matrix_dims(t)
+    dims = matrix_dims(t)
     if dims is None:
         return False
     ni, no = dims
@@ -729,7 +729,7 @@ def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
 
 @identity_from("matrix")
 def _matrix_injective(t: Transformation, kind: type, compute: bool) -> bool:
-    dims = _matrix_dims(t)
+    dims = matrix_dims(t)
     if dims is None:
         return False
     ni, no = dims
@@ -811,11 +811,29 @@ def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _embed_targets(node: type) -> tx.Tuple[type, ...]:
-    # The block-diagonal map blockdiag(inner, I) belongs to `node` if and only
-    # if `inner` belongs to one of the returned sets. The result is `node`
-    # itself when `node` is embeddable, and otherwise the largest embeddable
-    # sets that are strictly contained in `node`.
+def embed_targets(node: type) -> tx.Tuple[type, ...]:
+    """Return the sets that the inner map of an embedding must lie in.
+
+    The checkers use it to decide whether a transformation that acts on
+    some axes and leaves the others unchanged, which is the
+    block-diagonal map `blockdiag(inner, I)`, belongs to a set of
+    transformations: it does if and only if `inner` belongs to one of
+    the returned sets. The result is `node` itself when `node` is
+    embeddable, and otherwise the largest embeddable sets that `node`
+    strictly contains.
+
+    Parameters
+    ----------
+    node : type
+        The set of transformations, as a class of
+        [`kinds`][brainhops.datamodel.kinds].
+
+    Returns
+    -------
+    tuple[type, ...]
+        The sets of transformations that the inner map may belong
+        to.
+    """
     if kinds.is_embeddable(node):
         return (node,)
     return tuple(
@@ -832,12 +850,29 @@ def _embed_targets(node: type) -> tx.Tuple[type, ...]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
-    # For a permutation P of the coordinates with the given parity, the map
-    # P @ blockdiag(...) belongs to `node` if and only if the embedded map
-    # belongs to one of the returned sets. The result is `node` itself when
-    # `node` is closed under such permutations, and otherwise the largest
-    # closed sets that are strictly contained in `node`.
+def permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
+    """Return the sets that a map must lie in before a permutation.
+
+    For a permutation `P` of the coordinates with the given parity, the
+    map `P @ blockdiag(...)` belongs to `node` if and only if the
+    embedded map belongs to one of the returned sets. The result is
+    `node` itself when `node` is closed under such permutations, and
+    otherwise the largest closed sets that `node` strictly contains.
+
+    Parameters
+    ----------
+    node : type
+        The set of transformations, as a class of
+        [`kinds`][brainhops.datamodel.kinds].
+    even : bool
+        Whether the permutation is even.
+
+    Returns
+    -------
+    tuple[type, ...]
+        The sets of transformations that the permuted map may belong
+        to.
+    """
     perm = kinds.EvenPermutation if even else kinds.Permutation
 
     def is_closed(node: type) -> bool:
@@ -855,11 +890,27 @@ def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _bijective_targets(node: type) -> tx.Tuple[type, ...]:
-    # The inverse inv(T) belongs to `node` if and only if T belongs to one of
-    # the returned sets. The result is `node` itself when `node` contains only
-    # bijections, since such sets are closed under inversion, and otherwise the
-    # largest subsets of `node` that contain only bijections.
+def bijective_targets(node: type) -> tx.Tuple[type, ...]:
+    """Return the sets in which the forward of an inverse must lie.
+
+    The checkers use it to decide whether the lazy inverse `inv(T)` of a
+    transformation `T` belongs to a set of transformations: `inv(T)`
+    belongs to `node` if and only if `T` belongs to one of the returned
+    sets. The result is `node` itself when `node` holds only bijections,
+    because such a set is closed under inversion. Otherwise, it is the
+    largest subsets of `node` that hold only bijections.
+
+    Parameters
+    ----------
+    node : type
+        The set of transformations, as a class of
+        [`kinds`][brainhops.datamodel.kinds].
+
+    Returns
+    -------
+    tuple[type, ...]
+        The sets of transformations that the forward may belong to.
+    """
     if issubclass(node, kinds.Bijection):
         return (node,)
     return tuple(
@@ -932,13 +983,13 @@ def _subspace_member(
     )
     if same:
         return any(
-            _inner_member(inner, m, compute) for m in _embed_targets(node)
+            _inner_member(inner, m, compute) for m in embed_targets(node)
         )
     even = _reindex_is_even(sub.input_axes, sub.output_axes)
     return any(
         _inner_member(inner, m, compute)
-        for target in _permute_targets(node, even)
-        for m in _embed_targets(target)
+        for target in permute_targets(node, even)
+        for m in embed_targets(target)
     )
 
 
@@ -985,7 +1036,7 @@ def _inverse_member(inv: Inverse, node: type, compute: bool) -> bool:
     if inv.forward is None:
         return issubclass(kinds.Identity, node)
     return any(
-        is_kind(inv.forward, m, compute) for m in _bijective_targets(node)
+        is_kind(inv.forward, m, compute) for m in bijective_targets(node)
     )
 
 

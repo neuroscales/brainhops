@@ -22,8 +22,8 @@ from brainhops.io.base.parsers import (
 
 # this format
 from ._codecs import (
-    _storage_shape,
     image_to_storage,
+    storage_shape,
     storage_to_image,
 )
 from ._raw import MrtrixRaw
@@ -142,21 +142,21 @@ def _data_location(header: MrtrixRaw) -> tx.Tuple[str, int]:
 # ----------------------------------------------------------------------
 
 
-def _scaled_dtype(record: MrtrixRaw) -> np.dtype:
+def scaled_dtype(record: MrtrixRaw) -> np.dtype:
     """Return the type of the values once the intensity scaling applies."""
     stored = np.dtype(bool) if record.is_bit else record.dtype
-    if _is_scaled(record):
+    if is_scaled(record):
         return np.result_type(stored, np.float32)
     return stored
 
 
-def _is_scaled(record: MrtrixRaw) -> bool:
+def is_scaled(record: MrtrixRaw) -> bool:
     """Tell whether the intensity scaling of a header changes values."""
     scaling = record.scaling
     return bool(scaling) and tuple(scaling) != (0.0, 1.0)
 
 
-class _MrtrixProxy(StridedProxy):
+class MrtrixProxy(StridedProxy):
     """A lazy array of the stored voxels of an MRtrix image.
 
     The proxy holds where the voxels lie, which is a path or the stream
@@ -227,10 +227,10 @@ class _MrtrixProxy(StridedProxy):
 
         Returns
         -------
-        _MrtrixProxy or ScaledProxy
+        MrtrixProxy or ScaledProxy
             The lazy array of the voxels.
         """
-        shape, position = _storage_shape(record.dim, record.layout)
+        shape, position = storage_shape(record.dim, record.layout)
         flips = [axis for axis, s in enumerate(record.layout) if s < 0]
         proxy = cls.contiguous(
             source,
@@ -244,7 +244,7 @@ class _MrtrixProxy(StridedProxy):
             mmap=mmap,
             record=record,
         )
-        if not _is_scaled(record):
+        if not is_scaled(record):
             return proxy
         offset, scale = record.scaling
         return ScaledProxy(proxy, scale, offset)
@@ -311,7 +311,7 @@ class _MrtrixProxy(StridedProxy):
         return self.get_unscaled()[index]
 
 
-def whole_file(raw: tx.Any) -> tx.Optional[_MrtrixProxy]:
+def whole_file(raw: tx.Any) -> tx.Optional[MrtrixProxy]:
     """Return the lazy array of a whole MRtrix file that an array reads.
 
     A writer copies the stored bytes of such a lazy array as they are.
@@ -328,16 +328,16 @@ def whole_file(raw: tx.Any) -> tx.Optional[_MrtrixProxy]:
 
     Returns
     -------
-    _MrtrixProxy or None
+    MrtrixProxy or None
         The proxy of the stored voxels, or `None`.
     """
     scaled = isinstance(raw, ScaledProxy)
     proxy = raw.base if scaled else raw
-    if not isinstance(proxy, _MrtrixProxy):
+    if not isinstance(proxy, MrtrixProxy):
         return None
     if not scaled:
-        return None if _is_scaled(proxy.record) else proxy
-    if not _is_scaled(proxy.record):
+        return None if is_scaled(proxy.record) else proxy
+    if not is_scaled(proxy.record):
         return None
     offset, scale = proxy.record.scaling
     if raw.slope is None or raw.inter is None:
@@ -430,6 +430,4 @@ def read_mrtrix(
                     f"The MRtrix data file {source} holds {size} bytes, but "
                     f"the header asks for {offset + record.nbytes}."
                 )
-    return record, _MrtrixProxy.from_record(
-        source, start, offset, record, mmap
-    )
+    return record, MrtrixProxy.from_record(source, start, offset, record, mmap)

@@ -15,18 +15,14 @@ need more than the default conversion overrides `to_backend` or
 import typing_extensions as tx
 
 # internals
-from brainhops._core.backends import (
-    BackendLike,
-    DeviceLike,
-    to_backend,
-)
+from brainhops._core.backends import BackendLike, DeviceLike, to_backend
 from brainhops._core.magic import smart_replace
 from brainhops._core.typing import ArrayProtocol
 
 _T = tx.TypeVar("_T")
 
 
-class _BackendsMixin:
+class BackendsMixin:
     """
     The `to_*` and `as_*` methods of the classes that hold data.
     """
@@ -164,7 +160,7 @@ class _BackendsMixin:
 
 
 def as_backend(
-    objects: tx.Union[tx.Sequence[_BackendsMixin], _BackendsMixin, None],
+    objects: tx.Union[tx.Sequence[BackendsMixin], BackendsMixin, None],
     backend: tx.Optional[BackendLike] = None,
     *,
     device: tx.Optional[DeviceLike] = None,
@@ -194,7 +190,7 @@ def as_backend(
     """
     if not objects:
         return objects
-    if isinstance(objects, _BackendsMixin):
+    if isinstance(objects, BackendsMixin):
         return objects.as_backend(backend, device=device, inplace=inplace)
     converted = [
         obj.as_backend(backend, device=device, inplace=inplace)
@@ -205,7 +201,7 @@ def as_backend(
     return type(objects)(converted)
 
 
-class _FrozenBackendMixin(_BackendsMixin):
+class FrozenBackendMixin(BackendsMixin):
     """
     Mixin for classes that only support one backend, such as concrete
     transformations with small parameters.
@@ -221,7 +217,7 @@ class _FrozenBackendMixin(_BackendsMixin):
         return self
 
 
-class _MetaBackendMixin(_BackendsMixin):
+class MetaBackendMixin(BackendsMixin):
     """
     Mixin for classes that do not hold their own data, but instead
     hold references to other objects that do.

@@ -47,10 +47,8 @@ import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
-from brainhops.io.transformations.base._conversions import (
+from brainhops.datamodel._internal_api import smart_replace
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     apply_affine,
     coordinate_parts,
@@ -136,13 +134,13 @@ def _geometry(
     if isinstance(image, (tuple, list)) and len(image) == 2:
         vox2ras, shape = image
     else:
-        from brainhops.io.transformations.fsl._affines import (
-            _best_affine,
-            _shape,
+        from brainhops.io.transformations.fsl._internal_api import (
+            best_affine,
+            spatial_shape,
         )
 
         try:
-            vox2ras, shape = _best_affine(image), _shape(image)
+            vox2ras, shape = best_affine(image), spatial_shape(image)
         except ValueError as error:
             raise unrepresentable(
                 t, cls, f"the geometry of moving= cannot be read. {error}"

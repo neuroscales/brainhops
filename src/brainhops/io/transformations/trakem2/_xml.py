@@ -30,7 +30,7 @@ _ATTRIBUTE = re.compile(rb"""([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*')""")
 """An attribute of a start tag, with its name and its quoted value."""
 
 
-class _Element:
+class Element:
     """An element of the XML tree, with where its start tag lies.
 
     The tree is built by [`parse_xml`][] and is private to the parsing of
@@ -50,7 +50,7 @@ class _Element:
         self.attrs = attrs
         self.start = start
         self.stop = stop
-        self.children: tx.List[_Element] = []
+        self.children: tx.List[Element] = []
 
 
 class _Doctype(Exception):
@@ -99,7 +99,7 @@ def document_name(head: bytes) -> tx.Optional[str]:
     return None
 
 
-def parse_xml(content: bytes) -> _Element:
+def parse_xml(content: bytes) -> Element:
     """Parse an XML document into a tree that knows its byte spans.
 
     Parameters
@@ -109,7 +109,7 @@ def parse_xml(content: bytes) -> _Element:
 
     Returns
     -------
-    _Element
+    Element
         The root element.
 
     Raises
@@ -118,12 +118,12 @@ def parse_xml(content: bytes) -> _Element:
         If the content is not well-formed XML.
     """
     parser = expat.ParserCreate()
-    stack: tx.List[_Element] = []
-    roots: tx.List[_Element] = []
+    stack: tx.List[Element] = []
+    roots: tx.List[Element] = []
 
     def start(name: str, attrs: tx.Dict[str, str]) -> None:
         offset = parser.CurrentByteIndex
-        element = _Element(
+        element = Element(
             name.lower(),
             {key.lower(): value for key, value in attrs.items()},
             offset,
@@ -150,7 +150,7 @@ def parse_xml(content: bytes) -> _Element:
 
 
 def attribute_span(
-    content: bytes, element: _Element, name: str
+    content: bytes, element: Element, name: str
 ) -> tx.Optional[tx.Tuple[int, int]]:
     """Return where the value of an attribute lies in the bytes.
 
@@ -161,7 +161,7 @@ def attribute_span(
     ----------
     content : bytes
         The whole document.
-    element : _Element
+    element : Element
         The element whose start tag holds the attribute.
     name : str
         The name of the attribute, in lower case.

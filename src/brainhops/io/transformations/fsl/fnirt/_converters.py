@@ -50,16 +50,13 @@ from brainhops._core.backends import array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.errors import ConversionError, LossyConversionError
 
 # io
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._raw import NiftiRaw
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
     affine_between,
@@ -73,13 +70,14 @@ from brainhops.io.transformations.base._conversions import (
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 
 # this format
-from .._affines import _ImageGeometry
+from brainhops.io.transformations.fsl._internal_api import ImageGeometry
+
 from ._base import (
     FSL_CUBIC_SPLINE_COEFFICIENTS,
     FSL_FNIRT_DISPLACEMENT_FIELD,
     FnirtWarpField,
-    _anchor_offsets,
-    _read_image,
+    anchor_offsets,
+    read_image,
 )
 
 RAS = _systems.RASmm()
@@ -146,8 +144,8 @@ def to_fnirt(
             f"options, as in t.to(FnirtWarpField, reference=..., "
             f"moving=...), or in conversion= of io.save.",
         )
-    reference = _read_image(images["reference"])
-    moving = _read_image(images["moving"])
+    reference = read_image(images["reference"])
+    moving = read_image(images["moving"])
     spacing = options.get("knot_spacing")
     if spacing is None:
         return _deformation(t, cls, reference, moving)
@@ -179,8 +177,8 @@ def _deformation(
 ) -> FnirtWarpField:
     # The relative displacement, in scaled millimetres, of each voxel of
     # the reference, which keeps the backend of the field of `t`.
-    ref = _ImageGeometry(reference)
-    mov = _ImageGeometry(moving)
+    ref = ImageGeometry(reference)
+    mov = ImageGeometry(moving)
     shape = tuple(int(n) for n in ref.shape[:3])
     parts = sample_on_grid(t, ref.ras2vox, shape, RAS, RAS, cls)
     positions = parts.field.data
@@ -219,8 +217,8 @@ def _coefficients(
 ) -> FnirtWarpField:
     # A cubic B-spline on the knot grid that FNIRT places over the
     # reference, with an initial affine.
-    ref = _ImageGeometry(reference)
-    mov = _ImageGeometry(moving)
+    ref = ImageGeometry(reference)
+    mov = ImageGeometry(moving)
     shape = tuple(int(n) for n in ref.shape[:3])
     spacing = np.broadcast_to(np.asarray(spacing), (3,))
     if np.any(spacing != np.round(spacing)) or np.any(spacing < 1):
@@ -238,7 +236,7 @@ def _coefficients(
     # The affine from the scaled millimetres of the reference to the
     # knot grid, as `FnirtWarpField._ref_to_field` places it.
     fsl2grid = np.diag(np.concatenate([1.0 / (ref.pixdim * spacing), [1.0]]))
-    fsl2grid[:3, 3] += _anchor_offsets(3, spacing.astype(float))
+    fsl2grid[:3, 3] += anchor_offsets(3, spacing.astype(float))
     ras2grid = fsl2grid @ ref.ras2fsl
     # FNIRT maps a reference position `x`, in scaled millimetres, to
     # `M x + D(x)` in the source, where `M` is the inverse of the sform

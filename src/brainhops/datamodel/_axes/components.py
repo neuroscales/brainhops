@@ -872,7 +872,7 @@ def _multilinear(
     forward = _like(matrix, like)
     backward = None
     if "covector" in valence:
-        backward = _swap_last(_batched(_inv, forward))
+        backward = _swap_last(batched(inv, forward))
     for index, each in enumerate(valence):
         factor = forward if each == "vector" else backward
         full = _contract(full, factor, index, rank)
@@ -906,7 +906,7 @@ def _swap_last(matrix: ArrayProtocol) -> ArrayProtocol:
     return xp.swapaxes(matrix, -1, -2)
 
 
-def _batched(
+def batched(
     function: tx.Callable[[ArrayProtocol], ArrayProtocol],
     matrix: ArrayProtocol,
 ) -> ArrayProtocol:
@@ -922,6 +922,6 @@ def _batched(
     return function(matrix)
 
 
-def _inv(matrix: ArrayProtocol) -> ArrayProtocol:
+def inv(matrix: ArrayProtocol) -> ArrayProtocol:
     """Invert a stack of matrices."""
     return array_backend(matrix).linalg.inv(matrix)

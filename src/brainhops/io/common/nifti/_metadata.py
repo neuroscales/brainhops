@@ -5,12 +5,15 @@ import typing_extensions as tx
 from bagof.magic import NoRepr, replace
 
 # internals
-from brainhops.datamodel.metadata._derive import Indexed, Resampled
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import (
+    Indexed,
+    Resampled,
+    takes_error_policy,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import BinaryFileWriter
 from brainhops.io.metadata import MetadataFormat, MetadataReader
-from brainhops.io.metadata._base import consolidated
+from brainhops.io.metadata._internal_api import consolidated
 
 # this format
 from ._raw import NiftiRaw

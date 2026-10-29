@@ -14,30 +14,40 @@ from bagof.magic import NoRepr
 from brainhops._core import path
 from brainhops._core.magic import replace
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import (
+    Raw,
+    declined,
+    no_options,
+    sniffed_raw,
+)
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
     ParserExistsError,
-    SnifferContentError,
 )
 
 # this format
 from ._constants import (
-    _BRICK_DTYPES,
-    _BYTEORDERS,
-    _FLOAT_ATTRIBUTES,
-    _TAXIS_UNITS,
     AFNI_VIEWS,
+    BRICK_DTYPES,
+    BYTEORDERS,
+    FLOAT_ATTRIBUTES,
+    TAXIS_UNITS,
 )
 from ._files import afni_dataset_files
 from ._geometry import (
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
 )
+
+OPTION_OWNER = "AFNI reader"
+"""What refuses unknown options, as the error message names it."""
+
+DECLINE_MESSAGE = "Content is not an AFNI dataset"
+"""The message of the error raised when a sniffer declines a stream."""
 
 # typing
 _Value = tx.Union[str, tx.Tuple[int, ...], tx.Tuple[float, ...]]
@@ -176,7 +186,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         """
         value = self.attributes.get("BYTEORDER_STRING")
         if isinstance(value, str):
-            return _BYTEORDERS.get(value.split("\0")[0].strip(), "=")
+            return BYTEORDERS.get(value.split("\0")[0].strip(), "=")
         return "="
 
     @property
@@ -184,13 +194,13 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         """The stored dtype of each sub-brick, with its byte order."""
         dtypes = []
         for code in self.brick_types:
-            if code not in _BRICK_DTYPES:
+            if code not in BRICK_DTYPES:
                 raise ParserContentError(
                     f"AFNI sub-bricks of type code {code} are not "
                     f"supported (supported: byte, short, int, float, "
                     f"double, complex)."
                 )
-            dtypes.append(_BRICK_DTYPES[code].newbyteorder(self.byteorder))
+            dtypes.append(BRICK_DTYPES[code].newbyteorder(self.byteorder))
         return tuple(dtypes)
 
     @property
@@ -295,7 +305,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
             return None
         if not nums or not floats or len(floats) < 2:
             return None
-        unit = _TAXIS_UNITS.get(int(nums[2])) if len(nums) > 2 else None
+        unit = TAXIS_UNITS.get(int(nums[2])) if len(nums) > 2 else None
         return float(floats[1]), unit
 
     def validate(self) -> "AfniRaw":
@@ -373,7 +383,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         ParserContentError
             If the text is not an AFNI header.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         return cls(attributes=_parse_attributes(text), text=text)
 
     @classmethod
@@ -402,7 +412,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         ParserContentError
             If the content is not an AFNI header.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         return cls.from_text(bytes(content).decode("latin-1"))
 
     @classmethod
@@ -434,12 +444,12 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
             If the stream is not a header and has no file name, or if the
             header is not valid.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         with preserve_position(file):
             start = file.read(256)
             if isinstance(start, str):
                 start = start.encode("latin-1")
-            head = _looks_like_head(bytes(start).decode("latin-1"))
+            head = looks_like_head(bytes(start).decode("latin-1"))
             rest = file.read() if head else b""
         if head:
             if isinstance(rest, str):
@@ -482,7 +492,7 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         ParserContentError
             If the file is not an AFNI header.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         head, _, _ = afni_dataset_files(filename)
         if not head.exists():
             raise ParserExistsError(f"No such file: {head}")
@@ -522,10 +532,10 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         SnifferContentError
             If the stream holds no valid header and `error` is `True`.
         """
-        raw, failure = _sniffed_raw(file)
+        raw, failure = sniffed_raw(read_validated_header, file)
         if raw is not None:
             return Confidence.LIKELY
-        return _declined(error, failure)
+        return declined(error, DECLINE_MESSAGE, failure)
 
     @classmethod
     def sniff_filename(
@@ -560,10 +570,10 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         SnifferContentError
             If the path names no valid dataset and `error` is `True`.
         """
-        raw, failure = _sniffed_raw_at(filename)
+        raw, failure = sniffed_raw_at(filename)
         if raw is not None:
             return Confidence.LIKELY
-        return _declined(error, failure)
+        return declined(error, DECLINE_MESSAGE, failure)
 
     # --- writing ------------------------------------------------------
 
@@ -585,9 +595,9 @@ class AfniRaw(Raw, BinaryFileReader, BinaryFileWriter, eq=False):
         str
             The text of the file.
         """
-        formatted = _format_attributes(self.attributes)
+        formatted = format_attributes(self.attributes)
         if self.text is not None:
-            stored = _format_attributes(_parse_attributes(self.text))
+            stored = format_attributes(_parse_attributes(self.text))
             if stored == formatted:
                 return self.text
         return formatted
@@ -710,7 +720,7 @@ def _format_attribute(name: str, value: _Value) -> str:
     values = list(value)
     if not values:
         return ""
-    is_float = name in _FLOAT_ATTRIBUTES or any(
+    is_float = name in FLOAT_ATTRIBUTES or any(
         isinstance(v, (float, np.floating)) for v in values
     )
     if is_float:
@@ -729,7 +739,7 @@ def _format_attribute(name: str, value: _Value) -> str:
     )
 
 
-def _format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
+def format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
     """Format the attributes of a `.HEAD` file as the writer spells them."""
     return "".join(
         _format_attribute(name, value) for name, value in attributes.items()
@@ -741,19 +751,7 @@ def _format_attributes(attributes: tx.Mapping[str, _Value]) -> str:
 # ----------------------------------------------------------------------
 
 
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(f"Unknown AFNI reader option(s): {', '.join(kwargs)}")
-
-
-def _looks_like_head(head: str) -> bool:
+def looks_like_head(head: str) -> bool:
     """Tell whether a text starts like a `.HEAD` file."""
     return re.match(r"\s*type\s*=\s*\S+-attribute\s", head) is not None
 
@@ -766,7 +764,7 @@ def _read_header_stream(file: tx.IO) -> AfniRaw:
     start = file.read(256)
     if isinstance(start, bytes):
         start = start.decode("latin-1")
-    if not _looks_like_head(start):
+    if not looks_like_head(start):
         raise ParserContentError("Not an AFNI header")
     rest = file.read()
     if isinstance(rest, bytes):
@@ -774,22 +772,19 @@ def _read_header_stream(file: tx.IO) -> AfniRaw:
     return AfniRaw.from_text(start + rest)
 
 
-def _sniffed_raw(
-    file: tx.IO,
-) -> tx.Tuple[tx.Optional[AfniRaw], tx.Optional[Exception]]:
-    """Read and validate the record of a stream for sniffing.
+def read_validated_header(file: tx.IO) -> AfniRaw:
+    """Read and validate the record of a stream, then restore its position.
 
-    The position of the stream is restored. The result is the record, or
-    `None` with the error that refused it.
+    Raises
+    ------
+    ParserContentError
+        If the stream does not start like a header.
     """
-    try:
-        with preserve_position(file):
-            return _read_header_stream(file).validate(), None
-    except Exception as e:  # noqa: BLE001
-        return None, e
+    with preserve_position(file):
+        return _read_header_stream(file).validate()
 
 
-def _sniffed_raw_at(
+def sniffed_raw_at(
     filename: path.FilenameLike,
 ) -> tx.Tuple[tx.Optional[AfniRaw], tx.Optional[Exception]]:
     """Read and validate the record of the dataset that a path names."""
@@ -797,16 +792,4 @@ def _sniffed_raw_at(
     if not head.exists():
         return None, ParserExistsError(f"No such file: {head}")
     with head.open("rb") as f:
-        return _sniffed_raw(f)
-
-
-def _declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline a sniffed input, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error("Content is not an AFNI dataset") from failure
-    return Confidence.NO
+        return sniffed_raw(read_validated_header, f)

@@ -174,7 +174,7 @@ def _match_extension(name: str, cls: type) -> tx.Optional[int]:
     return extension
 
 
-def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
+def match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
     """Measure how much of a file name a format accounts for.
 
     The result holds the lengths of the longest matching declared extension and
@@ -254,7 +254,7 @@ def _specificity(
     )
 
 
-def _tiers(
+def group_tiers(
     candidates: tx.List[tx.Tuple[type, tx.Any]],
     score: tx.Optional[tx.Dict[type, float]] = None,
 ) -> tx.List[tx.List[type]]:
@@ -291,7 +291,7 @@ def _candidates(
     for subclass in registry:
         if allowed is not None and subclass not in allowed:
             continue
-        match = _match_name(name, subclass) if name else None
+        match = match_name(name, subclass) if name else None
         try:
             score = float(
                 getattr(subclass, fn_sniff)(
@@ -309,7 +309,7 @@ def _candidates(
             scores[subclass] = score
             candidates.append((subclass, match))
 
-    return _tiers(candidates, scores)
+    return group_tiers(candidates, scores)
 
 
 def parse(
@@ -370,7 +370,7 @@ def parse(
     tried: tx.List[type] = []
     if not registry:
         raise _failure(source, [], errors)
-    requested_hints = _normalize_hints(hints, hint)
+    requested_hints = normalize_hints(hints, hint)
     source_options = dict(options or {})
     duplicate = set(kwargs).intersection(source_options)
     if duplicate:
@@ -430,9 +430,7 @@ def parse(
                 return True, winners[0][1]
             if len(winners) > 1:
                 raise AmbiguousFormatError(
-                    _ambiguity_message(
-                        f"{source}", [cls for cls, _ in winners]
-                    )
+                    ambiguity_message(f"{source}", [cls for cls, _ in winners])
                 )
         return False, None
 
@@ -443,7 +441,7 @@ def parse(
     # example because of an unknown extension, try the allowed formats rather
     # than widening to the full registry.
     if requested_hints and not tiers:
-        tiers = _tiers([(subclass, None) for subclass in allowed])
+        tiers = group_tiers([(subclass, None) for subclass in allowed])
     ok, result = walk(tiers)
     if ok:
         return result
@@ -649,7 +647,7 @@ def sniff(
     SnifferContentError
         If `error` is set and no format recognizes the input.
     """
-    requested_hints = _normalize_hints(hints, hint)
+    requested_hints = normalize_hints(hints, hint)
     allowed = {
         subclass
         for subclass in registry
@@ -660,7 +658,7 @@ def sniff(
     # positively, the allowed formats are ranked without scores, which gives
     # the format that parse tries first. A missing file is still reported.
     if requested_hints and not tiers and source.missing is None:
-        tiers = _tiers([(subclass, None) for subclass in allowed])
+        tiers = group_tiers([(subclass, None) for subclass in allowed])
 
     if tiers and len(tiers[0]) == 1:
         return tiers[0][0]
@@ -674,7 +672,7 @@ def sniff(
         if tiers:
             if error is True:
                 error = AmbiguousFormatError
-            raise error(_ambiguity_message(what, tiers[0]))
+            raise error(ambiguity_message(what, tiers[0]))
         if error is True:
             error = SnifferContentError
         raise error(f"Nothing to sniff in {what}")
@@ -682,7 +680,7 @@ def sniff(
     return None
 
 
-def _describe(cls: type) -> str:
+def describe(cls: type) -> str:
     """Describe a format by the first paragraph of its own docstring.
 
     The paragraph is joined into one line without its final period. Inherited
@@ -720,7 +718,7 @@ def _selecting_hint(
     return found[0] if found else None
 
 
-def _ambiguity_message(subject: str, candidates: tx.Iterable[type]) -> str:
+def ambiguity_message(subject: str, candidates: tx.Iterable[type]) -> str:
     """Explain which formats an input could be in.
 
     Each candidate is listed with the `hint=` value or the `load` call that
@@ -735,7 +733,7 @@ def _ambiguity_message(subject: str, candidates: tx.Iterable[type]) -> str:
     example = None
     for cls in candidates:
         line = f"  - {cls.__name__}"
-        about = _describe(cls)
+        about = describe(cls)
         if about:
             line += f" ({about})"
         hint = _selecting_hint(cls, candidates)
@@ -761,7 +759,7 @@ def _ambiguity_message(subject: str, candidates: tx.Iterable[type]) -> str:
     return "\n".join(lines)
 
 
-def _normalize_hints(
+def normalize_hints(
     hints: tx.Iterable[str],
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]],
 ) -> tx.FrozenSet[str]:

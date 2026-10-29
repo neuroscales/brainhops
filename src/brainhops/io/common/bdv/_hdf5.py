@@ -17,7 +17,7 @@ from brainhops._core.properties import alias
 from brainhops._core.proxy import StoredProxy
 from brainhops.io.base.parsers import ParserContentError, ParserExistsError
 from brainhops.io.common.hdf5 import H5ArrayProxy
-from brainhops.io.common.hdf5._parsers import read_string
+from brainhops.io.common.hdf5._internal_api import read_string
 
 # this format
 from ._raw import BdvRaw
@@ -29,7 +29,7 @@ _LEGACY_TYPE = np.dtype("uint16")
 """The type of the voxels of a file without a `dataType` attribute."""
 
 
-class _BdvProxy(StoredProxy):
+class BdvProxy(StoredProxy):
     """A lazy array of the voxels of one level of one view.
 
     The proxy holds a
@@ -88,7 +88,7 @@ def read_dataset(
     filename: path.FilenameLike,
     setup: tx.Optional[int] = None,
     timepoint: tx.Optional[int] = None,
-) -> tx.Tuple[BdvRaw, int, int, tx.List[_BdvProxy]]:
+) -> tx.Tuple[BdvRaw, int, int, tx.List[BdvProxy]]:
     """Read a view of a dataset: its record and a lazy array of each level.
 
     The XML file is read into a record, and the HDF5 file that it names
@@ -113,7 +113,7 @@ def read_dataset(
         The id of the setup of the view.
     timepoint : int
         The id of the time point of the view.
-    levels : list of _BdvProxy
+    levels : list of BdvProxy
         A lazy array of each level of the view, finest first.
 
     Raises
@@ -263,7 +263,7 @@ def _level(
     pyramid: BdvRaw.Pyramid,
     timepoint: int,
     level: int,
-) -> _BdvProxy:
+) -> BdvProxy:
     """Return a lazy array of the `cells` of a level of a view.
 
     Raises
@@ -292,4 +292,4 @@ def _level(
                 f"The voxels of setup {pyramid.setup} have the unknown type "
                 f"{pyramid.data_type!r}."
             ) from error
-    return _BdvProxy(cells, dtype)
+    return BdvProxy(cells, dtype)

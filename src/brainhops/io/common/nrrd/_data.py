@@ -25,7 +25,7 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._codecs import _format_float
+from ._codecs import format_float
 from ._layout import image_order
 from ._raw import NrrdRaw
 
@@ -88,7 +88,7 @@ def _gunzip(content: bytes) -> bytes:
     return b"".join(out)
 
 
-def _decode(
+def decode(
     header: NrrdRaw,
     locations: tx.Sequence[tx.Tuple[tx.Any, int]],
     mmap: bool,
@@ -194,7 +194,7 @@ def encode_data(header: NrrdRaw, data: tx.Any) -> bytes:
     if encoding == "ascii":
         width = header.sizes[0] if header.sizes else 1
         if dtype.kind == "f":
-            words = [_format_float(v) for v in flat.tolist()]
+            words = [format_float(v) for v in flat.tolist()]
         else:
             words = [str(v) for v in flat.tolist()]
         rows = [
@@ -231,7 +231,7 @@ def _storage(header: NrrdRaw) -> tx.Tuple[tx.Any, ...]:
 # ----------------------------------------------------------------------
 
 
-class _NrrdProxy(StoredProxy):
+class NrrdProxy(StoredProxy):
     """A lazy array of the samples of a NRRD image.
 
     The proxy holds where the header lies, which is a path or the stream
@@ -386,7 +386,7 @@ class _NrrdProxy(StoredProxy):
             If the files are too short, or the header no longer describes
             the samples.
         """
-        values = _decode(self.record, self._locations(), self.mmap)
+        values = decode(self.record, self._locations(), self.mmap)
         return values.transpose(image_order(self.record))
 
     def _strided(self, file: tx.Any, start: int, skip: int) -> StridedProxy:
@@ -443,9 +443,7 @@ def _end_start(file: tx.Any, nbytes: int) -> int:
     return size - nbytes
 
 
-def read_nrrd(
-    file: tx.Any, mmap: bool = True
-) -> tx.Tuple[NrrdRaw, _NrrdProxy]:
+def read_nrrd(file: tx.Any, mmap: bool = True) -> tx.Tuple[NrrdRaw, NrrdProxy]:
     """Read the record and a lazy array of the samples of a NRRD image.
 
     The file is a path or a stream. The record is read from the header,
@@ -510,7 +508,7 @@ def read_nrrd(
             )
         files.append(datafile)
     _check_size(record, file if not files else None, files)
-    return record, _NrrdProxy(file, start, files, record, mmap)
+    return record, NrrdProxy(file, start, files, record, mmap)
 
 
 def _check_size(

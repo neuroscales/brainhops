@@ -19,9 +19,9 @@ from brainhops.datamodel._transformations.compute.check import (
     register_kind_alias,
 )
 from brainhops.datamodel._transformations.compute.checkers import (
-    _bijective_targets,
-    _embed_targets,
-    _permute_targets,
+    bijective_targets,
+    embed_targets,
+    permute_targets,
 )
 from brainhops.datamodel._transformations.concrete import (
     TransformationField,
@@ -57,28 +57,26 @@ def _M(t: object, node: str, policy: object = "analytic") -> bool:
 
 
 def test_embed_targets() -> None:
-    assert _embed_targets(H.Translation) == (H.Translation,)
+    assert embed_targets(H.Translation) == (H.Translation,)
     # ConformalEuclidean is not embeddable; Euclidean is its only maximal
     # embeddable subnode.
-    assert _embed_targets(H.ConformalEuclidean) == (H.Euclidean,)
+    assert embed_targets(H.ConformalEuclidean) == (H.Euclidean,)
 
 
 def test_permute_targets() -> None:
-    assert _permute_targets(H.Translation, True) == ()
-    assert _permute_targets(H.Euclidean, False) == (H.Euclidean,)
-    assert _permute_targets(H.SpecialOrthogonal, True) == (
-        H.SpecialOrthogonal,
-    )
-    assert H.SpecialOrthogonal not in _permute_targets(
+    assert permute_targets(H.Translation, True) == ()
+    assert permute_targets(H.Euclidean, False) == (H.Euclidean,)
+    assert permute_targets(H.SpecialOrthogonal, True) == (H.SpecialOrthogonal,)
+    assert H.SpecialOrthogonal not in permute_targets(
         H.SpecialOrthogonal, False
     )
 
 
 def test_bijective_targets() -> None:
-    assert _bijective_targets(H.Affine) == (H.InvertibleAffine,)
-    assert _bijective_targets(H.Transformation) == (H.Bijection,)
-    assert _bijective_targets(H.Injection) == (H.Bijection,)
-    assert _bijective_targets(H.Diagonal) == (H.InvertibleDiagonal,)
+    assert bijective_targets(H.Affine) == (H.InvertibleAffine,)
+    assert bijective_targets(H.Transformation) == (H.Bijection,)
+    assert bijective_targets(H.Injection) == (H.Bijection,)
+    assert bijective_targets(H.Diagonal) == (H.InvertibleDiagonal,)
 
 
 # ----------------------------------------------------------------------

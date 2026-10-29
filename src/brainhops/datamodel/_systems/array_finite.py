@@ -16,7 +16,7 @@ from .array import (
 )
 from .dispatch import both, is2d, is3d, is_array
 from .factories import ArrayAxesFactory
-from .finite import CoordinateSystem2D, CoordinateSystem3D, _2Axes, _3Axes
+from .finite import CoordinateSystem2D, CoordinateSystem3D, ThreeAxes, TwoAxes
 
 
 # ArrayCoordinateSystem has no constraint of its own, so its 2-D subclass is
@@ -42,7 +42,7 @@ class ArrayCoordinateSystem2D(
         The memory order of the indexed array, or `None` when unspecified.
     """
 
-    axes: Inherit[_2Axes] = ArrayAxesFactory(2)
+    axes: Inherit[TwoAxes] = ArrayAxesFactory(2)
 
 
 @ArrayCoordinateSystem.register_polymorph(axes=is3d)
@@ -63,7 +63,7 @@ class ArrayCoordinateSystem3D(
         The memory order of the indexed array, or `None` when unspecified.
     """
 
-    axes: Inherit[_3Axes] = ArrayAxesFactory(3)
+    axes: Inherit[ThreeAxes] = ArrayAxesFactory(3)
 
 
 # Each class below inherits from a class with a fixed number of axes and
@@ -82,7 +82,7 @@ class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[_2Axes] = ArrayAxesFactory(2)
+    axes: Inherit[TwoAxes] = ArrayAxesFactory(2)
 
 
 class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
@@ -98,7 +98,7 @@ class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[_3Axes] = ArrayAxesFactory(3)
+    axes: Inherit[ThreeAxes] = ArrayAxesFactory(3)
 
 
 class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
@@ -114,7 +114,7 @@ class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[_2Axes] = ArrayAxesFactory(2)
+    axes: Inherit[TwoAxes] = ArrayAxesFactory(2)
 
 
 class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
@@ -130,4 +130,4 @@ class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
         The pinned memory order.
     """
 
-    axes: Inherit[_3Axes] = ArrayAxesFactory(3)
+    axes: Inherit[ThreeAxes] = ArrayAxesFactory(3)

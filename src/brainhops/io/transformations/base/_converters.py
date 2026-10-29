@@ -39,11 +39,7 @@ import typing_extensions as tx
 
 from brainhops._core.magic import replace
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.adaptors import bridge
-from brainhops.datamodel._transformations.compute.convert import (
-    convert,
-    find_converter,
-)
+from brainhops.datamodel._internal_api import bridge, convert, find_converter
 from brainhops.errors import (
     AdaptationError,
     ConversionError,
@@ -52,7 +48,7 @@ from brainhops.errors import (
 
 from ._base import TransformationFormat
 from ._conversions import unrepresentable
-from .affines import _check_endpoint, _compatible
+from ._endpoints import check_endpoint, compatible
 
 
 def relabelling(
@@ -234,9 +230,9 @@ def _adapted(t: _xforms.Transformation, cls: type) -> _xforms.Transformation:
     # then refuses it.
     held = cls()
     chain = [t]
-    if held.input is not None and not _compatible(t.input, held.input):
+    if held.input is not None and not compatible(t.input, held.input):
         chain.insert(0, (held.input, t.input))
-    if held.output is not None and not _compatible(t.output, held.output):
+    if held.output is not None and not compatible(t.output, held.output):
         chain.append((t.output, held.output))
     if len(chain) == 1:
         return t
@@ -315,7 +311,7 @@ def _check_endpoints(
         if getattr(t, side) is None or system is None:
             continue
         try:
-            _check_endpoint(t, side, system)
+            check_endpoint(t, side, system)
         except IncompatibleSystemError as error:
             raise unrepresentable(
                 t,

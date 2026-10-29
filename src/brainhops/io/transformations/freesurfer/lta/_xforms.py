@@ -16,18 +16,15 @@ from bagof.magic import Inherit, NoRepr, fields, replace
 # internals
 from brainhops._core import path
 from brainhops._core.enum import enum_name
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.io.base._base import format_registry, register_format
 from brainhops.io.base.parsers import (
     TextFileReader,
@@ -35,7 +32,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
 )
 from brainhops.io.common.freesurfer import FreesurferTkrSystem
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
@@ -43,7 +40,7 @@ from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
-from brainhops.io.transformations.base._records import (
+from brainhops.io.transformations.base._internal_api import (
     matrix_to_disk,
     matrix_to_model,
     read_only,
@@ -51,13 +48,16 @@ from brainhops.io.transformations.base._records import (
 )
 
 # this format
-from .._formats import FreesurferTransformationFormat
+from brainhops.io.transformations.freesurfer._internal_api import (
+    FreesurferTransformationFormat,
+)
+
 from ._enums import LtaType, LtaValidity
 from ._matrix_utils import (
-    _get_phys2phys,
-    _get_ras2ras,
-    _get_vox2vox,
-    _volume_info,
+    get_phys2phys,
+    get_ras2ras,
+    get_vox2vox,
+    volume_info,
 )
 from ._metadata import LtaMetadata
 from ._raw import LtaRaw
@@ -65,7 +65,7 @@ from ._systems import (
     LtaCoordinateSystem,
     LtaPhysicalSystem,
     LtaVoxelSystem,
-    _name,
+    name_keywords,
 )
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
@@ -108,7 +108,9 @@ def _typed_system(
     if record.type == LtaType.LINEAR_RSA_TO_RSA:
         return _systems.RSAmm()
     if record.type == LtaType.REGISTER_DAT:
-        return FreesurferTkrSystem(**({} if info is None else _name(info)))
+        return FreesurferTkrSystem(
+            **({} if info is None else name_keywords(info))
+        )
     if record.type == LtaType.LINEAR_VOX_TO_VOX:
         return _system(LtaVoxelSystem, info)
     if record.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
@@ -451,7 +453,7 @@ class LtaTransformation(
                 return replace(self, metadata=metadata)
             self.metadata = metadata
             return self
-        record = _build_raw(self)
+        record = build_raw(self)
         _check_shape(record)
         if metadata is None:
             metadata = LtaMetadata.from_raw(record)
@@ -488,7 +490,7 @@ class LtaTransformation(
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        record, options = _lta_written(self, kwargs)
+        record, options = lta_written(self, kwargs)
         return record.to_file(file, **options)
 
     @takes_error_policy
@@ -514,7 +516,7 @@ class LtaTransformation(
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        record, options = _lta_written(self, kwargs)
+        record, options = lta_written(self, kwargs)
         return record.to_lines(**options)
 
     @takes_error_policy
@@ -540,7 +542,7 @@ class LtaTransformation(
         UnrepresentableTransformationError
             If the LTA format cannot encode the systems or the matrix.
         """
-        record, options = _lta_written(self, kwargs)
+        record, options = lta_written(self, kwargs)
         return record.to_text(**options)
 
 
@@ -577,7 +579,7 @@ class LtaTransformationVoxToVox(LtaTransformation):
         record = record_of(self)
         if record is None:
             return None
-        return read_only(_get_vox2vox(record)[:-1])
+        return read_only(get_vox2vox(record)[:-1])
 
 
 class LtaTransformationPhysToPhys(LtaTransformation):
@@ -613,7 +615,7 @@ class LtaTransformationPhysToPhys(LtaTransformation):
         record = record_of(self)
         if record is None:
             return None
-        return read_only(_get_phys2phys(record)[:-1])
+        return read_only(get_phys2phys(record)[:-1])
 
 
 class LtaTransformationRASToRAS(LtaTransformation):
@@ -641,7 +643,7 @@ class LtaTransformationRASToRAS(LtaTransformation):
         record = record_of(self)
         if record is None:
             return None
-        return read_only(_get_ras2ras(record)[:-1])
+        return read_only(get_ras2ras(record)[:-1])
 
 
 # ----------------------------------------------------------------------
@@ -669,7 +671,7 @@ def _check_shape(record: LtaRaw) -> None:
         )
 
 
-def _as_block(
+def as_block(
     info: tx.Optional[LtaRaw.VolumeInfo], cls: type
 ) -> LtaRaw.VolumeInfo:
     """Return a volume geometry as a block of type `cls`.
@@ -684,7 +686,7 @@ def _as_block(
     return cls(**{f.name: getattr(info, f.name) for f in fields(cls)})
 
 
-def _build_raw(xform: LtaTransformation) -> LtaRaw:
+def build_raw(xform: LtaTransformation) -> LtaRaw:
     """Encode the matrix and coordinate systems of `xform` as a record.
 
     See `LtaTransformation._consolidate`.
@@ -707,7 +709,7 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
             if both(_systems.RASmm)
             else LtaType.LINEAR_RSA_TO_RSA
         )
-        src, dst = _as_block(old.src, Src), _as_block(old.dst, Dst)
+        src, dst = as_block(old.src, Src), as_block(old.dst, Dst)
     elif both(FreesurferTkrSystem):
         # FreeSurfer stores the matrix of a register.dat file, from the
         # tkregister space of `dst` to that of `src`.
@@ -720,8 +722,8 @@ def _build_raw(xform: LtaTransformation) -> LtaRaw:
             if both(LtaVoxelSystem)
             else LtaType.LINEAR_PHYSVOX_TO_PHYSVOX
         )
-        src = _as_block(src_system.raw, Src)
-        dst = _as_block(dst_system.raw, Dst)
+        src = as_block(src_system.raw, Src)
+        dst = as_block(dst_system.raw, Dst)
     else:
 
         def name(system: tx.Any) -> str:
@@ -772,11 +774,11 @@ def _tkr_block(
     and is otherwise that of the current record, or an invalid block.
     """
     if system.geometry is not None:
-        return _volume_info(system.geometry, cls)
-    return _as_block(old, cls)
+        return volume_info(system.geometry, cls)
+    return as_block(old, cls)
 
 
-def _lta_written(
+def lta_written(
     xform: LtaTransformation, kwargs: tx.Mapping[str, tx.Any]
 ) -> tx.Tuple[LtaRaw, tx.Dict[str, tx.Any]]:
     """Return the record that a file written from a transformation holds.

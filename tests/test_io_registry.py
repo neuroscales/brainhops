@@ -532,7 +532,7 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
     """A generated docstring of fields does not describe a format."""
     pytest.importorskip("nibabel")
 
-    from brainhops.io.base._dispatch import _ambiguity_message, _describe
+    from brainhops.io.base._dispatch import ambiguity_message, describe
     from brainhops.io.transformations.nifti import (
         NiftiBasedTransformation,
     )
@@ -550,10 +550,10 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
 
     # The generated docstring belongs to the class itself.
     assert "Attributes" in Undocumented.__dict__["__doc__"]
-    assert _describe(Undocumented) == ""
-    assert _describe(Documented) == "A documented format"
+    assert describe(Undocumented) == ""
+    assert describe(Documented) == "A documented format"
 
-    message = _ambiguity_message("file 'x.nii'", [Undocumented, Documented])
+    message = ambiguity_message("file 'x.nii'", [Undocumented, Documented])
     assert "Attributes" not in message
     assert '  - Undocumented: hint="undocumented"' in message
     assert '  - Documented (A documented format): hint="documented"' in message

@@ -16,11 +16,11 @@ from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
+    FIELDS,
     apply_loss_policy,
     takes_error_policy,
 )
-from brainhops.datamodel.metadata._vocabulary import FIELDS
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -28,16 +28,19 @@ from brainhops.io.base.parsers import (
     BinaryFileWriter,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
-from ._data import _PillowProxy, read_pillow_image, reads_from
+from ._data import PillowProxy, read_pillow_image, reads_from
 from ._metadata import PillowMetadata
 from ._raw import PillowRaw
 from ._utils import (
@@ -47,7 +50,7 @@ from ._utils import (
     encode_pillow,
     format_for_name,
 )
-from ._views import _image_to_model
+from ._views import image_to_model
 
 _DpiLike = tx.Union[None, bool, float, tx.Sequence[float]]
 
@@ -299,7 +302,7 @@ class PillowImage(
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -609,7 +612,7 @@ class PillowImage(
             and not options
             and (dpi is None or dpi is True)
             and held is not None
-            and isinstance(self.rawdata, _PillowProxy)
+            and isinstance(self.rawdata, PillowProxy)
             and self.rawdata.record is held
             and _same_format(format, held)
         ):
@@ -746,7 +749,7 @@ class PillowImage(
         if reading:
             # The image holds what the file holds, and its lazy array reads
             # the new file, since the old lazy array may read other bytes.
-            self.rawdata = _PillowProxy(
+            self.rawdata = PillowProxy(
                 filename, self.metadata.raw, self.palette
             )
             self.data = None
@@ -769,7 +772,7 @@ def _no_options(cls: type, kwargs: tx.Mapping[str, tx.Any]) -> None:
 def _read_image(
     cls: type,
     record: PillowRaw,
-    proxy: _PillowProxy,
+    proxy: PillowProxy,
     dpi: _DpiLike,
     pixel_size: tx.Any,
     unit: tx.Any,
@@ -913,7 +916,7 @@ def _check_reading(image: PillowImage) -> None:
     """
     raw = image.rawdata
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _PillowProxy):
+    if not isinstance(raw, PillowProxy):
         return
     if image.frame != raw.record.frame or image.palette != raw.palette:
         raise WriterError(
@@ -942,7 +945,7 @@ def _encoded(
     if image._data is not None:
         data = image._data
     elif image.rawdata is not None:
-        data = _image_to_model(image.rawdata)
+        data = image_to_model(image.rawdata)
     else:
         raise WriterError(
             "This image has no data, so there is nothing to write."

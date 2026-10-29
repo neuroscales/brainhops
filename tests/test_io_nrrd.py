@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.nrrd import NrrdMetadata, NrrdRaw
 from brainhops.io.common.nrrd._codecs import dtype_to_nrrd, nrrd_dtype
-from brainhops.io.common.nrrd._data import _NrrdProxy
+from brainhops.io.common.nrrd._data import NrrdProxy
 from brainhops.io.images import ImageFormat
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,
@@ -152,7 +152,7 @@ def test_read_attached_lps(lps_file) -> None:  # noqa: ANN001
     name, values = lps_file
     image = io.load(name)
     assert type(image) is AttachedNrrdImage
-    assert isinstance(image.rawdata, _NrrdProxy) and image.rawdata.mmap
+    assert isinstance(image.rawdata, NrrdProxy) and image.rawdata.mmap
     assert isinstance(image.rawdata.read_samples().base, np.memmap)
     np.testing.assert_array_equal(image.data, values)
     assert [a.name for a in image.system.axes] == ["x", "y", "z"]
@@ -981,8 +981,8 @@ class _CountedReads:
 
     def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.count = 0
-        read = _NrrdProxy._read
-        stored = _NrrdProxy.read_stored
+        read = NrrdProxy._read
+        stored = NrrdProxy.read_stored
 
         def counted_read(proxy, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
             self.count += 1
@@ -992,8 +992,8 @@ class _CountedReads:
             self.count += 1
             return stored(proxy, *args, **kwargs)
 
-        monkeypatch.setattr(_NrrdProxy, "_read", counted_read)
-        monkeypatch.setattr(_NrrdProxy, "read_stored", counted_stored)
+        monkeypatch.setattr(NrrdProxy, "_read", counted_read)
+        monkeypatch.setattr(NrrdProxy, "read_stored", counted_stored)
 
 
 @pytest.mark.parametrize("encoding", ["raw", "gzip"])

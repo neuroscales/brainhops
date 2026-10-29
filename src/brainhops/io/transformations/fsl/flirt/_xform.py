@@ -21,7 +21,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
@@ -35,22 +35,24 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common.nifti._header import _NiftiObject
-from brainhops.io.metadata._base import (
+from brainhops.io.common.nifti._internal_api import NiftiObject
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
 )
 from brainhops.io.transformations.base import TransformationFormat
-from brainhops.io.transformations.base.affines import _RAS, _check_endpoint
+from brainhops.io.transformations.base._internal_api import check_endpoint
+from brainhops.io.transformations.fsl._internal_api import (
+    FslAffineFormat,
+    ImageGeometry,
+)
 
-from .._affines import _ImageGeometry
-from .._formats import FslAffineFormat
 from ._metadata import FlirtMetadata
 from ._raw import FlirtRaw
 
 # A nibabel image or header, or a brainhops image.
-_ImageLike = tx.Union[_NiftiObject, Image]
+_ImageLike = tx.Union[NiftiObject, Image]
 
 _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
@@ -204,8 +206,8 @@ class FlirtTransform(
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        _check_endpoint(self, "input", _RAS)
-        _check_endpoint(self, "output", _RAS)
+        check_endpoint(self, "input", _systems.RASmm())
+        check_endpoint(self, "output", _systems.RASmm())
 
     @property
     def data(self) -> tx.Optional[np.ndarray]:
@@ -230,8 +232,8 @@ class FlirtTransform(
                 "world coordinates. Pass reference=... and moving=... when "
                 "loading the matrix, or set them on the transformation."
             )
-        ref = _ImageGeometry(self.reference)
-        mov = _ImageGeometry(self.moving)
+        ref = ImageGeometry(self.reference)
+        mov = ImageGeometry(self.moving)
         flirt = np.asarray(flirt, dtype=np.float64)
         full = mov.fsl2ras @ np.linalg.inv(flirt) @ ref.ras2fsl
         return full[:-1]
@@ -453,7 +455,7 @@ class FlirtTransform(
             metadata = self.metadata
         for end in ("input", "output"):
             try:
-                _check_endpoint(self, end, _RAS)
+                check_endpoint(self, end, _systems.RASmm())
             except IncompatibleSystemError as e:
                 raise UnrepresentableTransformationError(str(e)) from None
         if self._flirt_matrix is None:

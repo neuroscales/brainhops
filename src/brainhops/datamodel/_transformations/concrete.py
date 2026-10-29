@@ -20,13 +20,20 @@ import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
 # core
-from brainhops._core.affines import inv as affine_inv
-from brainhops._core.affines import sqrtm as affine_sqrtm
-from brainhops._core.affines import to_compact, to_homogeneous
+from brainhops._core.affines import (
+    inv as affine_inv,
+)
+from brainhops._core.affines import (
+    sqrtm as affine_sqrtm,
+)
+from brainhops._core.affines import (
+    to_compact,
+    to_homogeneous,
+)
 from brainhops._core.backends import (
-    _creation_options,
     array_backend,
     backend,
+    creation_options,
     resolve_backend,
     to_backend,
 )
@@ -40,16 +47,12 @@ from brainhops._core.properties import (
     lazyproperty,
     smartproperty,
 )
-from brainhops._core.typing import (
-    ArrayProtocol,
-    npmatrix,
-    npvector,
-)
-from brainhops._ext.invfield import inverse as inverse_disp
+from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
+from brainhops._ext.invfield._internal_api import inverse as inverse_disp
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel._backends import _FrozenBackendMixin
+from brainhops.datamodel._backends import FrozenBackendMixin
 from brainhops.datamodel.enums import (
     BoundaryCondition,
     InterpolationOrder,
@@ -79,7 +82,7 @@ _FORGET_DERIVED = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the cached views listed in `derived_fields`."""
 
 
-def _invalidating_property(*args, **kwargs) -> property:
+def invalidating_property(*args, **kwargs) -> property:
     """Build a [`smartproperty`][] whose assignment clears the cached views."""
     kwargs.setdefault("invalidates", _FORGET_DERIVED)
     return smartproperty(*args, **kwargs)
@@ -311,11 +314,11 @@ class TransformationField(ConcreteTransformation):
 
     # --- [meta]data views ---------------------------------------------
 
-    data = _invalidating_property("data")
-    degree = _invalidating_property("degree")
-    bound = _invalidating_property("bound")
+    data = invalidating_property("data")
+    degree = invalidating_property("degree")
+    bound = invalidating_property("bound")
 
-    @_invalidating_property
+    @invalidating_property
     def store(self) -> StoreEnum:
         return StoreEnum.values
 
@@ -333,13 +336,13 @@ class TransformationField(ConcreteTransformation):
 
     @smartproperty(cache=True)
     def values(self) -> tx.Optional[ArrayProtocol]:
-        return _data2values(self.data, self.store, self.degree, self.bound)
+        return data2values(self.data, self.store, self.degree, self.bound)
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
         # Fit coefficients if the field stores them.
         # Assigning `data` clears every view derived from it ...
-        self.data = _values2data(value, self.store, self.degree, self.bound)
+        self.data = values2data(value, self.store, self.degree, self.bound)
         # ... so the input can be cached only afterwards.
         self._cache_values = value
 
@@ -347,7 +350,7 @@ class TransformationField(ConcreteTransformation):
 
     @smartproperty(cache=True)
     def coefficients(self) -> tx.Optional[ArrayProtocol]:
-        return _data2coeffs(self.data, self.store, self.degree, self.bound)
+        return data2coeffs(self.data, self.store, self.degree, self.bound)
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:
@@ -437,7 +440,7 @@ class DisplacementField(TransformationField, polymorphic=True):
     [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField].
     """
 
-    log = _invalidating_property("log", fset=False)
+    log = invalidating_property("log", fset=False)
 
     def __post_init__(self, arguments: tx.Any) -> None:
         _refuse_log(self, arguments.get("log"), "StationaryVelocityField")
@@ -460,7 +463,7 @@ class DisplacementField(TransformationField, polymorphic=True):
         with backend("native"):
             field = self.field
         ifield = _inverse_disp(field)
-        return _values2data(ifield, self.store, self.degree, self.bound)
+        return values2data(ifield, self.store, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
 
@@ -523,7 +526,7 @@ class CoordinateField(TransformationField):
         if self.data is None:
             return None
         ifield = _inv_coords(self.field)
-        return _values2data(ifield, self.store, self.degree, self.bound)
+        return values2data(ifield, self.store, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
 
@@ -535,7 +538,7 @@ class CoordinateField(TransformationField):
         )
 
 
-class CartesianField(_FrozenBackendMixin, CoordinateField):
+class CartesianField(FrozenBackendMixin, CoordinateField):
     """Identity over a regular grid of coordinates.
 
     A grid stores only its `shape`. The coordinates of its points (`field`) and
@@ -585,7 +588,7 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
 
     # --- attribute views ----------------------------------------------
 
-    shape = _invalidating_property("shape")
+    shape = invalidating_property("shape")
 
     # --- derived attributes -------------------------------------------
 
@@ -601,7 +604,7 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
         # The grid is created in the backend of the setting in effect,
         # which a computation sets to the backend of its result.
         xp = array_backend()
-        options = _creation_options()
+        options = creation_options()
         grid = [xp.arange(s, dtype=float, **options) for s in self.shape]
         return xp.stack(xp.meshgrid(*grid, indexing="ij"), -1)
 
@@ -610,7 +613,7 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
     @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """Coordinates of the grid points, encoded according to the flags."""
-        return _values2data(self.field, self.store, self.degree, self.bound)
+        return values2data(self.field, self.store, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
 
@@ -642,7 +645,7 @@ class CartesianField(_FrozenBackendMixin, CoordinateField):
         return self.compute(**kwargs) if compute else self
 
 
-class _CompactTransformation(_FrozenBackendMixin, ConcreteTransformation): ...
+class _CompactTransformation(FrozenBackendMixin, ConcreteTransformation): ...
 
 
 @kinds.Affine
@@ -722,8 +725,8 @@ class Affine(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
     matrix = alias("data")
 
     @lazyproperty
@@ -814,8 +817,8 @@ class Linear(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
     matrix = alias("data")
 
     @lazyproperty
@@ -925,7 +928,7 @@ class Permutation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = invalidating_property("data")
     permutation = alias("data")
 
     @lazyproperty
@@ -1023,8 +1026,8 @@ class Scaling(_CompactTransformation, polymorphic=True):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
-    log = _invalidating_property("log", fset=False)
+    data = invalidating_property("data")
+    log = invalidating_property("log", fset=False)
     scale = alias("data")
 
     @lazyproperty
@@ -1084,7 +1087,7 @@ class Translation(_CompactTransformation):
 
     # --- views --------------------------------------------------------
 
-    data = _invalidating_property("data")
+    data = invalidating_property("data")
     translation = alias("data")
 
     @lazyproperty
@@ -1192,7 +1195,7 @@ def _copy_map(
     carried over untouched, so that a tangent is not exponentiated and then
     turned back into a tangent with a logarithm.
     """
-    out_tangent = bool(kwargs.get("log", _is_tangent(cls)))
+    out_tangent = bool(kwargs.get("log", is_tangent(cls)))
     # The map is read only when the caller did not give it, because reading
     # it may decode a whole file.
     if out_tangent == bool(getattr(other, "log", False)):
@@ -1215,7 +1218,7 @@ def _copy_map(
         kwargs.setdefault("log", out_tangent)
 
 
-def _is_tangent(cls: tx.Type[Transformation]) -> bool:
+def is_tangent(cls: tx.Type[Transformation]) -> bool:
     """Return whether `cls` holds the tangent of its map.
 
     A tangent class declares `True` as the default of its `_log` field. The
@@ -1225,7 +1228,7 @@ def _is_tangent(cls: tx.Type[Transformation]) -> bool:
     return bool(field_default(cls, "_log", False))
 
 
-def _data2values(
+def data2values(
     data: tx.Optional[ArrayProtocol],
     store: StoreEnum,
     degree: InterpolationOrder,
@@ -1241,7 +1244,7 @@ def _data2values(
     return coeff2value_field(data, degree=degree, bound=bound)
 
 
-def _values2data(
+def values2data(
     values: tx.Optional[ArrayProtocol],
     store: StoreEnum,
     degree: InterpolationOrder,
@@ -1257,7 +1260,7 @@ def _values2data(
     return value2coeff_field(values, degree=degree, bound=bound)
 
 
-def _data2coeffs(
+def data2coeffs(
     data: tx.Optional[ArrayProtocol],
     store: StoreEnum,
     degree: InterpolationOrder,
@@ -1300,7 +1303,7 @@ def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
     # normalized field is close to voxel space (minimize ||aff @ field -
     # idgrid||_F).
 
-    idgrid = _grid_like(coords)
+    idgrid = grid_like(coords)
     return _inverse_disp(coords - idgrid) + idgrid
 
 
@@ -1322,7 +1325,7 @@ def _inverse_disp(disp: ArrayProtocol) -> ArrayProtocol:
     return to_backend(inverse, target)
 
 
-def _grid_like(field: ArrayProtocol) -> ArrayProtocol:
+def grid_like(field: ArrayProtocol) -> ArrayProtocol:
     """Return the identity grid of a field, in the package of the field.
 
     The grid holds the coordinates of the voxels of the field, as
@@ -1348,7 +1351,7 @@ def _refuse_log(
     TypeError
         If `log` is true and the class does not hold a tangent.
     """
-    if not log or _is_tangent(type(xform)):
+    if not log or is_tangent(type(xform)):
         return
     raise TypeError(
         f"A {type(xform).__name__} holds the map, not its tangent about the "

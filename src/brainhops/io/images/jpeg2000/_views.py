@@ -7,7 +7,7 @@ samples)` for several samples per pixel. The data of an image is indexed
 below swap the first two axes. The proxy that decodes the samples is
 read with the array backend, which decodes it with NumPy and keeps it
 lazy with Dask. The two functions are pure and invert each other, so
-that `_image_to_model(_image_to_disk(data))` gives `data` back.
+that `image_to_model(image_to_disk(data))` gives `data` back.
 """
 
 # core
@@ -15,7 +15,7 @@ from brainhops._core.backends import array_backend
 from brainhops._core.typing import ArrayProtocol
 
 
-def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
+def image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     """Return the data of an image from the samples that Pillow decodes.
 
     The data are the samples with the columns first. The axes are swapped
@@ -25,7 +25,7 @@ def _image_to_model(raw: ArrayProtocol) -> ArrayProtocol:
     return raw.transpose(perm)
 
 
-def _image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
+def image_to_disk(data: ArrayProtocol) -> ArrayProtocol:
     """Return the samples, as Pillow decodes them, from the data.
 
     The rows come first, then the columns, then the samples.

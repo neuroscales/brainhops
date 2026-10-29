@@ -31,12 +31,12 @@ from ._codecs import (
     format_layout,
     parse_layout,
 )
-from ._constants import _FILE, _RESERVED
+from ._constants import FILE, RESERVED
 from ._data import (
-    _is_scaled,
-    _MrtrixProxy,
-    _scaled_dtype,
+    MrtrixProxy,
     encode_data,
+    is_scaled,
+    scaled_dtype,
     whole_file,
 )
 from ._raw import MrtrixRaw
@@ -105,9 +105,7 @@ def merged_keyval(
     """
     keyval = dict(keyval or {})
     refused = sorted(
-        key
-        for key in keyval
-        if key.lower() in _RESERVED or key.lower() == _FILE
+        key for key in keyval if key.lower() in RESERVED or key.lower() == FILE
     )
     if refused:
         raise WriterError(
@@ -352,13 +350,13 @@ def stored_voxels(record: MrtrixRaw, source: ArrayProtocol) -> ArrayProtocol:
     """
     if whole_file(source) is not None:
         return source
-    stored = _scaled_dtype(record).newbyteorder("=")
-    if not _is_scaled(record) and stored == np.dtype(
-        source.dtype
-    ).newbyteorder("="):
+    stored = scaled_dtype(record).newbyteorder("=")
+    if not is_scaled(record) and stored == np.dtype(source.dtype).newbyteorder(
+        "="
+    ):
         return source
     content = BytesIO(payload(record, source))
-    return _MrtrixProxy.from_record(content, 0, 0, record, mmap=False)
+    return MrtrixProxy.from_record(content, 0, 0, record, mmap=False)
 
 
 # ----------------------------------------------------------------------
@@ -382,7 +380,7 @@ def reads_from(raw: tx.Any, written: tx.Sequence[path.Path]) -> bool:
         Whether `raw` is a lazy array of one of these files.
     """
     raw = raw.root if isinstance(raw, ArrayProxy) else raw
-    if not isinstance(raw, _MrtrixProxy):
+    if not isinstance(raw, MrtrixProxy):
         return False
     if not isinstance(raw.source, path.Path):
         # A stream is never one of the files that are written.

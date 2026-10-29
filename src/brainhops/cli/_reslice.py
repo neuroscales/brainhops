@@ -167,7 +167,7 @@ def _parse_clip(value: str) -> Clip:
         ) from error
 
 
-def _split_transform_spec(spec: str) -> TransformationSpec:
+def split_transform_spec(spec: str) -> TransformationSpec:
     """Parse a transformation source specification."""
     try:
         return TransformationSpec.from_arg(spec)
@@ -177,7 +177,7 @@ def _split_transform_spec(spec: str) -> TransformationSpec:
         ) from exc
 
 
-def _split_image_spec(spec: str) -> ImageSpec:
+def split_image_spec(spec: str) -> ImageSpec:
     """Parse an image source specification."""
     try:
         return ImageSpec.from_arg(spec)
@@ -185,14 +185,14 @@ def _split_image_spec(spec: str) -> ImageSpec:
         raise CliError(f"Invalid image source {spec!r}: {exc}") from exc
 
 
-def _load_push_transform(spec: str) -> Transformation:
+def load_push_transform(spec: str) -> Transformation:
     """Load a transformation and apply its chain of operators.
 
     The operators are applied in the order written, so that `warp|a|b`
     applies `a` to the loaded transformation and then applies `b` to the
     result. The returned transformation is a forward (push) map.
     """
-    source = _split_transform_spec(spec)
+    source = split_transform_spec(spec)
     transform = load_transform(source)
     return source.apply_operations(transform)
 
@@ -223,16 +223,16 @@ def reslice_image(
     input_spec = (
         input_path
         if isinstance(input_path, ImageSpec)
-        else _split_image_spec(input_path)
+        else split_image_spec(input_path)
     )
     image = load_image(input_spec)
     for spec in transform_paths:
-        transform = _load_push_transform(spec)
+        transform = load_push_transform(spec)
         image = image(transform)
     reference_spec = (
         reference_path
         if isinstance(reference_path, ImageSpec)
-        else _split_image_spec(reference_path)
+        else split_image_spec(reference_path)
     )
     reference = load_image(reference_spec)
     return image.reslice(

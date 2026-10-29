@@ -26,14 +26,8 @@ from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.errors import WriterError
 
 # this format
-from .affines import (
-    _LPS,
-    _RAS,
-    _VOXEL,
-    RASToVoxel,
-    VoxelToRAS,
-    _check_endpoint,
-)
+from ._endpoints import check_endpoint
+from .affines import RASToVoxel, VoxelToRAS
 
 DISPLACEMENT_HINTS: tx.Tuple[str, ...] = (
     "displacements",
@@ -69,8 +63,8 @@ class RASCoordinateField(_xforms.CoordinateField):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        _check_endpoint(self, "input", _VOXEL)
-        _check_endpoint(self, "output", _RAS)
+        check_endpoint(self, "input", _systems.VoxelCoordinateSystem())
+        check_endpoint(self, "output", _systems.RASmm())
 
 
 class LPSCoordinateField(_xforms.CoordinateField):
@@ -83,8 +77,8 @@ class LPSCoordinateField(_xforms.CoordinateField):
 
     def __post_init__(self, arguments: tx.Any) -> None:
         super().__post_init__(arguments)
-        _check_endpoint(self, "input", _VOXEL)
-        _check_endpoint(self, "output", _LPS)
+        check_endpoint(self, "input", _systems.VoxelCoordinateSystem())
+        check_endpoint(self, "output", _systems.LPSmm())
 
 
 # ----------------------------------------------------------------------

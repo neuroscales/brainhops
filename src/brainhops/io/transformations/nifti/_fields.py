@@ -13,17 +13,12 @@ from bagof.hints.array import ArrayProtocol
 from bagof.magic import Inherit, NoRepr, replace
 
 # internals
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -31,28 +26,26 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
-from brainhops.io.common.nifti._constants import (
-    _NIFTI_INTENT_DISPVECT,
-    _NIFTI_INTENT_NAME_ITK_COORDINATES,
-    _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
-    _NIFTI_INTENT_NAME_NIFTYREG,
-    _NIFTI_INTENT_VECTOR,
+from brainhops.io.common.nifti._internal_api import (
+    NIFTI_INTENT_DISPVECT,
+    NIFTI_INTENT_NAME_ITK_COORDINATES,
+    NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
+    NIFTI_INTENT_NAME_NIFTYREG,
+    NIFTI_INTENT_VECTOR,
+    NiftiObject,
+    apply_like,
+    apply_overrides,
+    header_of,
+    keep_given_fields,
+    nifti_intent,
+    nifti_intent_name,
+    nifti_shape,
+    record_image,
+    set_coordinates_intent,
+    split_options,
+    stored_parts,
 )
-from brainhops.io.common.nifti._header import (
-    _apply_like,
-    _apply_overrides,
-    _header,
-    _keep_given_fields,
-    _nifti_intent,
-    _nifti_intent_name,
-    _nifti_shape,
-    _NiftiObject,
-    _record_image,
-    _set_coordinates_intent,
-    _split_options,
-    _stored_parts,
-)
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     overruled_fields,
     requested_fields,
@@ -66,8 +59,8 @@ from brainhops.io.transformations.base.fields import (
 )
 
 # this format
-from ._base import NiftiBasedTransformation, _consolidated_metadata
-from ._views import _check_single_field, _field_to_disk, _field_to_model
+from ._base import NiftiBasedTransformation, consolidated_metadata
+from ._views import check_single_field, field_to_disk, field_to_model
 
 _NDIM = 3
 """Spatial dimension supported by the displacement reader."""
@@ -95,7 +88,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
     """
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as a field of RAS coordinates.
 
@@ -110,23 +103,23 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         [`brainhops.io.transformations.itk.nifti`][]). Any other file whose
         trailing axis has length 3 scores `Confidence.MAYBE`.
         """
-        intent = _nifti_intent(header)
-        if _nifti_intent_name(header) in (
-            _NIFTI_INTENT_NAME_NIFTYREG,
-            _NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
-            _NIFTI_INTENT_NAME_ITK_COORDINATES,
+        intent = nifti_intent(header)
+        if nifti_intent_name(header) in (
+            NIFTI_INTENT_NAME_NIFTYREG,
+            NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
+            NIFTI_INTENT_NAME_ITK_COORDINATES,
         ):
             # Only the NiftyReg readers decode what intent_p1 says the file
             # holds, and only the ITK readers read a field that brainhops
             # wrote as one.
             return Confidence.NO
-        if intent == _NIFTI_INTENT_VECTOR:
+        if intent == NIFTI_INTENT_VECTOR:
             return Confidence.CERTAIN
-        if intent == _NIFTI_INTENT_DISPVECT:
+        if intent == NIFTI_INTENT_DISPVECT:
             return Confidence.NO
         # The intent is often unset, so fall back on the shape. A plain image
         # scores zero rather than compete with the affine readers.
-        shape = _nifti_shape(header)
+        shape = nifti_shape(header)
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.MAYBE
         return Confidence.NO
@@ -150,7 +143,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     def _consolidate(
         self,
@@ -214,7 +207,7 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             If the field has no coordinates, or if its array holds a
             field for each of several volumes.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -230,16 +223,16 @@ class NiftiRASCoordinateField(NiftiBasedTransformation, RASCoordinateField):
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _coordinates_encoded(self, like, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -351,7 +344,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         """
         if self.rawdata is None:
             return None
-        return _field_to_model(self.rawdata)
+        return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -421,7 +414,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         return _with_encoding(obj, encoding)
 
     @classmethod
-    def score_header(cls, header: _NiftiObject) -> float:
+    def score_header(cls, header: NiftiObject) -> float:
         """
         Score a header as a field of RAS displacements.
 
@@ -429,7 +422,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         Other images may hold coordinates and are left to
         [`NiftiRASCoordinateField`][].
         """
-        if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
+        if nifti_intent(header) == NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
         return Confidence.NO
 
@@ -457,7 +450,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         The affine is the best affine of the header, or the identity for a
         field without metadata.
         """
-        header = _header(self)
+        header = header_of(self)
         if header is None:
             return np.eye(4)
         return np.asarray(header.get_best_affine(), dtype=np.float64)
@@ -595,7 +588,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
             If the stored array holds a field for each of several
             volumes.
         """
-        fields, overrides = _split_options(options)
+        fields, overrides = split_options(options)
         name = type(self).__name__
         report = ConversionReport(source=name, target=name)
         requested = requested_fields(self.metadata, fields)
@@ -613,16 +606,16 @@ StationaryVelocityField], integrated with `steps` squaring steps
             and self.metadata is not None
             and self.metadata.raw is not None
         ):
-            _check_single_field(self.rawdata, WriterError)
+            check_single_field(self.rawdata, WriterError)
             apply_loss_policy(report, stacklevel=2)
             return self if inplace else replace(self)
         if "dtype" in requested:
             overrides["dtype"] = requested["dtype"]
         base = None if metadata is None else metadata.raw
-        raw, record = _stored_parts(
+        raw, record = stored_parts(
             _displacement_encoded(self, like, log, overrides, base, fields)
         )
-        metadata = _consolidated_metadata(self, record)
+        metadata = consolidated_metadata(self, record)
         overruled_fields(requested, metadata, report)
         apply_loss_policy(report, stacklevel=2)
         if not inplace:
@@ -713,22 +706,22 @@ def _coordinates_encoded(
     # NIfTI stores sampled coordinates.
     if StoreEnum(field.store) is not StoreEnum.values:
         values = field.to(store="values").data
-        raw = None if values is None else _field_to_disk(values)
+        raw = None if values is None else field_to_disk(values)
     elif field._data is not None:
-        raw = _field_to_disk(field._data)
+        raw = field_to_disk(field._data)
     else:
         raw = field.rawdata
     if raw is None:
         raise WriterError(
             "This field has no coordinates, so there is nothing to write."
         )
-    _check_single_field(raw, WriterError)
+    check_single_field(raw, WriterError)
     record = None if base is None else base.copy()
-    image = _record_image(raw, record, overrides=overrides)
-    _set_coordinates_intent(image.header)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+    image = record_image(raw, record, overrides=overrides)
+    set_coordinates_intent(image.header)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     return image
 
 
@@ -750,7 +743,7 @@ def _displacement_encoded(
     """
     what = "A NIfTI displacement field"
     if field._data is not None:
-        stored = _field_to_disk(field._data)
+        stored = field_to_disk(field._data)
     else:
         stored = field.rawdata
     if (
@@ -758,20 +751,20 @@ def _displacement_encoded(
         and field._transformations is None
         and log == field.log
     ):
-        _check_single_field(stored, WriterError)
+        check_single_field(stored, WriterError)
         record = None if base is None else base.copy()
-        image = _record_image(stored, record, overrides=overrides)
-        if _nifti_intent(image.header) != _NIFTI_INTENT_DISPVECT:
-            image.header.set_intent(_NIFTI_INTENT_DISPVECT)
+        image = record_image(stored, record, overrides=overrides)
+        if nifti_intent(image.header) != NIFTI_INTENT_DISPVECT:
+            image.header.set_intent(NIFTI_INTENT_DISPVECT)
     else:
         vox2ras, vectors = split_ras_displacement_chain(
             field.transformations, what, ndim=_NDIM, log=log
         )
-        vectors = _field_to_disk(vectors)
+        vectors = field_to_disk(vectors)
         record = None if base is None else base.copy()
-        image = _record_image(vectors, record, vox2ras, overrides)
-        image.header.set_intent(_NIFTI_INTENT_DISPVECT)
-    _apply_like(image, like)
-    _keep_given_fields(image, fields)
-    _apply_overrides(image, overrides)
+        image = record_image(vectors, record, vox2ras, overrides)
+        image.header.set_intent(NIFTI_INTENT_DISPVECT)
+    apply_like(image, like)
+    keep_given_fields(image, fields)
+    apply_overrides(image, overrides)
     return image

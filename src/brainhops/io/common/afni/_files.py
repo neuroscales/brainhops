@@ -10,7 +10,7 @@ import typing_extensions as tx
 from brainhops._core import path
 
 # this format
-from ._constants import _BRIK_SUFFIXES
+from ._constants import BRIK_SUFFIXES
 
 # ----------------------------------------------------------------------
 #   FILES
@@ -41,14 +41,14 @@ def afni_dataset_files(
     name = filename.name
     stem, head_ext, brik_ext = name, ".HEAD", ".BRIK"
     match = re.search(r"\.(HEAD|head|BRIK|brik)(\.[A-Za-z0-9]+)?$", name)
-    if match and match.group(2) in (None,) + _BRIK_SUFFIXES[1:]:
+    if match and match.group(2) in (None,) + BRIK_SUFFIXES[1:]:
         stem = name[: match.start()]
         if match.group(1).islower():
             head_ext, brik_ext = ".head", ".brik"
     parent = filename.parent
     head = parent / (stem + head_ext)
     brik = None
-    for suffix in _BRIK_SUFFIXES:
+    for suffix in BRIK_SUFFIXES:
         candidate = parent / (stem + brik_ext + suffix)
         if candidate.exists():
             brik = candidate
@@ -88,20 +88,20 @@ def afni_written_files(
     brik_ext = ".brik" if head.name.endswith(".head") else ".BRIK"
     suffix = ""
     if ".BRIK" in filename.name.upper():
-        suffix = _brik_suffix(filename)
+        suffix = brik_suffix(filename)
     brik = filename.parent / (stem + brik_ext + suffix)
     stale = []
-    for other in _BRIK_SUFFIXES:
+    for other in BRIK_SUFFIXES:
         sibling = filename.parent / (stem + brik_ext + other)
         if other != suffix and sibling.is_local() and sibling.is_file():
             stale.append(sibling)
     return head, brik, stale
 
 
-def _brik_suffix(brik: tx.Any) -> str:
+def brik_suffix(brik: tx.Any) -> str:
     """Return the compression suffix of a BRIK name, or `""` without one."""
     name = str(brik.name if hasattr(brik, "name") else brik)
-    for suffix in _BRIK_SUFFIXES[1:]:
+    for suffix in BRIK_SUFFIXES[1:]:
         if name.endswith(suffix):
             return suffix
     return ""

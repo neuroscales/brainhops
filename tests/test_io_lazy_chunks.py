@@ -94,17 +94,17 @@ def zarr_field(tmp_path: Path) -> str:
 @pytest.fixture
 def read_boxes(monkeypatch: pytest.MonkeyPatch) -> list:
     """Record the shape of every box that a lazy Zarr array reads."""
-    from brainhops.io.common.zarr._data import _ZarrProxy
+    from brainhops.io.common.zarr._data import ZarrProxy
 
     boxes = []
-    read = _ZarrProxy._read
+    read = ZarrProxy._read
 
     def recording(self, index):  # noqa: ANN001, ANN202
         values = read(self, index)
         boxes.append(values.shape)
         return values
 
-    monkeypatch.setattr(_ZarrProxy, "_read", recording)
+    monkeypatch.setattr(ZarrProxy, "_read", recording)
     return boxes
 
 

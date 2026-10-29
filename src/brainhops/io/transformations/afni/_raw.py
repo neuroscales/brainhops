@@ -10,15 +10,15 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import declined, no_options
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
-    SnifferContentError,
     TextFileReader,
     TextFileWriter,
 )
-from brainhops.io.common._arrays import (
+from brainhops.io.common._internal_api import (
     ArrayContainerError,
     is_numeric_array,
     read_text_array,
@@ -29,7 +29,7 @@ _SIGNATURE = "DICOM-to-DICOM"
 before their matrices: `# 3dAllineate matrices (DICOM-to-DICOM,
 row-by-row):`."""
 
-_COMMENT = "# AFNI matrices (DICOM-to-DICOM, row-by-row):"
+COMMENT = "# AFNI matrices (DICOM-to-DICOM, row-by-row):"
 """The comment written before matrices that were not read from a file."""
 
 _AFF12 = ".aff12.1d"
@@ -48,6 +48,9 @@ _SNIFF_LIMIT = 16 << 20
 The volume registration of a long time series writes one row per volume,
 so a few megabytes are allowed before a file is turned down unread.
 """
+
+_OPTION_OWNER = "AFNI matrix file"
+"""What refuses unknown options, as the error message names it."""
 
 
 class AfniAffineRaw(TextFileReader, TextFileWriter):
@@ -150,9 +153,9 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
             if isinstance(text, bytes):
                 text = text.decode("utf-8")
         except UnicodeDecodeError as e:
-            return _declined(error, "The content is not text.", e)
+            return declined(error, "The content is not text.", e)
         if len(text) > _SNIFF_LIMIT:
-            return _declined(error, "The content is too long.", None)
+            return declined(error, "The content is too long.", None)
         return _score(text.splitlines(), name, error)
 
     @classmethod
@@ -215,7 +218,7 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
         ParserContentError
             If the text does not hold matrices that AFNI reads.
         """
-        _no_options(kwargs)
+        no_options(kwargs, _OPTION_OWNER)
         lines = text.splitlines()
         array = _array(lines)
         matrices = _matrices(array)
@@ -282,7 +285,7 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
         TypeError
             If an option is given.
         """
-        _no_options(kwargs)
+        no_options(kwargs, _OPTION_OWNER)
         if self.stored is not None and _parsed(self.stored) == self:
             return self.stored
         lines = self.comment.splitlines() if self.comment else []
@@ -334,20 +337,6 @@ class AfniAffineRaw(TextFileReader, TextFileWriter):
 # ----------------------------------------------------------------------
 #   HELPERS
 # ----------------------------------------------------------------------
-
-
-def _no_options(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse the options of a reader or a writer that takes none.
-
-    Raises
-    ------
-    TypeError
-        If an option is given.
-    """
-    if kwargs:
-        raise TypeError(
-            f"Unknown AFNI matrix file option(s): {', '.join(kwargs)}"
-        )
 
 
 def _array(lines: tx.List[str]) -> np.ndarray:
@@ -418,9 +407,9 @@ def _score(
     try:
         array = _array(lines)
     except ParserContentError as e:
-        return _declined(error, str(e), e)
+        return declined(error, str(e), e)
     if _matrices(array) is None:
-        return _declined(
+        return declined(
             error, f"A {array.shape} table is not an AFNI matrix file.", None
         )
     lower = None if name is None else name.lower()
@@ -436,7 +425,7 @@ def _score(
         return Confidence.LIKELY if own else Confidence.WEAK
     if array.shape[1] == 12:
         return Confidence.WEAK
-    return _declined(
+    return declined(
         error, "A matrix in a file not named .1D is not claimed by AFNI.", None
     )
 
@@ -464,16 +453,3 @@ def _format(value: float) -> str:
     if value.is_integer() and abs(value) < 1e15:
         return str(int(value))
     return repr(value)
-
-
-def _declined(
-    error: tx.Union[bool, tx.Type[Exception]],
-    message: str,
-    failure: tx.Optional[Exception],
-) -> float:
-    """Decline sniffed content, raising the requested error if any."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error(message) from failure
-    return Confidence.NO

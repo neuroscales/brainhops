@@ -21,7 +21,7 @@ from brainhops._core.backends import array_backend, to_backend, to_numpy
 from brainhops._core.path import Path, replace_directory
 
 # datamodel
-from brainhops.datamodel._sugar import vector_axis
+from brainhops.datamodel._internal_api import vector_axis
 from brainhops.datamodel.axes import AxisList
 from brainhops.datamodel.transformations import (
     Affine,
@@ -42,17 +42,15 @@ from brainhops.errors import ParserTypeError, WriterError
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike
-from brainhops.io.common.zarr._data import (
-    _ZarrProxy,
+from brainhops.io.common.zarr._internal_api import (
+    ZarrNodeReaderWriter,
+    ZarrProxy,
+    absolute_location,
+    as_node,
     reads_inside,
     store_chunks,
     store_location,
     write_into,
-)
-from brainhops.io.common.zarr._parsers import (
-    _as_node,
-    _ZarrNodeReaderWriter,
-    absolute_location,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -69,7 +67,7 @@ if tx.TYPE_CHECKING:
 
 @register_format
 class OmeZarrField(
-    _ZarrNodeReaderWriter, TransformationFormat, MultiscaleField
+    ZarrNodeReaderWriter, TransformationFormat, MultiscaleField
 ):
     """A coordinate or displacement field stored as OME-Zarr.
 
@@ -187,7 +185,7 @@ class OmeZarrField(
         held as a lazy array of its Zarr array, so that nothing but the
         metadata is read here, and the metadata is kept as read.
         """
-        node = _as_node(node)
+        node = as_node(node)
         if node is None:
             raise ParserTypeError(
                 "from_node expects an opened Zarr array or group; pass a "
@@ -236,7 +234,7 @@ class OmeZarrField(
             ]
         else:
             spatial = list(range(spatial_ndim))
-        placements = [_dataset_placement(ds, spatial, ndim) for ds in datasets]
+        placements = [dataset_placement(ds, spatial, ndim) for ds in datasets]
         voxel2world = placements[0]
         world2voxel = voxel2world.inverse()
         level_transforms = [
@@ -282,7 +280,7 @@ class OmeZarrField(
         """
         # Each level is written at the dataset path named by the metadata, and
         # the metadata is re-emitted unchanged.
-        node = _as_node(node)
+        node = as_node(node)
         if not isinstance(node, abczarr.ZarrGroup):
             raise WriterError(
                 "An OME-Zarr field is written into a group, not a plain array."
@@ -351,7 +349,7 @@ class OmeZarrField(
             cannot be replaced without the level reading a store half
             written.
         """
-        node = _as_node(location)
+        node = as_node(location)
         if node is not None:
             self.to_node(node, **kwargs)
             return
@@ -394,7 +392,7 @@ class OmeZarrField(
     def _level_voxel2world(self, index: int, ndim: int) -> Transformation:
         # Always a defined affine: the finest placement composed with the
         # transformation from this level's grid to the finest grid.
-        base = _affine_or_identity(
+        base = affine_or_identity(
             self.voxel2world if self.voxel2world is not None else Identity(),
             ndim,
         )
@@ -457,7 +455,7 @@ def _level_proxy(array: tx.Any) -> tx.Any:
     # reads only the chunks that a selection needs. A node that is not a
     # Zarr array, such as an array given in memory, is kept as it is.
     if isinstance(array, abczarr.ZarrArray):
-        return _ZarrProxy(array, store_location(array))
+        return ZarrProxy(array, store_location(array))
     return array
 
 
@@ -497,12 +495,30 @@ def _to_voxel_displacement(
     return raw @ ab.asarray(inverse[:, :-1].T)
 
 
-def _dataset_placement(
+def dataset_placement(
     dataset: tx.Any, spatial: tx.Sequence[int], ndim: int
 ) -> Transformation:
-    # A level's placement is the dataset's first coordinate transformation, or
-    # the identity. It is mapped over all `ndim` stored axes, and then
-    # restricted to the `spatial` ones, which keep their stored order.
+    """Return the placement of a level of an OME-Zarr field.
+
+    The placement is the first coordinate transformation of the dataset
+    of the level, or the identity when it has none. It is mapped over
+    all the `ndim` stored axes, and then restricted to the `spatial`
+    ones, which keep their stored order.
+
+    Parameters
+    ----------
+    dataset : Any
+        The dataset of the level, from the multiscale metadata.
+    spatial : Sequence[int]
+        The indices of the spatial axes among the stored axes.
+    ndim : int
+        The number of stored axes.
+
+    Returns
+    -------
+    Transformation
+        The placement of the level over its spatial axes.
+    """
     transforms = list(
         getattr(dataset, "coordinateTransformations", None) or []
     )
@@ -553,10 +569,26 @@ def _spatial_part(
     return Affine(matrix=matrix[np.ix_(spatial, spatial + [ndim])])
 
 
-def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
-    # An affine placement is returned unchanged. Otherwise, an identity affine
-    # stands in, so that the leading world-to-voxel element stays a defined
-    # affine rather than a bare identity.
+def affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
+    """Return a placement, or an identity affine in its place.
+
+    An affine placement is returned unchanged. Otherwise, an identity
+    affine between the same systems stands in, so that the leading
+    world-to-voxel element of a chain stays a defined affine rather than
+    a bare identity.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The placement.
+    ndim : int
+        The number of dimensions of the identity affine.
+
+    Returns
+    -------
+    Transformation
+        The placement, or an identity affine.
+    """
     affine = xform.to_affine(on_error=None)
     if affine is not None:
         return xform

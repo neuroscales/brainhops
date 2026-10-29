@@ -6,11 +6,16 @@ import pytest
 import typing_extensions as tx
 
 from brainhops._core.path import Path
+from brainhops._core.streams import preserve_position
 from brainhops.datamodel.metadata._report import takes_error_policy
 from brainhops.io.base._base import (
     FileFormat,
     format_registry,
     register_format,
+)
+from brainhops.io.base._parsers import (
+    delegated_from_fileobj,
+    overrides_from_fileobj,
 )
 from brainhops.io.base.parsers import (
     BinaryFileReader,
@@ -24,10 +29,7 @@ from brainhops.io.base.parsers import (
     TextFileReader,
     TextFileWriter,
     WriterError,
-    _delegated_from_fileobj,
-    _overrides_from_fileobj,
     disabled,
-    preserve_position,
 )
 
 
@@ -226,7 +228,8 @@ def test_a_boolean_sniffer_is_a_valid_scoring_sniffer() -> None:
 def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     """The writer entry point must not shadow Transformation.to(cls)."""
     from brainhops.datamodel.transformations import Transformation
-    from brainhops.io.base.parsers import FileWriter, _WriterMixin
+    from brainhops.io.base._parsers import WriterMixin
+    from brainhops.io.base.parsers import FileWriter
     from brainhops.io.transformations.base import (
         TransformationFormat,
     )
@@ -238,7 +241,7 @@ def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
 
     mro = WritableTransformation.__mro__
     assert next(c for c in mro if "to" in c.__dict__) is Transformation
-    assert next(c for c in mro if "save" in c.__dict__) is _WriterMixin
+    assert next(c for c in mro if "save" in c.__dict__) is WriterMixin
 
 
 # ----------------------------------------------------------------------
@@ -365,7 +368,7 @@ def test_a_delegated_fileobj_counts_when_its_delegate_reads_streams() -> None:
         DELEGATE: tx.ClassVar[tx.Optional[type]] = None
 
         @classmethod
-        @_delegated_from_fileobj(lambda cls: cls.DELEGATE)
+        @delegated_from_fileobj(lambda cls: cls.DELEGATE)
         def from_fileobj(cls, file, **kwargs) -> tx.Any:  # noqa: ANN001
             if cls.DELEGATE is None:
                 return super().from_fileobj(file, **kwargs)
@@ -378,13 +381,13 @@ def test_a_delegated_fileobj_counts_when_its_delegate_reads_streams() -> None:
         DELEGATE = BytesOnly
 
     # Without a delegate, the method is a passthrough.
-    assert not _overrides_from_fileobj(Delegating)
+    assert not overrides_from_fileobj(Delegating)
     with pytest.raises(ParserNotImplementedError):
         Delegating.from_bytes(b"data")
     # The delegate decides whether the stream is read.
-    assert _overrides_from_fileobj(ToHeader)
+    assert overrides_from_fileobj(ToHeader)
     assert ToHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"
-    assert not _overrides_from_fileobj(ToBytes)
+    assert not overrides_from_fileobj(ToBytes)
 
 
 # ----------------------------------------------------------------------

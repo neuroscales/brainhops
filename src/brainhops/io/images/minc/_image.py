@@ -15,9 +15,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.orientations import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
@@ -28,24 +26,26 @@ from brainhops.datamodel.units import (
     is_physicalunit,
 )
 from brainhops.io.base._base import register_format
+from brainhops.io.base._internal_api import checked_score, no_options
 from brainhops.io.base.parsers import BinaryFileReader, ParserContentError
 from brainhops.io.common.minc import MincDimension, MincMetadata, MincRaw
-from brainhops.io.common.minc._data import read_minc
-from brainhops.io.common.minc._raw import _no_options, sniff_minc
-from brainhops.io.common.minc._utils import (
-    _axis,
-    _score,
-    _sniff_minc2,
+from brainhops.io.common.minc._internal_api import (
+    DECLINE_MESSAGE,
+    OPTION_OWNER,
     minc_version,
+    read_minc,
+    sniff_minc,
+    sniff_minc2,
+    voxel_axis,
 )
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _PHYSICAL = "physical"
 """Name of the scaled voxel space."""
@@ -161,7 +161,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -263,9 +263,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             metadata = self.metadata
         if self._data is None and not requested:
             return self if inplace else replace(self)
-        raw = (
-            self.rawdata if self._data is None else _image_to_disk(self._data)
-        )
+        raw = self.rawdata if self._data is None else image_to_disk(self._data)
         if not inplace:
             return replace(self, data=None, rawdata=raw, metadata=metadata)
         self.rawdata = raw
@@ -335,7 +333,9 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             with filename.open("rb") as f:
                 version = minc_version(f.read(8))
             if version == 2 and 2 in cls._versions():
-                return _score(_sniff_minc2(str(filename)), error)
+                return checked_score(
+                    sniff_minc2(str(filename)), error, DECLINE_MESSAGE
+                )
         return super().sniff_filename(filename, error=error, **kwargs)
 
     @classmethod
@@ -368,7 +368,9 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
         float
             The confidence, between 0 and 1.
         """
-        return _score(sniff_minc(file, cls._versions()), error)
+        return checked_score(
+            sniff_minc(file, cls._versions()), error, DECLINE_MESSAGE
+        )
 
     @classmethod
     def from_filename(
@@ -403,7 +405,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the file is not a MINC file of a version that this class
             reads, or nibabel cannot read its voxels.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_minc(filename)
         klass = cls._variant(raw.version)
         return klass(rawdata=proxy, metadata=MincMetadata.from_raw(raw))
@@ -438,7 +440,7 @@ class MincImage(BinaryFileReader, ImageFormat, SingleScaleImage):
             If the stream is not a MINC file of a version that this class
             reads, or nibabel cannot read its voxels.
         """
-        _no_options(kwargs)
+        no_options(kwargs, OPTION_OWNER)
         raw, proxy = read_minc(file)
         klass = cls._variant(raw.version)
         return klass(rawdata=proxy, metadata=MincMetadata.from_raw(raw))
@@ -508,7 +510,7 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
 
 def _minc_system(record: MincRaw) -> CoordinateSystem:
     """Return the voxel system of a record, in Fortran order."""
-    axes = [_axis(d.name) for d in reversed(record.dimensions)]
+    axes = [voxel_axis(d.name) for d in reversed(record.dimensions)]
     return ArrayCoordinateSystem(name="voxel", axes=axes, order="F")
 
 

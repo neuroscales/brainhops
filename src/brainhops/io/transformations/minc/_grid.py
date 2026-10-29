@@ -16,9 +16,9 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path
-from brainhops._core.backends import to_backend
 
 # io
+from brainhops._core.backends import to_backend
 from brainhops._core.typing import ArrayProtocol
 
 # datamodel
@@ -35,7 +35,7 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     ParserNotImplementedError,
 )
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
     displacement_parts,
     split_field_chain,

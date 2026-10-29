@@ -55,7 +55,7 @@ from brainhops.io.images.jpeg2000 import (  # noqa: E402
     _boxes,  # noqa: E402
     _data,  # noqa: E402
 )
-from brainhops.io.images.jpeg2000._data import _Jpeg2000Proxy  # noqa: E402
+from brainhops.io.images.jpeg2000._data import Jpeg2000Proxy  # noqa: E402
 from brainhops.io.images.jpeg2000._raw import read_record  # noqa: E402
 from brainhops.io.images.pillow import PillowImage  # noqa: E402
 
@@ -204,7 +204,7 @@ def test_full_resolution_is_exact_f_ordered_and_read_only(
     assert data.flags.f_contiguous and not data.flags.c_contiguous
     with pytest.raises(TypeError):
         image.data[0, 0] = 1
-    assert isinstance(image.rawdata, _Jpeg2000Proxy)
+    assert isinstance(image.rawdata, Jpeg2000Proxy)
 
 
 def test_data_stays_lazy_with_dask(tmp_path: Path) -> None:

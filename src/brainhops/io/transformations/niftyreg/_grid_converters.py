@@ -51,14 +51,12 @@ import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
     FieldParts,
+    control_grid,
     displacement_parts,
     displacements_of,
     field_slots,
@@ -66,14 +64,11 @@ from brainhops.io.transformations.base._conversions import (
     held,
     register_converter,
     sample_on_grid,
+    source_grid,
     split_affine,
     split_field_chain,
     undoes,
     unrepresentable,
-)
-from brainhops.io.transformations.base._splines import (
-    control_grid,
-    source_grid,
 )
 from brainhops.io.transformations.base.affines import (
     RASToRAS,

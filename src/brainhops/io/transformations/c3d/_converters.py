@@ -13,15 +13,12 @@ because the endpoints of the format accept unknown systems.
 import typing_extensions as tx
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    _convert_withlog,
-)
-from brainhops.io.transformations.base._conversions import (
+from brainhops.datamodel._internal_api import convert_withlog, converter
+from brainhops.datamodel.systems import RASmm
+from brainhops.io.transformations.base._internal_api import (
     affine_between,
     format_options,
 )
-from brainhops.io.transformations.base.affines import _RAS
 
 from ._affine import C3dAffine
 
@@ -39,7 +36,7 @@ def _(t: _xforms.Affine, cls: tx.Type[C3dAffine], **kwargs) -> C3dAffine:
     # `affine_between` either converts `t` exactly or raises.
     cls = C3dAffine
     format_options(t, cls, kwargs)
-    matrix = affine_between(t, _RAS, _RAS, cls)
+    matrix = affine_between(t, RASmm(), RASmm(), cls)
     return cls(matrix=matrix[:-1])
 
 
@@ -48,4 +45,4 @@ def _(t: C3dAffine, cls: tx.Type[C3dAffine], **kwargs) -> C3dAffine:
     # A transformation that is already in this format is changed by the
     # rules of any affine, for example when it is given a new `matrix=`,
     # and these rules keep its type.
-    return _convert_withlog(t, cls, "matrix", **kwargs)
+    return convert_withlog(t, cls, "matrix", **kwargs)

@@ -9,7 +9,7 @@ import typing_extensions as tx
 # core
 from brainhops._core import affines as _affines
 from brainhops._core.backends import array_backend, to_backend
-from brainhops._core.enum import StrEnum
+from brainhops._core.compat import StrEnum
 from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.proxy import ArrayProxy
 from brainhops._core.typing import ArrayProtocol
@@ -20,17 +20,17 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
 
 # io
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # this format
-from ._systems import _make_grid_system, _make_system
+from ._systems import make_grid_system, make_system
 
 # An ITK transform type name is `{Class}_{Precision}_{InputDim}_{OutputDim}`.
 # A B-spline whose degree is not 3 appends its degree, as in
 # `BSplineTransform_double_3_3_1`.
-_TRANSFORM_TYPE_RE = re.compile(
+TRANSFORM_TYPE_RE = re.compile(
     r"^(?P<type>\w+)_(?P<precision>float|double)_"
     r"(?P<input_dim>\d+)_(?P<output_dim>\d+)"
     r"(?:_(?P<degree>[0-3]))?$"
@@ -215,12 +215,12 @@ class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence, frozen=False):
     @smartproperty(cache=True)
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The LPS space that the block maps from."""
-        return _make_system(self.ndim_input)
+        return make_system(self.ndim_input)
 
     @smartproperty(cache=True)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The LPS space that the block maps to."""
-        return _make_system(self.ndim_output)
+        return make_system(self.ndim_output)
 
     def inverse(self, compute: bool = False, **kwargs) -> _xforms.Sequence:
         """Return the inverse of the block, as a plain sequence."""
@@ -399,13 +399,13 @@ class ItkDisplacementBase(ItkBlockBase):
         return _xforms.Affine(
             matrix=_affines.inv(vox2lps),
             input=self.input,
-            output=_make_grid_system(self.ndim_input),
+            output=make_grid_system(self.ndim_input),
         )
 
     @smartproperty(cache=True)
     def displacement(self) -> _xforms.DisplacementField:
         """The displacement field on the warp grid."""
-        VOX = _make_grid_system(self.ndim_input)
+        VOX = make_grid_system(self.ndim_input)
         return _xforms.DisplacementField(
             data=self.field,
             input=VOX,
@@ -423,7 +423,7 @@ class ItkDisplacementBase(ItkBlockBase):
             return VoxelToLPS(matrix=vox2lps)
         return _xforms.Affine(
             matrix=vox2lps,
-            input=_make_grid_system(self.ndim_input),
+            input=make_grid_system(self.ndim_input),
             output=self.output,
         )
 
@@ -561,7 +561,7 @@ class ItkEuler3DStruct(ItkAffineBase, on={"type": _ITKT.Euler3DTransform}):
     def linear(self) -> _xforms.Rotation:
         """The rotation."""
         return _xforms.Rotation(
-            _euler_to_matrix(self.parameters[:3], self.compute_zyx)
+            euler_to_matrix(self.parameters[:3], self.compute_zyx)
         )
 
     @smartproperty(cache=True)
@@ -964,7 +964,7 @@ def _isotropic_scaling(scale: float, ndim: int) -> _xforms.Scaling:
     axes, so the endpoints are given explicitly to fix the number of
     dimensions.
     """
-    system = _make_system(ndim)
+    system = make_system(ndim)
     return _xforms.Scaling(
         np.asarray([scale], dtype=np.float64), input=system, output=system
     )
@@ -1065,7 +1065,7 @@ def _versor_to_matrix(q: tx.Sequence[float]) -> np.ndarray:
     )
 
 
-def _euler_to_matrix(
+def euler_to_matrix(
     angles: tx.Sequence[float], compute_zyx: bool = False
 ) -> np.ndarray:
     """Convert ITK Euler angles to a rotation matrix.
@@ -1081,7 +1081,7 @@ def _euler_to_matrix(
     return Rz @ Ry @ Rx if compute_zyx else Rz @ Rx @ Ry
 
 
-def _type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
+def type_fields(match: re.Match) -> tx.Dict[str, tx.Any]:
     """Return the block fields encoded by an ITK transform type name."""
     kind = ItkTransformClass(match.group("type"))
     fields = dict(

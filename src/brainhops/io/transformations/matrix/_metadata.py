@@ -18,7 +18,7 @@ from bagof.magic import NoRepr
 from brainhops._core.streams import preserve_position
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserContentError
-from brainhops.io.common._arrays import (
+from brainhops.io.common._internal_api import (
     ArrayContainerError,
     ArrayReader,
     CsvArrayReader,
@@ -28,9 +28,9 @@ from brainhops.io.common._arrays import (
     NpzArrayReader,
     TsvArrayReader,
     TxtArrayReader,
-    _read_mat_legacy,
     is_numeric_array,
     read_mat73,
+    read_mat_legacy,
     read_npy,
     read_npz,
     read_text_array,
@@ -440,7 +440,7 @@ class MatLegacyMatrixMetadata(MatLegacyArrayReader, MatrixMetadata):
         """
         variable = _variable(options)
         try:
-            arrays = _read_mat_legacy(bytes(content))
+            arrays = read_mat_legacy(bytes(content))
         except ArrayContainerError as e:
             raise ParserContentError(str(e)) from e
         name, array = _selected(cls, arrays, variable)

@@ -5,7 +5,7 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.images.base import _utils_raster as raster
 

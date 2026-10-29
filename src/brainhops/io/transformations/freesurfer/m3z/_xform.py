@@ -15,7 +15,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_to_write,
     requested_fields,
 )
@@ -38,7 +38,10 @@ from brainhops.io.transformations.base.fields import (
 )
 
 # this format
-from .._formats import FreesurferTransformationFormat
+from brainhops.io.transformations.freesurfer._internal_api import (
+    FreesurferTransformationFormat,
+)
+
 from ._metadata import M3zMetadata
 from ._raw import GCAM_RAS, GCAM_VOX, M3zGeometry, M3zRaw
 
@@ -60,7 +63,7 @@ def _record(xform: "M3zMorph") -> tx.Optional[M3zRaw]:
     return None if metadata is None else metadata.raw
 
 
-def _positions_to_model(positions: np.ndarray) -> np.ndarray:
+def positions_to_model(positions: np.ndarray) -> np.ndarray:
     """Return the data of the field of a chain from the positions of a record.
 
     The field holds the positions in the layout of the record, indexed
@@ -74,7 +77,7 @@ def _positions_to_model(positions: np.ndarray) -> np.ndarray:
     return view
 
 
-def _positions_to_disk(data: ArrayProtocol) -> np.ndarray:
+def positions_to_disk(data: ArrayProtocol) -> np.ndarray:
     """Return the positions that a record stores for the data of a field.
 
     The record stores single-precision floats. The array is a new one,
@@ -96,7 +99,7 @@ def _decode(record: M3zRaw) -> tx.Tuple[_xforms.Transformation, ...]:
     node2ras = record.atlas_geometry.vox2ras @ scale
     ras2node = RASToVoxel(matrix=np.linalg.inv(node2ras)[:3])
     options = dict(
-        field=_positions_to_model(record.positions),
+        field=positions_to_model(record.positions),
         degree=InterpolationOrder.linear,
         bound=BoundaryCondition.nearest,
     )
@@ -589,7 +592,7 @@ def _encode(
             "node voxels, a field of source RAS coordinates)."
         )
     # A morph stores sampled positions, not spline coefficients.
-    positions = _positions_to_disk(field.to(store="values").data)
+    positions = positions_to_disk(field.to(store="values").data)
     if positions.ndim != 4 or positions.shape[-1] != 3:
         raise UnrepresentableTransformationError(
             f"A morph holds one 3-vector per node of a 3-D grid, not "

@@ -7,7 +7,7 @@ from bagof.magic import Magic
 
 # this format
 from ._constants import (
-    _DEFAULT_COSINES,
+    DEFAULT_COSINES,
     SPATIAL_DIMENSIONS,
 )
 from ._netcdf import NetcdfHeader
@@ -58,7 +58,7 @@ class MincDimension(Magic, frozen=True):
         """The `direction_cosines`, or else the world axis of the dimension."""
         if self.direction_cosines is not None:
             return tuple(float(c) for c in self.direction_cosines)
-        return _DEFAULT_COSINES.get(self.name, (0.0, 0.0, 0.0))
+        return DEFAULT_COSINES.get(self.name, (0.0, 0.0, 0.0))
 
 
 def minc1_dimensions(
@@ -101,7 +101,7 @@ def _dimension(
         start=_float(attribute("start")),
         step=_float(attribute("step")),
         direction_cosines=_floats(attribute("direction_cosines")),
-        units=_string(attribute("units")),
+        units=string(attribute("units")),
     )
 
 
@@ -121,7 +121,7 @@ def _floats(value: tx.Any) -> tx.Optional[tx.Tuple[float, ...]]:
     return tuple(float(v) for v in value) if value.size == 3 else None
 
 
-def _string(value: tx.Any) -> tx.Optional[str]:
+def string(value: tx.Any) -> tx.Optional[str]:
     """Read a string attribute, or `None` if it is empty."""
     if value is None:
         return None

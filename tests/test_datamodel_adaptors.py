@@ -16,10 +16,10 @@ import pytest
 import typing_extensions as tx
 
 from brainhops.datamodel._transformations.compute.adaptors import (
-    _match_axes,
     adapt,
     bridge,
     embed,
+    match_axes,
 )
 from brainhops.datamodel._transformations.compute.compose import compose
 from brainhops.datamodel.axes import (
@@ -791,7 +791,7 @@ def _all_matches(
     matchings = []
     for sources in itertools.permutations(source_axes):
         for targets in itertools.permutations(target_axes):
-            match, _ = _match_axes(list(sources), list(targets), False)
+            match, _ = match_axes(list(sources), list(targets), False)
             matchings.append(
                 {
                     id(target): None if i is None else id(sources[i])

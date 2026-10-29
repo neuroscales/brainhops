@@ -16,26 +16,27 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
 from brainhops.io.common.hdf5 import Hdf5Reader
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
 from ._data import read_imaris_level
 from ._metadata import ImarisMetadata
 from ._raw import ImarisRaw, no_options
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 _AXES = "XYZTC"
 """The axes of the data of an Imaris image, fastest first."""
@@ -164,7 +165,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -263,7 +264,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
                 self.transformations = held
                 self.metadata = metadata
             return self
-        raw = _image_to_disk(self._data)
+        raw = image_to_disk(self._data)
         if not inplace:
             return replace(
                 self,
@@ -308,7 +309,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
             The confidence, between 0 and 1.
         """
         score = ImarisRaw.sniff_h5(h5file, error=error)
-        if score and _level_count(h5file) > 1:
+        if score and level_count(h5file) > 1:
             return Confidence.LIKELY
         return score
 
@@ -436,7 +437,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
             If the file is not an Imaris file that brainhops reads.
         """
         no_options(kwargs)
-        return _read_level(cls, h5file, _source(h5file), level)
+        return _read_level(cls, h5file, array_source(h5file), level)
 
     @classmethod
     def from_fileobj(
@@ -483,7 +484,7 @@ class ImarisImage(Hdf5Reader, ImageFormat, SingleScaleImage):
 # ----------------------------------------------------------------------
 
 
-def _source(h5file: h5py.File) -> tx.Union[str, h5py.File]:
+def array_source(h5file: h5py.File) -> tx.Union[str, h5py.File]:
     """Return what the lazy array of an open file reads from.
 
     A file opened by name is read again by its absolute name, and a file
@@ -494,7 +495,7 @@ def _source(h5file: h5py.File) -> tx.Union[str, h5py.File]:
     return op.abspath(h5file.filename)
 
 
-def _level_count(h5file: h5py.File) -> int:
+def level_count(h5file: h5py.File) -> int:
     """Return the number of resolution levels of an open Imaris file."""
     group = h5file["DataSet"]
     count = 0

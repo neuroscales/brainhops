@@ -12,22 +12,25 @@ from brainhops._core import path
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport, Metadata
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
-from brainhops.io.metadata._base import overruled_fields, requested_fields
+from brainhops.io.metadata._internal_api import (
+    overruled_fields,
+    requested_fields,
+)
 from brainhops.io.transformations.base import TransformationFormat
 
 from ._blocks import (
-    _check_ras,
+    check_ras,
     node_to_transformation,
     transformation_to_nodes,
 )
-from ._metadata import X5Metadata, _vocabulary_node
+from ._metadata import X5Metadata, vocabulary_node
 from ._raw import X5_VERSION, X5Header, X5Node, X5Raw
 
 # ----------------------------------------------------------------------
@@ -249,7 +252,7 @@ class X5Transform(
         decoded = self.__dict__.setdefault("_cache_decoded_nodes", {})
         if index not in decoded:
             block = node_to_transformation(record.nodes[index])
-            if index == _vocabulary_node(record):
+            if index == vocabulary_node(record):
                 block.metadata = Metadata.from_instance(self.metadata)
             decoded[index] = block
         return decoded[index]
@@ -468,7 +471,7 @@ class X5Transform(
             base = X5Raw() if record is None else record
         else:
             if declared:
-                _check_ras(self, "chain")
+                check_ras(self, "chain")
             decoded = self.__dict__.get("_cache_decoded_nodes", {})
             base = _encode(self.transformations, record, decoded)
         if self.metadata is not None and base is record:

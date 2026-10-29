@@ -18,7 +18,7 @@ from brainhops.io.base.parsers import (
 from brainhops.io.metadata import MetadataFormat
 
 # this format
-from ._data import _Slide, detect, local_path, open_handle
+from ._data import Slide, detect, local_path, open_handle
 from ._raw import OpenSlideRaw, read_record
 
 
@@ -318,5 +318,5 @@ def _read_content(content: bytes, name: tx.Optional[str]) -> OpenSlideRaw:
     closed, when the slide that reads it is garbage-collected, which is
     when this function returns.
     """
-    slide = _Slide.from_content(content, name)
+    slide = Slide.from_content(content, name)
     return read_record(slide.handle)

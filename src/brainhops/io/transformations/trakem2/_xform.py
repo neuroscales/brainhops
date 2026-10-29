@@ -14,7 +14,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
@@ -25,7 +25,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     UnrepresentableTransformationError,
 )
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
@@ -69,7 +69,7 @@ def _record(xform: "TrakEM2PatchAffine") -> tx.Optional[TrakEM2Raw]:
     return None if metadata is None else metadata.raw
 
 
-def _matrix_to_model(values: tx.Sequence[float]) -> np.ndarray:
+def matrix_to_model(values: tx.Sequence[float]) -> np.ndarray:
     """Return the `(2, 3)` matrix of the six values of a `transform`.
 
     The values are those of `java.awt.geom.AffineTransform.getMatrix`, in
@@ -83,7 +83,7 @@ def _matrix_to_model(values: tx.Sequence[float]) -> np.ndarray:
     return matrix
 
 
-def _matrix_to_disk(data: ArrayProtocol) -> tx.Tuple[float, ...]:
+def matrix_to_disk(data: ArrayProtocol) -> tx.Tuple[float, ...]:
     """Return the six values that a `transform` stores for a matrix.
 
     The matrix is a `(2, 3)` matrix, or a `(3, 3)` homogeneous one.
@@ -211,7 +211,7 @@ class TrakEM2PatchAffine(
         record = _record(self)
         if record is None:
             return None
-        return _matrix_to_model(record.patch(self.patch).transform)
+        return matrix_to_model(record.patch(self.patch).transform)
 
     # --- coordinate transform -----------------------------------------
 
@@ -491,7 +491,7 @@ class TrakEM2PatchAffine(
             )
         patch = record.patch(self.patch)
         _check_systems(self, patch)
-        record = record.with_transform(patch.oid, _matrix_to_disk(self.matrix))
+        record = record.with_transform(patch.oid, matrix_to_disk(self.matrix))
         metadata = replace(metadata, raw=record)
         if not inplace:
             return replace(
@@ -632,7 +632,7 @@ def _decode_coordinate_transform(
     fields = (item.data or "").split()
     try:
         if item.cls == _AFFINE and len(fields) == 6:
-            matrix = _matrix_to_model([float(v) for v in fields])
+            matrix = matrix_to_model([float(v) for v in fields])
         elif item.cls == _SIMILARITY and len(fields) == 4:
             scos, ssin, tx_, ty_ = (float(np.float32(v)) for v in fields)
             matrix = np.array([[scos, -ssin, tx_], [ssin, scos, ty_]])

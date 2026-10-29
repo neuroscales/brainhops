@@ -8,7 +8,7 @@ from bagof.magic import NoRepr
 
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common._arrays import TxtArrayReader, is_numeric_array
+from brainhops.io.common._internal_api import TxtArrayReader, is_numeric_array
 from brainhops.io.metadata import MetadataFormat, MetadataWriter
 
 from ._raw import NiftyRegAffineRaw, is_homogeneous

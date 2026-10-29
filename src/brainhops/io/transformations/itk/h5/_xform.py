@@ -9,26 +9,26 @@ from bagof.magic import Inherit, KwOnly, NoRepr, replace
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
+from brainhops.datamodel.metadata._internal_api import (
     apply_loss_policy,
     takes_error_policy,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.common._geometry import held_transformations
+from brainhops.io.common._internal_api import held_transformations
 from brainhops.io.common.hdf5 import Hdf5ReaderWriter
-from brainhops.io.metadata._base import (
+from brainhops.io.metadata._internal_api import (
     metadata_options,
     metadata_to_write,
     requested_fields,
 )
-
-from .._chains import (
-    _check_position,
-    _check_systems,
-    _decode_chain,
-    _encode_chain,
-    _same_chain,
+from brainhops.io.transformations.itk._internal_api import (
+    check_position,
+    check_systems,
+    decode_chain,
+    encode_chain,
+    same_chain,
 )
+
 from .._xform import ItkTransform
 from ._metadata import H5Metadata
 from ._raw import H5Header, H5Raw
@@ -194,7 +194,7 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
             header is not its first block.
         """
         metadata = H5Metadata.from_h5(h5file, load=load)
-        _check_position(metadata.raw.blocks, position)
+        check_position(metadata.raw.blocks, position)
         return cls(metadata=metadata, position=position, **kwargs)
 
     @classmethod
@@ -220,7 +220,7 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
         ParserContentError
             If the record has no transform at `position`.
         """
-        _check_position(raw.blocks, kwargs.get("position"))
+        check_position(raw.blocks, kwargs.get("position"))
         return cls(metadata=H5Metadata.from_raw(raw), **kwargs)
 
     @classmethod
@@ -317,9 +317,9 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
             [] if record is None else _decode(record, self.position, True)
         )
         chain = held_transformations(self)
-        _check_systems(self, decoded if chain is None else chain)
+        check_systems(self, decoded if chain is None else chain)
         if record is not None and (
-            chain is None or _same_chain(chain, decoded)
+            chain is None or same_chain(chain, decoded)
         ):
             if not inplace:
                 return replace(
@@ -335,7 +335,7 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
             self.metadata = metadata
             return self
         header = H5Header() if record is None else record.header
-        record = H5Raw(header=header, blocks=_encode_chain(chain or []))
+        record = H5Raw(header=header, blocks=encode_chain(chain or []))
         if metadata is None:
             metadata = H5Metadata.from_raw(record)
         else:
@@ -390,5 +390,5 @@ class H5Transform(Hdf5ReaderWriter, ItkTransform):
 def _decode(
     record: H5Raw, position: tx.Optional[int], quiet: bool = False
 ) -> tx.List[_xforms.Transformation]:
-    """Decode the chain of a record, as [`_decode_chain`][] does."""
-    return _decode_chain(record.blocks, position, quiet=quiet)
+    """Decode the chain of a record, as [`decode_chain`][] does."""
+    return decode_chain(record.blocks, position, quiet=quiet)

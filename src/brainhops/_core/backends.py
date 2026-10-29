@@ -857,7 +857,7 @@ def is_lazy(
     return name in ("dask", "dask+cupy")
 
 
-def _creation_options(like: tx.Any = None) -> tx.Dict[str, tx.Any]:
+def creation_options(like: tx.Any = None) -> tx.Dict[str, tx.Any]:
     """Return the options that create Dask arrays of CuPy chunks.
 
     Dask creates NumPy chunks unless it is given a CuPy array as

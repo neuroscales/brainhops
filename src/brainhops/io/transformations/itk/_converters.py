@@ -55,22 +55,19 @@ from brainhops._core.backends import array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.compute.convert import converter
-from brainhops.datamodel._transformations.compute.converters import (
-    smart_replace,
-)
+from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.errors import ConversionError
 
 # io
-from brainhops.io.transformations.base._conversions import (
+from brainhops.io.transformations.base._internal_api import (
     AFFINE_SOURCES,
     FIELD_SOURCES,
-    _is_field,
-    _leaves,
     affine_between,
+    chain_leaves,
     displacement_parts,
     format_options,
     held,
+    is_field,
     register_converter,
     unrepresentable,
     world_pieces,
@@ -82,7 +79,7 @@ from ._common import (
     ItkStruct,
     ItkTransformClass,
 )
-from ._systems import _make_system
+from ._systems import make_system
 from ._xform import ItkTransform
 from .mat import MatTransform
 from .tfm import TfmTransform
@@ -164,7 +161,7 @@ def _lps_affine(t: _xforms.Transformation, cls: type) -> _xforms.Affine:
         If `t` is not an affine, or a chain of affines, between systems
         that are bridged to LPS.
     """
-    space = _make_system(_ndim(t, cls))
+    space = make_system(_ndim(t, cls))
     matrix = affine_between(t, space, space, cls)
     return _xforms.Affine(matrix=matrix[:-1], input=space, output=space)
 
@@ -190,7 +187,7 @@ def _ndim(t: _xforms.Transformation, cls: type) -> int:
 
 def _holds_a_field(t: _xforms.Transformation) -> bool:
     """Return whether `t` is a field, or a chain that holds one."""
-    return any(_is_field(leaf) for leaf in _leaves(t))
+    return any(is_field(leaf) for leaf in chain_leaves(t))
 
 
 def _field_chain(
@@ -219,7 +216,7 @@ def _field_chain(
         If a field is sampled at its nodes.
     """
     ndim = _field_space_ndim(t)
-    space = _make_system(ndim)
+    space = make_system(ndim)
     transforms = []
     loss = None
     for piece in world_pieces(t, space, cls):
@@ -240,8 +237,8 @@ def _field_chain(
 
 def _field_space_ndim(t: _xforms.Transformation) -> int:
     """Return the number of dimensions of the fields that `t` holds."""
-    for leaf in _leaves(t):
-        if _is_field(leaf) and leaf.data is not None:
+    for leaf in chain_leaves(t):
+        if is_field(leaf) and leaf.data is not None:
             return int(leaf.data.shape[-1])
     return 3
 

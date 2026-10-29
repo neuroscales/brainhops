@@ -5,13 +5,9 @@ __all__ = ["MetadataReader", "MetadataWriter"]
 import typing_extensions as tx
 
 from brainhops._core import path
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base.parsers import (
-    FileReader,
-    FileWriter,
-    WriterError,
-    _delegated_from_fileobj,
-)
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import delegated_from_fileobj
+from brainhops.io.base.parsers import FileReader, FileWriter, WriterError
 
 # ----------------------------------------------------------------------
 #   MODES
@@ -252,7 +248,7 @@ class MetadataReader(FileReader):
         return cls.from_raw(cls.RAW.from_filename(filename, **kwargs))
 
     @classmethod
-    @_delegated_from_fileobj(lambda cls: cls.RAW)
+    @delegated_from_fileobj(lambda cls: cls.RAW)
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """Read the metadata from an open file, through the record class.
 

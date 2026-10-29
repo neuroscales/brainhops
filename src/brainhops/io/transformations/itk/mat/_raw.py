@@ -7,8 +7,8 @@ import typing_extensions as tx
 from bagof.magic import NoRepr
 
 from brainhops._core.streams import preserve_position
-from brainhops.datamodel.metadata._report import takes_error_policy
-from brainhops.io.base._raw import Raw
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     BinaryFileWriter,
@@ -16,17 +16,16 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
-
-from .._chains import _check_composite, _read_only
-from .._common import (
-    _TRANSFORM_TYPE_RE,
-    ItkPrecision,
-    ItkStruct,
-    ItkTransformClass,
-    _type_fields,
+from brainhops.io.transformations.itk._internal_api import (
+    TRANSFORM_TYPE_RE,
+    check_composite,
+    read_only,
+    type_fields,
 )
 
-_CLASS_RE = _TRANSFORM_TYPE_RE
+from .._common import ItkPrecision, ItkStruct, ItkTransformClass
+
+_CLASS_RE = TRANSFORM_TYPE_RE
 # A MATLAB v4 variable header is five 32-bit integers: the type, the number of
 # rows, the number of columns, the complex flag and the length of the name.
 _HEADER_SIZE = 20
@@ -437,12 +436,12 @@ def _decode(
             )
         blocks.append(
             ItkStruct(
-                **_type_fields(match),
-                parameters=_read_only(parameters),
-                fixed_parameters=_read_only(fixed_parameters),
+                **type_fields(match),
+                parameters=read_only(parameters),
+                fixed_parameters=read_only(fixed_parameters),
             )
         )
-    _check_composite(blocks)
+    check_composite(blocks)
     byteorder = variables[0][0].order if variables else "<"
     return tuple(blocks), byteorder
 

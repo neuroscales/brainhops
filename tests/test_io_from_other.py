@@ -173,4 +173,4 @@ def test_every_file_based_class_reads_files_in_from_any(cls: type) -> None:
         base for base in cls.__mro__[1:] if base is not TransformationFormat
     ]
     owner = next(base for base in bases if "from_any" in vars(base))
-    assert owner.__name__ == "_FileBasedModelMixin"
+    assert owner.__name__ == "FileBasedModelMixin"

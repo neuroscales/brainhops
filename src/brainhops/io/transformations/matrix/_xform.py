@@ -16,22 +16,17 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Inherit, NoRepr, replace
 
-from brainhops._core.properties import (
-    InvalidatorInAttribute,
-    smartproperty,
-)
+from brainhops._core.properties import InvalidatorInAttribute, smartproperty
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
     ParserNotImplementedError,
     UnrepresentableTransformationError,
 )
-from brainhops.io.common._arrays import (
+from brainhops.io.common._internal_api import (
     ArrayReader,
     CsvArrayReader,
     Mat73ArrayReader,
@@ -43,12 +38,15 @@ from brainhops.io.common._arrays import (
     TxtArrayReader,
     is_numeric_array,
 )
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
     TransformationFormat,
 )
-from brainhops.io.transformations.base._records import read_only
+from brainhops.io.transformations.base._internal_api import read_only
 
 from . import _conventions
 from ._metadata import (

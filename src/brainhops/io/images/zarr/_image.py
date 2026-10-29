@@ -16,9 +16,7 @@ from brainhops._core.typing import ArrayProtocol
 # internals
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._report import (
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.errors import (
     UnrepresentableTransformationError,
@@ -29,7 +27,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common._geometry import (
+from brainhops.io.common._internal_api import (
     held_transformations,
     same_transformations,
 )
@@ -39,23 +37,24 @@ from brainhops.io.common.zarr import (
     ZarrRaw,
     ZarrReaderWriter,
 )
-from brainhops.io.common.zarr._data import (
-    _ZarrProxy,
+from brainhops.io.common.zarr._internal_api import (
+    ZarrProxy,
+    absolute_location,
+    as_node,
+    opened_node,
     reads_store,
     store_location,
     write_array,
     write_into,
 )
-from brainhops.io.common.zarr._parsers import (
-    _as_node,
-    absolute_location,
-    opened_node,
-)
 from brainhops.io.images.base import ImageFormat
-from brainhops.io.metadata._base import metadata_to_write, requested_fields
+from brainhops.io.metadata._internal_api import (
+    metadata_to_write,
+    requested_fields,
+)
 
 # this format
-from ._views import _image_to_disk, _image_to_model
+from ._views import image_to_disk, image_to_model
 
 
 @register_format
@@ -156,7 +155,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         """
         if self.rawdata is None:
             return None
-        return _image_to_model(self.rawdata)
+        return image_to_model(self.rawdata)
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -246,7 +245,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             )
         record = ZarrRaw.from_node(node)
         image = cls(
-            rawdata=_ZarrProxy(node, store_location(node)),
+            rawdata=ZarrProxy(node, store_location(node)),
             metadata=ZarrMetadata.from_raw(record),
         )
         if transformation is not None:
@@ -283,7 +282,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         """
         location = absolute_location(location)
         image = super().from_store(location, **kwargs)
-        image.rawdata = _ZarrProxy(image.rawdata.node, location)
+        image.rawdata = ZarrProxy(image.rawdata.node, location)
         return image
 
     # --- consolidate --------------------------------------------------
@@ -464,7 +463,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
             If a transformation of the image is not the identity.
         """
         _no_options(kwargs)
-        wrapped = _as_node(node)
+        wrapped = as_node(node)
         if not isinstance(wrapped, ZarrArray):
             raise WriterError(
                 "A plain Zarr image is written into an array node, not a "
@@ -517,7 +516,7 @@ class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
         UnrepresentableTransformationError
             If a transformation of the image is not the identity.
         """
-        node = _as_node(location)
+        node = as_node(location)
         if node is not None:
             if driver is not None:
                 kwargs["driver"] = driver
@@ -626,7 +625,7 @@ def _encoded(
         If the image has no data.
     """
     if image._data is not None:
-        raw = _image_to_disk(image._data)
+        raw = image_to_disk(image._data)
     else:
         raw = image.rawdata
     if raw is None:

@@ -12,7 +12,7 @@ from PIL import Image
 
 # internals
 from brainhops._core.streams import preserve_position
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import (
     BinaryFileReader,
     Confidence,
@@ -21,7 +21,13 @@ from brainhops.io.base.parsers import (
 )
 
 # this format
-from ._utils import _open, _png_scal, pillow_dpi, pillow_layout, sniff_pillow
+from ._utils import (
+    open_with_pillow,
+    pillow_dpi,
+    pillow_layout,
+    png_scal,
+    sniff_pillow,
+)
 
 
 class PillowRaw(Raw, BinaryFileReader):
@@ -228,7 +234,7 @@ def _read_record(cls: type, file: tx.BinaryIO, frame: int) -> PillowRaw:
     pixels are decoded, since Pillow adds some keys to `info` only when it
     decodes them.
     """
-    with _open(file) as im:
+    with open_with_pillow(file) as im:
         n_frames = int(getattr(im, "n_frames", 1) or 1)
         index = int(frame)
         if index < 0:
@@ -250,20 +256,20 @@ def _read_record(cls: type, file: tx.BinaryIO, frame: int) -> PillowRaw:
         fmt, mode, size = im.format, im.mode, tuple(im.size)
         info = dict(im.info)
     if fmt == "PNG" and "sCAL" not in info:
-        scal = _png_scal(file, 0)
+        scal = png_scal(file, 0)
         if scal is not None:
             info["sCAL"] = scal
     return cls(
         format=fmt,
         mode=mode,
         size=(int(size[0]), int(size[1])),
-        info=_picklable(info),
+        info=picklable(info),
         frame=index,
         n_frames=n_frames,
     )
 
 
-def _picklable(info: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
+def picklable(info: tx.Mapping[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     """Return the entries of an `info` dictionary whose values can be
     pickled."""
     kept = {}

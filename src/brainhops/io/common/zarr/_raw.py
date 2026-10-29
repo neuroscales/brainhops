@@ -11,7 +11,7 @@ from abczarr.metadata.base import ArrayMetadata, NodeMetadata
 from bagof.magic import NoRepr
 
 # internals
-from brainhops.io.base._raw import Raw
+from brainhops.io.base._internal_api import Raw
 from brainhops.io.base.parsers import ParserContentError, WriterError
 
 # ----------------------------------------------------------------------
@@ -135,7 +135,7 @@ class ZarrRaw(Raw):
             )
         document = node.metadata
         stored = []
-        for key in _document_keys(document.zarr_format):
+        for key in document_keys(document.zarr_format):
             content = _read_key(node.store_path, key)
             if content is not None:
                 stored.append((key, content))
@@ -206,7 +206,7 @@ def _storage_part(document: ArrayMetadata) -> tx.Dict[str, tx.Any]:
     return data
 
 
-def _document_keys(version: int) -> tx.Tuple[str, ...]:
+def document_keys(version: int) -> tx.Tuple[str, ...]:
     """Return the names of the document files of an array of a version.
 
     Raises
@@ -235,7 +235,7 @@ def _encoded_documents(
         If the document is of a version other than 2 or 3.
     """
     data = dict(document.to_json())
-    keys = _document_keys(document.zarr_format)
+    keys = document_keys(document.zarr_format)
     if document.zarr_format == 3:
         return {keys[0]: data}
     # Version 2 tells an array from a group by the name of its file, so
@@ -256,7 +256,7 @@ def _parsed_documents(
     every document is then serialized again.
     """
     try:
-        keys = _document_keys(version)
+        keys = document_keys(version)
         if version == 3:
             if keys[0] not in stored:
                 return {}
