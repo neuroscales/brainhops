@@ -188,9 +188,10 @@ def image_to_world(
     """
     Return the voxel-to-world matrix of an image and its world space.
 
-    For a `nibabel` image or header, the world space is RAS. For a brainhops
-    image, the transformation must be an affine, and the world space is its
-    output.
+    For a `nibabel` image or header, the world space is RAS, and the matrix
+    is the one that nibabel's `get_best_affine()` chooses for the header.
+    For a brainhops image, the transformation must be an affine, and the
+    world space is its output.
     """
     xform = getattr(image, "transformations", None)
     if xform is not None and not hasattr(image, "get_best_affine"):
@@ -203,20 +204,11 @@ def image_to_world(
             )
         output = xform.output or _systems.CoordinateSystem3D()
         return np.asarray(matrix, dtype=np.float64), output
-    if hasattr(image, "get_best_affine"):
-        matrix = image.get_best_affine()
-    elif getattr(image, "header", None) is not None and hasattr(
-        image.header, "get_best_affine"
-    ):
-        matrix = image.header.get_best_affine()
-    elif getattr(image, "affine", None) is not None:
-        matrix = image.affine
-    else:
-        raise ValueError(
-            "Cannot find the voxel-to-world affine of the image: pass a "
-            "nibabel image or header, or a brainhops image."
-        )
-    return np.asarray(matrix, dtype=np.float64), _systems.RASCoordinateSystem()
+    # A nibabel image or header needs nibabel, which is optional, so the
+    # helper is imported only here.
+    from brainhops.io.common.nifti._internal_api import best_affine
+
+    return best_affine(image), _systems.RASCoordinateSystem()
 
 
 # ----------------------------------------------------------------------

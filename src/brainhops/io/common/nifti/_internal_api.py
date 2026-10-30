@@ -11,6 +11,7 @@ api.md`.
 __all__ = [
     "apply_like",
     "apply_overrides",
+    "best_affine",
     "embed_nifti_affine",
     "has_nifti_magic",
     "header_of",
@@ -69,6 +70,7 @@ from ._header import (
     NiftiObject,
     apply_like,
     apply_overrides,
+    best_affine,
     header_of,
     keep_given_fields,
     nifti_intent,

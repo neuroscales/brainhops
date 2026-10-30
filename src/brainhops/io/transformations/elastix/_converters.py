@@ -440,10 +440,8 @@ def _fixed_map(
         import nibabel as nb
 
         reference = nb.load(os.fspath(reference)).header
-    from brainhops.io.transformations.fsl._internal_api import (
-        best_affine,
-        spatial_shape,
-    )
+    from brainhops.io.common.nifti._internal_api import best_affine
+    from brainhops.io.transformations.fsl._internal_api import spatial_shape
 
     vox2ras = best_affine(reference)
     shape = spatial_shape(reference)[:ndim]

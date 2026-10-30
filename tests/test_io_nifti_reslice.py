@@ -339,7 +339,7 @@ def test_a_4d_image_without_a_repetition_time_round_trips(
 ) -> None:
     """Saving keeps the TR missing and leaves toffset alone."""
     data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
-    # With neither form, the preferred transformation is the scaling.
+    # With neither form, the preferred transformation is the default grid.
     path = _save_untimed(tmp_path / "bold.nii", data, 0.0, forms=forms)
 
     img = io.load(path)

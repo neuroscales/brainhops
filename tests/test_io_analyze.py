@@ -247,7 +247,7 @@ def test_without_origin_the_grid_is_centred_and_x_is_flipped(analyze) -> None:  
     centre = (np.asarray(image.shape) - 1) / 2
     assert np.allclose(_matrix(image) @ [*centre, 1], 0)
     world = image.transformation.output
-    assert world.name == "world"
+    assert world.name == "undefined"
     assert [axis.orientation.value for axis in world.axes] == [
         "left-to-right",
         "posterior-to-anterior",

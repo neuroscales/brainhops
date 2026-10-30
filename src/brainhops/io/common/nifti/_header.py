@@ -215,6 +215,49 @@ def header_of(obj: tx.Any) -> tx.Any:
     return getattr(obj, "header", None)
 
 
+def best_affine(obj: tx.Any) -> np.ndarray:
+    """Return the voxel-to-RAS matrix of a nibabel image or header.
+
+    The readers that take a nibabel image or header from the caller, such
+    as the FSL geometry and the matrix conventions, place the voxels in
+    world space with this function. The matrix is the one that nibabel's
+    `get_best_affine()` returns for the header, so a NIfTI header whose
+    sform and qform codes are both zero gets the default grid that
+    [`NiftiImage`][brainhops.io.images.nifti.NiftiImage] describes, and
+    the header of another format, such as MGH, gets the matrix that
+    nibabel chooses for that format. An object without a header that
+    nibabel can decode falls back on its `affine` attribute.
+
+    Parameters
+    ----------
+    obj : Any
+        A nibabel header, a nibabel image, or an object that holds a
+        header in its record, such as a `NiftiImage`.
+
+    Returns
+    -------
+    numpy.ndarray
+        The `(4, 4)` voxel-to-RAS matrix, in double precision.
+
+    Raises
+    ------
+    ValueError
+        If the object has neither a header that nibabel can decode nor
+        an affine.
+    """
+    if hasattr(obj, "get_best_affine"):
+        return np.asarray(obj.get_best_affine(), dtype=np.float64)
+    header = header_of(obj)
+    if hasattr(header, "get_best_affine"):
+        return np.asarray(header.get_best_affine(), dtype=np.float64)
+    if getattr(obj, "affine", None) is not None:
+        return np.asarray(obj.affine, dtype=np.float64)
+    raise ValueError(
+        "Cannot determine the voxel-to-world affine of the image. Pass a "
+        "nibabel image or header, or an object that exposes one."
+    )
+
+
 def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
     """Return the header to copy from a `like` template, or `None`.
 

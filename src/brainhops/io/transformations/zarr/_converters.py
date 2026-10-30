@@ -33,7 +33,13 @@ field interpolated with another degree than 1 is sampled at its nodes.
 Both are losses: the converter raises a `LossyConversionError`, and
 `t.to(OmeZarrField, on_loss="ignore")` returns the sampled field. The
 arrays are built with the operations of their backend, so a Dask array
-stays lazy until the field is written.
+stays lazy until the field is written. The conversion then builds
+the coarser levels of a pyramid from that level, as many as the rules
+of the method `with_scales` of the field allow, and the keyword
+`nscales=` takes the values of the argument of that method, as in
+`t.to(OmeZarrField, nscales=3)`, while `nscales=1` keeps the single
+level. The keywords `factor=`, `mode=`, `align=`, `min_size=` and
+`strict=` are those of `with_scales`.
 
 A field that is already of this format is changed by the rules of its
 family, which keep its type.
@@ -49,8 +55,13 @@ from brainhops._core.backends import array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._internal_api import converter, smart_replace
-from brainhops.datamodel.transformations import Identity
+from brainhops.datamodel._internal_api import (
+    build_pyramid,
+    converter,
+    pop_pyramid_options,
+    smart_replace,
+)
+from brainhops.datamodel.transformations import Affine, Identity
 
 # io
 from brainhops.io.transformations.base._internal_api import (
@@ -67,9 +78,8 @@ from brainhops.io.transformations.base._internal_api import (
 )
 
 # this format
-from . import _map
 from ._axes import to_axis
-from ._xforms import OmeZarrField, dataset_placement
+from ._xforms import OmeZarrField, dataset_placement, field_ome
 
 RAS = _systems.RASmm()
 """The world that the converter writes a field in."""
@@ -78,13 +88,15 @@ _SPACE = ("x", "y", "z")
 """The names of the spatial axes, which are those of the RAS world."""
 
 
-@register_converter(FIELD_SOURCES, OmeZarrField)
+@register_converter(FIELD_SOURCES + (_xforms.MultiscaleField,), OmeZarrField)
 def _(
     t: _xforms.Transformation, cls: tx.Type[OmeZarrField], **kwargs
 ) -> OmeZarrField:
-    # One level of coordinates or of displacements in RAS millimetres, on
-    # a grid along the world axes. What loses is reported.
+    # One level of coordinates or of displacements in RAS millimetres,
+    # on a grid along the world axes, and the coarser levels that the
+    # options of `PYRAMID_OPTIONS` ask for. What loses is reported.
     cls = OmeZarrField
+    pyramid = pop_pyramid_options(kwargs)
     format_options(t, cls, kwargs)
     _, field, _ = split_field_chain(t, RAS, RAS, cls)
     if isinstance(field, _xforms.CoordinateField):
@@ -98,14 +110,17 @@ def _(
         parts = displacements_of(cardinal_parts(parts, t, RAS, RAS, cls))
         values = _world_vectors(parts)
     values, scale, translation = _along_world(values, parts.grid2world)
-    return held(_field(values, kind, scale, translation), parts)
+    field = _field(values, kind, scale, translation)
+    return held(build_pyramid(field, pyramid, default=True), parts)
 
 
 @converter
 def _(t: OmeZarrField, cls: tx.Type[OmeZarrField], **kwargs) -> OmeZarrField:
     # A transformation that is already in this format is changed by the
-    # rules of any chain, and these rules keep its type.
-    return smart_replace(t, cls, **kwargs)
+    # rules of any chain, and these rules keep its type. The options of
+    # `PYRAMID_OPTIONS` build its levels.
+    pyramid = pop_pyramid_options(kwargs)
+    return build_pyramid(smart_replace(t, cls, **kwargs), pyramid)
 
 
 # ----------------------------------------------------------------------
@@ -184,8 +199,6 @@ def _field(
     [`OmeZarrField.from_node`][brainhops.io.transformations.zarr.OmeZarrField.from_node]
     builds it from the metadata.
     """
-    from abczarr.ome import v0_6
-
     backend = array_backend(values)
     stored = backend.moveaxis(values, -1, 0)
     ndim = len(scale)
@@ -193,23 +206,8 @@ def _field(
         {"name": name, "type": "space", "unit": "millimeter"}
         for name in _SPACE[:ndim]
     ]
-    placement = _map._scale_translation_entry(
-        np.concatenate([[1.0], scale]), np.concatenate([[0.0], translation])
-    )
-    placement = dict(placement, input={"path": "0"}, output={"name": "field"})
-    ome = v0_6.OME.from_json(
-        {
-            "version": "0.6",
-            "multiscales": [
-                {
-                    "coordinateSystems": [{"name": "field", "axes": axes}],
-                    "datasets": [
-                        {"path": "0", "coordinateTransformations": [placement]}
-                    ],
-                }
-            ],
-        }
-    )
+    matrix = np.concatenate([np.diag(scale), translation[:, None]], axis=1)
+    ome = field_ome([to_axis(axis) for axis in axes], [Affine(matrix=matrix)])
     dataset = ome.multiscales[0].datasets[0]
     spatial = list(range(1, ndim + 1))
     voxel2world = dataset_placement(dataset, spatial, ndim + 1)

@@ -30,6 +30,7 @@ nav = [
       "api/datamodel/geometry.md",
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
+      "api/datamodel/multiscale.md",
       {"metadata" = [
         "api/datamodel/metadata.md",
         "api/datamodel/metadata-formats.md",
@@ -116,6 +117,7 @@ nav = [
         {"numeric" = "api/_core/numeric.md"},
         {"enum" = "api/_core/enum.md"},
         {"proxy" = "api/_core/proxy.md"},
+        {"pyramids" = "api/_core/pyramids.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
         {"interpol" = "api/_ext/interpol/index.md"},
     ]}

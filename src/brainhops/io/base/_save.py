@@ -20,6 +20,10 @@ from brainhops._core.errors import (
     error_policy,
     policy_action,
 )
+from brainhops.datamodel._internal_api import (
+    build_pyramid,
+    pop_pyramid_options,
+)
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import (
@@ -85,12 +89,14 @@ def save(
        `SingleScaleImage`s). `obj` is converted to it, which neither
        loses nor changes anything. A `SingleScaleImage` that no
        candidate holds as it is, because no candidate stores a single
-       image, is written as a pyramid of one level in a candidate that
-       is a file-backed `MultiScaleImage`, as `OmeZarrImage(images=[obj])`
-       writes it. A name that ends with `.ome.zarr` therefore writes an
-       image as OME-Zarr, while a name that ends with `.zarr` still asks
-       for a plain Zarr array, which refuses an image that has a
-       geometry.
+       image, becomes the finest level of a pyramid in a candidate that
+       is a file-backed `MultiScaleImage`, as `obj.to(OmeZarrImage)`
+       converts it. A format that builds its scales, as OME-Zarr does,
+       builds the coarser levels as `with_scales()` builds them, unless
+       `nscales=1` asks for the single level. A name that ends with
+       `.ome.zarr` therefore writes an image as an OME-Zarr pyramid,
+       while a name that ends with `.zarr` still asks for a plain Zarr
+       array, which refuses an image that has a geometry.
     4. **A format a transformation converts to.** A transformation is
        instead converted to every candidate, with the same
        converters as `obj.to(Format, **conversion)`. A converter returns
@@ -205,7 +211,25 @@ def save(
         Options passed to the `save` method of the chosen format. An
         option named after a field of the metadata, such as `dtype`,
         overrides that field (see the `consolidate` method of the
-        format).
+        format). The options that build the scales of a pyramid,
+        `nscales=`, `factor=`, `mode=`, `align=`, `min_size=` and
+        `strict=`, are taken out first and given to the conversion, for
+        an image as for a transformation, so that
+        `io.save(image, "image.ome.zarr", nscales=1)` writes a single
+        level. They are those of
+        [`Multiscale.with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales].
+        A single scale saved to OME-Zarr is the exception: the writer
+        takes these options, writes the finest level, and builds each
+        coarser level from the levels that it has written, read back
+        from the store, so that the finest level is read once and the
+        memory stays bounded by a few chunks (#638). A pyramid built in
+        memory is written as it is, so that
+        `image.to(OmeZarrImage, nscales=4).save(path)` computes its
+        levels from one Dask graph, while
+        `io.save(image, path, nscales=4)` reads each level back. The
+        values are the same, except that a level of an integer type
+        that a mode averages is computed from the level before it once
+        rounded, which may change a value by one.
 
     Returns
     -------
@@ -229,10 +253,14 @@ def save(
     MetadataLossError
         If metadata is lost under the `"raise"` policy.
     """
+    # The options that build the scales of a pyramid are options of the
+    # conversion, for an image as for a transformation.
+    pyramid = pop_pyramid_options(kwargs)
     file = path.as_path_or_stream(file)
     name = path.base_name(file)
     if name is None:
         if isinstance(obj, FileFormat) and isinstance(obj, FileWriter):
+            obj = _own_scales(obj, pyramid, kwargs)
             return _save_as_it_is(obj, file, kwargs, on_error, on_loss)
         raise WriterError(
             f"Cannot choose a format to write {type(obj).__name__} in: the "
@@ -270,6 +298,7 @@ def save(
     # Rebuilding the object would rerun its constructor and lose state that is
     # not a field, such as data already read.
     if any(isinstance(obj, fmt) for fmt, _ in claimed):
+        obj = _own_scales(obj, pyramid, kwargs)
         return _save_as_it_is(obj, file, kwargs, on_error, on_loss)
 
     # The policy acts once on the report of the conversion and the
@@ -287,14 +316,14 @@ def save(
         # of its own data model is converted to as well (see "One pass for
         # a transformation" above).
         own = {fmt for fmt, _ in holders}
-        options = dict(conversion or {})
         report = _write_best(
             file,
             name,
             obj,
             claimed,
             own,
-            options,
+            dict(conversion or {}),
+            pyramid,
             loss,
             reasons,
             dropped,
@@ -307,10 +336,28 @@ def save(
             if data_model_of(fmt) is MultiScaleImage
         ]
         report = _write_first(
-            file, name, obj, pyramids, _one_level, reasons, kwargs
+            file,
+            name,
+            obj,
+            pyramids,
+            lambda obj, fmt: _one_level(obj, fmt, pyramid),
+            reasons,
+            kwargs,
+            lambda obj, fmt: _split_pyramid(obj, fmt, pyramid)[1],
         )
     else:
-        report = _write_first(file, name, obj, holders, _copy, reasons, kwargs)
+        report = _write_first(
+            file,
+            name,
+            obj,
+            holders,
+            lambda obj, fmt: _with_scales(
+                _copy(obj, fmt), _split_pyramid(obj, fmt, pyramid)[0]
+            ),
+            reasons,
+            kwargs,
+            lambda obj, fmt: _split_pyramid(obj, fmt, pyramid)[1],
+        )
     if report is not None:
         return _act_on_loss(report, policy)
     if dropped and not _drops_quietly(loss):
@@ -358,7 +405,7 @@ def _copy(obj: tx.Any, fmt: type) -> tx.Any:
 def _is_one_level(
     obj: tx.Any, claimed: tx.List[tx.Tuple[type, tx.Any]]
 ) -> bool:
-    """Whether `obj` is written as a pyramid of one level.
+    """Whether `obj` is written as the finest level of a pyramid.
 
     This is the case for a single-scale image when no candidate format
     stores a single-scale image, so that a format that does, such as a
@@ -369,9 +416,89 @@ def _is_one_level(
     )
 
 
-def _one_level(obj: SingleScaleImage, fmt: type) -> tx.Any:
-    """Return `obj` as the only level of a pyramid of the format `fmt`."""
-    return fmt(images=[obj])
+def _one_level(
+    obj: SingleScaleImage, fmt: type, pyramid: tx.Mapping[str, tx.Any]
+) -> tx.Any:
+    """Return `obj` as the finest level of a pyramid of format `fmt`.
+
+    A format whose `BUILDS_SCALES` is true, such as OME-Zarr, builds the
+    coarser levels as `with_scales()` builds them, unless `nscales=1`
+    asks for the single level, and the options in `pyramid` are those of
+    `with_scales`.
+    """
+    built = fmt(images=[obj])
+    if fmt.WRITES_SCALES:
+        # The writer builds the scales, as `_split_pyramid` says.
+        return built
+    return build_pyramid(built, pyramid, default=fmt.BUILDS_SCALES)
+
+
+def _split_pyramid(
+    obj: tx.Any, fmt: type, pyramid: tx.Mapping[str, tx.Any]
+) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
+    """Split the options of a pyramid between the conversion and the writer.
+
+    The writer of a format whose `WRITES_SCALES` is true, such as
+    OME-Zarr, builds the coarser scales of a single scale while it
+    writes them, from the scales that it has written, read back from
+    the store (#638). The conversion then keeps the single scale, and
+    the writer takes the options, with `nscales=None` by default when
+    the format builds its scales by default. An object of several
+    scales is converted as it is, and the writer refuses options that
+    would build more. Any other format takes the options in its
+    conversion.
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        The options of the conversion and those of the writer.
+    """
+    if not getattr(fmt, "WRITES_SCALES", False):
+        return dict(pyramid), {}
+    if getattr(obj, "nscales", 1) > 1:
+        return {}, dict(pyramid)
+    writer = dict(pyramid)
+    if fmt.BUILDS_SCALES:
+        writer.setdefault("nscales", None)
+    return {"nscales": 1}, writer
+
+
+def _own_scales(
+    obj: tx.Any,
+    pyramid: tx.Mapping[str, tx.Any],
+    options: tx.Dict[str, tx.Any],
+) -> tx.Any:
+    """Return `obj`, saved in its own format, with its scales.
+
+    A format whose `WRITES_SCALES` is true takes the options of a
+    pyramid in `options`, and builds the scales while it writes them.
+    Any other format builds them with `with_scales`.
+    """
+    if getattr(type(obj), "WRITES_SCALES", False):
+        options.update(pyramid)
+        return obj
+    return _with_scales(obj, pyramid)
+
+
+def _with_scales(obj: tx.Any, pyramid: tx.Mapping[str, tx.Any]) -> tx.Any:
+    """Return `obj` with the scales that `pyramid` asks for.
+
+    Raises
+    ------
+    TypeError
+        If the options are given for an object that has no scales.
+    """
+    if not pyramid:
+        return obj
+    if not isinstance(obj, MultiScaleImage) and not hasattr(
+        obj, "with_scales"
+    ):
+        names = ", ".join(f"{key}=" for key in sorted(pyramid))
+        raise TypeError(
+            f"{names} build the scales of a multiscale object, which a "
+            f"{type(obj).__name__} is not."
+        )
+    return build_pyramid(obj, pyramid)
 
 
 def _convert(
@@ -437,6 +564,7 @@ def _write_best(
     candidates: tx.List[tx.Tuple[type, tx.Any]],
     own: tx.Set[type],
     options: tx.Mapping[str, tx.Any],
+    pyramid: tx.Mapping[str, tx.Any],
     loss: tx.Any,
     reasons: tx.List[str],
     dropped: tx.List[LossyConversionError],
@@ -476,9 +604,12 @@ def _write_best(
         report = ConversionReport(
             source=type(obj).__name__, target=fmt.__name__
         )
+        conversion, written = _split_pyramid(obj, fmt, pyramid)
         try:
             with metadata_loss_policy(report):
-                writer, loses, unused = _convert(obj, fmt, options, fmt in own)
+                writer, loses, unused = _convert(
+                    obj, fmt, {**options, **conversion}, fmt in own
+                )
         except OSError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -499,7 +630,7 @@ def _write_best(
             len(fmt.EXTENSIONS),
             -fmt.PRIORITY,
         )
-        ranked.append((key, fmt, writer, report, loses))
+        ranked.append((key, fmt, writer, report, loses, written))
     ranked.sort(key=lambda item: item[0])
     while ranked:
         best = [item for item in ranked if item[0] == ranked[0][0]]
@@ -507,10 +638,10 @@ def _write_best(
             raise AmbiguousFormatError(
                 _ambiguity_message(name, obj, [item[1] for item in best])
             )
-        _, fmt, writer, report, loses = best[0]
+        _, fmt, writer, report, loses, written = best[0]
         ranked = ranked[1:]
         try:
-            _write_once(obj, writer, file, report, save_options)
+            _write_once(obj, writer, file, report, {**save_options, **written})
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue
@@ -584,6 +715,9 @@ def _write_first(
     build: tx.Callable[[tx.Any, type], tx.Any],
     reasons: tx.List[str],
     options: tx.Dict[str, tx.Any],
+    writer_options: tx.Optional[
+        tx.Callable[[tx.Any, type], tx.Mapping[str, tx.Any]]
+    ] = None,
 ) -> tx.Optional[ConversionReport]:
     """
     Write `obj` in the most specific candidate format that takes it.
@@ -636,8 +770,9 @@ def _write_first(
         if not writers:
             continue
         fmt, writer, report = writers[0]
+        extra = {} if writer_options is None else writer_options(obj, fmt)
         try:
-            _write_once(obj, writer, file, report, options)
+            _write_once(obj, writer, file, report, {**options, **extra})
         except (ConversionError, WriterError) as e:
             reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
             continue

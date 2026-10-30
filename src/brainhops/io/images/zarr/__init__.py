@@ -90,6 +90,42 @@ whose module `ngff_transform_to_itk_transform` states that both OME and
 ITK put the centre of a voxel at its integer index. Whether every writer
 of versions 0.4 and 0.5 follows it is not verified.
 
+## Building a pyramid
+
+The writer writes the levels that a pyramid holds, and nothing more. An
+image that has a single resolution gets its coarser levels when it is
+converted to `OmeZarrImage`, which happens when it is saved under a name
+that ends with `.ome.zarr`. By default, the conversion builds as many
+levels as the rules of
+[`Multiscale.with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales]
+allow, by averaging blocks of 2 voxels along each spatial axis until the
+axes have 32 voxels or fewer. The keyword `nscales=` takes the values of
+the argument of `with_scales`, as in `image.to(OmeZarrImage, nscales=4)`
+or `image.to(OmeZarrImage, nscales=[2, 4])`, and `nscales=1` keeps the
+single level. The keywords `factor=`, `mode=`, `align=`, `min_size=` and
+`strict=` are those of `with_scales`, which `OmeZarrImage` inherits from
+[`MultiScaleImage`][brainhops.datamodel.images.MultiScaleImage], and
+which builds the levels of a pyramid afterwards. The axes are those that
+the writer stores, so they are selected by the names of `axes`.
+
+With the default alignment `"exact"`, a level is placed by the rule of
+version 0.6 for a level downsampled by a factor `f`, which puts its
+voxel `i` at the base voxel `f * i + (f - 1) / 2`. The alignments
+`"edges"` and `"centers"` place it by the actual scale of each axis, as
+[`brainhops._core.pyramids`][] explains, and every level is still
+written as a scale and a translation.
+[`OmeZarrField`][brainhops.io.transformations.zarr.OmeZarrField] builds
+the levels of a field in the same way, and builds its metadata again
+when it is written.
+
+Every level is written with the chunks of the finest level, which shrink
+to the shape of a level that is smaller. These chunks are those given to
+`save`, or else those of the store or of the Dask array that the finest
+level reads, or else those that the writer chooses for the finest level.
+A coarser level that is a Dask array is rechunked to them before it is
+written, and the shards, when the levels are sharded, follow the same
+rule.
+
 ## Limitations
 
 The draft type `inverseOf` was removed before version 0.6 and is
@@ -116,17 +152,37 @@ field, with a [`WriterError`][brainhops.io.base.parsers.WriterError].
 Version 0.6 only allows a `scale`, an `identity`, or a `scale` followed
 by a `translation` in the dataset of a level. The writer writes the
 geometry of a level that only scales and translates each axis in that
-form, whatever its spelling. The geometry of a single level that also
-rotates or shears becomes the placement of a pyramid that has none, and
-the level then keeps a unit scale. Any other level that rotates or
-shears is refused with a
-[`WriterError`][brainhops.io.base.parsers.WriterError]. Splitting its
-geometry into a diagonal part per level and a placement shared by all
-levels is tracked in issue #447 (item 131). A flip is never written as
-a negative `scale`, which the schema of version 0.6 refuses, but as an
-`affine`. The flip that every level shares goes before the placements of
-the pyramid, so that each level keeps a positive scale, while levels that
-flip different axes are refused (item 135).
+form, whatever its spelling. When a level also rotates, shears or flips
+its axes, the writer splits the geometry of every level into a positive
+scale and a translation, which the dataset of the level holds, and a
+placement that every level shares, which goes before the placements of
+the pyramid (issue #447, item 131). OME-NGFF 0.6 makes the intrinsic
+system physical, so the dataset of a level holds the size of its voxels
+and the position of its voxels in physical units. The size of a voxel
+along an axis is the length of the column of that axis in the linear
+part of the geometry, which is the distance between two neighbouring
+voxels along the axis, even when the axes are sheared. A polar or a QR
+decomposition would not give that distance. The shared placement holds
+the rest of the geometry of the finest level: its linear part with
+columns of unit length, which only rotates, shears or flips the axes,
+and the position of its first voxel. It is therefore a map between two
+physical spaces. The translation of a coarser level is the offset of
+its first voxel from that of the finest level, which is `(f - 1) / 2`
+voxels of the finest level for a level downsampled by a factor `f`. A
+single level is split in the same way, so that a rotated image with
+voxels of 0.5 mm is written with a scale of 0.5 and a rotation.
+
+The split exists when every level is rotated, sheared and flipped in the
+same way, so that the levels differ only by a positive scale and a
+translation along each axis. The columns of their matrices are compared
+with a relative tolerance of 1e-6, which accepts geometries stored in
+single precision. Levels whose geometries differ in any other way, such
+as levels that flip different axes, are refused with a
+[`WriterError`][brainhops.io.base.parsers.WriterError]. A flip is never
+written as a negative `scale`, which the schema of version 0.6 refuses,
+but as an `affine` (item 135). A pyramid that is read back keeps the
+geometry of each level, but not necessarily the way in which it was
+split between the level and the placements.
 """
 
 __all__ = [

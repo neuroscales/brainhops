@@ -560,7 +560,11 @@ memo), decides them when it is written.
   gives `None`. A multi-scale image without a value of its own takes
   the value of its finest level. When a NIfTI image whose `labels` is
   true is written without a label intent, the intent `label` is written.
-  This is implemented.
+  A label map changes two defaults, and an explicit argument still
+  wins. `reslice` uses nearest interpolation (degree 0) instead of
+  linear interpolation, and the scales of a pyramid, built by
+  `with_scales`, by `to(..., nscales=)` or on save, use the mode
+  `"mode"` instead of `"mean"`. This is implemented.
 
 The forwarding of the save options and the use of `metadata.dtype` by
 the writers are part of the wiring of pass 5a (#287). The metadata half,

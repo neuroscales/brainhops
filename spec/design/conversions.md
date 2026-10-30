@@ -129,9 +129,13 @@ Images follow the pattern of transformations: the conversions that
 change how an image is stored are made by `Image.to()`, and
 `from_instance()` hands them to it, both in `Image` and in
 `ImageFormat`, which comes before the data model in the method
-resolution order of every image format. A single-scale image becomes a
-pyramid of one level. The level keeps its own transformations and the
-pyramid adds none, so the image keeps its geometry. A pyramid becomes
+resolution order of every image format. A single-scale image becomes
+the finest level of a pyramid. The level keeps its own transformations
+and the pyramid adds none, so the image keeps its geometry. A pyramid of
+the data model has that level alone, unless the keyword `nscales=` asks
+for coarser levels, while a pyramid format that builds its scales, such
+as OME-Zarr, builds them by default (item 136 of the tensions in
+`spec/design/format-records.md`). A pyramid becomes
 the single-scale image of its highest-resolution level, placed in the
 world space of the pyramid, and its other levels are left out.
 
