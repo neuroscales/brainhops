@@ -1,6 +1,13 @@
 # Transformations stored as images
 
-This memo is agreed and is not implemented. No issue tracks it yet.
+This memo is agreed and is partly implemented. The `from_image` field
+of `MrtrixWarpFull` is renamed (#629). Every transformation stored as
+a NIfTI image now keeps its stored state in a `NiftiImage`: the two NIfTI
+fields (#632), and the fields of NiftyReg, ITK, SPM and FNIRT and the
+AFNI NIfTI warp. These formats still decode their grid apart from the
+image, because the two decoders disagree on a file whose sform and
+qform codes are both zero (#631). The AFNI BRIK warp and the MRtrix
+warps are not moved yet.
 
 Many transformations are stored in an image file. A displacement field
 in a NIfTI file, an AFNI warp and an MRtrix warp are images whose
@@ -138,6 +145,13 @@ A transformation that has an image and nothing pending, consolidated
 without options, keeps its image, so the transformation is still saved
 byte for byte.
 
+A transformation that is encoded again follows the conventions of its
+image format, even where its own encoder did otherwise before. For
+NIfTI, the qform code is 2 and the qform is set from the sform, and
+assigned data is stored with the type in `metadata.dtype`, as step 2 of
+the precedence on write in [Format records](format-records.md)
+requires.
+
 ### Scope
 
 The decision applies to the transformation formats whose file is an
@@ -192,11 +206,15 @@ again.
 
 ## Order of the work
 
-1. Rename the `from_image` field of `MrtrixWarpFull`.
+1. Rename the `from_image` field of `MrtrixWarpFull` (#629).
 2. Move the two NIfTI fields to a stored `NiftiImage`, add `from_image`
    and `to_image`, and check that a file read and saved again is still
-   copied byte for byte.
-3. Move the AFNI warps, so that `AfniNiftiWarp.to_image()` returns a
-   `NiftiImage`.
-4. Move the other formats of the table, if the first two steps make the
-   code shorter without awkward forwarding.
+   copied byte for byte (#632).
+3. Rename `NiftiBasedTransformation`, the base of every transformation
+   stored in a NIfTI file, to `NiftiBackedTransformation`, and move the
+   other NIfTI formats of the table onto the base of step 2: NiftyReg,
+   ITK, SPM, FNIRT and the AFNI NIfTI warp, so that
+   `AfniNiftiWarp.to_image()` returns a `NiftiImage`.
+4. Move the part of that base that does not depend on NIfTI into a base
+   that takes the image class as a parameter, and move the AFNI BRIK
+   warp and the MRtrix warps onto it.
