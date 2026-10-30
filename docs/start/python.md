@@ -100,8 +100,12 @@ io.save(img, "copy.zarr")  # -> Zarr, without the geometry
 
 An image computed in memory is written the same way, since NIfTI and Zarr
 both hold a plain image. A name that ends with `.ome.zarr` writes an image
-with its geometry as an OME-Zarr pyramid, which has one level when the
-image has a single scale. A transformation is converted to the format the
+with its geometry as an OME-Zarr pyramid. An image that has a single
+scale becomes the finest level of the pyramid, whose coarser levels are
+built by averaging blocks of 2 voxels along each spatial axis, until the
+axes have 32 voxels or fewer. The keyword `nscales=` changes this, as in
+`io.save(img, "copy.ome.zarr", nscales=1)`, which writes the single
+level. A transformation is converted to the format the
 name asks for, with the same converters as `t.to(Format)`. Its `input`
 and `output` are read, and bridged to the format's: an affine from voxels
 to LPS is written as the voxel-to-RAS affine of a NIfTI file, with its

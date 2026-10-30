@@ -18,6 +18,8 @@ from brainhops._core.dependencies import da
 from brainhops._core.path import is_same_file
 from brainhops._core.properties import alias
 from brainhops._core.proxy import ArrayProxy, StoredProxy
+from brainhops.datamodel._internal_api import ScalePlan, plan_scales
+from brainhops.errors import WriterError
 
 # this format
 from ._raw import ZarrRaw, document_keys, same_storage
@@ -228,6 +230,85 @@ def write_array(
                 (location / key).unlink(missing_ok=True)
     for key, content in documents.items():
         (location / key).write_bytes(content)
+
+
+def read_back(
+    node: tx.Any, perm: tx.Optional[tx.Sequence[int]] = None
+) -> tx.Any:
+    """Return a level just written as a Dask array of the chunks of its store.
+
+    A writer that builds the coarser levels of a pyramid from the levels
+    that it has written reads them back with this function. Whatever the
+    backend setting, a level is read as a Dask array whose blocks are
+    the chunks of the store, so that a coarser level is computed one
+    chunk at a time and never loads a whole level into memory. Without
+    Dask, the level is a lazy array of the store, which the backend
+    setting converts.
+
+    Parameters
+    ----------
+    node : ZarrArray
+        The array just written.
+    perm : sequence of int, optional
+        The permutation from the stored axes to the axes of the level,
+        as [`ZarrProxy`][] takes it. By default, the stored order.
+
+    Returns
+    -------
+    Any
+        The level.
+    """
+    proxy = ZarrProxy(
+        node, store_location(node), None if perm is None else tuple(perm)
+    )
+    return proxy if da is None else proxy.to_dask()
+
+
+def written_plan(
+    obj: tx.Any, pyramid: tx.Mapping[str, tx.Any]
+) -> tx.Optional[ScalePlan]:
+    """Return the scales that a writer builds while it writes, or `None`.
+
+    A writer of OME-Zarr meets the options of a pyramid when a single
+    scale is saved with them, as `io.save` does by default. The writer
+    then writes the finest scale, and builds each coarser scale from the
+    scales that it has written, read back from the store, so that the
+    finest scale is read once and the memory stays bounded by a few
+    chunks (#638).
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid to write.
+    pyramid : mapping
+        The options of a pyramid that the writer was given, which may be
+        none.
+
+    Returns
+    -------
+    ScalePlan or None
+        The coarser scales to build, or `None` when no option was given.
+
+    Raises
+    ------
+    WriterError
+        If options are given for a pyramid that holds several scales,
+        which is written as it is, or if the options are wrong.
+    """
+    if not pyramid:
+        return None
+    if obj.nscales > 1:
+        names = ", ".join(f"{key}=" for key in sorted(pyramid))
+        raise WriterError(
+            f"{names} build the scales of a pyramid while it is written, "
+            f"but this pyramid already holds {obj.nscales} scales, which "
+            "are written as they are. Write its finest scale alone, or "
+            "build the scales with `with_scales` first."
+        )
+    try:
+        return plan_scales(obj, pyramid)
+    except (TypeError, ValueError, KeyError, IndexError) as error:
+        raise WriterError(str(error)) from error
 
 
 def write_into(node: tx.Any, raw: tx.Any) -> None:

@@ -516,11 +516,13 @@ own (item 364). The maintainer decided these rules on 2026-10-13.
 OME-NGFF 0.6 lets a dataset of a multiscale hold only a scale, an
 identity, or a scale followed by a translation. The OME-Zarr writer
 encodes a level transformation that is an axis-aligned scale with an
-optional translation, and refuses any other with
-`UnrepresentableTransformationError`, whose message says to move the
-rotation or the shear into the placements of the pyramid, which version
-0.6 stores as common transformations. Factoring a level transformation
-into a common part and a part for each level is tracked in #447. A
+optional translation in that form. When a level also rotates, shears or
+flips its axes, the writer splits the transformation of every level into
+a positive scale and a translation, which the dataset holds, and a
+placement that every level shares, which version 0.6 stores as a common
+transformation (#447, item 131). Levels that are rotated, sheared or
+flipped in different ways have no such split, and the writer refuses
+them with `UnrepresentableTransformationError`. A
 container that stores no placement, such as TIFF or JPEG 2000, composes
 an assigned preferred placement into the transformation of each level
 that it writes, and its class docstring says so.
@@ -1672,13 +1674,35 @@ its status.
      other placement in the transformations of the multiscale. A
      `MultiScaleImage` lets each level hold any geometry. The writer
      writes a geometry that only scales and translates each axis in the
-     form of a dataset, whatever its spelling, and moves the geometry of
-     a single level that rotates or shears to the placements of a pyramid
-     that has none, as #434 (66ff758) does. It refuses any other level
-     that rotates or shears, as the maintainer decided on #433
-     (`io/images/zarr/_multiscale.py`, `to_node`). Status: decided.
-     Splitting such a geometry into a diagonal part per level and a part
-     shared by every level is tracked in #447.
+     form of a dataset, whatever its spelling. When a level also rotates,
+     shears or flips, the writer splits the geometry of every level into a
+     diagonal part, which its dataset holds, and a placement that every
+     level shares, which goes before the placements of the pyramid
+     (`io/transformations/zarr/_map.py`, `split_levels`, used by
+     `io/images/zarr/_multiscale.py`, `to_node`). The split is the
+     default, because it is exact and a dataset cannot hold anything
+     else, and it applies to a single level too. The intrinsic system of
+     version 0.6 is physical (abczarr documents the chain as voxel, then
+     scale and translation, then intrinsic, with the scale as the
+     physical size of a voxel), so the dataset holds the voxel size and
+     the translation in physical units. The voxel size of an axis is the
+     length of its column in the linear part, which is the distance
+     between neighbouring voxels along the axis even under a shear,
+     unlike the factors of a polar or a QR decomposition. The shared
+     placement takes the linear part of the finest level, with each
+     column divided by its length, and the translation of the finest
+     level, so that it maps a physical space onto another, and the
+     translation of a coarser level is the offset of its first voxel from
+     that of the finest level. The levels share a
+     placement when each column of a level is parallel to the same column
+     of the finest level and points the same way, within a relative
+     tolerance of 1e-6. This tolerance accepts geometries stored in
+     single precision, and refuses rotations that differ by more than
+     about 1e-6 radian. Any other levels are refused with
+     `UnrepresentableTransformationError`. A pyramid that is read back
+     keeps the geometry of each level in its world spaces, but not
+     necessarily the way in which it was split, since its levels then
+     only scale and translate. Status: implemented (#447).
 132. OME-NGFF 0.6 identifies a coordinate system by its name and the path
      of its group, while two brainhops systems are equal when they have
      the same class, name and axes. Two images whose intrinsic systems are
@@ -1731,14 +1755,276 @@ its status.
      equivalent `affine` (`io/transformations/zarr/_map.py`,
      `_scale_translation_entry`). A dataset only holds a positive scale, so
      the flip that every level shares goes before the placements of the
-     pyramid as that linear transformation, and each level keeps a
-     positive scale (`io/images/zarr/_multiscale.py`, `to_node`). Levels
-     that flip different axes are refused, as in item 131 (#447), and
-     versions 0.4 and 0.5, which have no slot for an affine, refuse a
-     flip. The transformation of a dataset, from the array of a level to
-     the intrinsic system, is therefore never an affine or a flip
-     (`to_dataset_ome` only returns a positive scale, followed by a
-     translation). Status: decided.
+     pyramid, as an `affine` that also holds the translation of the
+     finest level, and each level keeps a positive scale
+     (`io/images/zarr/_multiscale.py`, `to_node`). This is the split of
+     item 131, applied to a flip. Levels that flip different axes are
+     refused, as in item 131 (#447), and versions 0.4 and 0.5, which
+     have no slot for an affine, refuse a flip. The transformation of a
+     dataset, from the array of a level to the intrinsic system, is
+     therefore never an affine or a flip (`to_dataset_ome` only returns a
+     positive scale, followed by a translation). Status: decided.
+136. A pyramid needs coarser levels that a single resolution does not
+     have (#625). The data model builds them, in
+     `datamodel/multiscale.py`, for `MultiScaleImage` and
+     `MultiscaleField`, and the OME-Zarr formats inherit the method, so
+     the writers only write the levels that they are given. The method
+     is `with_scales(scales=None, *, factor=None, mode="mean",
+     align="exact", min_size=32, strict=False)`, and it reads `scales`
+     by its type. `None` builds as many scales as the rules allow. An
+     int is the number of scales, the finest one included, and the
+     rules may build fewer, unless `strict=True`, which then raises a
+     `ValueError`. A sequence of factors gives, for each coarser scale,
+     its factor from the finest scale, as an int, a sequence of ints or
+     a mapping from axes to ints, and the factors must be positive and
+     never decrease. A sequence of scales, such as single-scale images,
+     is taken as it is, and must be ordered from fine to coarse and
+     share one world space. An empty sequence is a `ValueError`, and a
+     sequence that mixes factors and scales, or a sequence that comes
+     with `factor=`, is a `TypeError`. The signatures are typed with
+     `typing_extensions.overload`.
+
+     The rules downsample each axis by its factor of `factor` at each
+     step, which is 2 for the spatial axes and 1 for the other axes by
+     default. A factor of 1 freezes an axis. An axis is downsampled
+     while it has more than `min_size` voxels, even when its next scale
+     has fewer, so that an axis of 40 voxels becomes an axis of 20
+     voxels, and an axis of 32 voxels or fewer is frozen. The rules stop
+     when no axis can be downsampled. Among the axes that are not
+     frozen, an axis whose voxels are more than `sqrt(f)` times larger
+     than the smallest voxels waits, so that anisotropic voxels become
+     roughly isotropic first. Axes are selected by position, which may
+     count from the end, or by name, through `AxisList.positions`, as
+     `Transformation.restrict` selects them. The key `None` of a mapping
+     gives its factor to the spatial axes that the mapping does not
+     name, and never to the axis of the vectors of a field, which is
+     never downsampled. An image whose axes are not known names its
+     first three axes `x`, `y` and `z` to resolve the names of a factor,
+     and these names are never stored.
+
+     A scale is computed from the scale before it when its factors are
+     multiples of the factors of that scale, and from the finest scale
+     otherwise. The mode `"nearest"` always picks from the finest scale,
+     because a voxel picked from a picked voxel is not the nearest
+     voxel. A coarser scale that the object already holds is kept when
+     its shape and its placement are those that the request gives, and
+     the scales after it are computed from it.
+
+     The alignment decides where the voxels of a coarse scale lie, by an
+     actual scale `s` and a shift `t` per axis, so that the coarse voxel
+     `i` lies at the fine voxel `s * i + t`. `"exact"`, the default,
+     crops an axis of `n` voxels to `n // f` windows of `f` voxels, with
+     `s = f` and `t = (f - 1) / 2`, which is the rule of OME-NGFF 0.6.
+     Its windows do not overlap, so a coarse voxel reads only its own
+     window. `"edges"` keeps the outer edges of
+     the field of view, with `ceil(n / f)` voxels, `s = n / ceil(n / f)`
+     and `t = (s - 1) / 2`. `"centers"` keeps the centres of the first
+     and the last voxels, with `ceil((n - 1) / f) + 1` voxels,
+     `s = (n - 1) / ceil((n - 1) / f)` and `t = 0`, so that `s` is never
+     larger than `f`. This rule of `"centers"` is open for the
+     maintainer to change. `"edges"` and `"centers"` smooth with the
+     kernel of the mode, sized from `s`, and then pull the voxels with
+     `pull_axes` of `_core/bsplines.py`, which interpolates with
+     `_ext/interpol`: by B-splines of degree 1 after smoothing, and of
+     degree 0 in the mode `"nearest"`. A degree is not an option yet.
+     The pull is separable, one axis after the other with 1-D
+     coordinates, so that the other axes are batch axes. A level only
+     scales and shifts each axis, so the passes give the values of an
+     interpolation over every axis at once, without its dense grid of
+     coordinates, and they read 2 neighbours per pass instead of `2^d`
+     per voxel. The axis that shrinks the most goes first, which keeps
+     the arrays of the next passes small. The smoothing stays a
+     separable filter of `_core/pyramids.py`, since `_ext/interpol`
+     does not smooth. The
+     placement of a scale and the rescaling of the values of a field use
+     `s` and `t`. Every scale is written as a scale and a translation.
+
+     The modes are `"mean"`, the default, `"binomial"`, `"gaussian"`,
+     `"nearest"`, `"mode"`, `"vote_binomial"`, `"vote_gaussian"`,
+     `"max"` and `"min"`. The filters follow one principle: a voxel
+     has a Gaussian profile whose full width at half maximum (FWHM) is
+     1 voxel, and a scale downsampled by `s` ends with a FWHM of `s`
+     fine voxels. The filter adds a FWHM of
+     `sqrt(s ** 2 - 1)`, because Gaussian widths add in quadrature,
+     which is a standard deviation of `sqrt(s ** 2 - 1) / (2 * sqrt(2 *
+     log(2)))`, about 0.74 for `s = 2`. A FWHM of `s - 1` was suggested,
+     which adds the widths linearly and smooths less; the quadrature was
+     chosen because it is how the widths of two Gaussians combine, and
+     the maintainer may reverse this choice. `"gaussian"` samples that
+     Gaussian out to 3 standard deviations. `"binomial"` is the row `k`
+     of Pascal's triangle, whose variance is `k / 4`, for the order `k`
+     that brings it closest to the variance of that Gaussian among the
+     orders that centre the filter where the coarse voxel lies:
+     `(1, 3, 3, 1) / 8` for `"exact"` and `f = 2`, and `(1, 2, 1) / 4`
+     before a pull at `s = 2`. `"nearest"` picks the voxel
+     `f * i + (f - 1) // 2` with `"exact"`, which is half a fine voxel
+     from the centre of the coarse voxel when `f` is even. `"max"` and
+     `"min"` reduce the windows of `"exact"` and are refused with the
+     other alignments. A field takes `"mean"`, `"binomial"`,
+     `"gaussian"` and `"nearest"`, and refuses the other modes, which
+     compare its vectors component by component or vote among them.
+     Each mode is a `Mode` of `_core/pyramids.py`, which pairs a kernel
+     with a reduction and says whether the mode votes. A `"laplacian"`
+     mode, a property that marks an image as labels (#634), and the
+     detection of labels are not implemented, so the caller gives a
+     label image a label mode. An averaged scale of an integer type is
+     rounded back to its type. The edges are extended by repeating the
+     voxel at the edge for an image, and by continuing the line through
+     the voxels at the edge for a field, so that an affine field stays
+     exact.
+
+     The votes among labels (#635) are `"mode"`, `"vote_binomial"` and
+     `"vote_gaussian"`. The indicator of a label is 1 at the voxels of
+     the label and 0 elsewhere. A vote smooths the indicator of each
+     label with the box kernel of `"mean"`, the binomial kernel or the
+     Gaussian kernel, pulls it with B-splines of degree 1 under
+     `"edges"` and `"centers"`, and keeps the label of the highest
+     score, so the votes work with every alignment. The function `vote`
+     of `_core/pyramids.py` takes the labels and a function that maps
+     the indicator of a label to its scores, so that the upsampling of
+     label maps in resampling, which is not implemented, can reuse it.
+     It finds the labels with `unique` on the block that it is given,
+     which is the region of one chunk for a Dask array, and keeps a
+     running best score and best label while it loops over them, so it
+     never builds the one-hot array, and it holds two arrays of the
+     output shape whatever the number of labels. Scores within `1e-9`
+     tie, and a tie goes to the smallest label. A scale keeps the
+     labels and their type. A vote refuses the edge `"linear"`, which
+     would add labels that the array does not hold. A vote keeps a
+     label only where the label wins, so a structure thinner than half
+     a coarse voxel disappears when a single other label surrounds it,
+     where `"nearest"` keeps the voxels of the structure that it
+     happens to pick. Where several labels mix around such a structure,
+     a vote keeps it along its whole length, where `"nearest"` keeps
+     pieces of it.
+
+     A mode that averages is named after its reduction (`"mean"`) or
+     its kernel (`"binomial"`, `"gaussian"`), and these names are taken.
+     The votes are therefore named after the reduction and then the
+     kernel, and the vote with the box kernel keeps the name of the
+     statistic that it computes, `"mode"`, as `"mean"` is the average
+     with the box kernel. A kernel given as a separate option was not
+     chosen, because every caller would have to pass it, from
+     `with_scales` to `io.save`. Under `"exact"`, `"mode"` keeps a
+     reduction that counts the equal voxels of each window instead of
+     looping over the labels. It gives the labels of the vote with the
+     box kernel, ties included, which a test checks, and it costs less
+     for the small windows of a scale computed from the scale before
+     it. Under `"edges"` and `"centers"`, `"mode"` is the vote with the
+     box kernel.
+
+     A vote is computed from the scale before it, as the other modes
+     except `"nearest"` are, so a coarse scale votes among the labels
+     that the scale before it kept. On a parcellation of 40 labels and
+     128 x 128 x 96 voxels, with `"exact"`, the chained
+     `"vote_gaussian"` differs from a vote from the finest scale at
+     5.0 % of the coarse voxels for a factor of 4 and at 9.8 % for a
+     factor of 8, all along the boundaries between labels. The fraction
+     of the fine voxels whose label is that of their coarse voxel is
+     75.8 % instead of 76.3 % for a factor of 4, and 56.6 % instead of
+     57.5 % for a factor of 8. For `"mode"`, the differences are 8.1 %
+     and 15.5 % of the voxels, and the fractions drop by 1.2 and 1.8
+     percentage points. The chained votes cost 2 to 50 times less on
+     NumPy (0.8 s instead of 1.9 s for `"vote_gaussian"`, and 0.1 s
+     instead of 5.1 s for `"mode"`), and a vote from the finest scale
+     would make each chunk of a Dask scale read a region of the finest
+     scale `f ** d` times as large as the chunk, for `d` downsampled
+     axes. The votes are therefore chained, with one task per chunk of
+     a scale.
+
+     The values of a field follow one rule after any mode
+     (`rescale_vectors`). Values in the voxels of the grid of the field
+     change with the grid: the displacements of a field of displacements
+     are divided by `s`, and the coordinates of a field of coordinates
+     whose input and output spaces are the same, the grid of the field,
+     become `(i - t) / s`. Coordinates in another space, such as the
+     world or the grid of another image, and the world displacements of
+     an OME-Zarr field are only averaged.
+
+     A conversion takes the same values under `nscales=`, with
+     `factor=`, `mode=`, `align=`, `min_size=` and `strict=`, as in
+     `img.to(MultiScaleImage, nscales=4)` or
+     `t.to(OmeZarrField, nscales=[2, 4])`. A class whose `BUILDS_SCALES`
+     is true, `OmeZarrImage` and `OmeZarrField`, builds the scales of a
+     single-scale object by default, as `with_scales()` builds them, and
+     `nscales=1` keeps the single scale. The pyramids of the data model
+     keep the single scale by default. A conversion that builds no
+     scale, because it keeps the scales of a multiscale object or
+     because its class does not build them by default, refuses the
+     other options without `nscales=`. `io.save` takes these options
+     as keywords and gives them to the conversion, for an image as for
+     a transformation, so `io.save(img, "img.ome.zarr")` writes a full
+     pyramid and `io.save(img, "img.ome.zarr", nscales=1)` a single
+     level.
+
+     The writers store every level with the chunks of the finest level,
+     and the shards when the levels are sharded, capped at the shape of
+     each level. These chunks are those given to `save`, or else those
+     of the store or of the Dask array of the finest level, or else
+     those that the writer chooses for the finest level, and a coarser
+     Dask level is rechunked to them before it is written. The levels
+     are written one after the other.
+
+     A pyramid is built in one of two ways (#638). A pyramid built in
+     memory, by `with_scales` or by a conversion such as
+     `image.to(OmeZarrImage, nscales=4)`, holds its levels, lazily for
+     a Dask array, and the writer writes them as they are, with one
+     store per level. Its coarse levels are computed from the graph
+     that built them, so each level reads the finest level again. A
+     single scale saved to OME-Zarr, by `io.save(image, path,
+     nscales=4)` or by the `save` of a format object of one level given
+     these options, is built by the writer instead: `io.save` gives the
+     options of the pyramid to the writer of a format whose
+     `WRITES_SCALES` is true rather than to the conversion
+     (`_split_pyramid` in `io/base/_save.py`). The writer writes the
+     finest level, and builds each coarser level with `next_scale`
+     (`datamodel/_multiscale.py`), which calls the same `build_scales`
+     as `with_scales` on the levels already written, read back from the
+     store. The levels are read back as Dask arrays whose blocks are the
+     chunks of the store, whatever the backend setting (`read_back` in
+     `io/common/zarr/_data.py`), so that no step loads a whole level. The
+     level is computed from the level before it, or from the
+     finest level in the mode `"nearest"` and when its factors are not
+     multiples of those of that level, so the placement and the
+     metadata are those of the pyramid built in memory, and the finest
+     level is read once with a memory bounded by a few chunks. The
+     values are the same, except that a level of an integer type that a
+     mode averages is computed from the level before it once rounded,
+     rather than from its values in double precision, which may change
+     a value by one. The options of a pyramid given to the writer of a
+     pyramid of several levels are refused, since that pyramid is
+     written as it is. Saving a single scale to OME-Zarr still builds a
+     full pyramid by default, and `nscales=1` keeps one level.
+
+     A NumPy or CuPy array is computed as a whole, one pass after the
+     other. A Dask array would make each pass a layer of the graph,
+     whose halos along its axis give each task several dependencies, so
+     that Dask cannot fuse the passes, adds tasks and keeps the blocks
+     between the layers alive. A Dask level is therefore computed with
+     one task per chunk of the level, in an explicit graph: the task
+     copies the region of the finer level that the chunk reads, with the
+     voxels around it that the filter, the interpolation and the
+     extension of the edges read, from the chunks that it overlaps, and
+     runs the same passes on it with the package of the chunks. The
+     same function computes a whole array and a region, so the numerics
+     have one implementation. The chunks of every level have the shape
+     of the chunks of the finest level, capped at the shape of the
+     level, so the writers rechunk them only when `save` is given other
+     chunks. The block reductions of
+     `"exact"`, the default `"mean"` included, take the same path
+     instead of `dask.array.coarsen`, which keeps a single path and
+     gives chunks of the finest shape directly. For a 3-D array of
+     `512 x 512 x 256` voxels in chunks of 64 (256 tasks) and two
+     coarser levels, the graph had 768 tasks with `"exact"` and
+     `"mean"`, 150714 with `"binomial"`, and 72548 with `"edges"` and
+     `"mean"`, and it has 292 for each, which is one task per chunk of
+     the levels. The tile copies of `_ext/interpol/_dask.py` are
+     private names of that vendored module, so `_core/pyramids.py`
+     holds its own short version of them. The `ndimage` packages are
+     not used, since they have no Dask version. Status: implemented,
+     with the defaults, the FWHM in quadrature, the rule of
+     `"centers"`, and the names and the chaining of the votes open for
+     review.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,

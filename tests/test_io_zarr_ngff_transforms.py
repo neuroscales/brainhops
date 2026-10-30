@@ -983,20 +983,69 @@ def test_a_flipped_diagonal_affine_is_written_as_an_affine() -> None:
     assert _map.to_dataset_ome(Affine(matrix=matrix), _TO_ZYX, 3) is None
 
 
-def test_a_flip_factors_out_of_a_diagonal_geometry() -> None:
+def _composed(placement: Affine, part: Affine) -> np.ndarray:
+    # The compact matrix of `part` followed by `placement`.
+    outer = np.asarray(placement.matrix)
+    inner = np.asarray(part.matrix)
+    linear = outer[:, :3] @ inner[:, :3]
+    translation = outer[:, :3] @ inner[:, 3] + outer[:, 3]
+    return np.concatenate([linear, translation[:, None]], axis=1)
+
+
+def test_a_flip_splits_out_of_a_diagonal_geometry() -> None:
     matrix = np.zeros((3, 4))
     matrix[[0, 1, 2], [0, 1, 2]] = [-2.0, 3.0, 4.0]
     matrix[:, 3] = [1.0, 2.0, 3.0]
     geometry = Affine(matrix=matrix)
 
-    signs = _map.diagonal_signs(geometry, 3)
-    rest = _map.unflipped(geometry, signs, 3)
+    placement, (part,) = _map.split_levels([geometry], 3)
 
-    np.testing.assert_array_equal(signs, [-1.0, 1.0, 1.0])
-    np.testing.assert_allclose(np.diag(np.asarray(rest.matrix)), [2, 3, 4])
-    linear = np.asarray(_map.flip(signs).matrix)
-    composed = linear[:, :3] @ np.asarray(rest.matrix)
-    np.testing.assert_allclose(composed, matrix)
+    expected = np.zeros((3, 4))
+    expected[[0, 1, 2], [0, 1, 2]] = [-1.0, 1.0, 1.0]
+    expected[:, 3] = [1.0, 2.0, 3.0]
+    np.testing.assert_allclose(np.asarray(placement.matrix), expected)
+    np.testing.assert_allclose(
+        np.asarray(part.matrix), np.diag([2.0, 3.0, 4.0, 0.0])[:3]
+    )
+    np.testing.assert_allclose(_composed(placement, part), matrix)
+
+
+def test_the_levels_of_a_sheared_pyramid_split_exactly() -> None:
+    linear = np.array([[1.0, 0.3, 0.0], [-0.2, 2.0, 0.1], [0.0, 0.4, 0.5]])
+    origin = np.array([5.0, -6.0, 7.0])
+    factors = np.array([2.0, 1.0, 4.0])
+    fine = np.concatenate([linear, origin[:, None]], axis=1)
+    coarse = np.concatenate(
+        [
+            linear * factors,
+            (origin + linear @ ((factors - 1) / 2))[:, None],
+        ],
+        axis=1,
+    )
+
+    placement, parts = _map.split_levels(
+        [Affine(matrix=fine), Affine(matrix=coarse)], 3
+    )
+
+    sizes = np.linalg.norm(linear, axis=0)
+    np.testing.assert_allclose(
+        np.asarray(parts[1].matrix)[:, 3], sizes * (factors - 1) / 2
+    )
+    for part, matrix in zip(parts, (fine, coarse)):
+        diagonal = np.asarray(part.matrix)[:, :3]
+        np.testing.assert_allclose(diagonal, np.diag(np.diag(diagonal)))
+        np.testing.assert_allclose(_composed(placement, part), matrix)
+
+
+def test_levels_that_differ_by_more_than_a_scale_do_not_split() -> None:
+    fine = Affine(matrix=np.eye(3, 4))
+    sheared = np.eye(3, 4)
+    sheared[0, 1] = 1e-3
+    flipped = np.eye(3, 4)
+    flipped[1, 1] = -2.0
+
+    assert _map.split_levels([fine, Affine(matrix=sheared)], 3) is None
+    assert _map.split_levels([fine, Affine(matrix=flipped)], 3) is None
 
 
 # ---- parameters named by path, by version ----------------------------
