@@ -3191,7 +3191,7 @@ EXEMPLARS[MrtrixWarpFull] = _MRTRIX_WARP._replace(
     change_geometry=_warpfull_change_geometry,
     foreign=None,
     build=lambda data: MrtrixWarpFull(data=data),
-    options=frozenset({"from_image", "midway"}),
+    options=frozenset({"from_index", "midway"}),
     derived=(),
 )
 
