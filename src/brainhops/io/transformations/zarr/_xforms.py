@@ -37,10 +37,12 @@ from brainhops._core.pyramids import downsample, level_geometry
 # datamodel
 from brainhops.datamodel._internal_api import (
     PyramidLayout,
+    build_scales,
     field_scale,
     level_matches,
     next_scale,
     pop_pyramid_options,
+    pyramid_layout,
     vector_axis,
 )
 from brainhops.datamodel.axes import AxisList, CoordinateAxis, SpaceAxis
@@ -500,42 +502,10 @@ class OmeZarrField(
     # a coarser level are not rescaled, and the metadata is built again
     # from the levels when the field is written.
 
-    def _pyramid_layout(self) -> PyramidLayout:
-        raw_levels = list(self.raw_levels or [])
-        if not raw_levels:
-            raise ValueError(
-                "This OME-Zarr field has no level, so no coarser level can be "
-                "built from it."
-            )
-        shape = tuple(int(n) for n in raw_levels[0].shape)
-        ndim = len(shape)
-        vector = self._vector_axis
-        vector = ndim - 1 if vector is None else vector % ndim
-        spatial = tuple(axis for axis in range(ndim) if axis != vector)
-        if self.axes and len(self.axes) == ndim:
-            axes = AxisList(list(self.axes))
-        else:
-            axes = AxisList(
-                [SpaceAxis() for _ in spatial] + [CoordinateAxis()]
-            )
-        sizes = [1.0] * ndim
-        matrix = _map.affine_matrix(self._placements()[0], len(spatial))
-        if matrix is not None:
-            for axis, size in zip(spatial, axis_scales(matrix)):
-                sizes[axis] = float(size)
-        return PyramidLayout(
-            axes=axes,
-            shape=shape,
-            sizes=tuple(sizes),
-            spatial=spatial,
-            fixed=(vector,),
-            field=True,
-        )
-
     def _keeps_scale(
         self, index: int, factors: tx.Tuple[int, ...], align: str
     ) -> bool:
-        layout = self._pyramid_layout()
+        layout = pyramid_layout(self)
         raw_levels = list(self.raw_levels or [])
         transforms = list(self.level_transforms or [])
         count = len(layout.spatial)
@@ -554,50 +524,6 @@ class OmeZarrField(
             shapes[1],
             [factors[axis] for axis in layout.spatial],
             align,
-        )
-
-    def _build_scales(
-        self,
-        factors: tx.Sequence[tx.Tuple[int, ...]],
-        mode: str,
-        align: str,
-        kept: int,
-    ) -> tx.Self:
-        layout = self._pyramid_layout()
-        raw_levels = list(self.raw_levels[: kept + 1])
-        transforms = list(self.level_transforms or [])[: kept + 1]
-        transforms += [Identity()] * (kept + 1 - len(transforms))
-        finest_shape = [raw_levels[0].shape[axis] for axis in layout.spatial]
-        for level in factors[kept:]:
-            _, scales, shifts = level_geometry(
-                align, finest_shape, [level[axis] for axis in layout.spatial]
-            )
-            transforms.append(
-                Affine(
-                    matrix=np.concatenate(
-                        [np.diag(scales), shifts[:, None]], axis=1
-                    )
-                )
-            )
-        previous = None
-        if kept:
-            previous = (factors[kept - 1], to_backend(raw_levels[kept]))
-        # The vectors are stored in world units, which do not depend on
-        # the grid, so the modes only average them.
-        coarser = downsample(
-            to_backend(raw_levels[0]),
-            factors[kept:],
-            mode,
-            edge="linear",
-            align=align,
-            previous=previous,
-        )
-        return replace(
-            self,
-            raw_levels=raw_levels + coarser,
-            voxel2world=self._placements()[0],
-            level_transforms=transforms,
-            ome=None,
         )
 
     def _adopt_scales(self, scales: tx.Sequence[Sequence]) -> tx.Self:
@@ -1105,4 +1031,82 @@ def affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
         ],
         input=xform.input,
         output=xform.output,
+    )
+
+
+@pyramid_layout.register(OmeZarrField)
+def _(obj: "OmeZarrField") -> PyramidLayout:
+    raw_levels = list(obj.raw_levels or [])
+    if not raw_levels:
+        raise ValueError(
+            "This OME-Zarr field has no level, so no coarser level can be "
+            "built from it."
+        )
+    shape = tuple(int(n) for n in raw_levels[0].shape)
+    ndim = len(shape)
+    vector = obj._vector_axis
+    vector = ndim - 1 if vector is None else vector % ndim
+    spatial = tuple(axis for axis in range(ndim) if axis != vector)
+    if obj.axes and len(obj.axes) == ndim:
+        axes = AxisList(list(obj.axes))
+    else:
+        axes = AxisList([SpaceAxis() for _ in spatial] + [CoordinateAxis()])
+    sizes = [1.0] * ndim
+    matrix = _map.affine_matrix(obj._placements()[0], len(spatial))
+    if matrix is not None:
+        for axis, size in zip(spatial, axis_scales(matrix)):
+            sizes[axis] = float(size)
+    return PyramidLayout(
+        axes=axes,
+        shape=shape,
+        sizes=tuple(sizes),
+        spatial=spatial,
+        fixed=(vector,),
+        field=True,
+    )
+
+
+@build_scales.register(OmeZarrField)
+def _(
+    obj: "OmeZarrField",
+    factors: tx.Sequence[tx.Tuple[int, ...]],
+    mode: str,
+    align: str,
+    kept: int,
+) -> "OmeZarrField":
+    layout = pyramid_layout(obj)
+    raw_levels = list(obj.raw_levels[: kept + 1])
+    transforms = list(obj.level_transforms or [])[: kept + 1]
+    transforms += [Identity()] * (kept + 1 - len(transforms))
+    finest_shape = [raw_levels[0].shape[axis] for axis in layout.spatial]
+    for level in factors[kept:]:
+        _, scales, shifts = level_geometry(
+            align, finest_shape, [level[axis] for axis in layout.spatial]
+        )
+        transforms.append(
+            Affine(
+                matrix=np.concatenate(
+                    [np.diag(scales), shifts[:, None]], axis=1
+                )
+            )
+        )
+    previous = None
+    if kept:
+        previous = (factors[kept - 1], to_backend(raw_levels[kept]))
+    # The vectors are stored in world units, which do not depend on
+    # the grid, so the modes only average them.
+    coarser = downsample(
+        to_backend(raw_levels[0]),
+        factors[kept:],
+        mode,
+        edge="linear",
+        align=align,
+        previous=previous,
+    )
+    return replace(
+        obj,
+        raw_levels=raw_levels + coarser,
+        voxel2world=obj._placements()[0],
+        level_transforms=transforms,
+        ome=None,
     )

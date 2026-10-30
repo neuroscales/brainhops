@@ -15,10 +15,12 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._multiscale import (
     PyramidLayout,
     build_pyramid,
+    build_scales,
     downsampled_matrix,
     geometry_matrix,
     level_matches,
     pop_pyramid_options,
+    pyramid_layout,
 )
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import (
@@ -280,34 +282,6 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     # --- scales built from the finest scale ---------------------------
 
-    def _pyramid_layout(self) -> PyramidLayout:
-        scales = list(self.scales or [])
-        if not scales:
-            raise ValueError(
-                "This multiscale field has no scale, so no coarser scale can "
-                "be built from it."
-            )
-        parts = field_scale(scales[0])
-        shape = tuple(int(n) for n in parts.field.data.shape)
-        count = len(shape) - 1
-        grid = get_axes(parts.field.input)
-        if len(grid) != count or Ellipsis in list(grid):
-            grid = [SpaceAxis() for _ in range(count)]
-        vector = (
-            DisplacementAxis()
-            if parts.kind == "displacement"
-            else CoordinateAxis()
-        )
-        sizes = np.asarray(axis_scales(_affine_inv(parts.world2voxel)))
-        return PyramidLayout(
-            axes=AxisList(list(grid) + [vector]),
-            shape=shape,
-            sizes=tuple(float(size) for size in sizes) + (1.0,),
-            spatial=tuple(range(count)),
-            fixed=(count,),
-            field=True,
-        )
-
     def _keeps_scale(
         self, index: int, factors: tx.Tuple[int, ...], align: str
     ) -> bool:
@@ -327,71 +301,6 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
             factors[: len(shapes[0])],
             align,
         )
-
-    def _build_scales(
-        self,
-        factors: tx.Sequence[tx.Tuple[int, ...]],
-        mode: str,
-        align: str,
-        kept: int,
-    ) -> tx.Self:
-        finest = self.scales[0]
-        parts = field_scale(finest)
-        values = to_backend(parts.field.field)
-        count = len(values.shape) - 1
-        grid2world = np.asarray(_affine_inv(parts.world2voxel))
-        kind = grid_vectors(parts)
-        scales = list(self.scales[: kept + 1])
-        previous = None
-        if kept:
-            # The vectors of a kept scale are given back in the grid of
-            # the finest scale, in which the modes average them.
-            _, before, shifts = level_geometry(
-                align, values.shape[:count], factors[kept - 1][:count]
-            )
-            kept_values = to_backend(field_scale(scales[kept]).field.field)
-            kept_values = rescale_vectors(
-                kept_values, before, shifts, kind, inverse=True
-            )
-            previous = (factors[kept - 1], kept_values)
-        arrays = downsample(
-            values,
-            factors[kept:],
-            mode,
-            edge="linear",
-            align=align,
-            previous=previous,
-        )
-        for level, array in zip(factors[kept:], arrays):
-            _, spatial, shift = level_geometry(
-                align, values.shape[:count], level[:count]
-            )
-            world2voxel = _affine_inv(
-                downsampled_matrix(grid2world, spatial, shift)
-            )
-            array = rescale_vectors(array, spatial, shift, kind)
-            field = type(parts.field)(
-                field=array,
-                degree=parts.field.degree,
-                bound=parts.field.bound,
-                input=parts.field.input,
-                output=parts.field.output,
-            )
-            chain = [
-                _affine(world2voxel, finest.input, parts.field.input),
-                field,
-            ]
-            if parts.kind == "displacement":
-                voxel2world = downsampled_matrix(
-                    parts.voxel2world, spatial, shift
-                )
-                chain.append(
-                    _affine(voxel2world, parts.field.output, finest.output)
-                )
-            scales.append(
-                Sequence(chain, input=finest.input, output=finest.output)
-            )
-        return replace(self, scales=scales)
 
     def _check_scales(self, scales: tx.Sequence[Sequence]) -> None:
         parts = []  # type: tx.List[FieldScale]
@@ -513,3 +422,98 @@ def _field_to_multiscale(
 
 for _source in (Sequence, DisplacementField, CoordinateField):
     converter(_source, MultiscaleField)(_field_to_multiscale)
+
+
+@pyramid_layout.register(MultiscaleField)
+def _(obj: "MultiscaleField") -> PyramidLayout:
+    scales = list(obj.scales or [])
+    if not scales:
+        raise ValueError(
+            "This multiscale field has no scale, so no coarser scale can "
+            "be built from it."
+        )
+    parts = field_scale(scales[0])
+    shape = tuple(int(n) for n in parts.field.data.shape)
+    count = len(shape) - 1
+    grid = get_axes(parts.field.input)
+    if len(grid) != count or Ellipsis in list(grid):
+        grid = [SpaceAxis() for _ in range(count)]
+    vector = (
+        DisplacementAxis()
+        if parts.kind == "displacement"
+        else CoordinateAxis()
+    )
+    sizes = np.asarray(axis_scales(_affine_inv(parts.world2voxel)))
+    return PyramidLayout(
+        axes=AxisList(list(grid) + [vector]),
+        shape=shape,
+        sizes=tuple(float(size) for size in sizes) + (1.0,),
+        spatial=tuple(range(count)),
+        fixed=(count,),
+        field=True,
+    )
+
+
+@build_scales.register(MultiscaleField)
+def _(
+    obj: "MultiscaleField",
+    factors: tx.Sequence[tx.Tuple[int, ...]],
+    mode: str,
+    align: str,
+    kept: int,
+) -> "MultiscaleField":
+    finest = obj.scales[0]
+    parts = field_scale(finest)
+    values = to_backend(parts.field.field)
+    count = len(values.shape) - 1
+    grid2world = np.asarray(_affine_inv(parts.world2voxel))
+    kind = grid_vectors(parts)
+    scales = list(obj.scales[: kept + 1])
+    previous = None
+    if kept:
+        # The vectors of a kept scale are given back in the grid of
+        # the finest scale, in which the modes average them.
+        _, before, shifts = level_geometry(
+            align, values.shape[:count], factors[kept - 1][:count]
+        )
+        kept_values = to_backend(field_scale(scales[kept]).field.field)
+        kept_values = rescale_vectors(
+            kept_values, before, shifts, kind, inverse=True
+        )
+        previous = (factors[kept - 1], kept_values)
+    arrays = downsample(
+        values,
+        factors[kept:],
+        mode,
+        edge="linear",
+        align=align,
+        previous=previous,
+    )
+    for level, array in zip(factors[kept:], arrays):
+        _, spatial, shift = level_geometry(
+            align, values.shape[:count], level[:count]
+        )
+        world2voxel = _affine_inv(
+            downsampled_matrix(grid2world, spatial, shift)
+        )
+        array = rescale_vectors(array, spatial, shift, kind)
+        field = type(parts.field)(
+            field=array,
+            degree=parts.field.degree,
+            bound=parts.field.bound,
+            input=parts.field.input,
+            output=parts.field.output,
+        )
+        chain = [
+            _affine(world2voxel, finest.input, parts.field.input),
+            field,
+        ]
+        if parts.kind == "displacement":
+            voxel2world = downsampled_matrix(parts.voxel2world, spatial, shift)
+            chain.append(
+                _affine(voxel2world, parts.field.output, finest.output)
+            )
+        scales.append(
+            Sequence(chain, input=finest.input, output=finest.output)
+        )
+    return replace(obj, scales=scales)

@@ -12,6 +12,7 @@ __all__ = [
     "ScalePlan",
     "bridge",
     "build_pyramid",
+    "build_scales",
     "convert",
     "convert_withlog",
     "convert_withsplines",
@@ -24,6 +25,7 @@ __all__ = [
     "next_scale",
     "plan_scales",
     "pop_pyramid_options",
+    "pyramid_layout",
     "smart_replace",
     "vector_axis",
 ]
@@ -33,10 +35,12 @@ from ._multiscale import (
     PyramidLayout,
     ScalePlan,
     build_pyramid,
+    build_scales,
     level_matches,
     next_scale,
     plan_scales,
     pop_pyramid_options,
+    pyramid_layout,
 )
 from ._sugar import get_axes, vector_axis
 from ._transformations.compute.adaptors import bridge

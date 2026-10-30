@@ -44,10 +44,12 @@ from ._indexing import index2transform
 from ._multiscale import (
     PyramidLayout,
     build_pyramid,
+    build_scales,
     downsampled_matrix,
     geometry_matrix,
     level_matches,
     pop_pyramid_options,
+    pyramid_layout,
 )
 from ._resolution import match_resolution
 from ._transformations.compute.multiscale import (
@@ -962,33 +964,6 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             )
         return images[0]
 
-    def _pyramid_layout(self) -> PyramidLayout:
-        finest = self._finest_level()
-        shape = tuple(int(n) for n in finest.data.shape)
-        ndim = len(shape)
-        axes = self._pyramid_axes(ndim)
-        spatial = tuple(
-            position
-            for position, axis in enumerate(axes)
-            if getattr(axis, "type", None) == "space"
-        )
-        matrix = geometry_matrix(finest.transformation, ndim)
-        sizes = np.ones(ndim)
-        if matrix is not None:
-            placements = list(self.transformations or [])
-            world = (
-                geometry_matrix(placements[-1], ndim) if placements else None
-            )
-            if world is not None:
-                matrix = world[:, :-1] @ matrix
-            sizes = np.asarray(axis_scales(matrix))
-        return PyramidLayout(
-            axes=axes,
-            shape=shape,
-            sizes=tuple(float(size) for size in sizes),
-            spatial=spatial,
-        )
-
     def _keeps_scale(
         self, index: int, factors: tx.Tuple[int, ...], align: str
     ) -> bool:
@@ -1010,47 +985,6 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             factors,
             align,
         )
-
-    def _build_scales(
-        self,
-        factors: tx.Sequence[tx.Tuple[int, ...]],
-        mode: str,
-        align: str,
-        kept: int,
-    ) -> tx.Self:
-        finest = self._finest_level()
-        data = to_backend(finest.data)
-        ndim = len(data.shape)
-        geometry = finest.transformation
-        matrix = geometry_matrix(geometry, ndim)
-        if matrix is None:
-            raise ValueError(
-                "The finest level of this image is not placed by an affine, "
-                "so the placement of a coarser level cannot be computed."
-            )
-        levels = list(self.images[: kept + 1])  # type: tx.List[tx.Any]
-        previous = None
-        if kept:
-            previous = (factors[kept - 1], to_backend(levels[kept].data))
-        arrays = downsample(
-            data,
-            factors[kept:],
-            mode,
-            edge="repeat",
-            align=align,
-            previous=previous,
-        )
-        for level, array in zip(factors[kept:], arrays):
-            _, scales, shifts = level_geometry(align, data.shape, level)
-            placement = Affine(
-                matrix=downsampled_matrix(matrix, scales, shifts),
-                input=getattr(geometry, "input", None),
-                output=getattr(geometry, "output", None),
-            )
-            levels.append(
-                SingleScaleImage(data=array, transformations=[placement])
-            )
-        return replace(self, images=levels)
 
     def _check_scales(self, scales: tx.Sequence[SingleScaleImage]) -> None:
         if not all(isinstance(level, SingleScaleImage) for level in scales):
@@ -1387,3 +1321,73 @@ def _single_multi_swap(other: Image, cls: tx.Type[Image]) -> bool:
         isinstance(other, MultiScaleImage)
         and issubclass(cls, SingleScaleImage)
     )
+
+
+@pyramid_layout.register(MultiScaleImage)
+def _(obj: "MultiScaleImage") -> PyramidLayout:
+    finest = obj._finest_level()
+    shape = tuple(int(n) for n in finest.data.shape)
+    ndim = len(shape)
+    axes = obj._pyramid_axes(ndim)
+    spatial = tuple(
+        position
+        for position, axis in enumerate(axes)
+        if getattr(axis, "type", None) == "space"
+    )
+    matrix = geometry_matrix(finest.transformation, ndim)
+    sizes = np.ones(ndim)
+    if matrix is not None:
+        placements = list(obj.transformations or [])
+        world = geometry_matrix(placements[-1], ndim) if placements else None
+        if world is not None:
+            matrix = world[:, :-1] @ matrix
+        sizes = np.asarray(axis_scales(matrix))
+    return PyramidLayout(
+        axes=axes,
+        shape=shape,
+        sizes=tuple(float(size) for size in sizes),
+        spatial=spatial,
+    )
+
+
+@build_scales.register(MultiScaleImage)
+def _(
+    obj: "MultiScaleImage",
+    factors: tx.Sequence[tx.Tuple[int, ...]],
+    mode: str,
+    align: str,
+    kept: int,
+) -> "MultiScaleImage":
+    finest = obj._finest_level()
+    data = to_backend(finest.data)
+    ndim = len(data.shape)
+    geometry = finest.transformation
+    matrix = geometry_matrix(geometry, ndim)
+    if matrix is None:
+        raise ValueError(
+            "The finest level of this image is not placed by an affine, "
+            "so the placement of a coarser level cannot be computed."
+        )
+    levels = list(obj.images[: kept + 1])  # type: tx.List[tx.Any]
+    previous = None
+    if kept:
+        previous = (factors[kept - 1], to_backend(levels[kept].data))
+    arrays = downsample(
+        data,
+        factors[kept:],
+        mode,
+        edge="repeat",
+        align=align,
+        previous=previous,
+    )
+    for level, array in zip(factors[kept:], arrays):
+        _, scales, shifts = level_geometry(align, data.shape, level)
+        placement = Affine(
+            matrix=downsampled_matrix(matrix, scales, shifts),
+            input=getattr(geometry, "input", None),
+            output=getattr(geometry, "output", None),
+        )
+        levels.append(
+            SingleScaleImage(data=array, transformations=[placement])
+        )
+    return replace(obj, images=levels)

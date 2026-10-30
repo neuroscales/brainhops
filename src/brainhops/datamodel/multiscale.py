@@ -36,14 +36,11 @@ from brainhops._core.pyramids import (
     DEFAULT_ALIGN,
     DEFAULT_MODE,
     MIN_SIZE,
-    check_align,
-    check_mode,
-    default_factors,
 )
 from brainhops._core.typing import ArrayProtocol
 
 # datamodel
-from ._multiscale import PyramidLayout, ScalePlan
+from ._multiscale import build_scales, is_factor, plan_scales
 from .axes import AxisQuery
 from .base import DataModelBase
 
@@ -87,8 +84,9 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
     and, through the `_level_resolution` hook, the physical grid size of
     each one, from which `nearest_level` picks the scale whose
     resolution is closest to a target grid. A subclass that builds its
-    scales also supplies the hooks `_pyramid_layout`, `_keeps_scale`,
-    `_build_scales`, `_check_scales` and `_adopt_scales`.
+    scales also supplies the hooks `_keeps_scale`, `_check_scales` and
+    `_adopt_scales`, and registers its versions of the functions
+    `pyramid_layout` and `build_scales` of `brainhops.datamodel._multiscale`.
     """
 
     BUILDS_SCALES: tx.ClassVar[bool] = False
@@ -295,7 +293,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             and isinstance(scales, Iterable)
         ):
             scales = list(scales)
-            if scales and not any(_is_factor(item) for item in scales):
+            if scales and not any(is_factor(item) for item in scales):
                 if factor is not None:
                     raise TypeError(
                         "`factor` gives the step of the rules, which a "
@@ -303,7 +301,17 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
                     )
                 self._check_scales(scales)
                 return self._adopt_scales(scales)
-        plan = self._plan_scales(scales, factor, mode, align, min_size, strict)
+        plan = plan_scales(
+            self,
+            {
+                "nscales": scales,
+                "factor": factor,
+                "mode": mode,
+                "align": align,
+                "min_size": min_size,
+                "strict": strict,
+            },
+        )
         kept = 0
         for index, level in enumerate(plan.factors, start=1):
             if index >= self.nscales:
@@ -311,67 +319,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             if not self._keeps_scale(index, level, align):
                 break
             kept = index
-        return self._build_scales(plan.factors, mode, align, kept)
-
-    def _plan_scales(
-        self,
-        scales: tx.Union[None, int, tx.Sequence[FactorLike]],
-        factor: tx.Optional[FactorLike],
-        mode: str,
-        align: str,
-        min_size: int,
-        strict: bool,
-    ) -> ScalePlan:
-        # Return the factors of the coarser scales that the options of
-        # `with_scales` ask for, other than a list of scales.
-        if scales is not None and not isinstance(scales, Integral):
-            if isinstance(scales, (str, bytes, Mapping)) or not isinstance(
-                scales, Iterable
-            ):
-                raise TypeError(
-                    "The scales of a multiscale object are given by their "
-                    "number, by their factors or by their list, not by a "
-                    f"{type(scales).__name__}."
-                )
-            items = list(scales)
-            if not items:
-                raise ValueError(
-                    "A multiscale object has at least one scale, so the "
-                    "sequence of its scales or of its factors cannot be "
-                    "empty."
-                )
-            if factor is not None:
-                raise TypeError(
-                    "`factor` gives the step of the rules, which a sequence "
-                    "of scales or of factors replaces."
-                )
-            if not all(_is_factor(item) for item in items):
-                raise TypeError(
-                    "The sequence of scales mixes factors and scales. Give "
-                    "the factors of the coarser scales, or the list of all "
-                    "the scales."
-                )
-            layout = self._pyramid_layout()
-            requested = _requested_factors(items, layout)
-        else:
-            if isinstance(scales, bool):
-                raise TypeError("The number of scales is an int, not a bool.")
-            layout = self._pyramid_layout()
-            step = _resolve_factor(
-                2 if factor is None else factor, layout, layout.spatial
-            )
-            requested = default_factors(
-                layout.shape,
-                layout.sizes,
-                step,
-                None if scales is None else int(scales),
-                min_size,
-                strict,
-                check_align(align),
-            )
-        check_mode(mode, field=layout.field, align=align)
-        check_align(align)
-        return ScalePlan(list(requested), mode, align)
+        return build_scales(self, plan.factors, mode, align, kept)
 
     # --- hooks --------------------------------------------------------
 
@@ -381,36 +329,12 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         # hook returns `None` here, and subclasses override it.
         return None
 
-    def _pyramid_layout(self) -> PyramidLayout:
-        # Return the layout of the arrays of the finest scale. A
-        # subclass that builds its scales overrides it.
-        raise TypeError(
-            f"A {type(self).__name__} cannot build its scales from its finest "
-            "scale."
-        )
-
     def _keeps_scale(
         self, index: int, factors: tx.Tuple[int, ...], align: str
     ) -> bool:
         # Return whether the scale at `index` lies where `align` puts a
         # scale of `factors` from the finest scale, and has its shape.
         return False
-
-    def _build_scales(
-        self,
-        factors: tx.Sequence[tx.Tuple[int, ...]],
-        mode: str,
-        align: str,
-        kept: int,
-    ) -> tx.Self:
-        # Return a copy that keeps the scales up to `kept` and builds
-        # the others of `factors`, one tuple of factors per axis of the
-        # layout and per coarser scale, from the scale `kept` or from
-        # the finest scale.
-        raise TypeError(
-            f"A {type(self).__name__} cannot build its scales from its finest "
-            "scale."
-        )
 
     def _check_scales(self, scales: tx.Sequence[SINGLE_SCALE]) -> None:
         # Refuse a list of scales that is not ordered from fine to
@@ -422,187 +346,3 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         raise TypeError(
             f"A {type(self).__name__} cannot be given a list of scales."
         )
-
-
-def _is_factor(item: tx.Any) -> bool:
-    # Whether an item of a sequence of scales is a factor rather than a
-    # scale: an int, a mapping, or a sequence of ints.
-    if isinstance(item, bool):
-        return False
-    if isinstance(item, (Integral, Mapping)):
-        return True
-    if isinstance(item, (str, bytes)) or not isinstance(item, (tuple, list)):
-        return False
-    return all(
-        isinstance(value, Integral) and not isinstance(value, bool)
-        for value in item
-    )
-
-
-def _requested_factors(
-    items: tx.Sequence[FactorLike], layout: PyramidLayout
-) -> tx.List[tx.Tuple[int, ...]]:
-    # Resolve the factors of the coarser scales, which never decrease.
-    resolved = []  # type: tx.List[tx.Tuple[int, ...]]
-    previous = (1,) * len(layout.shape)
-    for index, entry in enumerate(items):
-        level = _resolve_factor(
-            entry, layout, layout.spatial, f"scales[{index}]"
-        )
-        decreasing = [
-            position
-            for position, (value, before) in enumerate(zip(level, previous))
-            if value < before
-        ]
-        if decreasing:
-            raise ValueError(
-                f"The factors of the scales never decrease, but those of the "
-                f"axes at positions {decreasing} decrease from "
-                f"{list(previous)} to {list(level)}."
-            )
-        resolved.append(level)
-        previous = level
-    return resolved
-
-
-def _resolve_factor(
-    factor: FactorLike,
-    layout: PyramidLayout,
-    default: tx.Sequence[int],
-    name: str = "factor",
-) -> tx.Tuple[int, ...]:
-    """Return the factor of each axis of a level, from one of its forms.
-
-    Names and positions are read by
-    [`AxisList.positions`][brainhops.datamodel.axes.AxisList.positions],
-    as
-    [`Transformation.restrict`][brainhops.datamodel.transformations.Transformation.restrict]
-    reads them, so that they designate the same axes as there.
-
-    Parameters
-    ----------
-    factor : int or sequence of int or mapping
-        The factor, in a form that `FactorLike` describes.
-    layout : PyramidLayout
-        The layout of the arrays, whose axes the factor refers to.
-    default : sequence of int
-        The positions of the axes that an int, and the key `None` of a
-        mapping, apply to.
-    name : str, default="factor"
-        The name of the argument, for the messages of the errors.
-
-    Returns
-    -------
-    tuple of int
-        One factor per axis of the arrays.
-
-    Raises
-    ------
-    TypeError
-        If the factor has none of the three forms, or if a value is not
-        an int.
-    ValueError
-        If a value is not positive, if a sequence has a length that
-        matches neither the axes nor the axes downsampled by default, if
-        a mapping names an axis twice, or if a factor above 1 is given
-        to an axis that is never downsampled.
-    KeyError
-        If no axis has a name of a mapping.
-    IndexError
-        If a position of a mapping is out of range.
-    """
-    count = len(layout.shape)
-    if isinstance(factor, bool):
-        raise TypeError(f"`{name}` is an int, not a bool.")
-    if isinstance(factor, Integral):
-        values = [1] * count
-        for position in default:
-            values[position] = int(factor)
-    elif isinstance(factor, Mapping):
-        values = [1] * count
-        seen = []  # type: tx.List[int]
-        for key, value in factor.items():
-            if key is None:
-                continue
-            for position in _positions(key, layout, name):
-                if position in seen:
-                    raise ValueError(
-                        f"`{name}` gives a factor to the axis at position "
-                        f"{position} more than once."
-                    )
-                seen.append(position)
-                values[position] = value
-        if None in factor:
-            # The key `None` gives its factor to every axis that an int
-            # would downsample and that the mapping does not name.
-            fallback = factor[None]
-            if isinstance(fallback, bool) or not isinstance(
-                fallback, Integral
-            ):
-                raise TypeError(
-                    f"`{name}` gives the factor {fallback!r} to the key "
-                    "None, which is not an int."
-                )
-            for position in default:
-                if position not in seen:
-                    values[position] = fallback
-    elif isinstance(factor, Iterable) and not isinstance(factor, (str, bytes)):
-        given = list(factor)
-        if len(given) == count:
-            values = given
-        elif len(given) == len(layout.spatial):
-            values = [1] * count
-            for position, value in zip(layout.spatial, given):
-                values[position] = value
-        else:
-            raise ValueError(
-                f"`{name}` gives {len(given)} factors, but the arrays have "
-                f"{count} axes, of which {len(layout.spatial)} are "
-                "downsampled by default."
-            )
-    else:
-        raise TypeError(
-            f"`{name}` is an int, a sequence of ints or a mapping from axes "
-            f"to ints, not a {type(factor).__name__}."
-        )
-    for value in values:
-        if isinstance(value, bool) or not isinstance(value, Integral):
-            raise TypeError(
-                f"`{name}` gives the factor {value!r}, which is not an int."
-            )
-        if value < 1:
-            raise ValueError(
-                f"`{name}` gives the factor {value}, which is not positive."
-            )
-    for position in layout.fixed:
-        if values[position] > 1:
-            raise ValueError(
-                f"`{name}` downsamples the axis at position {position}, "
-                "which holds the components of the vectors of the field and "
-                "is never downsampled."
-            )
-    return tuple(int(value) for value in values)
-
-
-def _positions(
-    reference: AxisReference, layout: PyramidLayout, name: str
-) -> tx.List[int]:
-    # Return the non-negative positions that one reference designates.
-    axes = layout.axes
-    count = len(layout.shape)
-    if isinstance(reference, Integral) and not -count <= reference < count:
-        raise IndexError(
-            f"`{name}` names the axis at position {reference}, which is out "
-            f"of range for arrays of {count} axes."
-        )
-    try:
-        positions = axes.positions([reference])
-    except KeyError:
-        names = [axis.name for axis in axes]
-        raise KeyError(
-            f"`{name}` names the axis {reference!r}, but the axes are named "
-            f"{names}."
-        ) from None
-    if not positions:
-        raise ValueError(f"`{name}` designates no axis with {reference!r}.")
-    return [int(position) % count for position in positions]

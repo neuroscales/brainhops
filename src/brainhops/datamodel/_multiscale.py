@@ -14,6 +14,11 @@ writes them. `geometry_matrix`,
 one.
 """
 
+# stdlib
+import functools
+from collections.abc import Iterable, Mapping
+from numbers import Integral
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -23,11 +28,17 @@ from brainhops._core.pyramids import (
     DEFAULT_ALIGN,
     DEFAULT_MODE,
     MIN_SIZE,
+    check_align,
+    check_mode,
+    default_factors,
     level_geometry,
 )
 
 # datamodel
 from .axes import AxisList
+
+if tx.TYPE_CHECKING:
+    from .multiscale import AxisReference, FactorLike
 
 PYRAMID_OPTIONS = ("nscales", "factor", "mode", "align", "min_size", "strict")
 """The options of a conversion that build the scales of a multiscale object.
@@ -148,6 +159,79 @@ class ScalePlan(tx.NamedTuple):
     """How the voxels of a coarse scale lie over those of the finest."""
 
 
+@functools.singledispatch
+def pyramid_layout(obj: tx.Any) -> PyramidLayout:
+    """Return the layout of the arrays of the finest scale of a pyramid.
+
+    Each multiscale class that builds its scales registers its version
+    of this function.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid.
+
+    Returns
+    -------
+    PyramidLayout
+        The layout of its finest scale.
+
+    Raises
+    ------
+    TypeError
+        If the class of `obj` cannot build its scales.
+    """
+    raise TypeError(
+        f"A {type(obj).__name__} cannot build its scales from its finest "
+        "scale."
+    )
+
+
+@functools.singledispatch
+def build_scales(
+    obj: tx.Any,
+    factors: tx.Sequence[tx.Tuple[int, ...]],
+    mode: str,
+    align: str,
+    kept: int,
+) -> tx.Any:
+    """Return a copy of a pyramid that keeps some scales and builds others.
+
+    [`Multiscale.with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales]
+    and [`next_scale`][] call this function, and each multiscale class
+    that builds its scales registers its version of it.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid.
+    factors : sequence of tuple of int
+        One tuple of factors, one per axis of the layout, for each
+        coarser scale.
+    mode : str
+        How a coarse voxel is computed.
+    align : str
+        How the voxels of a coarse scale lie over those of the finest.
+    kept : int
+        The index of the last scale of `obj` that is kept. The others
+        are built from it or from the finest scale.
+
+    Returns
+    -------
+    Multiscale
+        The copy.
+
+    Raises
+    ------
+    TypeError
+        If the class of `obj` cannot build its scales.
+    """
+    raise TypeError(
+        f"A {type(obj).__name__} cannot build its scales from its finest "
+        "scale."
+    )
+
+
 def plan_scales(obj: tx.Any, options: tx.Mapping[str, tx.Any]) -> ScalePlan:
     """Return the coarser scales that the options of a pyramid ask for.
 
@@ -186,14 +270,60 @@ def plan_scales(obj: tx.Any, options: tx.Mapping[str, tx.Any]) -> ScalePlan:
             f"{', '.join(unknown)} are not options of a pyramid, which are "
             f"{', '.join(PYRAMID_OPTIONS)}."
         )
-    return obj._plan_scales(
-        options.get("nscales"),
-        options.get("factor"),
-        options.get("mode", DEFAULT_MODE),
-        options.get("align", DEFAULT_ALIGN),
-        options.get("min_size", MIN_SIZE),
-        options.get("strict", False),
-    )
+    scales = options.get("nscales")
+    factor = options.get("factor")
+    mode = options.get("mode", DEFAULT_MODE)
+    align = options.get("align", DEFAULT_ALIGN)
+    min_size = options.get("min_size", MIN_SIZE)
+    strict = options.get("strict", False)
+    if scales is not None and not isinstance(scales, Integral):
+        if isinstance(scales, (str, bytes, Mapping)) or not isinstance(
+            scales, Iterable
+        ):
+            raise TypeError(
+                "The scales of a multiscale object are given by their "
+                "number, by their factors or by their list, not by a "
+                f"{type(scales).__name__}."
+            )
+        items = list(scales)
+        if not items:
+            raise ValueError(
+                "A multiscale object has at least one scale, so the "
+                "sequence of its scales or of its factors cannot be "
+                "empty."
+            )
+        if factor is not None:
+            raise TypeError(
+                "`factor` gives the step of the rules, which a sequence "
+                "of scales or of factors replaces."
+            )
+        if not all(is_factor(item) for item in items):
+            raise TypeError(
+                "The sequence of scales mixes factors and scales. Give "
+                "the factors of the coarser scales, or the list of all "
+                "the scales."
+            )
+        layout = pyramid_layout(obj)
+        requested = _requested_factors(items, layout)
+    else:
+        if isinstance(scales, bool):
+            raise TypeError("The number of scales is an int, not a bool.")
+        layout = pyramid_layout(obj)
+        step = _resolve_factor(
+            2 if factor is None else factor, layout, layout.spatial
+        )
+        requested = default_factors(
+            layout.shape,
+            layout.sizes,
+            step,
+            None if scales is None else int(scales),
+            min_size,
+            strict,
+            check_align(align),
+        )
+    check_mode(mode, field=layout.field, align=align)
+    check_align(align)
+    return ScalePlan(list(requested), mode, align)
 
 
 def next_scale(obj: tx.Any, plan: ScalePlan) -> tx.Any:
@@ -222,8 +352,8 @@ def next_scale(obj: tx.Any, plan: ScalePlan) -> tx.Any:
         A copy of `obj` with one more scale.
     """
     count = obj.nscales
-    return obj._build_scales(
-        plan.factors[:count], plan.mode, plan.align, count - 1
+    return build_scales(
+        obj, plan.factors[:count], plan.mode, plan.align, count - 1
     )
 
 
@@ -329,3 +459,190 @@ def level_matches(
     expected = downsampled_matrix(finest, scales, shifts)
     size = max(float(np.abs(finest[:, :-1]).max()), 1e-300)
     return bool(np.allclose(level, expected, rtol=1e-6, atol=1e-6 * size))
+
+
+def is_factor(item: tx.Any) -> bool:
+    """Return whether an item of a sequence of scales is a factor.
+
+    A factor is an int, a mapping, or a sequence of ints. Any other
+    item is a scale.
+    """
+    if isinstance(item, bool):
+        return False
+    if isinstance(item, (Integral, Mapping)):
+        return True
+    if isinstance(item, (str, bytes)) or not isinstance(item, (tuple, list)):
+        return False
+    return all(
+        isinstance(value, Integral) and not isinstance(value, bool)
+        for value in item
+    )
+
+
+def _requested_factors(
+    items: tx.Sequence["FactorLike"], layout: PyramidLayout
+) -> tx.List[tx.Tuple[int, ...]]:
+    # Resolve the factors of the coarser scales, which never decrease.
+    resolved = []  # type: tx.List[tx.Tuple[int, ...]]
+    previous = (1,) * len(layout.shape)
+    for index, entry in enumerate(items):
+        level = _resolve_factor(
+            entry, layout, layout.spatial, f"scales[{index}]"
+        )
+        decreasing = [
+            position
+            for position, (value, before) in enumerate(zip(level, previous))
+            if value < before
+        ]
+        if decreasing:
+            raise ValueError(
+                f"The factors of the scales never decrease, but those of the "
+                f"axes at positions {decreasing} decrease from "
+                f"{list(previous)} to {list(level)}."
+            )
+        resolved.append(level)
+        previous = level
+    return resolved
+
+
+def _resolve_factor(
+    factor: "FactorLike",
+    layout: PyramidLayout,
+    default: tx.Sequence[int],
+    name: str = "factor",
+) -> tx.Tuple[int, ...]:
+    """Return the factor of each axis of a level, from one of its forms.
+
+    Names and positions are read by
+    [`AxisList.positions`][brainhops.datamodel.axes.AxisList.positions],
+    as
+    [`Transformation.restrict`][brainhops.datamodel.transformations.Transformation.restrict]
+    reads them, so that they designate the same axes as there.
+
+    Parameters
+    ----------
+    factor : int or sequence of int or mapping
+        The factor, in a form that `FactorLike` describes.
+    layout : PyramidLayout
+        The layout of the arrays, whose axes the factor refers to.
+    default : sequence of int
+        The positions of the axes that an int, and the key `None` of a
+        mapping, apply to.
+    name : str, default="factor"
+        The name of the argument, for the messages of the errors.
+
+    Returns
+    -------
+    tuple of int
+        One factor per axis of the arrays.
+
+    Raises
+    ------
+    TypeError
+        If the factor has none of the three forms, or if a value is not
+        an int.
+    ValueError
+        If a value is not positive, if a sequence has a length that
+        matches neither the axes nor the axes downsampled by default, if
+        a mapping names an axis twice, or if a factor above 1 is given
+        to an axis that is never downsampled.
+    KeyError
+        If no axis has a name of a mapping.
+    IndexError
+        If a position of a mapping is out of range.
+    """
+    count = len(layout.shape)
+    if isinstance(factor, bool):
+        raise TypeError(f"`{name}` is an int, not a bool.")
+    if isinstance(factor, Integral):
+        values = [1] * count
+        for position in default:
+            values[position] = int(factor)
+    elif isinstance(factor, Mapping):
+        values = [1] * count
+        seen = []  # type: tx.List[int]
+        for key, value in factor.items():
+            if key is None:
+                continue
+            for position in _positions(key, layout, name):
+                if position in seen:
+                    raise ValueError(
+                        f"`{name}` gives a factor to the axis at position "
+                        f"{position} more than once."
+                    )
+                seen.append(position)
+                values[position] = value
+        if None in factor:
+            # The key `None` gives its factor to every axis that an int
+            # would downsample and that the mapping does not name.
+            fallback = factor[None]
+            if isinstance(fallback, bool) or not isinstance(
+                fallback, Integral
+            ):
+                raise TypeError(
+                    f"`{name}` gives the factor {fallback!r} to the key "
+                    "None, which is not an int."
+                )
+            for position in default:
+                if position not in seen:
+                    values[position] = fallback
+    elif isinstance(factor, Iterable) and not isinstance(factor, (str, bytes)):
+        given = list(factor)
+        if len(given) == count:
+            values = given
+        elif len(given) == len(layout.spatial):
+            values = [1] * count
+            for position, value in zip(layout.spatial, given):
+                values[position] = value
+        else:
+            raise ValueError(
+                f"`{name}` gives {len(given)} factors, but the arrays have "
+                f"{count} axes, of which {len(layout.spatial)} are "
+                "downsampled by default."
+            )
+    else:
+        raise TypeError(
+            f"`{name}` is an int, a sequence of ints or a mapping from axes "
+            f"to ints, not a {type(factor).__name__}."
+        )
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise TypeError(
+                f"`{name}` gives the factor {value!r}, which is not an int."
+            )
+        if value < 1:
+            raise ValueError(
+                f"`{name}` gives the factor {value}, which is not positive."
+            )
+    for position in layout.fixed:
+        if values[position] > 1:
+            raise ValueError(
+                f"`{name}` downsamples the axis at position {position}, "
+                "which holds the components of the vectors of the field and "
+                "is never downsampled."
+            )
+    return tuple(int(value) for value in values)
+
+
+def _positions(
+    reference: "AxisReference", layout: PyramidLayout, name: str
+) -> tx.List[int]:
+    # Return the non-negative positions that one reference designates.
+    axes = layout.axes
+    count = len(layout.shape)
+    if isinstance(reference, Integral) and not -count <= reference < count:
+        raise IndexError(
+            f"`{name}` names the axis at position {reference}, which is out "
+            f"of range for arrays of {count} axes."
+        )
+    try:
+        positions = axes.positions([reference])
+    except KeyError:
+        names = [axis.name for axis in axes]
+        raise KeyError(
+            f"`{name}` names the axis {reference!r}, but the axes are named "
+            f"{names}."
+        ) from None
+    if not positions:
+        raise ValueError(f"`{name}` designates no axis with {reference!r}.")
+    return [int(position) % count for position in positions]
