@@ -37,7 +37,9 @@ from brainhops._core.pyramids import downsample, level_geometry
 # datamodel
 from brainhops.datamodel._internal_api import (
     PyramidLayout,
+    adopt_scales,
     field_scale,
+    keeps_scale,
     level_matches,
     vector_axis,
 )
@@ -497,30 +499,6 @@ class OmeZarrField(
             field=True,
         )
 
-    def _keeps_scale(
-        self, index: int, factors: tx.Tuple[int, ...], align: str
-    ) -> bool:
-        layout = self._pyramid_layout()
-        raw_levels = list(self.raw_levels or [])
-        transforms = list(self.level_transforms or [])
-        count = len(layout.spatial)
-        level = transforms[index] if index < len(transforms) else None
-        matrix = _map.affine_matrix(level or Identity(), count)
-        if matrix is None or len(raw_levels[index].shape) != len(layout.shape):
-            return False
-        shapes = [
-            [int(raw.shape[axis]) for axis in layout.spatial]
-            for raw in (raw_levels[0], raw_levels[index])
-        ]
-        return level_matches(
-            np.eye(count, count + 1),
-            matrix,
-            shapes[0],
-            shapes[1],
-            [factors[axis] for axis in layout.spatial],
-            align,
-        )
-
     def _build_scales(
         self,
         factors: tx.Sequence[tx.Tuple[int, ...]],
@@ -561,45 +539,6 @@ class OmeZarrField(
             self,
             raw_levels=raw_levels + coarser,
             voxel2world=self._placements()[0],
-            level_transforms=transforms,
-            ome=None,
-        )
-
-    def _adopt_scales(self, scales: tx.Sequence[Sequence]) -> tx.Self:
-        parts = [field_scale(scale) for scale in scales]
-        if parts[0].kind != self._kind:
-            raise ValueError(
-                f"This OME-Zarr field holds {self._kind}s, but the scales "
-                f"that it is given hold {parts[0].kind}s."
-            )
-        ndim = int(parts[0].field.data.ndim)
-        vector = self._vector_axis
-        vector = ndim - 1 if vector is None else vector % ndim
-        grids = [np.asarray(_affine_inv(part.world2voxel)) for part in parts]
-        raw_levels = []
-        for part, grid2world in zip(parts, grids):
-            values = to_backend(part.field.field)
-            if part.kind == "displacement":
-                # The level stores its displacements in world units.
-                linear = array_backend(values).asarray(grid2world[:, :-1].T)
-                values = values @ linear
-            raw_levels.append(
-                array_backend(values).moveaxis(values, -1, vector)
-            )
-        finest2world = grids[0]
-        world2finest = np.asarray(_affine_inv(finest2world))
-        transforms = [Identity()]  # type: tx.List[Transformation]
-        for grid2world in grids[1:]:
-            linear = world2finest[:, :-1] @ grid2world[:, :-1]
-            shift = world2finest[:, :-1] @ grid2world[:, -1]
-            shift = shift + world2finest[:, -1]
-            transforms.append(
-                Affine(matrix=np.concatenate([linear, shift[:, None]], 1))
-            )
-        return replace(
-            self,
-            raw_levels=raw_levels,
-            voxel2world=Affine(matrix=finest2world),
             level_transforms=transforms,
             ome=None,
         )
@@ -696,6 +635,71 @@ class OmeZarrField(
                 "cannot be rescaled to voxel units. Only an affine "
                 "placement is supported for a displacement field."
             )
+
+
+@keeps_scale.register(OmeZarrField)
+def _(
+    obj: "OmeZarrField", index: int, factors: tx.Tuple[int, ...], align: str
+) -> bool:
+    layout = obj._pyramid_layout()
+    raw_levels = list(obj.raw_levels or [])
+    transforms = list(obj.level_transforms or [])
+    count = len(layout.spatial)
+    level = transforms[index] if index < len(transforms) else None
+    matrix = _map.affine_matrix(level or Identity(), count)
+    if matrix is None or len(raw_levels[index].shape) != len(layout.shape):
+        return False
+    shapes = [
+        [int(raw.shape[axis]) for axis in layout.spatial]
+        for raw in (raw_levels[0], raw_levels[index])
+    ]
+    return level_matches(
+        np.eye(count, count + 1),
+        matrix,
+        shapes[0],
+        shapes[1],
+        [factors[axis] for axis in layout.spatial],
+        align,
+    )
+
+
+@adopt_scales.register(OmeZarrField)
+def _(obj: "OmeZarrField", scales: tx.Sequence[Sequence]) -> "OmeZarrField":
+    parts = [field_scale(scale) for scale in scales]
+    if parts[0].kind != obj._kind:
+        raise ValueError(
+            f"This OME-Zarr field holds {obj._kind}s, but the scales "
+            f"that it is given hold {parts[0].kind}s."
+        )
+    ndim = int(parts[0].field.data.ndim)
+    vector = obj._vector_axis
+    vector = ndim - 1 if vector is None else vector % ndim
+    grids = [np.asarray(_affine_inv(part.world2voxel)) for part in parts]
+    raw_levels = []
+    for part, grid2world in zip(parts, grids):
+        values = to_backend(part.field.field)
+        if part.kind == "displacement":
+            # The level stores its displacements in world units.
+            linear = array_backend(values).asarray(grid2world[:, :-1].T)
+            values = values @ linear
+        raw_levels.append(array_backend(values).moveaxis(values, -1, vector))
+    finest2world = grids[0]
+    world2finest = np.asarray(_affine_inv(finest2world))
+    transforms = [Identity()]  # type: tx.List[Transformation]
+    for grid2world in grids[1:]:
+        linear = world2finest[:, :-1] @ grid2world[:, :-1]
+        shift = world2finest[:, :-1] @ grid2world[:, -1]
+        shift = shift + world2finest[:, -1]
+        transforms.append(
+            Affine(matrix=np.concatenate([linear, shift[:, None]], 1))
+        )
+    return replace(
+        obj,
+        raw_levels=raw_levels,
+        voxel2world=Affine(matrix=finest2world),
+        level_transforms=transforms,
+        ome=None,
+    )
 
 
 def _level_proxy(array: tx.Any) -> tx.Any:
