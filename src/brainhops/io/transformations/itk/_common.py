@@ -322,7 +322,7 @@ class ItkDisplacementBase(ItkBlockBase):
     """
 
     degree: tx.ClassVar[int] = 1
-    """The spline degree of the data."""
+    """The spline degree of the field."""
 
     store: tx.ClassVar[StoreEnum] = StoreEnum.values
     """Whether the data holds spline coefficients or values."""
