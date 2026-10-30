@@ -1,13 +1,17 @@
 # Transformations stored as images
 
-This memo is agreed and is partly implemented. The `from_image` field of
+This memo is agreed and is implemented. The `from_image` field of
 `MrtrixWarpFull` is renamed (#629). Every transformation stored as a
-NIfTI image now keeps its stored state in a `NiftiImage`: the two NIfTI
+NIfTI image keeps its stored state in a `NiftiImage`: the two NIfTI
 fields (#632), and the fields of NiftyReg, ITK, SPM and FNIRT and the
-AFNI NIfTI warp. These formats still decode their grid apart from the
-image, because the two decoders disagree on a file whose sform and qform
-codes are both zero (#631). The AFNI BRIK warp and the MRtrix warps are
-not moved yet.
+AFNI NIfTI warp. The AFNI BRIK warp keeps its stored state in an
+`AfniImage`, and the MRtrix warps keep theirs in an `MrtrixImage`. The
+part of the base that does not depend on NIfTI is the internal class
+`ImageBackedTransformation`, in
+`io/transformations/base/_image_backed.py`, which takes the image class
+as its class attribute `IMAGE`. The NIfTI formats still decode their
+grid apart from the image, because the two decoders disagree on a file
+whose sform and qform codes are both zero (#631).
 
 Many transformations are stored in an image file. A displacement field
 in a NIfTI file, an AFNI warp and an MRtrix warp are images whose
@@ -150,7 +154,9 @@ image format, even where its own encoder did otherwise before. For
 NIfTI, the qform code is 2 and the qform is set from the sform, and
 assigned data is stored with the type in `metadata.dtype`, as step 2 of
 the precedence on write in [Format records](format-records.md)
-requires.
+requires. For MRtrix, assigned data is stored with its own type, and an
+axis after the spatial ones that has no size in the record gets a size
+of one rather than `nan`.
 
 ### Scope
 

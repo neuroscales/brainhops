@@ -38,6 +38,8 @@ from brainhops.io.common.nifti._internal_api import (
 )
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.base._internal_api import (
+    data_image,
+    image_with,
     relabel,
     relabelling,
 )
@@ -52,11 +54,9 @@ from brainhops.io.transformations.base.fields import (
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
-    consolidate_through,
-    data_image,
+    consolidate_nifti,
     field_to_disk,
     field_to_model,
-    image_with,
     intent_overrides,
 )
 
@@ -525,11 +525,11 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             and self._transformations is None
             and self.niftyreg_type in type(self).TYPES
         ):
-            return consolidate_through(
+            return consolidate_nifti(
                 self, data_image(self, field_to_disk), {}, changes, **options
             )
         image, intent = self._encoded()
-        return consolidate_through(self, image, intent, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
 
     def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
         """Return the image of the chain and the overrides of its intent.

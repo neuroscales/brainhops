@@ -16,8 +16,10 @@ __all__ = [
     "chain_leaves",
     "check_endpoint",
     "compatible",
+    "consolidate_through",
     "control_grid",
     "coordinate_parts",
+    "data_image",
     "displacement_parts",
     "displacements_of",
     "field_slots",
@@ -25,6 +27,8 @@ __all__ = [
     "FieldParts",
     "format_options",
     "held",
+    "image_with",
+    "ImageBackedTransformation",
     "is_field",
     "matrix_to_disk",
     "matrix_to_model",
@@ -71,5 +75,11 @@ from ._conversions import (
 )
 from ._converters import relabel, relabelling, relabels
 from ._endpoints import check_endpoint, compatible
+from ._image_backed import (
+    ImageBackedTransformation,
+    consolidate_through,
+    data_image,
+    image_with,
+)
 from ._records import matrix_to_disk, matrix_to_model, read_only, record_of
 from ._splines import control_grid, orthonormal_placement, source_grid

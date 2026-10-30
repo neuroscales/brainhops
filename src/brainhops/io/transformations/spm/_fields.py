@@ -14,6 +14,10 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._internal_api import NiftiObject, header_of
+from brainhops.io.transformations.base._internal_api import (
+    data_image,
+    image_with,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinateField,
@@ -25,12 +29,10 @@ from brainhops.io.transformations.nifti import (
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
-    consolidate_through,
+    consolidate_nifti,
     coordinates_intent,
-    data_image,
     field_to_disk,
     field_to_model,
-    image_with,
 )
 
 
@@ -202,7 +204,7 @@ class SpmCoordinateField(
         changes = {"data": None, "transformations": None}
         stored = self._data is not None or self.rawdata is not None
         if self._transformations is None and stored:
-            return consolidate_through(
+            return consolidate_nifti(
                 self,
                 data_image(self, field_to_disk),
                 intent,
@@ -220,4 +222,4 @@ class SpmCoordinateField(
                 "This field has no coordinates, so there is nothing to write."
             )
         image = image_with(self, field_to_disk(coordinates), vox2ras)
-        return consolidate_through(self, image, intent, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
