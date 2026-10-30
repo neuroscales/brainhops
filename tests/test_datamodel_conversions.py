@@ -57,6 +57,55 @@ def test_a_conversion_checks_what_the_class_promises() -> None:
         X.Scaling.from_instance(X.Translation([1.0, 2.0, 3.0]))
 
 
+@pytest.mark.parametrize(
+    "t",
+    [X.Scaling([1.0, 2.0, 3.0]), X.Permutation([1, 0, 2])],
+    ids=lambda x: type(x).__name__,
+)
+def test_a_conversion_to_rotation_refuses_a_non_rotation(
+    t: X.Transformation,
+) -> None:
+    # A scaling that is not a unit scaling, and an odd permutation, are
+    # not rotations, although Rotation is a subclass of Linear (#622).
+    with pytest.raises(LossyConversionError):
+        t.to(X.Rotation)
+
+
+@pytest.mark.parametrize(
+    "t",
+    [X.Scaling([1.0, 1.0, 1.0]), X.Permutation([1, 2, 0])],
+    ids=lambda x: type(x).__name__,
+)
+def test_a_conversion_to_rotation_accepts_a_rotation(
+    t: X.Transformation,
+) -> None:
+    result = t.to(X.Rotation)
+    assert isinstance(result, X.Rotation)
+    np.testing.assert_allclose(
+        np.asarray(result.to(X.Linear).matrix),
+        np.asarray(t.to(X.Linear).matrix),
+    )
+
+
+def test_a_conversion_from_projection_to_rotation_checks_the_result() -> None:
+    # A projection that drops an axis and creates another one has a
+    # square but singular matrix, which is not a rotation (#622).
+    projection = X.Projection([1], [1], input=S.RASmm())
+    with pytest.raises(LossyConversionError):
+        projection.to(X.Rotation)
+    # A projection that drops and creates no axis is the identity.
+    assert isinstance(X.Projection().to(X.Rotation), X.Rotation)
+
+
+def test_a_rotation_tangent_stores_the_logarithm_of_the_matrix() -> None:
+    # The rotation tangent stores the logarithm of the matrix, so the
+    # matrix of a Linear must not be copied into it as data.
+    result = X.Linear(_ROTATION).to(X.RotationExponential)
+    np.testing.assert_allclose(
+        np.asarray(result.matrix), _ROTATION, atol=1e-12
+    )
+
+
 # ----------------------------------------------------------------------
 #   RELATED CLASSES
 # ----------------------------------------------------------------------

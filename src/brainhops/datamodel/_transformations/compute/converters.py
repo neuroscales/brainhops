@@ -761,7 +761,11 @@ def _(t: Linear, cls: tx.Type[ROTATION], **kwargs) -> ROTATION:
     # conversion lossy.
     if t.is_identity():
         return convert(convert(t, Identity), Rotation, **kwargs)
-    u = smart_replace(t, cls, **kwargs)
+    # The matrix is passed as a view rather than copied as data, because
+    # a tangent class such as RotationExponential stores the logarithm of
+    # the matrix in its data.
+    kwargs.setdefault("matrix", t.matrix)
+    u = _convert_withdata(t, cls, **kwargs)
     if not t.is_rotation(compute=True):
         raise LossyConversionError(result=u)
     return u
@@ -854,6 +858,15 @@ _make_converter_chain(TRANSLATION, IDENTITY, SCALING)
 _make_converter_chain(TRANSLATION, IDENTITY, PERMUTATION)
 _make_converter_chain(SCALING, LINEAR, PERMUTATION)
 _make_converter_chain(PERMUTATION, LINEAR, SCALING)
+# A scaling or a permutation is not always a rotation. Without these
+# chains, the converter to Linear would also accept Rotation, which is a
+# subclass of Linear, and it would skip the check made by the converter
+# from Linear to Rotation (#622).
+_make_converter_chain(SCALING, LINEAR, ROTATION)
+_make_converter_chain(PERMUTATION, LINEAR, ROTATION)
+# A projection that drops an axis has a singular matrix, so it is not a
+# rotation either, and it goes through the same check.
+_make_converter_chain(Projection, LINEAR, ROTATION)
 # A linear tangent matches both the converter of its own family and the
 # converter from Linear to Rotation, so the request is ambiguous unless the
 # tangent is first turned into its map.
