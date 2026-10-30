@@ -50,7 +50,7 @@ from brainhops._core.backends import array_backend
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import converter, smart_replace
-from brainhops.datamodel.transformations import Identity
+from brainhops.datamodel.transformations import Affine, Identity
 
 # io
 from brainhops.io.transformations.base._internal_api import (
@@ -67,9 +67,8 @@ from brainhops.io.transformations.base._internal_api import (
 )
 
 # this format
-from . import _map
 from ._axes import to_axis
-from ._xforms import OmeZarrField, dataset_placement
+from ._xforms import OmeZarrField, dataset_placement, field_ome
 
 RAS = _systems.RASmm()
 """The world that the converter writes a field in."""
@@ -184,8 +183,6 @@ def _field(
     [`OmeZarrField.from_node`][brainhops.io.transformations.zarr.OmeZarrField.from_node]
     builds it from the metadata.
     """
-    from abczarr.ome import v0_6
-
     backend = array_backend(values)
     stored = backend.moveaxis(values, -1, 0)
     ndim = len(scale)
@@ -193,23 +190,8 @@ def _field(
         {"name": name, "type": "space", "unit": "millimeter"}
         for name in _SPACE[:ndim]
     ]
-    placement = _map._scale_translation_entry(
-        np.concatenate([[1.0], scale]), np.concatenate([[0.0], translation])
-    )
-    placement = dict(placement, input={"path": "0"}, output={"name": "field"})
-    ome = v0_6.OME.from_json(
-        {
-            "version": "0.6",
-            "multiscales": [
-                {
-                    "coordinateSystems": [{"name": "field", "axes": axes}],
-                    "datasets": [
-                        {"path": "0", "coordinateTransformations": [placement]}
-                    ],
-                }
-            ],
-        }
-    )
+    matrix = np.concatenate([np.diag(scale), translation[:, None]], axis=1)
+    ome = field_ome([to_axis(axis) for axis in axes], [Affine(matrix=matrix)])
     dataset = ome.multiscales[0].datasets[0]
     spatial = list(range(1, ndim + 1))
     voxel2world = dataset_placement(dataset, spatial, ndim + 1)

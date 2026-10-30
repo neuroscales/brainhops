@@ -23,13 +23,12 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
 )
 from brainhops.datamodel.transformations import (
-    Identity,
     Sequence,
     Transformation,
 )
-from brainhops.errors import WriterError
 
 # io
+from brainhops.errors import UnrepresentableTransformationError, WriterError
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
@@ -385,7 +384,11 @@ class OmeZarrImage(
 
         Each level becomes an array named after its index, and the
         placements of the pyramid become common transformations of the
-        multiscale.
+        multiscale. When a level does more than scale and translate each
+        axis, the geometries of the levels are split into the scale and
+        the translation of each level and a placement that they share,
+        as the section "Limitations" of [`brainhops.io.images.zarr`][]
+        explains.
 
         Parameters
         ----------
@@ -404,13 +407,14 @@ class OmeZarrImage(
         Raises
         ------
         WriterError
-            If `node` is an array, if a level is missing or empty, or if the
-            axes or transformations cannot be written. This includes a
-            level that does not only scale and translate each axis in a
-            pyramid of several levels, or in a pyramid that has its own
-            placements, since an OME-NGFF 0.6 dataset only holds a scale and
-            a translation. The geometry of a single level becomes the
-            placement of a pyramid that has none.
+            If `node` is an array, if a level is missing or empty, or if
+            the axes or transformations cannot be written.
+        UnrepresentableTransformationError
+            If the levels are rotated, sheared or flipped in different
+            ways, so that their geometries cannot be split into the
+            positive scale and the translation that an OME-NGFF 0.6
+            dataset holds and a placement that every level shares. This
+            error is a kind of `WriterError`.
         """
         node = as_node(node)
         if not isinstance(node, ZarrGroup):
@@ -424,6 +428,11 @@ class OmeZarrImage(
                 "This multiscale image has no levels, so there is nothing "
                 "to write."
             )
+        for index, image in enumerate(images):
+            if image.data is None:
+                raise WriterError(
+                    f"Level {index} of this multiscale image has no data."
+                )
         ndim = len(images[0].data.shape)
         axes = self._write_axes(ndim)
         storage_perm = _axisorder.to_storage(axes)
@@ -433,26 +442,28 @@ class OmeZarrImage(
             None if chunks is None else tuple(chunks[p] for p in storage_perm)
         )
 
-        levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
-        rich = False
+        geometries = [image.transformation for image in images]
+        datasets = [
+            _dataset_entry(index, geometry, storage_perm, ndim)
+            for index, geometry in enumerate(geometries)
+        ]
         placements = list(self.transformations or [])
         moved_placement = False
-        # A dataset only holds a positive scale, and a flip is never written
-        # as a negative one (item 135). The flip that every level shares
-        # therefore goes before the placements of the pyramid, as a linear
-        # transformation, and each level keeps the rest of its geometry.
-        geometries = [image.transformation for image in images]
-        signs = _shared_flip(geometries, ndim)
-        if signs is not None:
-            geometries = [
-                _map.unflipped(geometry, signs, ndim)
-                for geometry in geometries
+        if any(entry is None for entry in datasets):
+            # A dataset only holds a positive scale and a translation
+            # (items 131 and 135). The rotation, the shear or the flip
+            # that every level shares therefore goes before the
+            # placements of the pyramid, and each level keeps a scale
+            # and a translation.
+            shared, geometries = _split(geometries, ndim)
+            datasets = [
+                _dataset_entry(index, geometry, storage_perm, ndim)
+                for index, geometry in enumerate(geometries)
             ]
-            linear = _map.flip(signs)
             if placements:
                 placements = [
                     Sequence(
-                        [linear, placement],
+                        [shared, placement],
                         input=getattr(placement, "input", None),
                         output=getattr(placement, "output", None),
                     )
@@ -460,44 +471,14 @@ class OmeZarrImage(
                 ]
             else:
                 output = getattr(images[0].transformation, "output", None)
-                placements = [replace(linear, output=output)]
+                placements = [replace(shared, output=output)]
             moved_placement = True
+
+        levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
+        rich = False
         for index, image in enumerate(images):
             data = image.data
-            if data is None:
-                raise WriterError(
-                    f"Level {index} of this multiscale image has no data."
-                )
-            try:
-                entry = _map.to_dataset_ome(
-                    geometries[index],
-                    storage_perm,
-                    len(data.shape),
-                )
-            except _map.OmeMappingError as error:
-                raise WriterError(
-                    f"Level {index} of this image cannot be written as "
-                    f"OME-Zarr metadata. {error}"
-                ) from error
-            if entry is None:
-                # A dataset only scales and translates. The geometry of a
-                # single level becomes the placement of the pyramid, which is
-                # exact. Splitting the geometry of several levels into a
-                # diagonal part per level and a shared placement is not done
-                # yet (#447).
-                if len(images) != 1 or placements:
-                    raise WriterError(
-                        f"Level {index} of this image is placed by a "
-                        "transformation that does not only scale and "
-                        "translate each axis, which an OME-NGFF 0.6 dataset "
-                        "cannot hold. Give the levels a scale and a "
-                        "translation, and the multiscale image the rest of "
-                        "the placement. Splitting it when writing is tracked "
-                        "in neuroscales/brainhops#447."
-                    )
-                placements.append(geometries[index])
-                entry = _map.to_ome(Identity(), storage_perm, len(data.shape))
-                moved_placement = True
+            entry = datasets[index]
             rich = rich or _map.needs_rich_version(entry)
             xp = array_backend(data)
             stored = xp.transpose(data, storage_perm)
@@ -668,27 +649,40 @@ def default_canonical_axes(ndim: int) -> tx.List[Axis]:
     return spatial + non_spatial
 
 
-def _shared_flip(
-    geometries: tx.Sequence[Transformation], ndim: int
-) -> tx.Optional[tx.Any]:
-    # Return the signs of the flip that every level shares, or `None` when
-    # no level flips an axis or when a level does not only scale and
-    # translate, which the writer handles level by level. Levels that flip
-    # different axes cannot share one placement (#447).
-    signs = [_map.diagonal_signs(geometry, ndim) for geometry in geometries]
-    if any(sign is None for sign in signs):
-        return None
-    if not any(bool((sign < 0).any()) for sign in signs):
-        return None
-    if any(list(sign) != list(signs[0]) for sign in signs):
+def _dataset_entry(
+    index: int,
+    geometry: Transformation,
+    storage_perm: tx.Sequence[int],
+    ndim: int,
+) -> tx.Optional[tx.Dict[str, tx.Any]]:
+    # Return the OME transformation of the dataset of a level, or `None`
+    # when its geometry does more than scale and translate each axis.
+    try:
+        return _map.to_dataset_ome(geometry, storage_perm, ndim)
+    except _map.OmeMappingError as error:
         raise WriterError(
-            "The levels of this image flip different axes, so the flip "
-            "cannot be moved to a placement that they share, and an "
-            "OME-NGFF dataset only holds a positive scale. Splitting the "
-            "geometry of the levels when writing is tracked in "
-            "neuroscales/brainhops#447."
+            f"Level {index} of this image cannot be written as OME-Zarr "
+            f"metadata. {error}"
+        ) from error
+
+
+def _split(
+    geometries: tx.Sequence[Transformation], ndim: int
+) -> tx.Tuple[Transformation, tx.List[Transformation]]:
+    # Split the geometries of the levels into a placement that they
+    # share and a scale and a translation of each level (#447).
+    split = _map.split_levels(geometries, ndim)
+    if split is None:
+        raise UnrepresentableTransformationError(
+            "The levels of this image are not rotated, sheared or flipped "
+            "in the same way, so their geometries cannot be split into the "
+            "positive scale and the translation that the dataset of each "
+            "level holds in OME-NGFF 0.6, and a placement that every level "
+            "shares. Give the levels geometries that differ only by a "
+            "positive scale and a translation along each axis."
         )
-    return signs[0]
+    shared, parts = split
+    return shared, list(parts)
 
 
 def _level(

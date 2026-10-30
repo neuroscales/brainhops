@@ -5,7 +5,14 @@ which each resolution level is a sequence that samples the field on the
 grid of that level. The format is registered, so that
 [`load`][brainhops.io.transformations.load] discovers it. Arrays and
 metadata are kept exactly as read, so that writing an unchanged field
-re-emits its OME metadata unchanged.
+re-emits its OME metadata unchanged. A field that has no metadata, such
+as a field built from arrays, is written with metadata built from its
+levels and their placements by [`field_ome`][].
+
+The dataset of a level of OME-NGFF 0.6 only scales and translates its
+grid. A rotation, a shear or a flip that every level shares is stored as
+a transformation of the whole multiscale, which [`common_placement`][]
+reads and [`field_ome`][] writes, as the levels of an image do.
 """
 
 # dependencies
@@ -36,7 +43,11 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
-from brainhops.errors import ParserTypeError, WriterError
+from brainhops.errors import (
+    ParserTypeError,
+    UnrepresentableTransformationError,
+    WriterError,
+)
 
 # io
 from brainhops.io.base._base import register_format
@@ -103,7 +114,9 @@ class OmeZarrField(
     voxel2world: tx.Optional[Transformation] = None
     """
     The voxel-to-world transformation of the finest level. It is the
-    coordinate transformation of the finest dataset in the OME metadata.
+    coordinate transformation of the finest dataset in the OME metadata,
+    followed by the transformation that the multiscale gives every
+    level, when it has one.
     """
 
     level_transforms: tx.Optional[tx.List[Transformation]] = None
@@ -118,7 +131,8 @@ class OmeZarrField(
     ome: tx.Optional[tx.Any] = None
     """
     The OME metadata exactly as read. The reader never rewrites this
-    object, so it can be re-emitted unchanged.
+    object, so it can be re-emitted unchanged. `None`, the default,
+    means that the writer builds the metadata from the levels.
     """
 
     # The degree is an option of the reading, so it is keyword-only and does
@@ -160,10 +174,32 @@ class OmeZarrField(
     def to_ome(self) -> tx.Any:
         """Return the OME metadata to write.
 
-        An untouched field returns the object it was read with, so that reading
-        and writing round-trips the metadata.
+        An untouched field returns the object it was read with, so that
+        reading and writing round-trips the metadata. A field without
+        metadata, such as a field built from arrays, gets metadata built
+        from its levels, their placements and its axes. The dataset of
+        each level then holds a positive scale and a translation, and a
+        rotation, a shear or a flip that every level shares becomes a
+        transformation of the whole multiscale, as for the levels of an
+        image (see the section "Limitations" of
+        [`brainhops.io.images.zarr`][]).
+
+        Raises
+        ------
+        WriterError
+            If the field has no metadata and no axes, or if the
+            placement of a level is not an affine.
         """
-        return self.ome
+        if self.ome is not None:
+            return self.ome
+        if not self.raw_levels:
+            return None
+        if not self.axes:
+            raise WriterError(
+                "This OME-Zarr field has neither OME metadata nor axes, so "
+                "the axis that holds its vectors is not known."
+            )
+        return field_ome(self.axes, self._placements())
 
     @classmethod
     def _score_store(cls, node: tx.Any) -> float:
@@ -236,11 +272,17 @@ class OmeZarrField(
         else:
             spatial = list(range(spatial_ndim))
         placements = [dataset_placement(ds, spatial, ndim) for ds in datasets]
-        voxel2world = placements[0]
-        world2voxel = voxel2world.inverse()
+        grid2finest = placements[0].inverse()
         level_transforms = [
-            (world2voxel @ placement).compute() for placement in placements
+            (grid2finest @ placement).compute() for placement in placements
         ]
+        # A placement that every level shares, such as a rotation, is
+        # stored in the transformations of the multiscale, after the
+        # placement of each level.
+        shared = common_placement(multiscales[0], spatial, ndim)
+        voxel2world = placements[0]
+        if shared is not None:
+            voxel2world = Sequence([voxel2world, shared])
         return cls(
             raw_levels=raw_levels,
             voxel2world=voxel2world,
@@ -276,12 +318,13 @@ class OmeZarrField(
         Raises
         ------
         WriterError
-            If the node is a plain array, if the field has no OME metadata
-            or no resolution levels, or if its OME metadata breaks a rule
-            of OME-NGFF.
+            If the node is a plain array, if the field has no resolution
+            levels, if its OME metadata cannot be built, as [`to_ome`][]
+            explains, or if its OME metadata breaks a rule of OME-NGFF.
         """
-        # Each level is written at the dataset path named by the metadata, and
-        # the metadata is re-emitted unchanged.
+        # Each level is written at the dataset path named by the
+        # metadata, which is re-emitted unchanged when it was read, and
+        # built from the levels otherwise.
         node = as_node(node)
         if not isinstance(node, abczarr.ZarrGroup):
             raise WriterError(
@@ -407,6 +450,23 @@ class OmeZarrField(
         ):
             return (base @ transforms[index]).compute()
         return base
+
+    def _placements(self) -> tx.List[Transformation]:
+        # The placement of each level over its spatial axes, in the
+        # stored order: the placement of the finest level after the
+        # transformation from the grid of the level to the finest grid.
+        base = self.voxel2world
+        if base is None:
+            base = Identity()
+        transforms = self.level_transforms or []
+        placements = []  # type: tx.List[Transformation]
+        for index in range(len(self.raw_levels or [])):
+            level = transforms[index] if index < len(transforms) else None
+            if level is None or is_identity(level):
+                placements.append(base)
+            else:
+                placements.append(base @ level)
+        return placements
 
     def _level(self, index: int) -> Sequence:
         # A coordinate level is the world-to-voxel affine followed by the
@@ -538,6 +598,229 @@ def dataset_placement(
         spatial_only = list(range(len(spatial)))
         return _map.from_ome(transforms[0], spatial_only, spatial_only)
     return _spatial_part(placement, list(spatial), ndim)
+
+
+def common_placement(
+    multiscale: tx.Any, spatial: tx.Sequence[int], ndim: int
+) -> tx.Optional[Transformation]:
+    """Return the placement that every level of an OME-Zarr field shares.
+
+    The datasets of a multiscale of OME-NGFF 0.6 only scale and
+    translate their levels, and a rotation or a shear that every level
+    shares is a transformation of the whole multiscale, from the system
+    onto which the levels map, called intrinsic, to another system. The
+    last such transformation is the preferred one, as for an image. A
+    transformation that ends in the intrinsic system is read as its
+    inverse, and one that refers to a system of another group is
+    skipped.
+
+    Parameters
+    ----------
+    multiscale : Any
+        The multiscale metadata, normalized to version 0.6.
+    spatial : sequence of int
+        The indices of the spatial axes among the stored axes.
+    ndim : int
+        The number of stored axes.
+
+    Returns
+    -------
+    Transformation or None
+        The shared placement over the spatial axes, in their stored
+        order, or `None` when the multiscale has none.
+
+    Raises
+    ------
+    OmeFieldError
+        If the shared placement cannot be read.
+    """
+    common = list(getattr(multiscale, "coordinateTransformations", None) or [])
+    if not common:
+        return None
+    intrinsic = _intrinsic_name(multiscale)
+    chosen = None  # type: tx.Optional[tx.Tuple[tx.Any, bool]]
+    for transform in common:
+        source = getattr(transform, "input", None)
+        target = getattr(transform, "output", None)
+        if _in_other_group(source) or _in_other_group(target):
+            continue
+        source = getattr(source, "name", None)
+        target = getattr(target, "name", None)
+        if source in (None, intrinsic):
+            chosen = (transform, False)
+        elif target == intrinsic:
+            chosen = (transform, True)
+    if chosen is None:
+        return None
+    transform, inverted = chosen
+    stored = list(range(ndim))
+    try:
+        mapped = _map.from_ome(transform, stored, stored)
+    except _map.OmeMappingError as error:
+        raise OmeFieldError(
+            "The placement that the levels of this OME field share cannot "
+            f"be read. {error}"
+        ) from error
+    placement = _spatial_part(mapped, list(spatial), ndim)
+    return placement.inverse() if inverted else placement
+
+
+def _intrinsic_name(multiscale: tx.Any) -> tx.Optional[str]:
+    # The intrinsic system is the output of the transformations of the
+    # datasets.
+    for dataset in getattr(multiscale, "datasets", None) or []:
+        for transform in dataset.coordinateTransformations or []:
+            name = getattr(getattr(transform, "output", None), "name", None)
+            if isinstance(name, str):
+                return name
+    return None
+
+
+def _in_other_group(system: tx.Any) -> bool:
+    # A system named with a path lies in another group of the hierarchy,
+    # unless the path leads back to the group of the multiscale.
+    path = getattr(system, "path", None)
+    return isinstance(path, str) and path.strip("/") not in ("", ".")
+
+
+FIELD_SYSTEM = "field"
+"""The name of the system in which a written field places its vectors."""
+
+INTRINSIC_SYSTEM = "intrinsic"
+"""The name of the system onto which the levels of a written field map.
+
+It is written only when the levels share a placement that their
+datasets cannot hold, such as a rotation. Otherwise, the levels map
+directly onto [`FIELD_SYSTEM`][].
+"""
+
+
+def field_ome(
+    axes: tx.Sequence[tx.Any], placements: tx.Sequence[Transformation]
+) -> tx.Any:
+    """Build the OME-NGFF 0.6 metadata of the levels of a field.
+
+    Each level is stored in the array named after its index, with the
+    axes in the order of `axes`, which holds one axis whose type is
+    `displacement` or `coordinate`. The dataset of a level holds a
+    positive scale and a translation of its spatial axes. When the
+    levels are also rotated, sheared or flipped, their placements are
+    split into that part and a placement that every level shares, which
+    is written as a transformation of the multiscale, as for the levels
+    of an image (see the section "Limitations" of
+    [`brainhops.io.images.zarr`][]). The vectors are given in the system
+    that the levels are placed in, whatever the split, so their values
+    do not change.
+
+    Parameters
+    ----------
+    axes : sequence of Axis
+        The axes of the stored arrays, in the order in which they are
+        stored. An axis without a name is named after its position.
+    placements : sequence of Transformation
+        The placement of each level, finest first, from its voxels to
+        the system of the field, over the spatial axes in their stored
+        order.
+
+    Returns
+    -------
+    OME
+        The typed metadata of the field.
+
+    Raises
+    ------
+    WriterError
+        If a placement is not an affine, or if the levels are rotated,
+        sheared or flipped in different ways.
+    """
+    from abczarr.ome import v0_6
+
+    ndim = len(axes)
+    spatial = [
+        index
+        for index, axis in enumerate(axes)
+        if getattr(axis, "type", None) not in ("displacement", "coordinate")
+    ]
+    full = []  # type: tx.List[Transformation]
+    for index, placement in enumerate(placements):
+        matrix = _map.affine_matrix(placement, len(spatial))
+        if matrix is None:
+            raise WriterError(
+                f"Level {index} of this OME-Zarr field is placed by a "
+                "transformation that is not an affine of its spatial axes, "
+                "which OME-Zarr cannot store."
+            )
+        # The axis of the vectors is left unchanged by the placement.
+        expanded = np.eye(ndim, ndim + 1)
+        expanded[np.ix_(spatial, spatial)] = matrix[:, :-1]
+        expanded[spatial, -1] = matrix[:, -1]
+        full.append(Affine(matrix=expanded))
+    stored = list(range(ndim))
+    entries = [_map.to_dataset_ome(level, stored, ndim) for level in full]
+    shared = None  # type: tx.Optional[tx.Dict[str, tx.Any]]
+    if any(entry is None for entry in entries):
+        split = _map.split_levels(full, ndim)
+        if split is None:
+            raise UnrepresentableTransformationError(
+                "The levels of this OME-Zarr field are not rotated, sheared "
+                "or flipped in the same way, so their placements cannot be "
+                "split into the positive scale and the translation that the "
+                "dataset of each level holds in OME-NGFF 0.6, and a "
+                "placement that every level shares."
+            )
+        placement, parts = split
+        entries = [_map.to_dataset_ome(part, stored, ndim) for part in parts]
+        shared = _map.to_ome(placement, stored, ndim)
+    json_axes = [_axis_json(index, axis) for index, axis in enumerate(axes)]
+    output = INTRINSIC_SYSTEM if shared is not None else FIELD_SYSTEM
+    systems = [{"name": FIELD_SYSTEM, "axes": json_axes}]
+    if shared is not None:
+        systems.insert(0, {"name": INTRINSIC_SYSTEM, "axes": json_axes})
+    block = {
+        "coordinateSystems": systems,
+        "datasets": [
+            {
+                "path": str(index),
+                "coordinateTransformations": [
+                    dict(
+                        entry,
+                        input={"path": str(index)},
+                        output={"name": output},
+                    )
+                ],
+            }
+            for index, entry in enumerate(entries)
+        ],
+    }  # type: tx.Dict[str, tx.Any]
+    if shared is not None:
+        block["coordinateTransformations"] = [
+            dict(
+                shared,
+                input={"name": INTRINSIC_SYSTEM},
+                output={"name": FIELD_SYSTEM},
+            )
+        ]
+    return v0_6.OME.from_json({"version": "0.6", "multiscales": [block]})
+
+
+def _axis_json(index: int, axis: tx.Any) -> tx.Dict[str, tx.Any]:
+    # The OME description of an axis. OME-NGFF requires a name, so an
+    # axis without one is named after its position.
+    name = getattr(axis, "name", None)
+    entry = {
+        "name": name if isinstance(name, str) and name else f"axis{index}"
+    }  # type: tx.Dict[str, tx.Any]
+    kind = getattr(axis, "type", None)
+    if isinstance(kind, str):
+        entry["type"] = kind
+    # A brainhops unit is an object whose text is the name of the unit.
+    unit = getattr(axis, "unit", None)
+    if unit is not None:
+        entry["unit"] = str(getattr(unit, "value", unit))
+    discrete = getattr(axis, "discrete", None)
+    if isinstance(discrete, bool):
+        entry["discrete"] = discrete
+    return entry
 
 
 def _spatial_part(

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import typing_extensions as tx
 
 from brainhops.datamodel import transformations as X
 from brainhops.datamodel._transformations.compute.multiscale import (
@@ -495,3 +496,141 @@ def test_writer_refuses_metadata_that_breaks_a_rule(tmp_path: Path) -> None:
 
     with pytest.raises(WriterError, match="names neither"):
         broken.to_store(str(tmp_path / "warp.ome.zarr"))
+
+
+# ---- oblique fields on write (#447) ------------------------------------
+
+
+_FIELD_AXES = [
+    {"name": "d", "type": "displacement", "discrete": True},
+    {"name": "z", "type": "space", "unit": "millimeter"},
+    {"name": "y", "type": "space", "unit": "millimeter"},
+    {"name": "x", "type": "space", "unit": "millimeter"},
+]
+"""The stored axes of the fields written here, in the order of OME-NGFF."""
+
+
+def _oblique_placement() -> np.ndarray:
+    # The placement of the finest grid, over the stored axes (z, y, x):
+    # a rotation and anisotropic voxels.
+    angle = 0.3
+    rotation = np.array(
+        [
+            [np.cos(angle), -np.sin(angle), 0.0],
+            [np.sin(angle), np.cos(angle), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    linear = rotation @ np.diag([3.0, 1.0, 1.0])
+    return np.concatenate([linear, [[4.0], [-5.0], [6.0]]], axis=1)
+
+
+def _downsampling(factors: tx.Sequence[int]) -> Affine:
+    # The map from the grid of a level downsampled by `factors` to the
+    # finest grid, by the rule of OME-NGFF 0.6.
+    factors = np.asarray(factors, dtype=float)
+    return Affine(
+        matrix=np.concatenate(
+            [np.diag(factors), ((factors - 1) / 2)[:, None]], axis=1
+        )
+    )
+
+
+def _oblique_field() -> OmeZarrField:
+    rng = np.random.default_rng(11)
+    fine = rng.normal(size=(3, 6, 10, 8))
+    coarse = rng.normal(size=(3, 6, 5, 4))
+    return OmeZarrField(
+        raw_levels=[fine, coarse],
+        voxel2world=Affine(matrix=_oblique_placement()),
+        level_transforms=[Identity(), _downsampling([1, 2, 2])],
+        axes=[to_axis(axis) for axis in _FIELD_AXES],
+    )
+
+
+def _field_multiscale(path: str) -> dict:
+    import json
+
+    with open(Path(path) / "zarr.json") as stream:
+        return json.load(stream)["attributes"]["ome"]["multiscales"][0]
+
+
+def _check_lean_field_datasets(path: str) -> None:
+    # Each dataset holds a positive scale, or a positive scale followed
+    # by a translation, and anything else is in the common
+    # transformations.
+    multiscale = _field_multiscale(path)
+    for dataset in multiscale["datasets"]:
+        (entry,) = dataset["coordinateTransformations"]
+        if entry["type"] == "sequence":
+            steps = entry["transformations"]
+            assert [step["type"] for step in steps] == ["scale", "translation"]
+            scale = steps[0]["scale"]
+        else:
+            assert entry["type"] == "scale"
+            scale = entry["scale"]
+        assert all(value > 0 for value in scale)
+    assert multiscale["coordinateTransformations"]
+
+
+def _level_matrix(field: OmeZarrField, index: int) -> np.ndarray:
+    # The placement of a level, from its grid to the world.
+    placement = field.voxel2world @ field.level_transforms[index]
+    return np.asarray(placement.compute().to(Affine).matrix)
+
+
+def test_an_oblique_field_is_split_on_write(tmp_path: Path) -> None:
+    field = _oblique_field()
+    path = str(tmp_path / "oblique.zarr")
+
+    field.to_store(path)
+    back = OmeZarrField.from_store(path)
+
+    _check_lean_field_datasets(path)
+    assert back.nscales == 2
+    for index in range(2):
+        np.testing.assert_array_equal(
+            np.asarray(back.raw_levels[index]), field.raw_levels[index]
+        )
+        np.testing.assert_allclose(
+            _level_matrix(back, index), _level_matrix(field, index), atol=1e-12
+        )
+
+
+def test_the_vectors_of_an_oblique_field_keep_their_world_units(
+    tmp_path: Path,
+) -> None:
+    # The voxel displacements of a level are the world displacements
+    # mapped by the inverse of the linear part of its placement, which
+    # the split leaves unchanged.
+    field = _oblique_field()
+    path = str(tmp_path / "oblique.zarr")
+
+    field.to_store(path)
+    back = OmeZarrField.from_store(path)
+
+    for index in range(2):
+        expected = field.scales[index].transformations[1].field
+        actual = back.scales[index].transformations[1].field
+        np.testing.assert_allclose(
+            np.asarray(actual), np.asarray(expected), atol=1e-12
+        )
+
+
+def test_a_field_whose_levels_turn_differently_is_refused(
+    tmp_path: Path,
+) -> None:
+    from brainhops.errors import UnrepresentableTransformationError
+
+    field = _oblique_field()
+    sheared = np.eye(3, 4)
+    sheared[0, 1] = 0.1
+    field = OmeZarrField(
+        raw_levels=field.raw_levels,
+        voxel2world=field.voxel2world,
+        level_transforms=[Identity(), Affine(matrix=sheared)],
+        axes=field.axes,
+    )
+
+    with pytest.raises(UnrepresentableTransformationError):
+        field.to_store(str(tmp_path / "refused.zarr"))

@@ -516,11 +516,13 @@ own (item 364). The maintainer decided these rules on 2026-10-13.
 OME-NGFF 0.6 lets a dataset of a multiscale hold only a scale, an
 identity, or a scale followed by a translation. The OME-Zarr writer
 encodes a level transformation that is an axis-aligned scale with an
-optional translation, and refuses any other with
-`UnrepresentableTransformationError`, whose message says to move the
-rotation or the shear into the placements of the pyramid, which version
-0.6 stores as common transformations. Factoring a level transformation
-into a common part and a part for each level is tracked in #447. A
+optional translation in that form. When a level also rotates, shears or
+flips its axes, the writer splits the transformation of every level into
+a positive scale and a translation, which the dataset holds, and a
+placement that every level shares, which version 0.6 stores as a common
+transformation (#447, item 131). Levels that are rotated, sheared or
+flipped in different ways have no such split, and the writer refuses
+them with `UnrepresentableTransformationError`. A
 container that stores no placement, such as TIFF or JPEG 2000, composes
 an assigned preferred placement into the transformation of each level
 that it writes, and its class docstring says so.
@@ -1671,13 +1673,35 @@ its status.
      other placement in the transformations of the multiscale. A
      `MultiScaleImage` lets each level hold any geometry. The writer
      writes a geometry that only scales and translates each axis in the
-     form of a dataset, whatever its spelling, and moves the geometry of
-     a single level that rotates or shears to the placements of a pyramid
-     that has none, as #434 (66ff758) does. It refuses any other level
-     that rotates or shears, as the maintainer decided on #433
-     (`io/images/zarr/_multiscale.py`, `to_node`). Status: decided.
-     Splitting such a geometry into a diagonal part per level and a part
-     shared by every level is tracked in #447.
+     form of a dataset, whatever its spelling. When a level also rotates,
+     shears or flips, the writer splits the geometry of every level into a
+     diagonal part, which its dataset holds, and a placement that every
+     level shares, which goes before the placements of the pyramid
+     (`io/transformations/zarr/_map.py`, `split_levels`, used by
+     `io/images/zarr/_multiscale.py`, `to_node`). The split is the
+     default, because it is exact and a dataset cannot hold anything
+     else, and it applies to a single level too. The intrinsic system of
+     version 0.6 is physical (abczarr documents the chain as voxel, then
+     scale and translation, then intrinsic, with the scale as the
+     physical size of a voxel), so the dataset holds the voxel size and
+     the translation in physical units. The voxel size of an axis is the
+     length of its column in the linear part, which is the distance
+     between neighbouring voxels along the axis even under a shear,
+     unlike the factors of a polar or a QR decomposition. The shared
+     placement takes the linear part of the finest level, with each
+     column divided by its length, and the translation of the finest
+     level, so that it maps a physical space onto another, and the
+     translation of a coarser level is the offset of its first voxel from
+     that of the finest level. The levels share a
+     placement when each column of a level is parallel to the same column
+     of the finest level and points the same way, within a relative
+     tolerance of 1e-6. This tolerance accepts geometries stored in
+     single precision, and refuses rotations that differ by more than
+     about 1e-6 radian. Any other levels are refused with
+     `UnrepresentableTransformationError`. A pyramid that is read back
+     keeps the geometry of each level in its world spaces, but not
+     necessarily the way in which it was split, since its levels then
+     only scale and translate. Status: implemented (#447).
 132. OME-NGFF 0.6 identifies a coordinate system by its name and the path
      of its group, while two brainhops systems are equal when they have
      the same class, name and axes. Two images whose intrinsic systems are
@@ -1730,14 +1754,15 @@ its status.
      equivalent `affine` (`io/transformations/zarr/_map.py`,
      `_scale_translation_entry`). A dataset only holds a positive scale, so
      the flip that every level shares goes before the placements of the
-     pyramid as that linear transformation, and each level keeps a
-     positive scale (`io/images/zarr/_multiscale.py`, `to_node`). Levels
-     that flip different axes are refused, as in item 131 (#447), and
-     versions 0.4 and 0.5, which have no slot for an affine, refuse a
-     flip. The transformation of a dataset, from the array of a level to
-     the intrinsic system, is therefore never an affine or a flip
-     (`to_dataset_ome` only returns a positive scale, followed by a
-     translation). Status: decided.
+     pyramid, as an `affine` that also holds the translation of the
+     finest level, and each level keeps a positive scale
+     (`io/images/zarr/_multiscale.py`, `to_node`). This is the split of
+     item 131, applied to a flip. Levels that flip different axes are
+     refused, as in item 131 (#447), and versions 0.4 and 0.5, which
+     have no slot for an affine, refuse a flip. The transformation of a
+     dataset, from the array of a level to the intrinsic system, is
+     therefore never an affine or a flip (`to_dataset_ome` only returns a
+     positive scale, followed by a translation). Status: decided.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,

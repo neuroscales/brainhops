@@ -55,10 +55,12 @@ express the reordering, such as a scale, is followed by a
 [`Permutation`][], so that the mapping stays exact.
 
 On write, an affine that only scales and translates each axis is written
-as a `scale` and a `translation`. Any other affine is written in full as an
-`affine`, so that rotations and shears are kept. The dataset of a level
-only holds a scale and a translation in version 0.6, which
-[`to_dataset_ome`][] writes.
+as a `scale` and a `translation`. Any other affine is written in full as
+an `affine`, so that rotations and shears are kept. The dataset of a
+level only holds a scale and a translation in version 0.6, which
+[`to_dataset_ome`][] writes, and [`split_levels`][] splits the
+geometries of the levels of a pyramid that do more into that form and a
+placement that every level shares.
 
 In both directions, a [`Function`][] selects the converter that is
 registered for the nearest supertype of the transformation. When two
@@ -626,87 +628,180 @@ def to_dataset_ome(
     return entry if is_dataset_transform(entry) else None
 
 
-def diagonal_signs(
+SPLIT_TOLERANCE = 1e-6
+"""The relative tolerance with which [`split_levels`][] compares levels.
+
+Two levels share a placement when each column of the linear part of one
+level is parallel to the same column of the other, and points the same
+way. A column may deviate from the parallel direction by this fraction
+of its length, which accepts geometries stored in single precision,
+whose entries are rounded to about 6e-8 of their size, and refuses any
+rotation, shear or flip that differs between the levels by more than
+about 1e-6 radian.
+"""
+
+
+def split_levels(
+    transforms: tx.Sequence[Transformation],
+    ndim: int,
+    tolerance: float = SPLIT_TOLERANCE,
+) -> tx.Optional[tx.Tuple[Affine, tx.List[Affine]]]:
+    """Split the geometries of the levels of a pyramid into shared parts.
+
+    The dataset of a level of OME-NGFF 0.6 only holds a positive scale
+    and a translation, and anything else that places the levels, such as
+    a rotation, a shear or a flip, belongs to the transformations of the
+    whole multiscale. This function finds such a split. Each geometry
+    `G_i` of a level becomes `P @ D_i`, which applies the diagonal part
+    `D_i` of the level first and the shared placement `P` after it. The
+    result is exact, up to the rounding of the arithmetic, when the
+    levels are rotated, sheared and flipped in the same way and differ
+    only by a positive scale and a translation along each of their axes,
+    as the levels of a pyramid do.
+
+    The intrinsic system of OME-NGFF 0.6 is physical, so the diagonal
+    part of a level holds the size of its voxels in physical units. The
+    size of a voxel along an axis is the length of the column of that
+    axis, which is the distance between two neighbouring voxels along
+    the axis even when the axes are sheared, unlike the factors of a
+    polar or a QR decomposition. The shared placement is the rest of the
+    geometry. Its linear part is that of the finest level, the first
+    one, with each column divided by its length, so that it only
+    rotates, shears or flips the axes, and its translation is that of
+    the finest level. The scale of each level is therefore the size of
+    its voxels, and the translation of the finest level is zero. The
+    translation of a coarser level is the position of its first voxel
+    relative to the first voxel of the finest level. For a level
+    downsampled by a factor `f`, the rule of OME-NGFF 0.6 puts it
+    `(f - 1) / 2` voxels of the finest level away along each axis, so
+    that its translation is that number times the size of a voxel of the
+    finest level.
+
+    Parameters
+    ----------
+    transforms : sequence of Transformation
+        The geometry of each level, from its voxels to the intrinsic
+        system of the pyramid, finest first.
+    ndim : int
+        The number of axes of the levels.
+    tolerance : float, default=1e-6
+        The relative tolerance with which the columns of the levels are
+        compared, as [`SPLIT_TOLERANCE`][] explains.
+
+    Returns
+    -------
+    tuple of Affine and list of Affine, or None
+        The shared placement and the diagonal part of each level, which
+        keeps the systems of its geometry, or `None` when no such split
+        exists. This is the case when a geometry is not an affine of
+        `ndim` axes, or when two levels are rotated, sheared or flipped
+        differently.
+    """
+    matrices = []  # type: tx.List[np.ndarray]
+    for transform in transforms:
+        matrix = affine_matrix(transform, ndim)
+        if matrix is None:
+            return None
+        matrices.append(matrix)
+    if not matrices:
+        return None
+    first = matrices[0][:, :-1]
+    origin = matrices[0][:, -1]
+    lengths = np.linalg.norm(first, axis=0)
+    # A column of zeros, which flattens its axis, keeps a unit scale, so
+    # that the scale of the finest level stays positive.
+    sizes = np.where(lengths > 0, lengths, 1.0)
+    shared = first / sizes
+    parts = []  # type: tx.List[Affine]
+    for transform, matrix in zip(transforms, matrices):
+        scale = _column_scales(matrix[:, :-1], shared, lengths, tolerance)
+        if scale is None:
+            return None
+        offset = matrix[:, -1] - origin
+        translation = np.linalg.lstsq(shared, offset, rcond=None)[0]
+        # The solution has rounding errors of about 1e-16 times the
+        # offset, which would give an axis that is not downsampled a
+        # translation that is not zero, so that its dataset could not be
+        # a plain scale. An entry that small is set to zero, which moves
+        # the level by far less than the tolerance.
+        noise = np.abs(translation) <= 1e-12 * np.linalg.norm(offset)
+        translation[noise] = 0.0
+        # The linear part of the shared placement may be singular, when
+        # a level flattens an axis, and an offset that it cannot reach
+        # has no split.
+        residual = np.linalg.norm(shared @ translation - offset)
+        bound = max(np.linalg.norm(offset), np.max(scale))
+        if residual > tolerance * bound:
+            return None
+        part = np.concatenate([np.diag(scale), translation[:, None]], 1)
+        parts.append(
+            Affine(
+                matrix=part,
+                input=getattr(transform, "input", None),
+                output=getattr(transform, "output", None),
+            )
+        )
+    placement = Affine(matrix=np.concatenate([shared, origin[:, None]], 1))
+    return placement, parts
+
+
+def _column_scales(
+    linear: np.ndarray,
+    shared: np.ndarray,
+    lengths: np.ndarray,
+    tolerance: float,
+) -> tx.Optional[np.ndarray]:
+    # Return the positive scale of each column of `linear` along the
+    # same column of `shared`, or `None` when a column is not parallel
+    # to it or points the other way.
+    if linear.shape != shared.shape:
+        return None
+    scale = np.ones(shared.shape[1])
+    for column in range(shared.shape[1]):
+        values = linear[:, column]
+        length = np.linalg.norm(values)
+        if lengths[column] == 0:
+            if length > 0:
+                return None
+            continue
+        scale[column] = float(values @ shared[:, column])
+        if scale[column] <= 0:
+            return None
+        deviation = values - scale[column] * shared[:, column]
+        if np.linalg.norm(deviation) > tolerance * length:
+            return None
+    return scale
+
+
+def affine_matrix(
     transform: Transformation, ndim: int
 ) -> tx.Optional[np.ndarray]:
-    """Return the signs of the scale of a diagonal geometry.
-
-    A negative sign flips its axis. A flip cannot be written in the dataset
-    of a level, which only holds a positive scale, so the writer moves the
-    flip that every level shares to the placement of the pyramid, with
-    [`unflipped`][].
+    """Return the compact matrix of a geometry that is an affine.
 
     Parameters
     ----------
     transform : Transformation
-        The geometry of a level, in the brainhops axis order.
+        The geometry, such as that of a level of a pyramid.
     ndim : int
-        The number of axes of the level.
+        The number of axes that the geometry maps onto as many axes.
 
     Returns
     -------
     ndarray or None
-        One sign per axis, `-1.0` or `1.0`, or `None` when the geometry is
-        not an affine that only scales and translates each axis.
+        The matrix of shape `(ndim, ndim + 1)`, which is the identity
+        for an affine without a matrix, or `None` when the geometry is
+        not an affine of `ndim` axes, or when its matrix holds a value
+        that is not finite.
     """
     affine = transform.to(Affine, on_error={ConversionError: None})
     if affine is None:
         return None
-    decomposed = scale_translation_from_affine(affine.matrix, ndim)
-    if decomposed is None:
+    if affine.matrix is None:
+        return np.eye(ndim, ndim + 1)
+    matrix = np.asarray(affine.matrix, dtype=float)
+    if matrix.shape != (ndim, ndim + 1) or not np.isfinite(matrix).all():
         return None
-    scale, _ = decomposed
-    return np.where(scale < 0, -1.0, 1.0)
-
-
-def unflipped(
-    transform: Transformation, signs: tx.Sequence[float], ndim: int
-) -> Affine:
-    """Remove a flip from a geometry that only scales and translates.
-
-    With `D` the diagonal matrix of `signs`, the result `G` satisfies
-    `transform = D @ G`, so the geometry is the flip applied after `G`.
-
-    Parameters
-    ----------
-    transform : Transformation
-        The geometry of a level, as accepted by [`diagonal_signs`][].
-    signs : sequence of float
-        The signs of the flip, as [`diagonal_signs`][] returns them.
-    ndim : int
-        The number of axes of the level.
-
-    Returns
-    -------
-    Affine
-        The geometry without the flip, with the systems of `transform`.
-    """
-    matrix = np.asarray(transform.to(Affine).matrix, dtype=float)
-    flipped = np.asarray(signs, dtype=float)[:, None] * matrix
-    return Affine(
-        matrix=flipped,
-        input=getattr(transform, "input", None),
-        output=getattr(transform, "output", None),
-    )
-
-
-def flip(signs: tx.Sequence[float]) -> Affine:
-    """Return the linear transformation that flips the axes of negative sign.
-
-    Parameters
-    ----------
-    signs : sequence of float
-        One sign per axis, as [`diagonal_signs`][] returns them.
-
-    Returns
-    -------
-    Affine
-        The diagonal affine of `signs`, without translation. It is written
-        as an OME `affine`, never as a negative `scale`.
-    """
-    signs = np.asarray(signs, dtype=float)
-    matrix = np.concatenate([np.diag(signs), np.zeros((len(signs), 1))], 1)
-    return Affine(matrix=matrix)
+    return matrix
 
 
 def is_dataset_transform(entry: tx.Mapping[str, tx.Any]) -> bool:

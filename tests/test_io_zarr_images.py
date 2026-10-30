@@ -540,30 +540,256 @@ def test_writer_moves_the_rotation_of_a_single_level_to_the_pyramid(
     )
 
 
-@pytest.mark.parametrize("levels", [1, 2])
-def test_writer_refuses_a_rotated_level_it_cannot_move(
-    tmp_path: Path, levels: int
+def test_writer_splits_a_rotated_level_of_a_placed_pyramid(
+    tmp_path: Path,
 ) -> None:
-    # Splitting the geometry of the levels into a diagonal part per level and
-    # a shared placement is not done yet (#447), so a rotated level of a
-    # pyramid of several levels, or of a pyramid that has its own
-    # placement, is refused.
-    data = np.zeros((4, 4, 4), "float32")
-    rotated = SingleScaleImage(data, transformations=[_rotation()])
-    if levels == 2:
-        coarse = SingleScaleImage(
-            data[::2, ::2, ::2],
-            transformations=[_diag_affine([2.0, 2.0, 2.0], [0.5] * 3)],
+    # The rotation of the only level goes before the placement of the
+    # pyramid, which keeps its own translation after it (#447).
+    rotation = _rotation()
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"), transformations=[rotation]
+    )
+    pyramid = OmeZarrImage(
+        images=[image],
+        axes=_spatial_axes(),
+        transformations=[Translation(translation=[1.0, 2.0, 3.0])],
+    )
+    path = str(tmp_path / "placed.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    _check_lean_datasets(path)
+    np.testing.assert_allclose(
+        _world_of_level(back, 0), _world_of_level(pyramid, 0), atol=1e-12
+    )
+
+
+# ---- oblique pyramids on write (#447) ----------------------------------
+
+
+def _oblique_matrix(
+    linear: np.ndarray, origin: tx.Sequence[float], factors: tx.Sequence[int]
+) -> np.ndarray:
+    # The geometry of a level downsampled by `factors` from a finest
+    # level whose geometry has the linear part `linear` and the
+    # translation `origin`, by the rule of OME-NGFF 0.6: voxel `i` of
+    # the level lies at voxel `f * i + (f - 1) / 2` of the finest level.
+    factors = np.asarray(factors, dtype=float)
+    columns = linear @ np.diag(factors)
+    shift = np.asarray(origin, dtype=float) + linear @ ((factors - 1) / 2)
+    return np.concatenate([columns, shift[:, None]], axis=1)
+
+
+def _oblique_linear() -> np.ndarray:
+    # A rotation about two axes, with a shear, and anisotropic voxels.
+    first, second = 0.4, -0.25
+    about_z = np.array(
+        [
+            [np.cos(first), -np.sin(first), 0.0],
+            [np.sin(first), np.cos(first), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    about_x = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, np.cos(second), -np.sin(second)],
+            [0.0, np.sin(second), np.cos(second)],
+        ]
+    )
+    shear = np.eye(3)
+    shear[0, 1] = 0.2
+    return about_z @ about_x @ shear @ np.diag([0.5, 0.5, 1.5])
+
+
+_OBLIQUE_FACTORS = ([1, 1, 1], [2, 2, 1], [4, 4, 2])
+"""The factors of the levels of the oblique pyramid, finest first."""
+
+
+def _oblique_pyramid(placed: bool = False) -> OmeZarrImage:
+    rng = np.random.default_rng(3)
+    data = rng.random((16, 12, 8)).astype("float32")
+    linear = _oblique_linear()
+    origin = [-12.0, 30.0, 7.5]
+    levels = []
+    for factors in _OBLIQUE_FACTORS:
+        index = tuple(slice(None, None, f) for f in factors)
+        matrix = _oblique_matrix(linear, origin, factors)
+        levels.append(
+            SingleScaleImage(
+                data[index].copy(), transformations=[Affine(matrix=matrix)]
+            )
         )
-        pyramid = OmeZarrImage(images=[rotated, coarse], axes=_spatial_axes())
-    else:
-        pyramid = OmeZarrImage(
-            images=[rotated],
-            axes=_spatial_axes(),
-            transformations=[Translation(translation=[1.0, 2.0, 3.0])],
+    placements = [Translation(translation=[1.0, 2.0, 3.0])] if placed else None
+    return OmeZarrImage(
+        images=levels, axes=_spatial_axes(), transformations=placements
+    )
+
+
+def _multiscale_metadata(path: str) -> dict:
+    import json
+
+    with open(Path(path) / "zarr.json") as stream:
+        return json.load(stream)["attributes"]["ome"]["multiscales"][0]
+
+
+def _check_lean_datasets(path: str) -> None:
+    # Each dataset holds a positive scale, or a positive scale followed
+    # by a translation, and anything else is in the common
+    # transformations.
+    multiscale = _multiscale_metadata(path)
+    for dataset in multiscale["datasets"]:
+        entries = dataset["coordinateTransformations"]
+        assert len(entries) == 1
+        entry = entries[0]
+        if entry["type"] == "sequence":
+            steps = entry["transformations"]
+            assert [step["type"] for step in steps] == ["scale", "translation"]
+            scale = steps[0]["scale"]
+        else:
+            assert entry["type"] == "scale"
+            scale = entry["scale"]
+        assert all(value > 0 for value in scale)
+    assert multiscale["coordinateTransformations"]
+
+
+@pytest.mark.parametrize("placed", [False, True])
+def test_writer_splits_an_oblique_pyramid(
+    tmp_path: Path, placed: bool
+) -> None:
+    pyramid = _oblique_pyramid(placed)
+    path = str(tmp_path / "oblique.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    _check_lean_datasets(path)
+    common = _multiscale_metadata(path)["coordinateTransformations"]
+    assert len(common) == 1
+    assert back.nscales == len(_OBLIQUE_FACTORS)
+    for index in range(back.nscales):
+        np.testing.assert_array_equal(
+            np.asarray(back.images[index].data),
+            np.asarray(pyramid.images[index].data),
+        )
+        np.testing.assert_allclose(
+            _world_of_level(back, index),
+            _world_of_level(pyramid, index),
+            atol=1e-12,
         )
 
-    with pytest.raises(WriterError, match="#447"):
+
+def test_the_split_of_an_oblique_pyramid_follows_the_ome_rule(
+    tmp_path: Path,
+) -> None:
+    # The scale of each level is the size of its voxels, and its
+    # translation puts its first voxel `(f - 1) / 2` voxels of the
+    # finest level away from the first voxel of that level.
+    pyramid = _oblique_pyramid()
+    path = str(tmp_path / "oblique.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    sizes = np.linalg.norm(_oblique_linear(), axis=0)
+    for index, factors in enumerate(_OBLIQUE_FACTORS):
+        factors = np.asarray(factors, dtype=float)
+        expected = np.concatenate(
+            [np.diag(sizes * factors), (sizes * (factors - 1) / 2)[:, None]],
+            axis=1,
+        )
+        np.testing.assert_allclose(
+            _world_matrix(back.images[index].transformation),
+            expected,
+            atol=1e-12,
+        )
+
+
+def test_the_dataset_of_an_oblique_level_holds_its_voxel_size(
+    tmp_path: Path,
+) -> None:
+    # The intrinsic system of OME-NGFF 0.6 is physical, so the dataset
+    # holds the size of a voxel, and the common transformation holds
+    # only the rotation, which maps a physical space onto another.
+    rotation = np.asarray(_rotation().to(Affine).matrix)[:, :3]
+    matrix = np.concatenate([rotation * 0.5, np.zeros((3, 1))], axis=1)
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"),
+        transformations=[Affine(matrix=matrix)],
+    )
+    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
+    path = str(tmp_path / "oblique.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    multiscale = _multiscale_metadata(path)
+    (entry,) = multiscale["datasets"][0]["coordinateTransformations"]
+    assert entry["type"] == "scale"
+    np.testing.assert_allclose(entry["scale"], [0.5, 0.5, 0.5])
+    (common,) = multiscale["coordinateTransformations"]
+    assert common["type"] == "affine"
+    linear = np.asarray(common["affine"])[:, :3]
+    np.testing.assert_allclose(linear @ linear.T, np.eye(3), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(common["affine"])[:, 3], 0.0)
+    np.testing.assert_allclose(_world_of_level(back, 0), matrix, atol=1e-12)
+
+
+def test_a_written_split_is_kept_by_a_second_write(tmp_path: Path) -> None:
+    # The levels that are read back only scale and translate, so writing
+    # them again keeps the split and the metadata.
+    first = str(tmp_path / "first.zarr")
+    second = str(tmp_path / "second.zarr")
+    _oblique_pyramid(placed=True).save(first)
+
+    images.load(first).save(second)
+
+    assert _multiscale_metadata(second) == _multiscale_metadata(first)
+
+
+def test_writer_accepts_levels_rounded_to_single_precision(
+    tmp_path: Path,
+) -> None:
+    # Geometries stored in single precision differ from each other by
+    # their rounding, which the tolerance of the split accepts.
+    pyramid = _oblique_pyramid()
+    for level in pyramid.images:
+        matrix = _world_matrix(level.transformation).astype("float32")
+        level.transformations = [Affine(matrix=matrix.astype(float))]
+    path = str(tmp_path / "rounded.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    for index in range(back.nscales):
+        np.testing.assert_allclose(
+            _world_of_level(back, index),
+            _world_of_level(pyramid, index),
+            atol=1e-5,
+        )
+
+
+@pytest.mark.parametrize("angle", [1e-4, 0.4])
+def test_writer_refuses_levels_rotated_differently(
+    tmp_path: Path, angle: float
+) -> None:
+    from brainhops.datamodel.transformations import Rotation
+
+    pyramid = _oblique_pyramid()
+    turn = Rotation(
+        matrix=[
+            [np.cos(angle), -np.sin(angle), 0.0],
+            [np.sin(angle), np.cos(angle), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    coarse = pyramid.images[1]
+    coarse.transformations = [
+        Affine(matrix=_world_matrix(turn @ coarse.transformation))
+    ]
+
+    with pytest.raises(WriterError, match="in the same way"):
         pyramid.save(str(tmp_path / "refused.zarr"))
 
 
@@ -706,7 +932,7 @@ def test_writer_refuses_levels_that_flip_different_axes(
     )
     pyramid = OmeZarrImage(images=[fine, coarse], axes=_spatial_axes())
 
-    with pytest.raises(WriterError, match="#447"):
+    with pytest.raises(WriterError, match="in the same way"):
         pyramid.save(str(tmp_path / "refused.zarr"))
 
 
