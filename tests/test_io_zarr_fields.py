@@ -465,3 +465,33 @@ def test_a_placement_without_a_matrix_becomes_the_identity() -> None:
 
     affine = affine_or_identity(_placement_without_matrix(), 3)
     np.testing.assert_array_equal(np.asarray(affine.matrix), np.eye(4)[:3])
+
+
+# ---- checking the metadata before it is written ----------------------
+
+
+def test_writer_writes_the_metadata_of_a_converted_field(
+    tmp_path: Path,
+) -> None:
+    field = DisplacementField(field=np.zeros((2, 3, 4, 3)))
+    path = str(tmp_path / "warp.ome.zarr")
+
+    field.to(OmeZarrField).save(path)
+
+    assert isinstance(OmeZarrField.from_store(path), OmeZarrField)
+
+
+def test_writer_refuses_metadata_that_breaks_a_rule(tmp_path: Path) -> None:
+    from abczarr.ome import v0_6
+    from bagof.magic import replace
+
+    from brainhops.errors import WriterError
+
+    field = DisplacementField(field=np.zeros((2, 3, 4, 3))).to(OmeZarrField)
+    document = field.to_ome().to_json()
+    dataset = document["multiscales"][0]["datasets"][0]
+    dataset["coordinateTransformations"][0]["output"] = {"name": "nowhere"}
+    broken = replace(field, ome=v0_6.OME.from_json(document))
+
+    with pytest.raises(WriterError, match="names neither"):
+        broken.to_store(str(tmp_path / "warp.ome.zarr"))

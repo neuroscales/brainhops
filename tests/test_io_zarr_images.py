@@ -21,7 +21,7 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.transformations import Affine, Translation
-from brainhops.io.base.parsers import WriterError
+from brainhops.errors import WriterError
 
 # The module imports abczarr itself, so the skip must come first.
 abczarr = pytest.importorskip("abczarr")
@@ -2087,3 +2087,270 @@ def test_the_base_writer_refuses_streams_and_bytes() -> None:
         writer.to_fileobj(BytesIO())
     with pytest.raises(WriterError):
         writer.to_bytes()
+
+
+# ---- saving an image built in memory ---------------------------------
+
+
+def test_save_writes_a_single_scale_image_as_ome_zarr(
+    tmp_path: Path,
+) -> None:
+    from brainhops import io
+
+    data = np.arange(60, dtype="float32").reshape(3, 4, 5)
+    affine = _diag_affine([2, 3, 4], [1, 2, 3])
+    image = SingleScaleImage(data=data, transformations=[affine])
+    path = str(tmp_path / "img.ome.zarr")
+
+    io.save(image, path)
+    back = images.load(path)
+
+    assert isinstance(back, OmeZarrImage)
+    assert back.nscales == 1
+    assert np.array_equal(np.asarray(back.images[0].data), data)
+    np.testing.assert_allclose(
+        _world_matrix(back.images[0].transformation), _world_matrix(affine)
+    )
+
+
+def test_save_writes_a_multiscale_image_as_ome_zarr(tmp_path: Path) -> None:
+    from brainhops import io
+
+    pyramid = _small_pyramid()
+    image = MultiScaleImage(images=list(pyramid.images))
+    path = str(tmp_path / "img.ome.zarr")
+
+    io.save(image, path)
+
+    assert images.load(path).nscales == 2
+
+
+def test_save_refuses_an_image_with_a_geometry_in_plain_zarr(
+    tmp_path: Path,
+) -> None:
+    from brainhops import io
+
+    image = SingleScaleImage(
+        data=np.zeros((3, 4, 5), "float32"),
+        transformations=[_diag_affine([2, 2, 2], [0, 0, 0])],
+    )
+
+    with pytest.raises(WriterError):
+        io.save(image, str(tmp_path / "img.zarr"))
+
+
+# ---- axes written in full --------------------------------------------
+
+
+def _written_systems(path: str) -> tx.List[tx.Dict[str, tx.Any]]:
+    attrs = dict(abczarr.open(path, mode="r").attrs)
+    return attrs["ome"]["multiscales"][0]["coordinateSystems"]
+
+
+def test_writer_takes_the_units_of_the_world_of_the_geometry(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.systems import RASmm
+
+    affine = replace(_diag_affine([2, 2, 2], [0, 0, 0]), output=RASmm())
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"), transformations=[affine]
+    )
+    path = str(tmp_path / "img.ome.zarr")
+
+    OmeZarrImage(images=[image]).save(path)
+
+    for system in _written_systems(path):
+        assert system["axes"] == [
+            {"name": name, "type": "space", "unit": "millimeter"}
+            for name in ("z", "y", "x")
+        ]
+
+
+def test_writer_leaves_out_a_unit_that_is_not_known(tmp_path: Path) -> None:
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"),
+        transformations=[_diag_affine([2, 2, 2], [0, 0, 0])],
+    )
+    path = str(tmp_path / "img.ome.zarr")
+
+    OmeZarrImage(images=[image]).save(path)
+
+    for system in _written_systems(path):
+        assert system["axes"] == [
+            {"name": name, "type": "space"} for name in ("z", "y", "x")
+        ]
+
+
+def test_writer_writes_the_unit_and_discreteness_of_its_axes(
+    tmp_path: Path,
+) -> None:
+    axes = [
+        SpaceAxis(name="x", unit="micrometer"),
+        SpaceAxis(name="y", unit="micrometer"),
+        SpaceAxis(name="z", unit="micrometer"),
+        ChannelAxis(name="c", discrete=True),
+    ]
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5, 2), "float32"),
+        transformations=[_diag_affine([2, 2, 2, 1], [0, 0, 0, 0])],
+    )
+    path = str(tmp_path / "img.ome.zarr")
+
+    OmeZarrImage(images=[image], axes=axes).save(path)
+
+    written = _written_systems(path)[0]["axes"]
+    assert written[0] == {"name": "c", "type": "channel", "discrete": True}
+    assert written[1:] == [
+        {"name": name, "type": "space", "unit": "micrometer"}
+        for name in ("z", "y", "x")
+    ]
+
+
+# ---- checking the metadata before it is written ----------------------
+
+
+def _ome(
+    systems: tx.List[str],
+    placement: tx.Dict[str, tx.Any],
+    commons: tx.Sequence[tx.Dict[str, tx.Any]] = (),
+) -> tx.Any:
+    from abczarr.ome import v0_6
+
+    axes = [{"name": name, "type": "space"} for name in ("z", "y", "x")]
+    block = {
+        "coordinateSystems": [{"name": s, "axes": axes} for s in systems],
+        "datasets": [{"path": "0", "coordinateTransformations": [placement]}],
+    }  # type: tx.Dict[str, tx.Any]
+    if commons:
+        block["coordinateTransformations"] = list(commons)
+    return v0_6.OME.from_json({"version": "0.6", "multiscales": [block]})
+
+
+_SCALE = {
+    "type": "scale",
+    "scale": [1.0, 1.0, 1.0],
+    "input": {"path": "0"},
+    "output": {"name": "physical"},
+}
+
+
+def test_check_accepts_the_metadata_of_the_writer() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    check_ome(_ome(["physical"], _SCALE))
+
+
+def test_check_refuses_a_dataset_placed_by_a_translation_then_a_scale() -> (
+    None
+):
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    sequence = {
+        "type": "sequence",
+        "input": {"path": "0"},
+        "output": {"name": "physical"},
+        "transformations": [
+            {"type": "translation", "translation": [1.0, 2.0, 3.0]},
+            {"type": "scale", "scale": [1.0, 1.0, 1.0]},
+        ],
+    }
+    with pytest.raises(WriterError, match="dataset"):
+        check_ome(_ome(["physical"], sequence))
+
+
+def test_check_refuses_two_systems_of_the_same_name() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    with pytest.raises(WriterError, match="several coordinate systems"):
+        check_ome(_ome(["physical", "physical"], _SCALE))
+
+
+def test_check_refuses_an_output_that_names_no_system() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    placement = dict(_SCALE, output={"name": "elsewhere"})
+    with pytest.raises(WriterError, match="names neither"):
+        check_ome(_ome(["physical"], placement))
+
+
+def test_check_refuses_a_common_input_that_names_no_system() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    common = {
+        "type": "identity",
+        "input": {"name": "nowhere"},
+        "output": {"name": "physical"},
+    }
+    with pytest.raises(WriterError, match="names neither"):
+        check_ome(_ome(["physical"], _SCALE, [common]))
+
+
+def test_writer_checks_the_metadata_it_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A writer that would break a rule refuses to write.
+    from brainhops.io.images.zarr import _ome
+
+    def build(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        return _ome_with_two_physical_systems()
+
+    monkeypatch.setattr(_ome, "build_ome", build)
+    image = SingleScaleImage(np.zeros((3, 4, 5), "float32"))
+    with pytest.raises(WriterError, match="several coordinate systems"):
+        OmeZarrImage(images=[image]).save(str(tmp_path / "img.ome.zarr"))
+
+
+def _ome_with_two_physical_systems() -> tx.Any:
+    return _ome(["physical", "physical"], _SCALE)
+
+
+# ---- names of the axes that have none --------------------------------
+
+
+def _written_axes(tmp_path: Path, axes: tx.List[tx.Any], ndim: int) -> tx.Any:
+    shape = (2,) * ndim
+    image = SingleScaleImage(np.zeros(shape, "float32"))
+    path = str(tmp_path / "img.ome.zarr")
+    OmeZarrImage(images=[image], axes=axes).save(path)
+    return _written_systems(path)[0]["axes"]
+
+
+def test_writer_gives_open_axes_the_conventional_names(
+    tmp_path: Path,
+) -> None:
+    axes = _written_axes(tmp_path, [*_spatial_axes(), ...], 5)
+
+    assert axes[:2] == [
+        {"name": "t", "type": "time"},
+        {"name": "c", "type": "channel"},
+    ]
+    assert [axis["name"] for axis in axes[2:]] == ["z", "y", "x"]
+
+
+def test_writer_skips_a_conventional_name_that_is_taken(
+    tmp_path: Path,
+) -> None:
+    given = [*_spatial_axes(), TimeAxis(name="t"), ...]
+    axes = _written_axes(tmp_path, given, 5)
+
+    names = [axis["name"] for axis in axes]
+    assert sorted(names) == ["c", "t", "x", "y", "z"]
+    assert {"name": "c", "type": "channel"} in axes
+
+
+def test_axes_beyond_the_conventions_are_named_by_position() -> None:
+    # The schema of OME-NGFF 0.6 holds at most five axes, so the fallback
+    # is checked on the helper that names the axes.
+    from brainhops.io.images.zarr._ome import name_undescribed_axes
+
+    axes = [{"name": ""} for _ in range(3)] + [
+        {"name": name, "type": "space"} for name in ("z", "y", "x")
+    ]
+    name_undescribed_axes(axes)
+
+    assert axes[:3] == [
+        {"name": "dim0"},
+        {"name": "t", "type": "time"},
+        {"name": "c", "type": "channel"},
+    ]

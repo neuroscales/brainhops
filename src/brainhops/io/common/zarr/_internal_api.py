@@ -10,6 +10,7 @@ package. The rules are explained in `spec/design/internal-api.md`.
 __all__ = [
     "absolute_location",
     "as_node",
+    "check_ome",
     "opened_node",
     "reads_inside",
     "reads_store",
@@ -30,6 +31,7 @@ from ._data import (
     write_array,
     write_into,
 )
+from ._ome_rules import check_ome
 from ._parsers import (
     ZarrNodeReaderWriter,
     absolute_location,
