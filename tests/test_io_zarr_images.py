@@ -2205,3 +2205,101 @@ def test_writer_writes_the_unit_and_discreteness_of_its_axes(
         {"name": name, "type": "space", "unit": "micrometer"}
         for name in ("z", "y", "x")
     ]
+
+
+# ---- checking the metadata before it is written ----------------------
+
+
+def _ome(
+    systems: tx.List[str],
+    placement: tx.Dict[str, tx.Any],
+    commons: tx.Sequence[tx.Dict[str, tx.Any]] = (),
+) -> tx.Any:
+    from abczarr.ome import v0_6
+
+    axes = [{"name": name, "type": "space"} for name in ("z", "y", "x")]
+    block = {
+        "coordinateSystems": [{"name": s, "axes": axes} for s in systems],
+        "datasets": [{"path": "0", "coordinateTransformations": [placement]}],
+    }  # type: tx.Dict[str, tx.Any]
+    if commons:
+        block["coordinateTransformations"] = list(commons)
+    return v0_6.OME.from_json({"version": "0.6", "multiscales": [block]})
+
+
+_SCALE = {
+    "type": "scale",
+    "scale": [1.0, 1.0, 1.0],
+    "input": {"path": "0"},
+    "output": {"name": "physical"},
+}
+
+
+def test_check_accepts_the_metadata_of_the_writer() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    check_ome(_ome(["physical"], _SCALE))
+
+
+def test_check_refuses_a_dataset_placed_by_a_translation_then_a_scale() -> (
+    None
+):
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    sequence = {
+        "type": "sequence",
+        "input": {"path": "0"},
+        "output": {"name": "physical"},
+        "transformations": [
+            {"type": "translation", "translation": [1.0, 2.0, 3.0]},
+            {"type": "scale", "scale": [1.0, 1.0, 1.0]},
+        ],
+    }
+    with pytest.raises(WriterError, match="dataset"):
+        check_ome(_ome(["physical"], sequence))
+
+
+def test_check_refuses_two_systems_of_the_same_name() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    with pytest.raises(WriterError, match="several coordinate systems"):
+        check_ome(_ome(["physical", "physical"], _SCALE))
+
+
+def test_check_refuses_an_output_that_names_no_system() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    placement = dict(_SCALE, output={"name": "elsewhere"})
+    with pytest.raises(WriterError, match="names neither"):
+        check_ome(_ome(["physical"], placement))
+
+
+def test_check_refuses_a_common_input_that_names_no_system() -> None:
+    from brainhops.io.common.zarr._ome_rules import check_ome
+
+    common = {
+        "type": "identity",
+        "input": {"name": "nowhere"},
+        "output": {"name": "physical"},
+    }
+    with pytest.raises(WriterError, match="names neither"):
+        check_ome(_ome(["physical"], _SCALE, [common]))
+
+
+def test_writer_checks_the_metadata_it_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A writer that would break a rule refuses to write.
+    from brainhops.io.images.zarr import _ome
+
+    def build(*args: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        return _ome_with_two_physical_systems()
+
+    monkeypatch.setattr(_ome, "build_ome", build)
+    image = SingleScaleImage(np.zeros((3, 4, 5), "float32"))
+    with pytest.raises(WriterError, match="several coordinate systems"):
+        OmeZarrImage(images=[image]).save(str(tmp_path / "img.ome.zarr"))
+
+
+def _ome_with_two_physical_systems() -> tx.Any:
+    return _ome(["physical", "physical"], _SCALE)

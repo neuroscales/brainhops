@@ -40,6 +40,7 @@ from brainhops.datamodel.units import Unit
 
 # io
 from brainhops.io.base.parsers import ParserContentError, WriterError
+from brainhops.io.common.zarr._internal_api import check_ome
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
 from brainhops.io.transformations.zarr._internal_api import to_axis
@@ -941,9 +942,17 @@ def write_multiscale(
 ) -> None:
     """Write the OME metadata of a pyramid onto a group.
 
-    The arguments are those of [`build_ome`][].
+    The arguments are those of [`build_ome`][]. The metadata is checked
+    against the rules of OME-NGFF before it is written.
+
+    Raises
+    ------
+    WriterError
+        If the metadata breaks a rule of OME-NGFF.
     """
-    node.ome = build_ome(axes, levels, commons, name, version)
+    ome = build_ome(axes, levels, commons, name, version)
+    check_ome(ome)
+    node.ome = ome
 
 
 def _other_group(space: tx.Any) -> bool:
