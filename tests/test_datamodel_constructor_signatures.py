@@ -248,7 +248,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftiVoxelToRAS": ("data",),
     },
     "brainhops.io.transformations.nifti._base": {
-        "NiftiBasedTransformation": (),
+        "NiftiBackedTransformation": (),
     },
     "brainhops.io.transformations.nifti._fields": {
         "NiftiRASCoordinateField": ("data",),

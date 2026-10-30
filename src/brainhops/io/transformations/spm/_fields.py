@@ -3,54 +3,41 @@ SPM deformation fields, stored in NIfTI files prefixed with `y_` or `iy_`.
 """
 
 # dependencies
-import nibabel as nb
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr
 
 # internals
 from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
-from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
-from brainhops.io.common.nifti._internal_api import (
-    NiftiObject,
-    apply_like,
-    apply_overrides,
-    keep_given_fields,
-    record_image,
-    set_coordinates_intent,
-    split_options,
-    stored_parts,
-)
-from brainhops.io.metadata._internal_api import (
-    metadata_to_write,
-    overruled_fields,
-    requested_fields,
-)
+from brainhops.io.common.nifti import NiftiMetadata
+from brainhops.io.common.nifti._internal_api import NiftiObject, header_of
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinateField,
     homogeneous_matrix,
 )
 from brainhops.io.transformations.nifti import (
-    NiftiBasedTransformation,
     NiftiRASCoordinateField,
     NiftiRASToVoxel,
 )
 from brainhops.io.transformations.nifti._internal_api import (
-    check_single_field,
-    consolidated_metadata,
+    NiftiImageBackedTransformation,
+    consolidate_through,
+    coordinates_intent,
+    data_image,
     field_to_disk,
     field_to_model,
+    image_with,
 )
 
 
 @register_format
-class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
+class SpmCoordinateField(
+    NiftiImageBackedTransformation, _xforms.DerivedSequence
+):
     """
     Field of RAS coordinates written by SPM.
 
@@ -123,22 +110,15 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
         return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
-
-    metadata = smartproperty("metadata", invalidates="transformations")
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata drops the chain decoded from the previous
-    header.
-    """
 
     # --- chain --------------------------------------------------------
     # The stored chain is a tuple, as `ImmutableSequence` declares it, so
     # the derived and the assigned chain are both immutable, and in-place
     # edits such as `del field[0]` are refused.
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(
         self,
     ) -> tx.Tuple[RASToVoxel, RASCoordinateField]:
@@ -146,7 +126,8 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
 
         The decoded chain is made of the RAS-to-voxel affine of the header
         and the field of RAS coordinates of the file. Both hold the metadata
-        of this field, and the field holds its `rawdata` array and its pending
+        of this field, and the field holds its `rawdata` array and its
+        pending
         coordinates too.
         """
         return (
@@ -197,154 +178,46 @@ class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
 
     # --- writing ------------------------------------------------------
 
-    def _consolidate(
-        self,
-        *,
-        inplace: bool = False,
-        like: tx.Any = None,
-        **options: tx.Any,
-    ) -> tx.Self:
-        """
-        Encode the pending coordinates or chain into `rawdata` and a
-        header.
+    def _consolidate(self, **options: tx.Any) -> tx.Self:
+        """Encode the pending coordinates or chain through the image.
 
-        The coordinates of `rasfield`, as values, become the array, with
-        the `VECTOR` (1007) intent code and the intent name `"Mapping"`
-        that SPM writes. The voxel-to-RAS affine of the grid is the
-        inverse of `ras2voxel`.
+        The field is written as SPM writes it: the RAS coordinates, as
+        values, under the `VECTOR` intent (1007) with the intent name
+        `"Mapping"`. A header that already has this intent keeps its
+        intent parameters.
 
-        A field whose chain is decoded from its stored coordinates keeps
-        them under a copy of the header of its metadata, whose geometry is
-        kept. A field whose chain was assigned is encoded from the chain
-        over that header, whose geometry is replaced. When `like` is given,
-        non-encoding header fields are copied from it. Keyword arguments
-        override header fields last. A field that has a header and nothing
-        pending, consolidated without options, is left as it is.
-
-        The metadata is consolidated first (step 2 of the precedence on
-        write), with the options that name its fields, and its record is
-        the base of the new header. The fields given by keyword take
-        precedence over `like`, and a `dtype` that is given, or changed
-        in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, under the error policy
-        of the call.
-
-        Parameters
-        ----------
-        inplace : bool, default=False
-            Whether to change this field rather than a copy.
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **options : Any
-            Fields of the metadata to override, such as `description` or
-            `dtype`, and header fields, which take precedence over the
-            derived values and `like`. A header field that holds a field
-            of the metadata, such as `descrip`, is refused.
-
-        Returns
-        -------
-        Self
-            The consolidated copy, or this field with `inplace=True`.
+        A field whose chain was not assigned keeps its coordinates,
+        assigned or read, and the geometry of its header. A field whose
+        chain was assigned is encoded from the chain: the coordinates of
+        `rasfield` become the array, and the inverse of `ras2voxel`
+        becomes the voxel-to-RAS matrix of the grid, which replaces the
+        geometry of the header.
 
         Raises
         ------
-        TypeError
-            If an option names a header field that holds a field of the
-            metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
         WriterError
-            If the field has no coordinates, or if its array holds a
-            field for each of several volumes.
+            If the field has no coordinates.
         """
-        fields, overrides = split_options(options)
-        name = type(self).__name__
-        report = ConversionReport(source=name, target=name)
-        requested = requested_fields(self.metadata, fields)
-        metadata = metadata_to_write(
-            self.metadata, NiftiMetadata, fields, report
-        )
-        if (
-            self._data is None
-            and self._transformations is None
-            and like is None
-            and not overrides
-            and not requested
-            and self.metadata is not None
-            and self.metadata.raw is not None
-        ):
-            check_single_field(self.rawdata, WriterError)
-            apply_loss_policy(report, stacklevel=2)
-            return self if inplace else replace(self)
-        if "dtype" in requested:
-            overrides["dtype"] = requested["dtype"]
-        base = None if metadata is None else metadata.raw
-        raw, record = stored_parts(
-            _spm_encoded(self, like, overrides, base, fields)
-        )
-        metadata = consolidated_metadata(self, record)
-        overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, stacklevel=2)
-        if not inplace:
-            return replace(
+        intent = coordinates_intent(header_of(self))
+        changes = {"data": None, "transformations": None}
+        stored = self._data is not None or self.rawdata is not None
+        if self._transformations is None and stored:
+            return consolidate_through(
                 self,
-                rawdata=raw,
-                metadata=metadata,
-                data=None,
-                transformations=None,
+                data_image(self, field_to_disk),
+                intent,
+                changes,
+                **options,
             )
-        self.rawdata = raw
-        self.metadata = metadata
-        self.data = None
-        self.transformations = None
-        return self
-
-
-def _spm_encoded(
-    field: SpmCoordinateField,
-    like: tx.Any,
-    overrides: tx.Mapping[str, tx.Any],
-    base: tx.Optional[NiftiRaw],
-    fields: tx.Mapping[str, tx.Any],
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-    """Encode an SPM field over a copy of a record.
-
-    The record, `base`, is that of the consolidated metadata.
-
-    The stored coordinates, assigned or read, are kept when the chain was
-    not assigned, and the chain is encoded otherwise.
-
-    Raises
-    ------
-    WriterError
-        If the field has no coordinates, or if its array holds a field
-        for each of several volumes.
-    """
-    if field._data is not None:
-        stored = field_to_disk(field._data)
-    else:
-        stored = field.rawdata
-    if stored is not None and field._transformations is None:
-        check_single_field(stored, WriterError)
-        record = None if base is None else base.copy()
-        image = record_image(stored, record, overrides=overrides)
-    else:
         what = "An SPM deformation field"
         # The inverse of a `NiftiRASToVoxel` read from a header is that
         # header's affine itself, rather than an inverse of its inverse.
-        vox2ras = homogeneous_matrix(field.ras2voxel.inverse(), what, ndim=3)
+        vox2ras = homogeneous_matrix(self.ras2voxel.inverse(), what, ndim=3)
         # SPM stores sampled coordinates.
-        coordinates = field.rasfield.values
+        coordinates = self.rasfield.values
         if coordinates is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        coordinates = field_to_disk(coordinates)
-        record = None if base is None else base.copy()
-        image = record_image(coordinates, record, vox2ras, overrides)
-    set_coordinates_intent(image.header)
-    apply_like(image, like)
-    keep_given_fields(image, fields)
-    apply_overrides(image, overrides)
-    return image
+        image = image_with(self, field_to_disk(coordinates), vox2ras)
+        return consolidate_through(self, image, intent, changes, **options)

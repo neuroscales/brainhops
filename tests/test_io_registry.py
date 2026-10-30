@@ -534,13 +534,13 @@ def test_a_format_without_a_docstring_is_not_described() -> None:
 
     from brainhops.io.base._dispatch import ambiguity_message, describe
     from brainhops.io.transformations.nifti import (
-        NiftiBasedTransformation,
+        NiftiBackedTransformation,
     )
 
-    class Undocumented(NiftiBasedTransformation):
+    class Undocumented(NiftiBackedTransformation):
         HINTS = ("undocumented",)
 
-    class Documented(NiftiBasedTransformation):
+    class Documented(NiftiBackedTransformation):
         """A documented format.
 
         A detail line that the description leaves out.
