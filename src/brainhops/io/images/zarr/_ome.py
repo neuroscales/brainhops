@@ -36,6 +36,7 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Transformation,
 )
+from brainhops.datamodel.units import Unit
 
 # io
 from brainhops.io.base.parsers import ParserContentError, WriterError
@@ -758,18 +759,27 @@ def common_transformations(
 
 
 def axis_to_json(axis: Axis) -> tx.Dict[str, tx.Any]:
-    """Return the OME-Zarr JSON description of one axis."""
+    """Return the OME-Zarr JSON description of one axis.
+
+    The description holds the name of the axis, and its type, its unit
+    and whether it is discrete whenever the axis knows them. An unknown
+    unit is left out rather than replaced by a default.
+    """
     entry = {}  # type: tx.Dict[str, tx.Any]
     name = getattr(axis, "name", None)
     type_ = getattr(axis, "type", None)
     unit = getattr(axis, "unit", None)
     entry["name"] = name if isinstance(name, str) else ""
     if isinstance(type_, str):
-        entry["type"] = type_
-    if unit is not None:
-        value = getattr(unit, "value", unit)
-        if isinstance(value, str):
-            entry["unit"] = value
+        entry["type"] = str(getattr(type_, "value", type_))
+    # A unit of the data model is written by its full name, such as
+    # `millimeter`, which is how OME-NGFF spells its units.
+    value = unit.name if isinstance(unit, Unit) else unit
+    if isinstance(value, str):
+        entry["unit"] = value
+    discrete = getattr(axis, "discrete", None)
+    if isinstance(discrete, bool):
+        entry["discrete"] = discrete
     return entry
 
 

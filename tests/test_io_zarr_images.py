@@ -2137,3 +2137,71 @@ def test_save_refuses_an_image_with_a_geometry_in_plain_zarr(
 
     with pytest.raises(WriterError):
         io.save(image, str(tmp_path / "img.zarr"))
+
+
+# ---- axes written in full --------------------------------------------
+
+
+def _written_systems(path: str) -> tx.List[tx.Dict[str, tx.Any]]:
+    attrs = dict(abczarr.open(path, mode="r").attrs)
+    return attrs["ome"]["multiscales"][0]["coordinateSystems"]
+
+
+def test_writer_takes_the_units_of_the_world_of_the_geometry(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.systems import RASmm
+
+    affine = replace(_diag_affine([2, 2, 2], [0, 0, 0]), output=RASmm())
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"), transformations=[affine]
+    )
+    path = str(tmp_path / "img.ome.zarr")
+
+    OmeZarrImage(images=[image]).save(path)
+
+    for system in _written_systems(path):
+        assert system["axes"] == [
+            {"name": name, "type": "space", "unit": "millimeter"}
+            for name in ("z", "y", "x")
+        ]
+
+
+def test_writer_leaves_out_a_unit_that_is_not_known(tmp_path: Path) -> None:
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5), "float32"),
+        transformations=[_diag_affine([2, 2, 2], [0, 0, 0])],
+    )
+    path = str(tmp_path / "img.ome.zarr")
+
+    OmeZarrImage(images=[image]).save(path)
+
+    for system in _written_systems(path):
+        assert system["axes"] == [
+            {"name": name, "type": "space"} for name in ("z", "y", "x")
+        ]
+
+
+def test_writer_writes_the_unit_and_discreteness_of_its_axes(
+    tmp_path: Path,
+) -> None:
+    axes = [
+        SpaceAxis(name="x", unit="micrometer"),
+        SpaceAxis(name="y", unit="micrometer"),
+        SpaceAxis(name="z", unit="micrometer"),
+        ChannelAxis(name="c", discrete=True),
+    ]
+    image = SingleScaleImage(
+        np.zeros((3, 4, 5, 2), "float32"),
+        transformations=[_diag_affine([2, 2, 2, 1], [0, 0, 0, 0])],
+    )
+    path = str(tmp_path / "img.ome.zarr")
+
+    OmeZarrImage(images=[image], axes=axes).save(path)
+
+    written = _written_systems(path)[0]["axes"]
+    assert written[0] == {"name": "c", "type": "channel", "discrete": True}
+    assert written[1:] == [
+        {"name": name, "type": "space", "unit": "micrometer"}
+        for name in ("z", "y", "x")
+    ]
