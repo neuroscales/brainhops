@@ -24,8 +24,12 @@ from brainhops.io.common.nifti import (
 )
 from brainhops.io.common.nifti._internal_api import (
     NIBABEL_OPTIONS,
+    NIFTI_INTENT_NAME_MAPPING,
+    NIFTI_INTENT_VECTOR,
     NiftiObject,
     NiftiProxy,
+    nifti_intent,
+    nifti_intent_name,
     split_options,
 )
 from brainhops.io.images.nifti import NiftiImage
@@ -84,16 +88,6 @@ class NiftiBackedTransformation(NiftiReaderWriter, TransformationFormat):
     """
 
     # --- writing ------------------------------------------------------
-
-    def _record(self) -> tx.Optional[NiftiRaw]:
-        """Return a copy of the record of the metadata, or `None`.
-
-        The encoders build the new header over this copy, so they are free
-        to change it.
-        """
-        if self.metadata is None or self.metadata.raw is None:
-            return None
-        return self.metadata.raw.copy()
 
     def _consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
         """Encode the pending state into `rawdata` and the header.
@@ -376,6 +370,22 @@ def image_with(
     return replace(xform._image, data=raw, transformations=grid)
 
 
+def data_image(
+    xform: NiftiImageBackedTransformation,
+    to_disk: tx.Callable[[ArrayProtocol], ArrayProtocol],
+) -> NiftiImage:
+    """Return the stored image of a transformation, with its assigned data.
+
+    A concrete format keeps the data that is assigned to it in `_data`.
+    That data, laid out by `to_disk` as the file stores it, replaces the
+    array of a copy of the stored image, whose header keeps its
+    geometry, as [`image_with`][] does. Without assigned data, the
+    stored image is returned as it is.
+    """
+    data = getattr(xform, "_data", None)
+    return image_with(xform, None if data is None else to_disk(data))
+
+
 def consolidate_through(
     xform: NiftiImageBackedTransformation,
     image: NiftiImage,
@@ -476,15 +486,36 @@ def consolidated_metadata(
     return type(xform.metadata).from_raw(record)
 
 
-def intent_overrides(code: int, name: str = "") -> tx.Dict[str, tx.Any]:
+def intent_overrides(
+    code: int, name: str = "", params: tx.Sequence[float] = ()
+) -> tx.Dict[str, tx.Any]:
     """Return the header overrides that give a header an intent.
 
-    The overrides set the intent code and the intent name, and reset the
-    three intent parameters to zero, as nibabel's `set_intent` does when
-    it is given no parameter.
+    The overrides set the intent code and the intent name. The three
+    intent parameters take the values in `params`, in order, and the
+    parameters that `params` does not give are reset to zero, as
+    nibabel's `set_intent` does.
     """
-    params = {f"intent_p{i}": 0.0 for i in (1, 2, 3)}
+    values = (*params, 0.0, 0.0, 0.0)[:3]
+    params = {f"intent_p{i}": v for i, v in enumerate(values, start=1)}
     return {"intent_code": code, "intent_name": name, **params}
+
+
+def coordinates_intent(
+    header: tx.Optional[NiftiObject],
+) -> tx.Dict[str, tx.Any]:
+    """Return the header overrides that mark a field of coordinates.
+
+    A field of coordinates is written under the `VECTOR` intent (1007)
+    with the SPM intent name `"Mapping"`. A header that already has this
+    intent needs no override, so that its intent parameters are kept,
+    and any other header, or no header, gets the overrides of
+    [`intent_overrides`][].
+    """
+    intent = (nifti_intent(header), nifti_intent_name(header))
+    if intent == (NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING):
+        return {}
+    return intent_overrides(NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING)
 
 
 def _reader_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
