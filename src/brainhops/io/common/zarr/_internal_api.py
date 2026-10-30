@@ -12,6 +12,7 @@ __all__ = [
     "as_node",
     "check_ome",
     "opened_node",
+    "read_back",
     "reads_inside",
     "reads_store",
     "store_chunks",
@@ -25,6 +26,7 @@ __all__ = [
 
 from ._data import (
     ZarrProxy,
+    read_back,
     reads_inside,
     reads_store,
     store_chunks,

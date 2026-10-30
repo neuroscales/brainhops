@@ -73,6 +73,7 @@ from brainhops.io.common.zarr._internal_api import (
     absolute_location,
     as_node,
     check_ome,
+    read_back,
     reads_inside,
     store_chunks,
     store_location,
@@ -405,7 +406,7 @@ class OmeZarrField(
             if index == len(raw_levels):
                 # The next level of the plan is built from the levels
                 # just written, read back from the store.
-                written = [_level_proxy(target) for target in targets]
+                written = [read_back(target) for target in targets]
                 field = next_scale(replace(field, raw_levels=written), plan)
                 raw_levels.append(field.raw_levels[-1])
             array = raw_levels[index]

@@ -8,12 +8,12 @@ from bagof.magic import Inherit, replace
 from brainhops._core.backends import array_backend, is_dask
 from brainhops._core.path import Path, replace_directory
 from brainhops._core.properties import smartproperty
+
+# datamodel
 from brainhops.datamodel._internal_api import (
     next_scale,
     pop_pyramid_options,
 )
-
-# datamodel
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -42,6 +42,7 @@ from brainhops.io.common.zarr._internal_api import (
     absolute_location,
     as_node,
     opened_node,
+    read_back,
     reads_inside,
     store_chunks,
     store_location,
@@ -491,7 +492,10 @@ class OmeZarrImage(
                 # The next level of the plan is built from the levels
                 # just written, read back from the store.
                 written = [
-                    _level(array, canonical_perm, image.transformation)
+                    SingleScaleImage(
+                        data=read_back(array, canonical_perm),
+                        transformations=[image.transformation],
+                    )
                     for array, image in zip(arrays, images)
                 ]
                 built = next_scale(replace(self, images=written), plan)

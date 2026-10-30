@@ -9,6 +9,7 @@ once, and that a pyramid built in memory is written as it is.
 """
 
 # stdlib
+import itertools
 import threading
 from pathlib import Path
 
@@ -18,7 +19,6 @@ import pytest
 import typing_extensions as tx
 
 import brainhops.io as io
-from brainhops._core.backends import backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import DisplacementField
 from brainhops.errors import WriterError
@@ -27,6 +27,7 @@ da = pytest.importorskip("dask.array")
 # The modules import abczarr themselves, so the skip must come first.
 abczarr = pytest.importorskip("abczarr")
 
+from brainhops.io.common.zarr._data import read_back  # noqa: E402
 from brainhops.io.images.zarr import OmeZarrImage  # noqa: E402
 from brainhops.io.transformations.zarr import OmeZarrField  # noqa: E402
 
@@ -156,9 +157,7 @@ def test_a_coarse_level_of_a_saved_pyramid_holds_no_task_of_the_source(
         return store(self, name, **kwargs)
 
     monkeypatch.setattr(abczarr.ZarrGroup, "create_array", create_array)
-    # The levels are read back as Dask arrays, whose graphs are kept.
-    with backend("dask"):
-        io.save(image, str(tmp_path / "pyramid.ome.zarr"), min_size=5)
+    io.save(image, str(tmp_path / "pyramid.ome.zarr"), min_size=5)
 
     assert len(graphs) > 2
     assert set(image.data.dask) <= graphs[0]
@@ -191,3 +190,35 @@ def test_a_pyramid_of_several_levels_refuses_the_options(
 
     with pytest.raises(WriterError, match="already holds 2 scales"):
         pyramid.save(str(tmp_path / "pyramid.ome.zarr"), nscales=3)
+
+
+def test_a_saved_pyramid_reads_its_levels_back_one_chunk_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under the default backend, a level read back is a Dask array whose
+    # blocks are the chunks of the store, so that a coarse level never
+    # loads a whole level into memory.
+    image = _image()
+    blocks = []  # type: tx.List[tx.Tuple[tx.Any, tx.Any]]
+
+    def counted(node: tx.Any, perm: tx.Any = None) -> tx.Any:
+        level = read_back(node, perm)
+        blocks.append((level, node))
+        return level
+
+    monkeypatch.setattr(
+        "brainhops.io.images.zarr._multiscale.read_back", counted
+    )
+    io.save(image, str(tmp_path / "pyramid.ome.zarr"), min_size=5)
+
+    assert blocks
+    for level, node in blocks:
+        assert isinstance(level, da.Array)
+        largest = max(int(np.prod(block)) for block in _block_shapes(level))
+        assert largest <= int(np.prod(node.chunks))
+    finest = blocks[0][0]
+    assert finest.numblocks != (1,) * finest.ndim
+
+
+def _block_shapes(array: tx.Any) -> tx.List[tx.Tuple[int, ...]]:
+    return list(itertools.product(*array.chunks))

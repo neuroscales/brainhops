@@ -232,6 +232,38 @@ def write_array(
         (location / key).write_bytes(content)
 
 
+def read_back(
+    node: tx.Any, perm: tx.Optional[tx.Sequence[int]] = None
+) -> tx.Any:
+    """Return a level just written as a Dask array of the chunks of its store.
+
+    A writer that builds the coarser levels of a pyramid from the levels
+    that it has written reads them back with this function. Whatever the
+    backend setting, a level is read as a Dask array whose blocks are
+    the chunks of the store, so that a coarser level is computed one
+    chunk at a time and never loads a whole level into memory. Without
+    Dask, the level is a lazy array of the store, which the backend
+    setting converts.
+
+    Parameters
+    ----------
+    node : ZarrArray
+        The array just written.
+    perm : sequence of int, optional
+        The permutation from the stored axes to the axes of the level,
+        as [`ZarrProxy`][] takes it. By default, the stored order.
+
+    Returns
+    -------
+    Any
+        The level.
+    """
+    proxy = ZarrProxy(
+        node, store_location(node), None if perm is None else tuple(perm)
+    )
+    return proxy if da is None else proxy.to_dask()
+
+
 def written_plan(
     obj: tx.Any, pyramid: tx.Mapping[str, tx.Any]
 ) -> tx.Optional[ScalePlan]:

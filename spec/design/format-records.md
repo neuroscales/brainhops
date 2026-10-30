@@ -1920,7 +1920,10 @@ its status.
      finest level, and builds each coarser level with `next_scale`
      (`datamodel/multiscale.py`), which calls the same `_build_scales`
      as `with_scales` on the levels already written, read back from the
-     store. The level is computed from the level before it, or from the
+     store. The levels are read back as Dask arrays whose blocks are the
+     chunks of the store, whatever the backend setting (`read_back` in
+     `io/common/zarr/_data.py`), so that no step loads a whole level. The
+     level is computed from the level before it, or from the
      finest level in the mode `"nearest"` and when its factors are not
      multiples of those of that level, so the placement and the
      metadata are those of the pyramid built in memory, and the finest
