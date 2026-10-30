@@ -43,7 +43,12 @@ from brainhops.io.transformations.base.fields import (
 )
 
 # this format
-from ._base import NiftiImageBackedTransformation, intent_overrides
+from ._base import (
+    NiftiImageBackedTransformation,
+    consolidate_through,
+    image_with,
+    intent_overrides,
+)
 from ._views import field_to_disk, field_to_model
 
 _NDIM = 3
@@ -136,10 +141,8 @@ class NiftiRASCoordinateField(
             return None
         return field_to_model(self.rawdata)
 
-    def _pending_image(
-        self, options: tx.Dict[str, tx.Any]
-    ) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
-        """Return the image that holds the pending coordinates.
+    def _consolidate(self, **options: tx.Any) -> tx.Self:
+        """Encode the pending coordinates through the stored image.
 
         The coordinates are written under the `VECTOR` intent (1007)
         with the SPM intent name `"Mapping"`, which marks a coordinate
@@ -155,9 +158,7 @@ class NiftiRASCoordinateField(
             data = self.to(store="values").data
         else:
             data = self._data
-        image = self._image
-        if data is not None:
-            image = self._image_with(field_to_disk(data))
+        image = image_with(self, None if data is None else field_to_disk(data))
         header = header_of(self)
         intent = (nifti_intent(header), nifti_intent_name(header))
         overrides = {}
@@ -165,7 +166,8 @@ class NiftiRASCoordinateField(
             overrides = intent_overrides(
                 NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING
             )
-        return image, overrides, {"data": None, "store": StoreEnum.values}
+        changes = {"data": None, "store": StoreEnum.values}
+        return consolidate_through(self, image, overrides, changes, **options)
 
 
 @register_format
@@ -279,10 +281,6 @@ StationaryVelocityField], integrated with `steps` squaring steps
         "metadata", default=None, var=True
     )
 
-    # The chain is decoded from the header, so it is dropped when the
-    # image is replaced.
-    _DECODED_FROM_IMAGE = ("transformations",)
-
     # --- reading ------------------------------------------------------
 
     @classmethod
@@ -387,7 +385,9 @@ StationaryVelocityField], integrated with `steps` squaring steps
 
     # --- chain --------------------------------------------------------
 
-    @smartproperty(cache=True)
+    # The chain is decoded from the header, so it is decoded again when
+    # the stored image is replaced.
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
@@ -428,10 +428,10 @@ StationaryVelocityField], integrated with `steps` squaring steps
 
     # --- writing ------------------------------------------------------
 
-    def _pending_image(
-        self, options: tx.Dict[str, tx.Any]
-    ) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
-        """Return the image that holds the pending vectors or chain.
+    def _consolidate(
+        self, *, log: tx.Optional[bool] = None, **options: tx.Any
+    ) -> tx.Self:
+        """Encode the pending vectors or chain through the stored image.
 
         The displacements are written in RAS millimetres under the
         `DISPVECT` intent (1006), with shape (X, Y, Z, 1, 3). With the
@@ -447,25 +447,25 @@ StationaryVelocityField], integrated with `steps` squaring steps
         field whose chain was assigned is encoded from the chain, and
         the grid of the chain replaces the geometry of the header.
         """
-        log = options.pop("log", None)
         log = self.log if log is None else log
         changes = {"data": None, "transformations": None, "log": log}
         intent = intent_overrides(NIFTI_INTENT_DISPVECT)
         if self._transformations is None and log == self.log:
-            image = self._image
-            if self._data is not None:
-                image = self._image_with(field_to_disk(self._data))
+            data = self._data
+            image = image_with(
+                self, None if data is None else field_to_disk(data)
+            )
             if nifti_intent(header_of(self)) == NIFTI_INTENT_DISPVECT:
                 intent = {}
-            return image, intent, changes
-        vox2ras, vectors = split_ras_displacement_chain(
-            self.transformations,
-            "A NIfTI displacement field",
-            ndim=_NDIM,
-            log=log,
-        )
-        image = self._image_with(field_to_disk(vectors), vox2ras)
-        return image, intent, changes
+        else:
+            vox2ras, vectors = split_ras_displacement_chain(
+                self.transformations,
+                "A NIfTI displacement field",
+                ndim=_NDIM,
+                log=log,
+            )
+            image = image_with(self, field_to_disk(vectors), vox2ras)
+        return consolidate_through(self, image, intent, changes, **options)
 
     def to_nibabel(
         self,

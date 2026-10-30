@@ -9,11 +9,9 @@ import typing_extensions as tx
 from bagof.magic import Field, Inherit, KwOnly, NoRepr, replace
 
 # internals
-from brainhops._core.properties import drop_cache
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import apply_loss_policy
-from brainhops.datamodel.transformations import Affine
 from brainhops.io.base.parsers import (
     WriterError,
     WriterNotImplementedError,
@@ -33,6 +31,7 @@ from brainhops.io.common.nifti._internal_api import (
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.metadata._internal_api import requested_fields
 from brainhops.io.transformations.base import TransformationFormat
+from brainhops.io.transformations.base.affines import VoxelToRAS
 
 # this format
 from ._views import check_single_field
@@ -162,9 +161,13 @@ class NiftiImageBackedTransformation(NiftiBasedTransformation):
 
     A concrete subclass takes the `metadata` field of its data model
     over as a value that the constructor takes and does not keep, with
-    `_metadata: ... = Inherit("metadata", default=None, var=True)`. It
-    describes what it stores in the method `_pending_image`, on which
-    [`consolidate`][] relies.
+    `_metadata: ... = Inherit("metadata", default=None, var=True)`. A
+    view that it decodes from the image, such as its chain, is cached
+    with `invalidated_by="_image"`, so that the view is decoded again
+    whenever the stored image is replaced. The subclass implements
+    [`consolidate`][] in `_consolidate`: it builds the image of its
+    pending state with [`image_with`][], and passes that image to
+    [`consolidate_through`][].
     """
 
     # The image is not converted, so that an image of another class is
@@ -180,13 +183,6 @@ class NiftiImageBackedTransformation(NiftiBasedTransformation):
     """
 
     _rawdata: NoRepr[tx.Optional[ArrayProtocol]] = Inherit("rawdata", var=True)
-
-    _DECODED_FROM_IMAGE: tx.ClassVar[tx.Tuple[str, ...]] = ()
-    """The cached views that are decoded from the image.
-
-    They are dropped when the stored image is replaced, so that they are
-    decoded again from the new image.
-    """
 
     def __post_init__(self, arguments: tx.Any) -> None:
         image = self._image
@@ -229,7 +225,7 @@ class NiftiImageBackedTransformation(NiftiBasedTransformation):
 
     @rawdata.setter
     def rawdata(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self._replace_image(replace(self._image, rawdata=value))
+        self._image = replace(self._image, rawdata=value)
 
     @property
     def metadata(self) -> tx.Optional[NiftiMetadata]:
@@ -245,12 +241,7 @@ class NiftiImageBackedTransformation(NiftiBasedTransformation):
 
     @metadata.setter
     def metadata(self, value: tx.Optional[NiftiMetadata]) -> None:
-        self._replace_image(replace(self._image, metadata=value))
-
-    def _replace_image(self, image: NiftiImage) -> None:
-        """Replace the stored image and drop the views decoded from it."""
-        self._image = image
-        drop_cache(self, *self._DECODED_FROM_IMAGE)
+        self._image = replace(self._image, metadata=value)
 
     # --- reading ------------------------------------------------------
 
@@ -354,102 +345,99 @@ class NiftiImageBackedTransformation(NiftiBasedTransformation):
         """
         return self.consolidate()._image
 
-    def _pending_image(
-        self, options: tx.Dict[str, tx.Any]
-    ) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
-        """Return the image that holds the pending state of the format.
-
-        A concrete format encodes its pending data, or its pending
-        chain, into a copy of the stored image with `_image_with`, or
-        returns the stored image when nothing is pending. It removes
-        from `options` the options that are its own rather than the
-        image's, such as the `log` option of a displacement field.
-
-        Parameters
-        ----------
-        options : dict
-            The options of the consolidation, which the method may
-            change.
-
-        Returns
-        -------
-        image : NiftiImage
-            The image to consolidate.
-        intent : dict
-            The header fields that mark the format, such as the intent
-            code, which are set when the image is encoded.
-        changes : dict
-            The fields that the consolidated transformation receives,
-            such as `data=None`.
-
-        Raises
-        ------
-        WriterNotImplementedError
-            Always, since the base does not know what to encode.
-        """
-        raise WriterNotImplementedError(
-            f"{type(self).__name__} does not know how to write itself to "
-            f"NIfTI."
-        )
-
-    def _image_with(
-        self, raw: ArrayProtocol, vox2ras: tx.Optional[np.ndarray] = None
-    ) -> NiftiImage:
-        """Return a copy of the stored image that holds pending data.
-
-        The array `raw` is laid out as the file stores it. When the grid
-        is given, as the (4, 4) voxel-to-RAS matrix `vox2ras`, it
-        becomes the voxel-to-world transformation of the image, and the
-        image encodes its geometry from it. Otherwise, the image keeps
-        the geometry of its header.
-        """
-        if vox2ras is None:
-            return replace(self._image, data=raw)
-        grid = [Affine(matrix=np.asarray(vox2ras)[:3])]
-        return replace(self._image, data=raw, transformations=grid)
-
-    def _consolidate(
-        self,
-        *,
-        inplace: bool = False,
-        like: tx.Any = None,
-        **options: tx.Any,
-    ) -> tx.Self:
-        # The format builds an image that holds its pending state, and
-        # the image encodes it. The precedence on write, the loss report
-        # and the choice between NIfTI-1 and NIfTI-2 are therefore those
-        # of NiftiImage. A transformation that has an image and nothing
-        # pending, consolidated without options, keeps the image, so it
-        # is still saved byte for byte, and the codes of the format are
-        # set only when the image is encoded again.
-        image, intent, changes = self._pending_image(options)
-        fields, overrides = split_options(options)
-        if (
-            image is self._image
-            and like is None
-            and not overrides
-            and not requested_fields(self.metadata, fields)
-        ):
-            intent = {}
-        # The image reports what it loses to a report of this format, on
-        # which the policy in effect then acts once.
-        name = type(self).__name__
-        report = ConversionReport(source=name, target=name)
-        options = {**intent, **options}
-        image = image.consolidate(like=like, on_loss=report, **options)
-        apply_loss_policy(report, stacklevel=2)
-        check_single_field(image.rawdata, WriterError)
-        if not inplace:
-            return replace(self, image=image, **changes)
-        self._replace_image(image)
-        for name, value in changes.items():
-            setattr(self, name, value)
-        return self
-
 
 # ----------------------------------------------------------------------
 #   HELPERS OF THE CONCRETE FORMATS
 # ----------------------------------------------------------------------
+
+
+def image_with(
+    xform: NiftiImageBackedTransformation,
+    raw: tx.Optional[ArrayProtocol] = None,
+    vox2ras: tx.Optional[np.ndarray] = None,
+) -> NiftiImage:
+    """Return the stored image of a transformation, with pending data.
+
+    A concrete format calls this function to build the image of its
+    pending state. The array `raw`, laid out as the file stores it,
+    replaces the array of a copy of the stored image. When the grid is
+    given as the (4, 4) voxel-to-RAS matrix `vox2ras`, it becomes the
+    voxel-to-world transformation of the copy, as a
+    [`VoxelToRAS`][brainhops.io.transformations.base.affines.VoxelToRAS],
+    and the image encodes its geometry from it. Otherwise, the copy
+    keeps the geometry of its header. Without `raw`, the stored image is
+    returned as it is.
+    """
+    if raw is None:
+        return xform._image
+    if vox2ras is None:
+        return replace(xform._image, data=raw)
+    grid = [VoxelToRAS(matrix=np.asarray(vox2ras)[:3])]
+    return replace(xform._image, data=raw, transformations=grid)
+
+
+def consolidate_through(
+    xform: NiftiImageBackedTransformation,
+    image: NiftiImage,
+    intent: tx.Mapping[str, tx.Any],
+    changes: tx.Mapping[str, tx.Any],
+    *,
+    inplace: bool = False,
+    like: tx.Any = None,
+    **options: tx.Any,
+) -> NiftiImageBackedTransformation:
+    """Consolidate a transformation through the image of its pending state.
+
+    A concrete format implements `_consolidate` with this function. It
+    builds `image`, the image that holds its pending data or chain, with
+    [`image_with`][], and it removes from `options` the options that are
+    its own rather than the image's. The image is consolidated with the
+    options of the call, so the precedence on write, the loss report and
+    the choice between NIfTI-1 and NIfTI-2 are those of `NiftiImage`.
+    The header fields in `intent`, such as the intent code, mark the
+    format, and they are set only when the image is encoded again, under
+    the options that the call gives. A transformation that has an image
+    and nothing pending, consolidated without options, therefore keeps
+    its image, and it is still saved byte for byte. The consolidated
+    transformation then holds the consolidated image and receives the
+    fields in `changes`, such as `data=None`.
+
+    Returns
+    -------
+    NiftiImageBackedTransformation
+        The consolidated copy, or `xform` with `inplace=True`.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data, or if its array holds a field for each
+        of several volumes.
+    MetadataLossError
+        If metadata is lost under the `"raise"` policy.
+    """
+    fields, overrides = split_options(options)
+    if (
+        image is xform._image
+        and like is None
+        and not overrides
+        and not requested_fields(xform.metadata, fields)
+    ):
+        intent = {}
+    # The image reports what it loses to a report of the format, on which
+    # the policy in effect then acts once, at the level of the caller of
+    # `consolidate`.
+    name = type(xform).__name__
+    report = ConversionReport(source=name, target=name)
+    options = {**intent, **options}
+    image = image.consolidate(like=like, on_loss=report, **options)
+    apply_loss_policy(report, stacklevel=3)
+    check_single_field(image.rawdata, WriterError)
+    if not inplace:
+        return replace(xform, image=image, **changes)
+    xform._image = image
+    for name, value in changes.items():
+        setattr(xform, name, value)
+    return xform
 
 
 def nibabel_parts(
