@@ -29,7 +29,9 @@ permissions:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to Ubuntu 26.04, for which setup-python has no
+    # Python 3.8, the oldest version that the test matrix supports.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
