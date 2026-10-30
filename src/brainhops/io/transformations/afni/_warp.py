@@ -6,7 +6,7 @@ AFNI datasets (`.HEAD` and `.BRIK`)."""
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr
 
 # core
 from brainhops._core import path
@@ -25,9 +25,8 @@ from brainhops.datamodel.metadata._internal_api import (
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
+from brainhops.io.base._internal_api import declined, sniffed_raw
 from brainhops.io.base.parsers import (
-    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
@@ -40,19 +39,21 @@ from brainhops.io.common.afni import AfniMetadata, AfniRaw
 from brainhops.io.common.afni._internal_api import (
     DECLINE_MESSAGE,
     DICOM_TO_RAS,
-    OPTION_OWNER,
     afni_view,
-    afni_world,
     afni_written_files,
     brik_proxy,
-    read_afni,
     read_validated_header,
     reads_brik,
     sniffed_raw_at,
     write_brik,
 )
 from brainhops.io.images.afni import AfniImage
-from brainhops.io.metadata._internal_api import requested_fields
+from brainhops.io.transformations.base._internal_api import (
+    ImageBackedTransformation,
+    consolidate_through,
+    data_image,
+    image_with,
+)
 from brainhops.io.transformations.base.fields import (
     ras_displacement_chain,
     split_ras_displacement_chain,
@@ -75,8 +76,8 @@ _NDIM = 3
 
 @register_format
 class AfniBrikWarp(
-    BinaryFileReader,
     BinaryFileWriter,
+    ImageBackedTransformation,
     AfniWarpFormat,
     _xforms.DerivedSequence,
 ):
@@ -90,18 +91,21 @@ class AfniBrikWarp(
     `BulkEn` and `ShearEn`, which are kept but not read. See
     [`AfniWarpFormat`][] for what the displacements mean.
 
-    The warp holds the header of its dataset as [`AfniMetadata`][], whose
-    record is an [`AfniRaw`][], and the sub-bricks as the BRIK stores
-    them in `rawdata`, as an AFNI image does. When the warp is read from
-    a file, `rawdata` is a lazy array that reads the BRIK only when the
-    values are needed, and the chain is decoded from `rawdata` and from
-    the cardinal grid of the record on first access. Sub-bricks and
-    chains that are assigned are pending until [`consolidate`][] encodes
-    them into a copy, or until the warp is written, which writes such a
-    copy and leaves the warp as it was. The record of the metadata is
-    the base of the header that is written, as for an
-    [`AfniImage`][brainhops.io.images.afni.AfniImage], so its attributes,
-    such as `HISTORY_NOTE`, are kept.
+    The warp keeps its dataset in a private
+    [`AfniImage`][brainhops.io.images.afni.AfniImage], as it was read or
+    as the warp was last consolidated, and `rawdata` and `metadata` read
+    that image. The metadata is [`AfniMetadata`][], whose record is an
+    [`AfniRaw`][], and `rawdata` holds the sub-bricks as the BRIK stores
+    them. When the warp is read from a file, `rawdata` is a lazy array
+    that reads the BRIK only when the values are needed, and the chain
+    is decoded from `rawdata` and from the cardinal grid of the record
+    on first access. Sub-bricks and chains that are assigned are pending
+    until [`consolidate`][] encodes them through the image into a copy,
+    or until the warp is written, which writes such a copy and leaves
+    the warp as it was. The record of the metadata is the base of the
+    header that is written, so its attributes, such as `HISTORY_NOTE`,
+    are kept. [`from_image`][] builds a warp from an AFNI image, and
+    [`to_image`][] returns the image that the dataset of the warp holds.
 
     AFNI puts nothing in the header that says "warp" but the labels of
     the sub-bricks, so the labels are what this reader claims a dataset
@@ -120,17 +124,10 @@ class AfniBrikWarp(
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition outside the field of view."""
 
-    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
-    """The sub-bricks as the BRIK stores them, or `None` without data.
-
-    After a read, `rawdata` is a lazy array of the BRIK, which applies
-    the scale factors of the header when it is read. `rawdata` describes
-    the dataset as it was read, or as the warp was last consolidated, so
-    assigning `data` leaves it as it is.
-    """
+    IMAGE = AfniImage
 
     _metadata: NoRepr[tx.Optional[AfniMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
 
     _data: KwOnly[NoRepr[tx.Optional[ArrayProtocol]]] = None
@@ -138,13 +135,6 @@ class AfniBrikWarp(
 
     Sub-bricks stored here are pending until [`consolidate`][] or a write
     encodes them into `rawdata`.
-    """
-
-    metadata = smartproperty("metadata", invalidates="transformations")
-    """The metadata of the dataset, which holds its record, or `None`.
-
-    Assigning other metadata drops the chain decoded from the previous
-    record.
     """
 
     @smartproperty(
@@ -242,78 +232,6 @@ class AfniBrikWarp(
             return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw)
 
-    @classmethod
-    def from_filename(
-        cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
-    ) -> "AfniBrikWarp":
-        """Read a warp from the path of a `.HEAD`, a `.BRIK` or a dataset.
-
-        The record is read from the `.HEAD` file, and the BRIK is checked
-        but not read: the lazy array reads it when the values are needed.
-
-        Parameters
-        ----------
-        filename : path-like
-            Any file of the dataset, or the bare dataset name.
-        mmap : bool, default=True
-            Whether the lazy array memory-maps a local BRIK that is not
-            compressed and whose sub-bricks share a type.
-        **kwargs : Any
-            Refused, since the warp has no other option.
-
-        Returns
-        -------
-        AfniBrikWarp
-            The warp, whose values are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        ParserExistsError
-            If the `.HEAD` or the `.BRIK` file does not exist.
-        ParserContentError
-            If the header is invalid, or the BRIK cannot be read.
-        """
-        no_options(kwargs, OPTION_OWNER)
-        raw, proxy = read_afni(filename, mmap=mmap)
-        return cls(rawdata=proxy, metadata=AfniMetadata.from_raw(raw))
-
-    @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
-    ) -> "AfniBrikWarp":
-        """Read a warp from an open `.HEAD` or `.BRIK` file.
-
-        The stream is read as
-        [`AfniImage.from_fileobj`][brainhops.io.images.afni.AfniImage.from_fileobj]
-        reads it: the other file of the dataset is found from the name of
-        the stream, which must have one.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream of the `.HEAD` or the `.BRIK` file.
-        mmap : bool, default=False
-            Accepted for the readers of paths, and without effect.
-        **kwargs : Any
-            Refused, since the warp has no other option.
-
-        Returns
-        -------
-        AfniBrikWarp
-            The warp, whose values are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        ParserContentError
-            If the stream has no file name.
-        """
-        image = AfniImage.from_fileobj(file, mmap=mmap, **kwargs)
-        return cls(rawdata=image.rawdata, metadata=image.metadata)
-
     from_bytes = disabled(
         ParserContentError,
         "An AFNI dataset is two files (.HEAD and .BRIK), which bytes "
@@ -336,7 +254,7 @@ class AfniBrikWarp(
 
     # --- chain --------------------------------------------------------
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of transformations that the warp encodes.
 
@@ -365,88 +283,38 @@ class AfniBrikWarp(
         """The affine from the warp's voxels back to RAS world."""
         return self.transformations[2]
 
-    def to_image(self) -> AfniImage:
-        """Return the warp as an AFNI image, which is what AFNI stores.
-
-        The image holds what a dataset written from the warp holds: the
-        sub-bricks of displacements in DICOM (LPS) millimetres, on the
-        cardinal grid of the warp, labelled `x_delta`, `y_delta` and
-        `z_delta`, and the other attributes of the record of the warp.
-        Saved as an AFNI dataset, it is read back as a warp.
-
-        Returns
-        -------
-        AfniImage
-            The image, which shares the consolidated record and values of
-            the warp.
-
-        Raises
-        ------
-        WriterError
-            If the chain is not a displacement field between two affines,
-            or its grid is oblique, since AFNI places a warp on a
-            cardinal grid.
-        """
-        xform = self.consolidate()
-        return AfniImage(rawdata=xform.rawdata, metadata=xform.metadata)
-
     # --- writing ------------------------------------------------------
 
     def _consolidate(
         self,
         *,
-        inplace: bool = False,
-        view: tx.Optional[str] = None,
-        datatype: tx.Optional[tx.Any] = None,
         attributes: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-        **fields: tx.Any,
+        **options: tx.Any,
     ) -> "AfniBrikWarp":
-        """Encode the pending sub-bricks or chain into `rawdata` and a record.
+        """Encode the pending sub-bricks or chain through the image.
 
-        The warp is encoded as an
-        [`AfniImage`][brainhops.io.images.afni.AfniImage] is, by
-        `AfniImage._consolidate`,
-        over the record of its metadata. A warp whose chain was not
-        assigned keeps its sub-bricks, assigned or read, under the geometry
-        of its record. A warp whose chain was assigned is encoded from the
-        chain: its displacements are written in DICOM millimetres as
-        `float32` sub-bricks, on the cardinal grid of the chain, which
-        replaces the geometry of the record. The sub-bricks are given the
-        labels of a warp when the record does not have them, or has
-        another number of sub-bricks. When this encoding gives the record
-        of the metadata, the metadata is kept. A warp that has a record
-        and nothing pending, consolidated without options, is left as it
-        is: the copy shares `rawdata` and the metadata.
-
-        The metadata is consolidated first, as by the AFNI image, with
-        the fields given by keyword. The record of an AFNI dataset holds
-        no field of the vocabulary yet, so a field that is set is
-        reported as lost, once, under the error policy of the call.
+        A warp whose chain was not assigned keeps its sub-bricks,
+        assigned or read, under the geometry of its record. A warp whose
+        chain was assigned is encoded from the chain: its displacements
+        are written in DICOM millimetres as `float32` sub-bricks, on the
+        cardinal grid of the chain, which replaces the geometry of the
+        record. The image stores them as an AFNI image stores its data,
+        so the attributes of the record, such as `HISTORY_NOTE`, are
+        kept. The sub-bricks are given the labels of a warp when the
+        record does not have them, or has another number of sub-bricks.
 
         Parameters
         ----------
-        inplace : bool, default=False
-            Whether to change this warp rather than a copy.
-        view : {"orig", "acpc", "tlrc"}, optional
-            The view of the dataset.
-        datatype : str or dtype, optional
-            AFNI type name or NumPy type of the stored values.
         attributes : mapping, optional
-            Attributes set last, as for an AFNI image.
-        **fields : Any
-            Fields of the metadata to override.
-
-        Returns
-        -------
-        AfniBrikWarp
-            The consolidated copy, or this warp with `inplace=True`.
+            Attributes set last, as for an AFNI image, after the labels
+            of a warp.
+        **options : Any
+            The other options of
+            [`AfniImage.consolidate`][brainhops.io.images.afni.AfniImage.consolidate],
+            `view` and `datatype`, and the fields of the metadata.
 
         Raises
         ------
-        TypeError
-            If a keyword names no field of the metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
         WriterError
             If the warp has no values, if its chain is not a displacement
             field between two affines, or if the options are refused as
@@ -456,47 +324,22 @@ class AfniBrikWarp(
             RAS to RAS, or the grid of the chain is oblique.
         """
         what = "An AFNI warp"
-        options = dict(view=view, datatype=datatype, attributes=attributes)
-        declared = self._input is not None or self._output is not None
-        if declared:
+        if self._input is not None or self._output is not None:
             check_ras(self.input, self.output, what)
-        if (
-            self._data is None
-            and self._transformations is None
-            and not declared
-            and all(value is None for value in options.values())
-            and not requested_fields(self.metadata, fields)
-            and self.metadata is not None
-            and self.metadata.raw is not None
-        ):
-            return self if inplace else replace(self)
-        image = _warp_image(self, what).consolidate(
-            view=view,
-            datatype=datatype,
-            attributes=_labelled(self, attributes),
-            **fields,
-        )
-        if self.metadata is not None and image.metadata is self.metadata:
-            metadata = self.metadata
+        if self._transformations is None:
+            image = data_image(self, warp_to_disk)
         else:
-            metadata = image.metadata
-        if not inplace:
-            return replace(
-                self,
-                rawdata=image.rawdata,
-                metadata=metadata,
-                data=None,
-                transformations=None,
-                input=None,
-                output=None,
-            )
-        self.rawdata = image.rawdata
-        self.metadata = metadata
-        self.data = None
-        self.transformations = None
-        self.input = None
-        self.output = None
-        return self
+            vox2dicom, vectors = dicom_field(self.transformations, what)
+            data = np.asarray(vectors, dtype=np.float32)
+            image = image_with(self, data, DICOM_TO_RAS @ vox2dicom)
+        labelled = _labelled(self, attributes)
+        if attributes is not None:
+            options["attributes"] = labelled
+        intent = {"attributes": labelled}
+        changes = dict(
+            data=None, transformations=None, input=None, output=None
+        )
+        return consolidate_through(self, image, intent, changes, **options)
 
     @takes_error_policy
     def to_filename(
@@ -739,46 +582,6 @@ def _record(xform: AfniBrikWarp) -> tx.Optional[AfniRaw]:
     if xform.metadata is None:
         return None
     return xform.metadata.raw
-
-
-def _warp_image(xform: AfniBrikWarp, what: str) -> AfniImage:
-    """Return the AFNI image whose consolidation encodes a warp.
-
-    A warp whose chain was not assigned is the image of its sub-bricks,
-    assigned or read, under its record. A warp whose chain was assigned
-    is the image of the displacements of the chain, as `float32`
-    sub-bricks, on the cardinal grid of the chain, in the view of the
-    record.
-
-    Raises
-    ------
-    WriterError
-        If the warp has no values, or its chain is not a displacement
-        field between two affines.
-    UnrepresentableTransformationError
-        If the chain does not map RAS to RAS, or its grid is oblique.
-    """
-    if xform._transformations is None:
-        if xform._data is None and xform.rawdata is None:
-            raise WriterError(
-                "This warp has no values, so there is nothing to write."
-            )
-        data = None if xform._data is None else warp_to_disk(xform._data)
-        return AfniImage(
-            data=data, rawdata=xform.rawdata, metadata=xform.metadata
-        )
-    vox2dicom, vectors = dicom_field(xform.transformations, what)
-    record = _record(xform)
-    world = afni_world(record.view if record is not None else "orig")
-    affine = _xforms.Affine(
-        matrix=vox2dicom[:3],
-        input=_systems.VoxelCoordinateSystem(),
-        output=world,
-    )
-    data = np.asarray(vectors, dtype=np.float32)
-    return AfniImage(
-        data=data, transformations=[affine], metadata=xform.metadata
-    )
 
 
 def _labelled(

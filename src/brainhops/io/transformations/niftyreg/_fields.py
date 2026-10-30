@@ -21,39 +21,25 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._internal_api import converter, smart_replace
 from brainhops.datamodel.enums import BoundaryCondition, StoreEnum
-from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._internal_api import apply_loss_policy
-from brainhops.errors import (
-    ConversionError,
-    ParserContentError,
-    WriterError,
-)
+from brainhops.errors import ConversionError, ParserContentError
 
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.common.nifti import NiftiMetadata
+from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 from brainhops.io.common.nifti._internal_api import (
     NIFTI_INTENT_NAME_NIFTYREG,
     NIFTI_INTENT_VECTOR,
     NiftiObject,
-    apply_like,
-    apply_overrides,
     header_of,
-    keep_given_fields,
     nifti_intent,
     nifti_intent_name,
     nifti_shape,
-    record_image,
-    split_options,
-    stored_parts,
 )
-from brainhops.io.metadata._internal_api import (
-    metadata_to_write,
-    overruled_fields,
-    requested_fields,
-)
+from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.base._internal_api import (
+    data_image,
+    image_with,
     relabel,
     relabelling,
 )
@@ -66,12 +52,12 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
     voxel_grid_coordinates,
 )
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._internal_api import (
-    check_single_field,
-    consolidated_metadata,
+    NiftiImageBackedTransformation,
+    consolidate_nifti,
     field_to_disk,
     field_to_model,
+    intent_overrides,
 )
 
 # this format
@@ -260,12 +246,51 @@ def _extensions_of(
     return [] if before is None else [before]
 
 
+def _world_grid(vectors: ArrayProtocol, vox2world: np.ndarray) -> tx.Any:
+    """Return the world position of every voxel of a grid of vectors.
+
+    The positions have the shape and the data type of the (X, Y, Z, 3)
+    array `vectors`. They are added to displacements to give the
+    positions that NiftyReg stores, and subtracted from positions to
+    give displacements.
+    """
+    xp = array_backend(vectors)
+    shape = tuple(int(s) for s in vectors.shape[:_NDIM])
+    grid = voxel_grid_coordinates(shape, vox2world, xp)
+    return xp.asarray(grid, dtype=vectors.dtype)
+
+
+def _with_extensions(
+    image: NiftiImage, matrices: tx.Sequence[np.ndarray]
+) -> NiftiImage:
+    """Return a copy of an image whose header extensions hold affines.
+
+    The affines replace every extension of the header, as NiftyReg
+    writes them. An image without a header and without affines is
+    returned as it is, and an image without a header gets a new one.
+    """
+    metadata = image.metadata
+    if metadata is None or metadata.raw is None:
+        if not matrices:
+            return image
+        record = NiftiRaw(header=nb.Nifti1Header())
+        metadata = metadata or NiftiMetadata.from_raw(record)
+    else:
+        record = metadata.raw.copy()
+    extensions = record.header.extensions
+    del extensions[:]
+    extensions.extend(_extension(matrix) for matrix in matrices)
+    return replace(image, metadata=replace(metadata, raw=record))
+
+
 # ----------------------------------------------------------------------
 #   BASE
 # ----------------------------------------------------------------------
 
 
-class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
+class NiftyRegField(
+    NiftyRegTransformationFormat, NiftiImageBackedTransformation
+):
     """
     NiftyReg transformation stored in a NIfTI file.
 
@@ -391,15 +416,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
         return field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
-
-    metadata = smartproperty("metadata", invalidates="transformations")
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata drops the chain decoded from the previous
-    header.
-    """
 
     # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
@@ -452,7 +470,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             steps=self.steps,
         )
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
@@ -492,111 +510,29 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
 
     _WHAT: tx.ClassVar[str] = "A NiftyReg field"
 
-    def _consolidate(
-        self,
-        *,
-        inplace: bool = False,
-        like: tx.Any = None,
-        **options: tx.Any,
-    ) -> tx.Self:
-        """Encode the pending vectors or chain into `rawdata` and a header.
+    def _consolidate(self, **options: tx.Any) -> tx.Self:
+        """Encode the pending vectors or chain through the stored image.
 
-        A field whose chain is decoded from a NiftyReg file of its own type
-        keeps its stored vectors, assigned or read, under a copy of the
-        header of its metadata, extensions included. Otherwise, each type
-        encodes its chain as NiftyReg would write it. Non-encoding header
-        fields are copied from `like`, and `overrides` are applied last. A
-        field that has a header and nothing pending, consolidated without
-        options, is left as it is.
-
-        The metadata is consolidated first (step 2 of the precedence on
-        write), with the options that name its fields, and its record is
-        the base of the new header. The fields given by keyword take
-        precedence over `like`, and a `dtype` that is given, or changed
-        in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, under the error policy
-        of the call.
-
-        Parameters
-        ----------
-        inplace : bool, default=False
-            Whether to change this field rather than a copy.
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **options : Any
-            Fields of the metadata to override, such as `description` or
-            `dtype`, and header fields, which take precedence over the
-            derived values and `like`. A header field that holds a field
-            of the metadata, such as `descrip`, is refused.
-
-        Returns
-        -------
-        Self
-            The consolidated copy, or this field with `inplace=True`.
-
-        Raises
-        ------
-        TypeError
-            If an option names a header field that holds a field of the
-            metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
-        WriterError
-            If the stored array holds a field for each of several
-            volumes.
+        A field whose chain is decoded from a NiftyReg file of its own
+        type keeps its stored vectors, assigned or read, and its header,
+        extensions included. Otherwise, each type encodes its chain as
+        NiftyReg would write it.
         """
-        fields, overrides = split_options(options)
-        name = type(self).__name__
-        report = ConversionReport(source=name, target=name)
-        requested = requested_fields(self.metadata, fields)
-        metadata = metadata_to_write(
-            self.metadata, NiftiMetadata, fields, report
-        )
+        changes = {"data": None, "transformations": None}
+        stored = self._data is not None or self.rawdata is not None
         if (
-            self._data is None
+            stored
             and self._transformations is None
-            and like is None
-            and not overrides
-            and not requested
-            and self.metadata is not None
-            and self.metadata.raw is not None
+            and self.niftyreg_type in type(self).TYPES
         ):
-            check_single_field(self.rawdata, WriterError)
-            apply_loss_policy(report, stacklevel=2)
-            return self if inplace else replace(self)
-        if "dtype" in requested:
-            overrides["dtype"] = requested["dtype"]
-        # The encoders read the record of the metadata, so they encode
-        # over a copy that holds the consolidated metadata.
-        source = (
-            self
-            if metadata is self.metadata
-            else replace(self, metadata=metadata)
-        )
-        image = keep_given_fields(source._encoded(like, **overrides), fields)
-        raw, record = stored_parts(image)
-        metadata = consolidated_metadata(self, record)
-        overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, stacklevel=2)
-        if not inplace:
-            return replace(
-                self,
-                rawdata=raw,
-                metadata=metadata,
-                data=None,
-                transformations=None,
+            return consolidate_nifti(
+                self, data_image(self, field_to_disk), {}, changes, **options
             )
-        self.rawdata = raw
-        self.metadata = metadata
-        self.data = None
-        self.transformations = None
-        return self
+        image, intent = self._encoded()
+        return consolidate_nifti(self, image, intent, changes, **options)
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """Encode the field over a copy of its record.
+    def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
+        """Return the image of the chain and the overrides of its intent.
 
         Each registered type encodes its chain as NiftyReg writes it.
         """
@@ -618,68 +554,35 @@ class NiftyRegSequence(NiftyRegField, _xforms.DerivedSequence):
             log=self.log,
         )
 
-    def _read_back(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
-        """
-        Return the NIfTI image of the stored vectors, or `None`.
-
-        A field whose chain is decoded from a NiftyReg file of its own type
-        keeps its stored vectors, assigned or read, under a copy of the
-        header of its metadata, extensions included. `None` is returned
-        when the field was not read from such a file, or when its chain
-        was assigned.
-        """
-        if self._data is not None:
-            stored = field_to_disk(self._data)
-        else:
-            stored = self.rawdata
-        if stored is None or self.niftyreg_type not in type(self).TYPES:
-            return None
-        if self._transformations is not None:
-            return None
-        check_single_field(stored, WriterError)
-        image = record_image(stored, self._record(), overrides=overrides)
-        apply_like(image, like)
-        apply_overrides(image, overrides)
-        return image
-
-    def _write(
+    def _written(
         self,
         vectors: ArrayProtocol,
         vox2world: np.ndarray,
         kind: int,
-        like: tx.Any = None,
         extensions: tx.Sequence[np.ndarray] = (),
-        **overrides,
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+        steps: int = 0,
+    ) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
         """
-        Build a NiftyReg NIfTI image from an (X, Y, Z, 3) array.
+        Return the image of a NiftyReg file and its intent overrides.
 
-        The image is a `VECTOR` image of shape (X, Y, Z, 1, 3) named
-        `"NREG_TRANS"`, with its type in `intent_p1`. A copy of the header of
-        the metadata is the base of the new header, and its fields that
-        describe the layout and the geometry are encoded again. The given
-        affines replace the extensions of that header, because NiftyReg
-        reads its affines from the first extensions.
-
-        The vectors are stored in single precision, unless the `dtype` or
-        `datatype` override asks for another type. NiftyReg computes its
-        deformation fields in single precision, and refuses a grid of
-        control points whose type differs from that of the field.
+        The file is a `VECTOR` image of shape (X, Y, Z, 1, 3) named
+        `"NREG_TRANS"`, with its type in `intent_p1` and the squaring
+        steps of a velocity in `intent_p2`. The (X, Y, Z, 3) array
+        `vectors` is cast to single precision, because NiftyReg computes
+        its deformation fields in single precision and refuses a grid of
+        control points whose type differs from that of the field. The
+        grid `vox2world` replaces the geometry of the header, and the
+        given affines replace the extensions of the header, because
+        NiftyReg reads its affines from the first extensions.
         """
-        vectors = field_to_disk(vectors)
-        image = record_image(vectors, self._record(), vox2world, overrides)
-        header = image.header
-        header.set_intent(NIFTI_INTENT_VECTOR, name=NIFTI_INTENT_NAME_NIFTYREG)
-        header["intent_p1"] = kind
-        header.set_data_dtype(np.float32)
-        del header.extensions[:]
-        for matrix in extensions:
-            header.extensions.append(_extension(matrix))
-        apply_like(image, like)
-        apply_overrides(image, overrides)
-        return image
+        xp = array_backend(vectors)
+        raw = field_to_disk(xp.asarray(vectors, dtype=np.float32))
+        image = image_with(self, raw, vox2world)
+        image = _with_extensions(image, extensions)
+        intent = intent_overrides(
+            NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_NIFTYREG, (kind, steps)
+        )
+        return image, intent
 
 
 # ----------------------------------------------------------------------
@@ -707,33 +610,10 @@ class NiftyRegDisplacementField(NiftyRegSequence):
     so the priority does not change what is read."""
     _WHAT: tx.ClassVar[str] = "A NiftyReg displacement field"
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """Encode the field as NiftyReg would write it.
-
-        A field read from a file keeps its stored vectors. Otherwise, the
-        displacements of the chain are encoded.
-
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
-        """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
+    def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
+        """Return the image of the displacements of the chain."""
         vox2world, vectors = self._split(self.transformations)
-        return self._write(vectors, vox2world, DISP_FIELD, like, **overrides)
+        return self._written(vectors, vox2world, DISP_FIELD)
 
 
 @register_format
@@ -759,44 +639,13 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        xp = array_backend(positions)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
-        )
-        return positions - xp.asarray(grid, dtype=positions.dtype)
+        return positions - _world_grid(positions, vox2world)
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """
-        Encode the field, with displacements as positions.
-
-        A field read from a file keeps its stored vectors.
-
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
-        """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
+    def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
+        """Return the image of the chain, with displacements as positions."""
         vox2world, vectors = self._split(self.transformations)
-        xp = array_backend(vectors)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
-        )
-        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
-        return self._write(positions, vox2world, DEF_FIELD, like, **overrides)
+        positions = vectors + _world_grid(vectors, vox2world)
+        return self._written(positions, vox2world, DEF_FIELD)
 
 
 # ----------------------------------------------------------------------
@@ -861,11 +710,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        xp = array_backend(positions)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
-        )
-        return positions - xp.asarray(grid, dtype=positions.dtype)
+        return positions - _world_grid(positions, vox2world)
 
     def _field_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
         chain = super()._field_chain()
@@ -888,40 +733,20 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         chain = self.transformations
         return chain[-1] if len(chain) > _field_index(chain) + 2 else None
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
         """
-        Encode the grid, with coefficients as positions.
+        Return the image of the chain, with coefficients as positions.
 
-        A grid read from a file keeps its stored positions. Otherwise, the
-        affines before and after the spline are encoded in the header
-        extensions that NiftyReg reads.
-
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
+        The affines before and after the spline are encoded in the
+        header extensions that NiftyReg reads.
         """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
         before, chain, after = _slot_affines(
             self.transformations or (), self._WHAT
         )
         extensions = _extensions_of(before, after)
-        # NiftyReg stores cubic and linear grids, so a field of either degree
-        # is
-        # written at its own degree, and any other is refitted to cubic.
+        # NiftyReg stores cubic and linear grids, so a field of either
+        # degree is written at its own degree, and any other is refitted
+        # to cubic.
         degree = int(getattr(chain[1], "degree", 3)) if len(chain) == 3 else 3
         kinds = {degree: kind for kind, degree in _GRID_DEGREE.items()}
         if degree not in kinds:
@@ -934,14 +759,8 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             degree=degree,
             bound=self.bound,
         )
-        xp = array_backend(vectors)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
-        )
-        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
-        return self._write(
-            positions, vox2world, kinds[degree], like, extensions, **overrides
-        )
+        positions = vectors + _world_grid(vectors, vox2world)
+        return self._written(positions, vox2world, kinds[degree], extensions)
 
 
 # ----------------------------------------------------------------------
@@ -1073,55 +892,25 @@ class NiftyRegVelocityGrid(NiftyRegVelocity):
 
     def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
-        xp = array_backend(positions)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, xp
-        )
-        return positions - xp.asarray(grid, dtype=positions.dtype)
+        return positions - _world_grid(positions, vox2world)
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
         """
-        Encode the velocity grid.
+        Return the image of the velocity grid.
 
-        A grid read from a file keeps its stored positions. Otherwise, the
-        coefficients are turned into positions, the squaring steps are
-        stored in `intent_p2`, and an affine after the velocity is stored
-        in the second header extension.
-
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
+        The coefficients are turned into positions, the squaring steps
+        are stored in `intent_p2`, and an affine after the velocity is
+        stored in the second header extension.
         """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
         chain, extensions = self._velocity_slots()
         vox2world, vectors = self._split(chain)
-        xp = array_backend(vectors)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
-        )
-        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
-        overrides.setdefault("intent_p2", _written_steps(chain))
-        return self._write(
+        positions = vectors + _world_grid(vectors, vox2world)
+        return self._written(
             positions,
             vox2world,
             SPLINE_VEL_GRID,
-            like,
             extensions,
-            **overrides,
+            _written_steps(chain),
         )
 
 
@@ -1150,55 +939,25 @@ class NiftyRegVelocityField(NiftyRegVelocity):
         vectors = self._stored_vectors()
         if self.niftyreg_type == DISP_VEL_FIELD:
             return vectors
-        xp = array_backend(vectors)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
-        )
-        return vectors - xp.asarray(grid, dtype=vectors.dtype)
+        return vectors - _world_grid(vectors, vox2world)
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    def _encoded(self) -> tx.Tuple[NiftiImage, tx.Dict[str, tx.Any]]:
         """
-        Encode the velocity field.
+        Return the image of the velocity field.
 
-        A field read from a file keeps its stored vectors. Otherwise, it is
-        encoded as positions, the type that NiftyReg integrates, with the
-        squaring steps in `intent_p2` and an affine after the velocity in
-        the second header extension.
-
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
+        The field is encoded as positions, the type that NiftyReg
+        integrates, with the squaring steps in `intent_p2` and an affine
+        after the velocity in the second header extension.
         """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
         chain, extensions = self._velocity_slots()
         vox2world, vectors = self._split(chain)
-        xp = array_backend(vectors)
-        grid = voxel_grid_coordinates(
-            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, xp
-        )
-        positions = vectors + xp.asarray(grid, dtype=vectors.dtype)
-        overrides.setdefault("intent_p2", _written_steps(chain))
-        return self._write(
+        positions = vectors + _world_grid(vectors, vox2world)
+        return self._written(
             positions,
             vox2world,
             DEF_VEL_FIELD,
-            like,
             extensions,
-            **overrides,
+            _written_steps(chain),
         )
 
 

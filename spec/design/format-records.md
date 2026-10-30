@@ -140,7 +140,7 @@ For NIfTI, the first pass gives the classes the following bases.
 | `NiftiRaw`                 | `Magic`, `BinaryFileReader`, `BinaryFileWriter`           | `sniff_fileobj`, `from_fileobj` and `to_fileobj`, which read and write the header only |
 | `NiftiMetadata`            | `MetadataFormat`, `MetadataReader`, `BinaryFileWriter`    | `to_bytes` and `to_filename`, which consolidate and call `NiftiRaw`, and `RAW = NiftiRaw`, through which every input is scored and read |
 | `NiftiImage`               | `ImageFormat`, `SingleScaleImage`, `BinaryFileReader`, `BinaryFileWriter` | `sniff_fileobj`, `from_file`, `from_fileobj`, `to_file` and `to_bytes` |
-| `NiftiBasedTransformation` | `TransformationFormat`, `BinaryFileReader`, `BinaryFileWriter` | the same as `NiftiImage`, written once for all NIfTI transformations |
+| `NiftiBackedTransformation` | `TransformationFormat`, `BinaryFileReader`, `BinaryFileWriter` | the same as `NiftiImage`, written once for all NIfTI transformations |
 
 ### Data
 
@@ -868,7 +868,7 @@ its status.
 1. The constructor assigns fields in their declared order, so the
    default `rawdata=None` overwrites a value given as `data=`. A
    `__post_init__` applies `data=` again, and for the NIfTI
-   transformations it is written once, in `NiftiBasedTransformation`
+   transformations it is written once, in `NiftiBackedTransformation`
    (`io/transformations/nifti/_base.py:84`). When both `rawdata=` and
    `data=` are given, `data=` wins. Status: resolved by pending data.
    The constructor stores `data=` in `_data`, which the default of
@@ -3229,14 +3229,14 @@ The items from 400 on were found in pass 5a, which adds the vocabulary
 of #233 to the metadata of the formats (#310) and wires it into images
 and transformations (#287).
 
-400. `NiftiBasedTransformation`, `_NiftiAffine` and `NiftyRegField` are
+400. `NiftiBackedTransformation`, `_NiftiAffine` and `NiftyRegField` are
      format classes that do not derive from `Transformation`: the root
      of the data model comes in with the first base of each concrete
      class, as in `NiftiRASToVoxel(RASToVoxel, _NiftiAffine)`. `bagof`
      refuses a takeover of a field that no base declares, and refuses a
      class that holds both the `metadata` of the root and a `_metadata`
      of the format, so the takeover cannot be written once on
-     `NiftiBasedTransformation`. Deriving that class from
+     `NiftiBackedTransformation`. Deriving that class from
      `Transformation` would allow it, but it would make the abstract
      `NiftyRegField` a data model, which `relabel` then no longer
      refuses as a family of formats. Status: decided in pass 5a. Each

@@ -110,6 +110,14 @@ PACKAGES: tx.Dict[str, Package] = {
         names=frozenset({"PillowImage", "PillowMetadata", "PillowRaw"}),
         needs=("PIL",),
     ),
+    "brainhops.io.common.analyze": Package(
+        names=frozenset({"AnalyzeMetadata", "AnalyzeRaw"}),
+        needs=("nibabel",),
+    ),
+    "brainhops.io.images.analyze": Package(
+        names=frozenset({"AnalyzeImage", "AnalyzeMetadata", "AnalyzeRaw"}),
+        needs=("nibabel",),
+    ),
     "brainhops.io.common.minc": Package(
         names=frozenset({"MincDimension", "MincMetadata", "MincRaw"}),
         needs=("nibabel",),
@@ -253,7 +261,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.nifti": Package(
         names=frozenset(
             {
-                "NiftiBasedTransformation",
+                "NiftiBackedTransformation",
                 "NiftiMetadata",
                 "NiftiRASCoordinateField",
                 "NiftiRASDisplacementField",

@@ -37,7 +37,7 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 # this format
 from ._base import (
-    NiftiBasedTransformation,
+    NiftiBackedTransformation,
     consolidated_metadata,
     nibabel_parts,
 )
@@ -47,7 +47,7 @@ _FORGET_VIEWS = InvalidatorInAttribute("derived_fields")
 """Invalidator that clears the views that the data model derives."""
 
 
-class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
+class _NiftiAffine(AffineTransformationFormat, NiftiBackedTransformation):
     """Shared reading, scoring and writing of the affines of a header.
 
     An affine read from a file keeps its matrix in the header of its

@@ -24,7 +24,6 @@ from brainhops.io.common.nifti._internal_api import (
     NIFTI_INTENT_DISPVECT,
     NIFTI_INTENT_NAME_ITK_COORDINATES,
     NIFTI_INTENT_NAME_ITK_DISPLACEMENT,
-    NIFTI_INTENT_NAME_MAPPING,
     NIFTI_INTENT_NAME_NIFTYREG,
     NIFTI_INTENT_VECTOR,
     NiftiObject,
@@ -34,6 +33,10 @@ from brainhops.io.common.nifti._internal_api import (
     nifti_shape,
 )
 from brainhops.io.images.nifti import NiftiImage
+from brainhops.io.transformations.base._internal_api import (
+    data_image,
+    image_with,
+)
 from brainhops.io.transformations.base.fields import (
     COORDINATE_HINTS,
     DISPLACEMENT_HINTS,
@@ -45,8 +48,8 @@ from brainhops.io.transformations.base.fields import (
 # this format
 from ._base import (
     NiftiImageBackedTransformation,
-    consolidate_through,
-    image_with,
+    consolidate_nifti,
+    coordinates_intent,
     intent_overrides,
 )
 from ._views import field_to_disk, field_to_model
@@ -156,18 +159,12 @@ class NiftiRASCoordinateField(
         """
         if StoreEnum(self.store) is not StoreEnum.values:
             data = self.to(store="values").data
+            image = image_with(self, field_to_disk(data))
         else:
-            data = self._data
-        image = image_with(self, None if data is None else field_to_disk(data))
-        header = header_of(self)
-        intent = (nifti_intent(header), nifti_intent_name(header))
-        overrides = {}
-        if intent != (NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING):
-            overrides = intent_overrides(
-                NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING
-            )
+            image = data_image(self, field_to_disk)
+        intent = coordinates_intent(header_of(self))
         changes = {"data": None, "store": StoreEnum.values}
-        return consolidate_through(self, image, overrides, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
 
 
 @register_format
@@ -451,10 +448,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         changes = {"data": None, "transformations": None, "log": log}
         intent = intent_overrides(NIFTI_INTENT_DISPVECT)
         if self._transformations is None and log == self.log:
-            data = self._data
-            image = image_with(
-                self, None if data is None else field_to_disk(data)
-            )
+            image = data_image(self, field_to_disk)
             if nifti_intent(header_of(self)) == NIFTI_INTENT_DISPVECT:
                 intent = {}
         else:
@@ -465,7 +459,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
                 log=log,
             )
             image = image_with(self, field_to_disk(vectors), vox2ras)
-        return consolidate_through(self, image, intent, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
 
     def to_nibabel(
         self,

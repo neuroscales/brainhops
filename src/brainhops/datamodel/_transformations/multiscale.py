@@ -12,15 +12,7 @@ from brainhops._core.pyramids import (
     rescale_vectors,
 )
 from brainhops._core.typing import ArrayProtocol
-from brainhops.datamodel._sugar import get_axes
-from brainhops.datamodel.axes import (
-    AxisList,
-    CoordinateAxis,
-    DisplacementAxis,
-    SpaceAxis,
-)
-from brainhops.datamodel.multiscale import (
-    Multiscale,
+from brainhops.datamodel._multiscale import (
     PyramidLayout,
     build_pyramid,
     downsampled_matrix,
@@ -28,6 +20,14 @@ from brainhops.datamodel.multiscale import (
     level_matches,
     pop_pyramid_options,
 )
+from brainhops.datamodel._sugar import get_axes
+from brainhops.datamodel.axes import (
+    AxisList,
+    CoordinateAxis,
+    DisplacementAxis,
+    SpaceAxis,
+)
+from brainhops.datamodel.multiscale import Multiscale
 from brainhops.errors import ConversionError
 
 from .base import Transformation
