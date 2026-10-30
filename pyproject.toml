@@ -69,6 +69,7 @@ tiff = ["tifffile"]
 # package manager).
 openslide = ["openslide-python", "openslide-bin"]
 nifti = ["brainhops[nibabel]"]
+analyze = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 # MINC1 is read with nibabel; MINC2 (HDF5) also needs h5py.
 minc = ["brainhops[nibabel]", "brainhops[h5py]"]

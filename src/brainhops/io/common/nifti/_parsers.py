@@ -40,7 +40,7 @@ class NiftiReaderWriter(BinaryFileReader, BinaryFileWriter):
     """The reader and writer of an object stored in a NIfTI file.
 
     [`NiftiImage`][brainhops.io.images.nifti.NiftiImage] and
-    [`NiftiBasedTransformation`][brainhops.io.transformations.nifti.NiftiBasedTransformation]
+    [`NiftiBackedTransformation`][brainhops.io.transformations.nifti.NiftiBackedTransformation]
     both store a header and an array in a NIfTI file, and both read and
     write it through nibabel. They list this class first among their
     bases, so that they share its reading and writing methods. Each of
