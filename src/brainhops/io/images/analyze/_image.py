@@ -50,8 +50,12 @@ _OPTION_OWNER = "Analyze reader"
 _PHYSICAL = "physical"
 """Name of the space of the voxels scaled by their size."""
 
-_WORLD = "world"
-"""Name of the RAS world space, the preferred world space."""
+_WORLD = "undefined"
+"""Name of the RAS world space, the preferred world space.
+
+Analyze stores no orientation, so the header does not say which world
+space the voxels are placed in.
+"""
 
 _MM = "mm"
 """The unit of the voxel sizes of the spatial axes."""
@@ -87,10 +91,11 @@ class AnalyzeImage(BinaryFileReader, ImageFormat, SingleScaleImage):
     unless other transformations are assigned. They are, in order, a
     [`Scaling`][] to `"physical"` by the voxel size of each spatial axis,
     in millimetres, and the preferred [`Affine`][] to the RAS space
-    `"world"`. Analyze stores no orientation, so the affine follows the
-    convention of SPM: the first axis runs from right to left, and the
-    origin of the world is the voxel that SPM stores in the header, or
-    else the centre of the grid (see
+    `"undefined"`. Analyze stores no orientation, so the header does not
+    say which world space the voxels are placed in, and the affine
+    follows the convention of SPM: the first axis runs from right to
+    left, and the origin of the world is the voxel that SPM stores in
+    the header, or else the centre of the grid (see
     [`brainhops.io.common.analyze`][brainhops.io.common.analyze]).
 
     Analyze files cannot be written by brainhops. The format would need
