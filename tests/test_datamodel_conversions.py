@@ -87,6 +87,16 @@ def test_a_conversion_to_rotation_accepts_a_rotation(
     )
 
 
+def test_a_conversion_from_projection_to_rotation_checks_the_result() -> None:
+    # A projection that drops an axis and creates another one has a
+    # square but singular matrix, which is not a rotation (#622).
+    projection = X.Projection([1], [1], input=S.RASmm())
+    with pytest.raises(LossyConversionError):
+        projection.to(X.Rotation)
+    # A projection that drops and creates no axis is the identity.
+    assert isinstance(X.Projection().to(X.Rotation), X.Rotation)
+
+
 def test_a_rotation_tangent_stores_the_logarithm_of_the_matrix() -> None:
     # The rotation tangent stores the logarithm of the matrix, so the
     # matrix of a Linear must not be copied into it as data.

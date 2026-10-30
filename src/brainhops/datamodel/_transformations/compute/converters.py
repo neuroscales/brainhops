@@ -864,6 +864,9 @@ _make_converter_chain(PERMUTATION, LINEAR, SCALING)
 # from Linear to Rotation (#622).
 _make_converter_chain(SCALING, LINEAR, ROTATION)
 _make_converter_chain(PERMUTATION, LINEAR, ROTATION)
+# A projection that drops an axis has a singular matrix, so it is not a
+# rotation either, and it goes through the same check.
+_make_converter_chain(Projection, LINEAR, ROTATION)
 # A linear tangent matches both the converter of its own family and the
 # converter from Linear to Rotation, so the request is ambiguous unless the
 # tangent is first turned into its map.
