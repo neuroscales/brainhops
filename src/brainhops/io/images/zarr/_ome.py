@@ -893,6 +893,17 @@ def build_ome(
         OME-NGFF version to produce.
     """
     json_axes = [axis_to_json(axis) for axis in axes]
+    # OME-NGFF needs a distinct name for every axis, so an axis that has
+    # none, such as an axis that closes `...`, is named after its stored
+    # position, as `_default_canonical_axes` names its extra axes.
+    taken = {entry["name"] for entry in json_axes if entry["name"]}
+    for index, entry in enumerate(json_axes):
+        if not entry["name"]:
+            name = "dim" + str(index)
+            while name in taken:
+                name = "_" + name
+            taken.add(name)
+            entry["name"] = name
     level_output = INTRINSIC_SYSTEM if commons else WORLD_SYSTEM
     if commons:
         systems = [{"name": INTRINSIC_SYSTEM, "axes": json_axes}]
