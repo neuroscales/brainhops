@@ -33,6 +33,7 @@ from brainhops._core.pyramids import (
     default_factors,
     level_geometry,
 )
+from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from .axes import AxisList
@@ -229,6 +230,118 @@ def build_scales(
     raise TypeError(
         f"A {type(obj).__name__} cannot build its scales from its finest "
         "scale."
+    )
+
+
+@functools.singledispatch
+def level_resolution(obj: tx.Any, index: int) -> tx.Optional[ArrayProtocol]:
+    """Return the physical grid size of a scale of a pyramid.
+
+    `nearest_level` compares these sizes to choose the scale whose
+    resolution is closest to a target grid. Each multiscale class that
+    knows the resolution of its scales registers its version of this
+    function, and the size of any other scale is unknown.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid.
+    index : int
+        The index of the scale.
+
+    Returns
+    -------
+    ArrayProtocol or None
+        One entry per axis, in the units of the input, or `None` when
+        the size is unknown.
+    """
+    return None
+
+
+@functools.singledispatch
+def keeps_scale(
+    obj: tx.Any, index: int, factors: tx.Tuple[int, ...], align: str
+) -> bool:
+    """Return whether a scale of a pyramid is the one that is asked for.
+
+    [`Multiscale.with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales]
+    keeps a coarser scale that the pyramid already holds when this
+    function returns true for it. Each multiscale class that builds its
+    scales registers its version of it, and any other scale is built
+    again.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid.
+    index : int
+        The index of the scale.
+    factors : tuple of int
+        The factor of each axis of the layout from the finest scale.
+    align : str
+        How the voxels of the scale lie over those of the finest scale.
+
+    Returns
+    -------
+    bool
+        Whether the scale lies where `align` puts a scale of `factors`,
+        and has its shape.
+    """
+    return False
+
+
+@functools.singledispatch
+def check_scales(obj: tx.Any, scales: tx.Sequence[tx.Any]) -> None:
+    """Refuse a list of scales that a pyramid cannot take as it is.
+
+    [`Multiscale.with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales]
+    calls this function before [`adopt_scales`][]. Each multiscale class
+    registers its version of it, and any list passes by default.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid.
+    scales : sequence
+        The scales, finest first.
+
+    Raises
+    ------
+    TypeError
+        If a scale has the wrong type.
+    ValueError
+        If the scales are not ordered from fine to coarse, or do not
+        share one world space.
+    """
+    return None
+
+
+@functools.singledispatch
+def adopt_scales(obj: tx.Any, scales: tx.Sequence[tx.Any]) -> tx.Any:
+    """Return a copy of a pyramid that holds the scales it is given.
+
+    Each multiscale class that can be given a list of scales registers
+    its version of this function.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The pyramid.
+    scales : sequence
+        The scales, finest first, which [`check_scales`][] accepted.
+
+    Returns
+    -------
+    Multiscale
+        The copy.
+
+    Raises
+    ------
+    TypeError
+        If the class of `obj` cannot be given a list of scales.
+    """
+    raise TypeError(
+        f"A {type(obj).__name__} cannot be given a list of scales."
     )
 
 

@@ -10,6 +10,7 @@ package. The rules are explained in `spec/design/internal-api.md`.
 __all__ = [
     "PyramidLayout",
     "ScalePlan",
+    "adopt_scales",
     "bridge",
     "build_pyramid",
     "build_scales",
@@ -20,6 +21,7 @@ __all__ = [
     "field_scale",
     "find_converter",
     "get_axes",
+    "keeps_scale",
     "index2transform",
     "level_matches",
     "next_scale",
@@ -34,8 +36,10 @@ from ._indexing import index2transform
 from ._multiscale import (
     PyramidLayout,
     ScalePlan,
+    adopt_scales,
     build_pyramid,
     build_scales,
+    keeps_scale,
     level_matches,
     next_scale,
     plan_scales,

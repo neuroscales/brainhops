@@ -43,10 +43,13 @@ from ._frames import (
 from ._indexing import index2transform
 from ._multiscale import (
     PyramidLayout,
+    adopt_scales,
     build_pyramid,
     build_scales,
+    check_scales,
     downsampled_matrix,
     geometry_matrix,
+    keeps_scale,
     level_matches,
     pop_pyramid_options,
     pyramid_layout,
@@ -964,56 +967,6 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             )
         return images[0]
 
-    def _keeps_scale(
-        self, index: int, factors: tx.Tuple[int, ...], align: str
-    ) -> bool:
-        finest, level = self.images[0], self.images[index]
-        if finest.data is None or level.data is None:
-            return False
-        ndim = len(finest.data.shape)
-        matrices = [
-            geometry_matrix(image.transformation, ndim)
-            for image in (finest, level)
-        ]
-        if any(matrix is None for matrix in matrices):
-            return False
-        return level_matches(
-            matrices[0],
-            matrices[1],
-            finest.data.shape,
-            level.data.shape,
-            factors,
-            align,
-        )
-
-    def _check_scales(self, scales: tx.Sequence[SingleScaleImage]) -> None:
-        if not all(isinstance(level, SingleScaleImage) for level in scales):
-            raise TypeError(
-                "The scales of a multiscale image are single-scale images."
-            )
-        ndim = len(scales[0].shape)
-        if any(len(level.shape) != ndim for level in scales):
-            raise ValueError(
-                "The scales of a multiscale image have the same number of "
-                "axes."
-            )
-        outputs = [
-            getattr(level.transformation, "output", None) for level in scales
-        ]
-        known = [output for output in outputs if output is not None]
-        if any(output != known[0] for output in known):
-            raise ValueError(
-                "The scales of a multiscale image map their voxels onto the "
-                "same space, but these scales map them onto "
-                f"{[getattr(output, 'name', None) for output in outputs]}."
-            )
-        _check_fine_to_coarse(
-            [geometry_matrix(level.transformation, ndim) for level in scales]
-        )
-
-    def _adopt_scales(self, scales: tx.Sequence[SingleScaleImage]) -> tx.Self:
-        return replace(self, images=list(scales))
-
     @property
     def geometry(self) -> Geometry:
         """The geometry of the highest-resolution level.
@@ -1391,3 +1344,60 @@ def _(
             SingleScaleImage(data=array, transformations=[placement])
         )
     return replace(obj, images=levels)
+
+
+@keeps_scale.register(MultiScaleImage)
+def _(
+    obj: "MultiScaleImage", index: int, factors: tx.Tuple[int, ...], align: str
+) -> bool:
+    finest, level = obj.images[0], obj.images[index]
+    if finest.data is None or level.data is None:
+        return False
+    ndim = len(finest.data.shape)
+    matrices = [
+        geometry_matrix(image.transformation, ndim)
+        for image in (finest, level)
+    ]
+    if any(matrix is None for matrix in matrices):
+        return False
+    return level_matches(
+        matrices[0],
+        matrices[1],
+        finest.data.shape,
+        level.data.shape,
+        factors,
+        align,
+    )
+
+
+@check_scales.register(MultiScaleImage)
+def _(obj: "MultiScaleImage", scales: tx.Sequence[SingleScaleImage]) -> None:
+    if not all(isinstance(level, SingleScaleImage) for level in scales):
+        raise TypeError(
+            "The scales of a multiscale image are single-scale images."
+        )
+    ndim = len(scales[0].shape)
+    if any(len(level.shape) != ndim for level in scales):
+        raise ValueError(
+            "The scales of a multiscale image have the same number of axes."
+        )
+    outputs = [
+        getattr(level.transformation, "output", None) for level in scales
+    ]
+    known = [output for output in outputs if output is not None]
+    if any(output != known[0] for output in known):
+        raise ValueError(
+            "The scales of a multiscale image map their voxels onto the "
+            "same space, but these scales map them onto "
+            f"{[getattr(output, 'name', None) for output in outputs]}."
+        )
+    _check_fine_to_coarse(
+        [geometry_matrix(level.transformation, ndim) for level in scales]
+    )
+
+
+@adopt_scales.register(MultiScaleImage)
+def _(
+    obj: "MultiScaleImage", scales: tx.Sequence[SingleScaleImage]
+) -> "MultiScaleImage":
+    return replace(obj, images=list(scales))

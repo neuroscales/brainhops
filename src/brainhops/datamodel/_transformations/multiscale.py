@@ -14,11 +14,15 @@ from brainhops._core.pyramids import (
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel._multiscale import (
     PyramidLayout,
+    adopt_scales,
     build_pyramid,
     build_scales,
+    check_scales,
     downsampled_matrix,
     geometry_matrix,
+    keeps_scale,
     level_matches,
+    level_resolution,
     pop_pyramid_options,
     pyramid_layout,
 )
@@ -282,81 +286,6 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     # --- scales built from the finest scale ---------------------------
 
-    def _keeps_scale(
-        self, index: int, factors: tx.Tuple[int, ...], align: str
-    ) -> bool:
-        try:
-            finest = field_scale(self.scales[0])
-            level = field_scale(self.scales[index])
-        except ValueError:
-            return False
-        if level.kind != finest.kind:
-            return False
-        shapes = [part.field.data.shape[:-1] for part in (finest, level)]
-        return level_matches(
-            np.asarray(_affine_inv(finest.world2voxel)),
-            np.asarray(_affine_inv(level.world2voxel)),
-            shapes[0],
-            shapes[1],
-            factors[: len(shapes[0])],
-            align,
-        )
-
-    def _check_scales(self, scales: tx.Sequence[Sequence]) -> None:
-        parts = []  # type: tx.List[FieldScale]
-        for scale in scales:
-            if not isinstance(scale, Sequence):
-                raise TypeError(
-                    "The scales of a multiscale field are sequences."
-                )
-            parts.append(field_scale(scale))
-        if len({part.kind for part in parts}) > 1:
-            raise ValueError(
-                "The scales of a multiscale field hold the same kind of "
-                "field, but these mix displacements and coordinates."
-            )
-        for side in ("input", "output"):
-            systems = [getattr(scale, side, None) for scale in scales]
-            systems.append(getattr(self, side, None))
-            known = [system for system in systems if system is not None]
-            if any(system != known[0] for system in known):
-                names = [getattr(system, "name", None) for system in systems]
-                raise ValueError(
-                    f"The scales of a multiscale field share their {side} "
-                    f"space, but these have the {side} spaces {names[:-1]}."
-                )
-        sizes = [
-            np.asarray(axis_scales(_affine_inv(part.world2voxel)))
-            for part in parts
-        ]
-        for index in range(1, len(sizes)):
-            if bool((sizes[index] < sizes[index - 1] * (1 - 1e-9)).any()):
-                raise ValueError(
-                    "The scales are ordered from fine to coarse, but the "
-                    f"voxels of scale {index} ({sizes[index].tolist()}) are "
-                    f"smaller than those of scale {index - 1} "
-                    f"({sizes[index - 1].tolist()}) along some axis."
-                )
-
-    def _adopt_scales(self, scales: tx.Sequence[Sequence]) -> tx.Self:
-        return replace(self, scales=list(scales))
-
-    def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
-        # The resolution of a scale is read from its leading world-to-voxel
-        # affine: the norm of each column of its inverse is the voxel size
-        # along that axis. If the leading element is not a defined affine, the
-        # resolution is unknown.
-        scales = self.scales or []
-        if not 0 <= index < len(scales):
-            return None
-        scale = scales[index]
-        if not len(scale):
-            return None
-        affine = scale[0].to_affine(on_error=None)
-        if affine is None:
-            return None
-        return axis_scales(_affine_inv(affine.matrix))
-
 
 def _affine(matrix: np.ndarray, input: tx.Any, output: tx.Any) -> Affine:
     # An affine of `matrix` between two coordinate systems.
@@ -517,3 +446,86 @@ def _(
             Sequence(chain, input=finest.input, output=finest.output)
         )
     return replace(obj, scales=scales)
+
+
+@keeps_scale.register(MultiscaleField)
+def _(
+    obj: "MultiscaleField", index: int, factors: tx.Tuple[int, ...], align: str
+) -> bool:
+    try:
+        finest = field_scale(obj.scales[0])
+        level = field_scale(obj.scales[index])
+    except ValueError:
+        return False
+    if level.kind != finest.kind:
+        return False
+    shapes = [part.field.data.shape[:-1] for part in (finest, level)]
+    return level_matches(
+        np.asarray(_affine_inv(finest.world2voxel)),
+        np.asarray(_affine_inv(level.world2voxel)),
+        shapes[0],
+        shapes[1],
+        factors[: len(shapes[0])],
+        align,
+    )
+
+
+@check_scales.register(MultiscaleField)
+def _(obj: "MultiscaleField", scales: tx.Sequence[Sequence]) -> None:
+    parts = []  # type: tx.List[FieldScale]
+    for scale in scales:
+        if not isinstance(scale, Sequence):
+            raise TypeError("The scales of a multiscale field are sequences.")
+        parts.append(field_scale(scale))
+    if len({part.kind for part in parts}) > 1:
+        raise ValueError(
+            "The scales of a multiscale field hold the same kind of "
+            "field, but these mix displacements and coordinates."
+        )
+    for side in ("input", "output"):
+        systems = [getattr(scale, side, None) for scale in scales]
+        systems.append(getattr(obj, side, None))
+        known = [system for system in systems if system is not None]
+        if any(system != known[0] for system in known):
+            names = [getattr(system, "name", None) for system in systems]
+            raise ValueError(
+                f"The scales of a multiscale field share their {side} "
+                f"space, but these have the {side} spaces {names[:-1]}."
+            )
+    sizes = [
+        np.asarray(axis_scales(_affine_inv(part.world2voxel)))
+        for part in parts
+    ]
+    for index in range(1, len(sizes)):
+        if bool((sizes[index] < sizes[index - 1] * (1 - 1e-9)).any()):
+            raise ValueError(
+                "The scales are ordered from fine to coarse, but the "
+                f"voxels of scale {index} ({sizes[index].tolist()}) are "
+                f"smaller than those of scale {index - 1} "
+                f"({sizes[index - 1].tolist()}) along some axis."
+            )
+
+
+@adopt_scales.register(MultiscaleField)
+def _(
+    obj: "MultiscaleField", scales: tx.Sequence[Sequence]
+) -> "MultiscaleField":
+    return replace(obj, scales=list(scales))
+
+
+@level_resolution.register(MultiscaleField)
+def _(obj: "MultiscaleField", index: int) -> tx.Optional[ArrayProtocol]:
+    # The resolution of a scale is read from its leading world-to-voxel
+    # affine: the norm of each column of its inverse is the voxel size
+    # along that axis. If the leading element is not a defined affine, the
+    # resolution is unknown.
+    scales = obj.scales or []
+    if not 0 <= index < len(scales):
+        return None
+    scale = scales[index]
+    if not len(scale):
+        return None
+    affine = scale[0].to_affine(on_error=None)
+    if affine is None:
+        return None
+    return axis_scales(_affine_inv(affine.matrix))

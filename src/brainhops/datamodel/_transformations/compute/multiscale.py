@@ -3,6 +3,7 @@ import typing_extensions as tx
 
 from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel._multiscale import level_resolution
 
 from ..base import Transformation
 from ..concrete import Affine
@@ -18,7 +19,7 @@ def nearest_level(
     # grid of `voxel2world`. The comparison is done by
     # `nearest_resolution_index`, which the multiscale image also uses.
     scales = multiscale.scales
-    resolutions = [multiscale._level_resolution(i) for i in range(len(scales))]
+    resolutions = [level_resolution(multiscale, i) for i in range(len(scales))]
     return nearest_resolution_index(
         resolutions, voxel2world.to_affine(include="affine", on_error=None)
     )

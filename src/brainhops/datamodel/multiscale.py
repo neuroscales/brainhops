@@ -37,10 +37,16 @@ from brainhops._core.pyramids import (
     DEFAULT_MODE,
     MIN_SIZE,
 )
-from brainhops._core.typing import ArrayProtocol
 
 # datamodel
-from ._multiscale import build_scales, is_factor, plan_scales
+from ._multiscale import (
+    adopt_scales,
+    build_scales,
+    check_scales,
+    is_factor,
+    keeps_scale,
+    plan_scales,
+)
 from .axes import AxisQuery
 from .base import DataModelBase
 
@@ -81,12 +87,13 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
     its scales, [`with_scales`][].
 
     It does not define what a scale is: a subclass supplies the scales
-    and, through the `_level_resolution` hook, the physical grid size of
-    each one, from which `nearest_level` picks the scale whose
-    resolution is closest to a target grid. A subclass that builds its
-    scales also supplies the hooks `_keeps_scale`, `_check_scales` and
-    `_adopt_scales`, and registers its versions of the functions
-    `pyramid_layout` and `build_scales` of `brainhops.datamodel._multiscale`.
+    and, by registering its version of the internal function
+    `level_resolution`, the physical grid size of each one, from which
+    `nearest_level` picks the scale whose resolution is closest to a
+    target grid. A subclass that builds its scales also registers its
+    versions of the internal functions `pyramid_layout`,
+    `build_scales`, `keeps_scale`, `check_scales` and `adopt_scales` of
+    `brainhops.datamodel._multiscale`.
     """
 
     BUILDS_SCALES: tx.ClassVar[bool] = False
@@ -299,8 +306,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
                         "`factor` gives the step of the rules, which a "
                         "sequence of scales replaces."
                     )
-                self._check_scales(scales)
-                return self._adopt_scales(scales)
+                check_scales(self, scales)
+                return adopt_scales(self, scales)
         plan = plan_scales(
             self,
             {
@@ -316,33 +323,9 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         for index, level in enumerate(plan.factors, start=1):
             if index >= self.nscales:
                 break
-            if not self._keeps_scale(index, level, align):
+            if not keeps_scale(self, index, level, align):
                 break
             kept = index
         return build_scales(self, plan.factors, mode, align, kept)
 
     # --- hooks --------------------------------------------------------
-
-    def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
-        # Return the physical grid size of a level, as a vector with one entry
-        # per axis in the input units, or `None` if the size is unknown. This
-        # hook returns `None` here, and subclasses override it.
-        return None
-
-    def _keeps_scale(
-        self, index: int, factors: tx.Tuple[int, ...], align: str
-    ) -> bool:
-        # Return whether the scale at `index` lies where `align` puts a
-        # scale of `factors` from the finest scale, and has its shape.
-        return False
-
-    def _check_scales(self, scales: tx.Sequence[SINGLE_SCALE]) -> None:
-        # Refuse a list of scales that is not ordered from fine to
-        # coarse, or whose scales do not share one world space.
-        return None
-
-    def _adopt_scales(self, scales: tx.Sequence[SINGLE_SCALE]) -> tx.Self:
-        # Return a copy that holds `scales` as they are.
-        raise TypeError(
-            f"A {type(self).__name__} cannot be given a list of scales."
-        )
