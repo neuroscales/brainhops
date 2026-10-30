@@ -5,13 +5,17 @@ This memo is agreed and is implemented. The `from_image` field of
 NIfTI image keeps its stored state in a `NiftiImage`: the two NIfTI
 fields (#632), and the fields of NiftyReg, ITK, SPM and FNIRT and the
 AFNI NIfTI warp. The AFNI BRIK warp keeps its stored state in an
-`AfniImage`, and the MRtrix warps keep theirs in an `MrtrixImage`. The
-part of the base that does not depend on NIfTI is the internal class
-`ImageBackedTransformation`, in
+`AfniImage`, and the MRtrix warps keep theirs in an `MrtrixImage`
+(#644). The part of the base that does not depend on NIfTI is the
+internal class `ImageBackedTransformation`, in
 `io/transformations/base/_image_backed.py`, which takes the image class
-as its class attribute `IMAGE`. The NIfTI formats still decode their
-grid apart from the image, because the two decoders disagree on a file
-whose sform and qform codes are both zero (#631).
+as its class attribute `IMAGE`. The NIfTI fields and the fields of ITK
+and SPM take their grid from nibabel's `get_best_affine()`, as
+`NiftiImage` does, so a file whose sform and qform codes are both zero
+gets the same default grid in the image and in the transformation
+(#631, #641). The AFNI NIfTI warp uses the same default grid, but it
+prefers the qform to the sform, as AFNI does. NiftyReg and FNIRT read
+the forms of the header as those tools read them.
 
 Many transformations are stored in an image file. A displacement field
 in a NIfTI file, an AFNI warp and an MRtrix warp are images whose

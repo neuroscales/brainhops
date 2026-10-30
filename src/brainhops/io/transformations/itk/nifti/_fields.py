@@ -255,8 +255,10 @@ class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
 
         The affine has shape `(ndim, ndim + 1)`. The header stores a
         voxel-to-RAS affine, so its first two rows are negated. ITK writes the
-        same matrix to the sform and the qform. A field without metadata has
-        no grid of its own, and its voxel-to-RAS affine is the identity.
+        same matrix to the sform and the qform. A header whose codes are both
+        zero gets the default grid that `NiftiImage` decodes for it. A field
+        without metadata has no grid of its own, and its voxel-to-RAS affine
+        is the identity.
         """
         ndim = self._ndim()
         if ndim is None:

@@ -349,8 +349,10 @@ StationaryVelocityField], integrated with `steps` squaring steps
     def _vox2ras(self) -> np.ndarray:
         """Return the (4, 4) voxel-to-RAS affine of the grid.
 
-        The affine is the best affine of the header, or the identity for a
-        field without metadata.
+        The affine is the grid that the stored image decodes from its
+        header, which is the sform, else the qform, else the default
+        grid of a header whose codes are both zero. A field without
+        metadata has the identity.
         """
         header = header_of(self)
         if header is None:

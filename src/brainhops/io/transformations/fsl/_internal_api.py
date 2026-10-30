@@ -9,7 +9,6 @@ api.md`.
 """
 
 __all__ = [
-    "best_affine",
     "FslAffineFormat",
     "FslTransformationFormat",
     "ImageGeometry",
@@ -20,7 +19,7 @@ __all__ = [
     "WarpFieldToRAS",
 ]
 
-from ._affines import ImageGeometry, best_affine, spatial_shape
+from ._affines import ImageGeometry, spatial_shape
 from ._fields import RASToWarpField, WarpFieldToRAS
 from ._formats import FslAffineFormat, FslTransformationFormat
 from ._keywords import pop_aliased

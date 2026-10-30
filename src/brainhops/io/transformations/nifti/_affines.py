@@ -349,10 +349,13 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
 class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
     """Affine from voxel to RAS space, stored in the header of a NIfTI file.
 
-    The matrix of an affine read from a file is the best affine of the
-    header, which is the sform when its code is set and the qform
-    otherwise. Setting the matrix stores it in `rawdata`, which then
-    takes precedence over the header.
+    The matrix of an affine read from a file is the grid that a
+    [`NiftiImage`][brainhops.io.images.nifti.NiftiImage] of the same
+    file decodes: the sform when its code is set, and otherwise the
+    qform when its code is set. When both codes are zero, the matrix is
+    the default grid that `NiftiImage` describes, which is centred on
+    the middle of the image and flips the first axis. Setting the matrix
+    stores it in `rawdata`, which then takes precedence over the header.
     """
 
     HINTS = ("nifti",)

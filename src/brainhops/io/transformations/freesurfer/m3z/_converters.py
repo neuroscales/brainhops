@@ -134,8 +134,8 @@ def _geometry(
     if isinstance(image, (tuple, list)) and len(image) == 2:
         vox2ras, shape = image
     else:
+        from brainhops.io.common.nifti._internal_api import best_affine
         from brainhops.io.transformations.fsl._internal_api import (
-            best_affine,
             spatial_shape,
         )
 

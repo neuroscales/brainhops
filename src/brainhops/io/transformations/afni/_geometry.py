@@ -197,7 +197,8 @@ def nifti_matrix(header: tx.Any) -> tx.Optional[np.ndarray]:
 
     AFNI prefers the qform when its code is set, then the sform
     (`thd_niftiread.c`, unless `NIFTI_FORM_PRIORITY` says otherwise).
-    A header with neither code falls back to the best affine of nibabel.
+    A header with neither code falls back to the best affine of nibabel,
+    which is the default grid that `NiftiImage` describes.
     A nibabel image, or a NIfTI record, is read through its header, and
     `None` is returned for anything else.
     """
