@@ -21,7 +21,7 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.transformations import Affine, Translation
-from brainhops.io.base.parsers import WriterError
+from brainhops.errors import WriterError
 
 # The module imports abczarr itself, so the skip must come first.
 abczarr = pytest.importorskip("abczarr")

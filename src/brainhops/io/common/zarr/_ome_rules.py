@@ -25,7 +25,7 @@ do not know, such as an unknown unit.
 
 import typing_extensions as tx
 
-from brainhops.io.base.parsers import WriterError
+from brainhops.errors import WriterError
 
 _TOP_LEVEL_VERSIONS = frozenset({"0.1", "0.2", "0.3", "0.4"})
 """The versions whose metadata is not stored under an `ome` key."""

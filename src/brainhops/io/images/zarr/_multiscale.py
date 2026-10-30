@@ -27,10 +27,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+from brainhops.errors import WriterError
 
 # io
 from brainhops.io.base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
 from brainhops.io.common.zarr._internal_api import (
     ZarrNodeReaderWriter,

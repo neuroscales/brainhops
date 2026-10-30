@@ -39,7 +39,8 @@ from brainhops.datamodel.transformations import (
 from brainhops.datamodel.units import Unit
 
 # io
-from brainhops.io.base.parsers import ParserContentError, WriterError
+from brainhops.errors import WriterError
+from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.common.zarr._internal_api import check_ome
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node

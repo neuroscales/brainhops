@@ -31,6 +31,7 @@ from brainhops.datamodel.transformations import (
 from brainhops.errors import (
     ConversionError,
     UnrepresentableTransformationError,
+    WriterError,
 )
 from brainhops.io.base import FileFormat
 from brainhops.io.base._base import (
@@ -40,7 +41,6 @@ from brainhops.io.base._base import (
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     TextFileWriter,
-    WriterError,
     WriterNotImplementedError,
 )
 

@@ -36,6 +36,7 @@ from brainhops.errors import (
     ErrorAction,
     ErrorPolicy,
     LossyConversionError,
+    WriterError,
 )
 from brainhops.io.base._base import FileFormat, takes_over
 from brainhops.io.base._dispatch import (
@@ -47,7 +48,6 @@ from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     FileReader,
     FileWriter,
-    WriterError,
 )
 from brainhops.io.base.specs import format_hints
 
