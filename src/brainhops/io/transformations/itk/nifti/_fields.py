@@ -6,10 +6,9 @@ described in [`brainhops.io.transformations.itk.nifti`][].
 """
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr
 
 # core
 from brainhops._core import affines as _affines
@@ -22,8 +21,6 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.enums import BoundaryCondition
-from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._internal_api import apply_loss_policy
 from brainhops.errors import (
     ParserContentError,
     WriterError,
@@ -41,22 +38,15 @@ from brainhops.io.common.nifti._internal_api import (
     NIFTI_INTENT_NAME_NIFTYREG,
     NIFTI_INTENT_VECTOR,
     NiftiObject,
-    apply_like,
-    apply_overrides,
     embed_nifti_affine,
     header_of,
-    keep_given_fields,
     nifti_intent,
     nifti_intent_name,
     nifti_shape,
-    record_image,
-    split_options,
-    stored_parts,
 )
-from brainhops.io.metadata._internal_api import (
-    metadata_to_write,
-    overruled_fields,
-    requested_fields,
+from brainhops.io.transformations.base._internal_api import (
+    data_image,
+    image_with,
 )
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import (
@@ -67,9 +57,10 @@ from brainhops.io.transformations.base.fields import (
 
 # this_format
 from brainhops.io.transformations.itk._internal_api import make_system
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
 from brainhops.io.transformations.nifti._internal_api import (
-    consolidated_metadata,
+    NiftiImageBackedTransformation,
+    consolidate_nifti,
+    intent_overrides,
 )
 
 from ._views import itk_field_to_disk, itk_field_to_model
@@ -92,11 +83,6 @@ Homogeneous RAS-to-LPS matrix, which negates the first two axes.
 ITK applies it to the direction and origin of an image of any dimension when it
 writes or reads the sform and qform (`itkNiftiImageIO.cxx`), so a 2-D ITK image
 lives in (L, P).
-"""
-
-_NIFTI_XFORM_SCANNER_ANAT = 1
-"""
-The sform and qform code that ITK writes, used for fields not read from a file.
 """
 
 
@@ -160,7 +146,7 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
+class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
     """
     Base class of the fields stored in ITK NIfTI vector images.
 
@@ -220,17 +206,8 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
         return itk_field_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
-
-    metadata = smartproperty(
-        "metadata", invalidates=("transformations", "input", "output")
-    )
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata drops the chain and the endpoints decoded
-    from the previous header.
-    """
 
     # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
@@ -258,13 +235,13 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
             return _itk_ndim(tuple(self.rawdata.shape))
         return None
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The ITK physical space that the field maps from."""
         ndim = self._ndim()
         return None if ndim is None else make_system(ndim)
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The ITK physical space that the field maps to."""
         ndim = self._ndim()
@@ -334,168 +311,40 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
 
     # --- writing ------------------------------------------------------
 
-    def _consolidate(
-        self,
-        *,
-        inplace: bool = False,
-        like: tx.Any = None,
-        **options: tx.Any,
-    ) -> tx.Self:
-        """Encode the pending vectors or chain into `rawdata` and a header.
+    def _consolidate(self, **options: tx.Any) -> tx.Self:
+        """Encode the pending vectors or chain through the stored image.
 
         A field whose chain is decoded from its file keeps its stored
-        vectors, assigned or read, under a copy of the header of its
-        metadata. Otherwise, each type encodes its chain as ITK would
-        write it. Non-encoding header fields are copied from `like`, and
-        `overrides` are applied last. A field that has a header and
-        nothing pending, consolidated without options, is left as it is.
-
-        The metadata is consolidated first (step 2 of the precedence on
-        write), with the options that name its fields, and its record is
-        the base of the new header. The fields given by keyword take
-        precedence over `like`, and a `dtype` that is given, or changed
-        in the metadata, is the type of the stored array. What the write
-        loses or approximates is acted on once, under the error policy
-        of the call.
-
-        Parameters
-        ----------
-        inplace : bool, default=False
-            Whether to change this field rather than a copy.
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **options : Any
-            Fields of the metadata to override, such as `description` or
-            `dtype`, and header fields, which take precedence over the
-            derived values and `like`. A header field that holds a field
-            of the metadata, such as `descrip`, is refused.
-
-        Returns
-        -------
-        Self
-            The consolidated copy, or this field with `inplace=True`.
+        vectors, assigned or read, and its header, so that a `DISPVECT`
+        file stays one. Otherwise, each type encodes its chain as ITK
+        would write it. The LPS vectors are written as they are, under
+        the `VECTOR` intent (1007) and in the five-dimensional layout of
+        ITK, and the voxel-to-LPS affine of the chain becomes the
+        voxel-to-RAS matrix of the grid, with an identity on the axes
+        that a 2-D grid lacks. That grid replaces the geometry of the
+        header.
 
         Raises
         ------
-        TypeError
-            If an option names a header field that holds a field of the
-            metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
+        WriterError
+            If the chain is not one that the type encodes, or if its
+            vectors and its grid do not have the same dimension.
         """
-        fields, overrides = split_options(options)
-        name = type(self).__name__
-        report = ConversionReport(source=name, target=name)
-        requested = requested_fields(self.metadata, fields)
-        metadata = metadata_to_write(
-            self.metadata, NiftiMetadata, fields, report
-        )
+        changes = {"data": None, "transformations": None}
+        stored = self._data is not None or self.rawdata is not None
         if (
-            self._data is None
+            self.metadata is not None
+            and stored
             and self._transformations is None
-            and like is None
-            and not overrides
-            and not requested
-            and self.metadata is not None
-            and self.metadata.raw is not None
         ):
-            apply_loss_policy(report, stacklevel=2)
-            return self if inplace else replace(self)
-        if "dtype" in requested:
-            overrides["dtype"] = requested["dtype"]
-        # The encoders read the record of the metadata, so they encode
-        # over a copy that holds the consolidated metadata.
-        source = (
-            self
-            if metadata is self.metadata
-            else replace(self, metadata=metadata)
-        )
-        image = keep_given_fields(source._encoded(like, **overrides), fields)
-        raw, record = stored_parts(image)
-        metadata = consolidated_metadata(self, record)
-        overruled_fields(requested, metadata, report)
-        apply_loss_policy(report, stacklevel=2)
-        if not inplace:
-            return replace(
+            return consolidate_nifti(
                 self,
-                rawdata=raw,
-                metadata=metadata,
-                data=None,
-                transformations=None,
+                data_image(self, itk_field_to_disk),
+                {},
+                changes,
+                **options,
             )
-        self.rawdata = raw
-        self.metadata = metadata
-        self.data = None
-        self.transformations = None
-        return self
-
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """Encode the field over a copy of its record.
-
-        Each registered type encodes its chain as ITK writes it.
-        """
-        raise NotImplementedError
-
-    def _xform_codes(self) -> tx.Tuple[int, int]:
-        """
-        Return the sform and qform codes to store.
-
-        The codes come from the header when either is set, and each falls back
-        on the other. Otherwise both are `NIFTI_XFORM_SCANNER_ANAT`.
-        """
-        header = header_of(self)
-        if header is not None:
-            _, scode = header.get_sform(coded=True)
-            _, qcode = header.get_qform(coded=True)
-            if scode or qcode:
-                return int(scode or qcode), int(qcode or scode)
-        return _NIFTI_XFORM_SCANNER_ANAT, _NIFTI_XFORM_SCANNER_ANAT
-
-    def _read_back(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
-        """
-        Return the NIfTI image of the stored vectors, or `None`.
-
-        A field whose chain is decoded from its file keeps its stored
-        vectors, assigned or read, under a copy of the header of its
-        metadata, so that a `DISPVECT` file stays one. `None` is returned
-        when the field has no metadata or no vectors, or when its chain
-        was assigned.
-        """
-        if self._data is not None:
-            stored = itk_field_to_disk(self._data)
-        else:
-            stored = self.rawdata
-        if self.metadata is None or stored is None:
-            return None
-        if self._transformations is not None:
-            return None
-        image = record_image(stored, self._record(), overrides=overrides)
-        apply_like(image, like)
-        apply_overrides(image, overrides)
-        return image
-
-    def _write_vectors(
-        self,
-        vectors: ArrayProtocol,
-        vox2lps: np.ndarray,
-        like: tx.Any = None,
-        **overrides,
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """
-        Build an ITK NIfTI image from LPS vectors and a voxel-to-LPS affine.
-
-        The vectors are written unconverted under the `VECTOR` intent (1007),
-        in the five-dimensional ITK layout. The affine becomes the voxel-to-RAS
-        affine of the header, with an identity on the axes that a 2-D grid
-        lacks. A copy of the header of the metadata is the base of the new
-        header, and its fields that describe the layout and the geometry are
-        encoded again.
-        """
+        vectors, vox2lps = self._encoded()
         xp = array_backend(vectors)
         vectors = xp.asarray(vectors)
         ndim = int(vectors.shape[-1])
@@ -511,15 +360,16 @@ class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
                 f"is {vox2lps.shape[0] - 1}x{vox2lps.shape[1] - 1}."
             )
         vox2ras = _RAS_LPS @ embed_nifti_affine(vox2lps)
-        vectors = itk_field_to_disk(vectors)
-        image = record_image(vectors, self._record(), vox2ras, overrides)
-        image.header.set_intent(NIFTI_INTENT_VECTOR, name=self.INTENT_NAME)
-        scode, qcode = self._xform_codes()
-        image.header.set_sform(vox2ras, code=scode)
-        image.header.set_qform(vox2ras, code=qcode)
-        apply_like(image, like)
-        apply_overrides(image, overrides)
-        return image
+        image = image_with(self, itk_field_to_disk(vectors), vox2ras)
+        intent = intent_overrides(NIFTI_INTENT_VECTOR, self.INTENT_NAME)
+        return consolidate_nifti(self, image, intent, changes, **options)
+
+    def _encoded(self) -> tx.Tuple[ArrayProtocol, np.ndarray]:
+        """Return the LPS vectors and the voxel-to-LPS affine of the chain.
+
+        Each registered type decodes its chain as ITK writes it.
+        """
+        raise NotImplementedError
 
 
 @register_format
@@ -588,7 +438,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     # --- chain --------------------------------------------------------
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
@@ -636,35 +486,19 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     # --- writing ------------------------------------------------------
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    def _encoded(self) -> tx.Tuple[ArrayProtocol, np.ndarray]:
         """
-        Encode the field as ITK would write it.
+        Return the LPS displacements and the voxel-to-LPS affine.
 
-        The displacements are rotated back to LPS millimetres and encoded
-        unconverted under the `VECTOR` intent. The voxel-to-LPS affine becomes
-        the voxel-to-RAS sform and qform. A field read from a file keeps its
-        stored vectors. Non-encoding header fields are copied from `like`, and
-        `overrides` are applied last.
+        The displacements of the chain are rotated back to LPS
+        millimetres.
 
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
+        Raises
+        ------
+        WriterError
+            If the chain is not a displacement field between two
+            affines, or if it has no displacements.
         """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
         chain = tuple(self.transformations or ())
         if len(chain) != 3 or not isinstance(
             chain[1], _xforms.DisplacementField
@@ -688,7 +522,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         field = xp.asarray(field)
         rotate = xp.asarray(vox2lps[:ndim, :ndim], dtype=field.dtype)
         vectors = xp.matmul(rotate, field[..., None])[..., 0]
-        return self._write_vectors(vectors, vox2lps, like, **overrides)
+        return vectors, vox2lps
 
 
 @register_format
@@ -744,7 +578,7 @@ class ItkNiftiCoordinateField(ItkNiftiField):
 
     # --- chain --------------------------------------------------------
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
         The chain of transformations that the field encodes.
@@ -770,35 +604,19 @@ class ItkNiftiCoordinateField(ItkNiftiField):
 
     # --- writing ------------------------------------------------------
 
-    def _encoded(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    def _encoded(self) -> tx.Tuple[ArrayProtocol, np.ndarray]:
         """
-        Encode the coordinate field.
+        Return the LPS coordinates and the voxel-to-LPS affine.
 
-        The coordinates are encoded unconverted under the `VECTOR` intent, and
-        the inverse of the `lps2voxel` affine becomes the voxel-to-RAS sform
-        and qform. A field read from a file keeps its stored coordinates.
-        Non-encoding header fields are copied from `like`, and `overrides` are
-        applied last.
+        The voxel-to-LPS affine is the inverse of the `lps2voxel`
+        affine.
 
-        Parameters
-        ----------
-        like : path, nibabel image or header, or NIfTI object, optional
-            Template whose header fields that do not encode the
-            transformation are copied.
-        **overrides : Any
-            Header fields that take precedence over the derived values and
-            `like`.
-
-        Returns
-        -------
-        nibabel.Nifti1Image or nibabel.Nifti2Image
-            The encoded image.
+        Raises
+        ------
+        WriterError
+            If the chain is not an affine followed by a field of
+            coordinates, or if it has no coordinates.
         """
-        image = self._read_back(like, **overrides)
-        if image is not None:
-            return image
         chain = tuple(self.transformations or ())
         if len(chain) != 2 or not isinstance(
             chain[1], _xforms.CoordinateField
@@ -813,7 +631,4 @@ class ItkNiftiCoordinateField(ItkNiftiField):
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        vox2lps = np.linalg.inv(_homogeneous(chain[0]))
-        return self._write_vectors(
-            coordinates.data, vox2lps, like, **overrides
-        )
+        return coordinates.data, np.linalg.inv(_homogeneous(chain[0]))

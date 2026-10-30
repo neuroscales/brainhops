@@ -28,9 +28,9 @@ from .base import ImageFormat, load, sniff
 # registry only knows imported classes, so every available format is
 # imported eagerly to make it visible to `load`.
 if HAS_NIBABEL:
-    from . import freesurfer, minc, nifti
+    from . import analyze, freesurfer, minc, nifti
 
-    __all__ += ["freesurfer", "minc", "nifti"]
+    __all__ += ["analyze", "freesurfer", "minc", "nifti"]
     # MINC2 files are HDF5 files and need h5py to be read.
     if not HAS_H5PY:
         register_missing_format(
@@ -40,6 +40,7 @@ else:
     register_missing_format(
         ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
     )
+    register_missing_format(["analyze"], "nibabel", "analyze")
 
 # BigDataViewer datasets keep their voxels in an HDF5 file.
 if HAS_H5PY:

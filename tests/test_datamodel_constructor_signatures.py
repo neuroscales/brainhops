@@ -248,7 +248,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftiVoxelToRAS": ("data",),
     },
     "brainhops.io.transformations.nifti._base": {
-        "NiftiBasedTransformation": (),
+        "NiftiBackedTransformation": (),
     },
     "brainhops.io.transformations.nifti._fields": {
         "NiftiRASCoordinateField": ("data",),
@@ -298,6 +298,9 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.images.afni._image": {
         "AfniImage": ("data", "transformations"),
+    },
+    "brainhops.io.images.analyze._image": {
+        "AnalyzeImage": ("data", "transformations"),
     },
     "brainhops.io.images.base._base": {
         "ImageFormat": (),

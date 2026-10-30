@@ -25,8 +25,6 @@ from brainhops.io.base.parsers import (
 from ._constants import (
     NIFTI1_MAX_DIM,
     NIFTI_AXES,
-    NIFTI_INTENT_NAME_MAPPING,
-    NIFTI_INTENT_VECTOR,
     NIFTI_SPECIFIC_AXES,
 )
 from ._data import NiftiProxy, stored_dtype, whole_file
@@ -436,18 +434,6 @@ def written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> NiftiObject:
     image.header["scl_slope"] = header["scl_slope"]
     image.header["scl_inter"] = header["scl_inter"]
     return image
-
-
-def set_coordinates_intent(header: nb.Nifti1Header) -> None:
-    """Give a header the intent of a field of coordinates.
-
-    The intent is `VECTOR` (1007) with the intent name `"Mapping"`. A
-    header that already has this intent is left as it is, so that its
-    intent parameters are kept.
-    """
-    intent = (nifti_intent(header), nifti_intent_name(header))
-    if intent != (NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING):
-        header.set_intent(NIFTI_INTENT_VECTOR, name=NIFTI_INTENT_NAME_MAPPING)
 
 
 def apply_like(image: NiftiObject, like: tx.Any) -> NiftiObject:

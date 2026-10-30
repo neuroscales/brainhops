@@ -26,6 +26,12 @@ __all__ = [
 ]
 
 from ._indexing import index2transform
+from ._multiscale import (
+    PyramidLayout,
+    build_pyramid,
+    level_matches,
+    pop_pyramid_options,
+)
 from ._sugar import get_axes, vector_axis
 from ._transformations.compute.adaptors import bridge
 from ._transformations.compute.convert import (
@@ -39,9 +45,3 @@ from ._transformations.compute.converters import (
     smart_replace,
 )
 from ._transformations.multiscale import field_scale
-from .multiscale import (
-    PyramidLayout,
-    build_pyramid,
-    level_matches,
-    pop_pyramid_options,
-)

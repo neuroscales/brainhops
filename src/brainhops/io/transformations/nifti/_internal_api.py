@@ -9,13 +9,20 @@ import inside the package. The rules are explained in
 """
 
 __all__ = [
-    "check_single_field",
-    "consolidated_metadata",
+    "consolidate_nifti",
+    "coordinates_intent",
     "field_to_disk",
     "field_to_model",
+    "intent_overrides",
+    "NiftiImageBackedTransformation",
     "RAS",
 ]
 
-from ._base import consolidated_metadata
+from ._base import (
+    NiftiImageBackedTransformation,
+    consolidate_nifti,
+    coordinates_intent,
+    intent_overrides,
+)
 from ._converters import RAS
-from ._views import check_single_field, field_to_disk, field_to_model
+from ._views import field_to_disk, field_to_model

@@ -37,6 +37,7 @@ from brainhops.io.transformations.afni import (
 from brainhops.io.transformations.matrix import TxtMatrixAffine
 
 nb = pytest.importorskip("nibabel")
+from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.afni import AfniNiftiWarp  # noqa: E402
 
 LPS = np.diag([-1.0, -1.0, 1.0, 1.0])
@@ -543,11 +544,13 @@ def test_to_image(tmp_path) -> None:  # noqa: ANN001
 
 def test_to_image_of_a_warp_not_read_from_a_brik(tmp_path) -> None:  # noqa: ANN001
     vectors = _vectors()
+    # A NIfTI warp reaches the AFNI dataset through a conversion to a
+    # BRIK warp.
     for warp in (
         AfniBrikWarp(
             transformations=tuple(io.load(_write_brik(tmp_path, vectors)))
         ),
-        io.load(_write_nifti(tmp_path, vectors)),
+        io.load(_write_nifti(tmp_path, vectors)).to(AfniBrikWarp),
     ):
         image = warp.to_image()
         record = image.metadata.raw
@@ -556,6 +559,17 @@ def test_to_image_of_a_warp_not_read_from_a_brik(tmp_path) -> None:  # noqa: ANN
         assert np.allclose(np.asarray(image.data), vectors)
         image.save(tmp_path / "image.HEAD")
         _check_warp(io.load(tmp_path / "image.HEAD"), vectors)
+
+
+def test_to_image_of_a_nifti_warp_is_its_nifti_image(tmp_path) -> None:  # noqa: ANN001
+    path = _write_nifti(tmp_path, _vectors())
+    warp = io.load(path)
+    image = warp.to_image()
+    assert type(image) is NiftiImage
+    # The warp is read and saved again byte for byte, so its image holds
+    # the header and the array of its file.
+    assert image.to_bytes() == AfniNiftiWarp.from_filename(path).to_bytes()
+    assert np.array_equal(np.asarray(image.data), np.asarray(warp.rawdata))
 
 
 def test_an_oblique_grid_cannot_be_written(tmp_path) -> None:  # noqa: ANN001

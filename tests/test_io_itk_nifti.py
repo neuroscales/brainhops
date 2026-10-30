@@ -694,7 +694,10 @@ def test_a_field_built_in_memory_is_written_in_itks_encoding(ndim) -> None:  # n
     img = field.to_nibabel()
     assert img.shape == (*SHAPES[ndim], *(1,) * (3 - ndim), 1, ndim)
     assert int(img.header["intent_code"]) == VECTOR
-    assert int(img.header["sform_code"]) == 1
+    # A grid that is encoded again follows the conventions of NiftiImage,
+    # which writes the aligned code (2) for the sform and the qform.
+    assert int(img.header["sform_code"]) == 2
+    assert int(img.header["qform_code"]) == 2
     np.testing.assert_allclose(img.affine, VOX2RAS[ndim], atol=1e-5)
     np.testing.assert_allclose(
         np.asarray(img.dataobj).reshape(*SHAPES[ndim], ndim),
