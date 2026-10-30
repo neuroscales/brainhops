@@ -9,6 +9,7 @@ package. The rules are explained in `spec/design/internal-api.md`.
 
 __all__ = [
     "PyramidLayout",
+    "adopt_scales",
     "bridge",
     "build_pyramid",
     "convert",
@@ -19,6 +20,7 @@ __all__ = [
     "find_converter",
     "get_axes",
     "index2transform",
+    "keeps_scale",
     "level_matches",
     "pop_pyramid_options",
     "smart_replace",
@@ -28,7 +30,9 @@ __all__ = [
 from ._indexing import index2transform
 from ._multiscale import (
     PyramidLayout,
+    adopt_scales,
     build_pyramid,
+    keeps_scale,
     level_matches,
     pop_pyramid_options,
 )

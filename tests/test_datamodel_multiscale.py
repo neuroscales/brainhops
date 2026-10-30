@@ -10,6 +10,7 @@ isotropic 1 mm grid and would hide a wrong normalization.
 import numpy as np
 import pytest
 
+from brainhops.datamodel._multiscale import level_resolution
 from brainhops.datamodel._resolution import match_resolution
 from brainhops.datamodel._transformations.compute.multiscale import (
     nearest_level,
@@ -185,10 +186,10 @@ def test_nearest_level_matches_the_target_resolution() -> None:
 def test_level_resolution_reads_the_leading_affine() -> None:
     field, *_ = _two_level_displacement(np.random.default_rng(10))
     np.testing.assert_allclose(
-        np.asarray(field._level_resolution(0)), [2.0, 0.5]
+        np.asarray(level_resolution(field, 0)), [2.0, 0.5]
     )
     np.testing.assert_allclose(
-        np.asarray(field._level_resolution(1)), [4.0, 1.0]
+        np.asarray(level_resolution(field, 1)), [4.0, 1.0]
     )
 
 
@@ -208,7 +209,7 @@ def test_an_identity_led_level_has_no_resolution() -> None:
             ),
         ]
     )
-    assert field._level_resolution(0) is None
+    assert level_resolution(field, 0) is None
     assert nearest_level(field, _rotated_anisotropic_affine(4.0, 1.0)[0]) == 0
 
 
