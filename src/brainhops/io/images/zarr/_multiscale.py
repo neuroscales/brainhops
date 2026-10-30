@@ -58,6 +58,7 @@ from ._ome import (
     OmeImageError,
     check_parameter_paths,
     common_transformations,
+    describe_axes,
     group_path,
     intrinsic_name,
     level_transformation,
@@ -662,7 +663,9 @@ class OmeZarrImage(
         # An axis whose unit is unknown takes the unit of the axis of the
         # same name in the world of the geometry, when that world knows
         # it. Otherwise the unit is left out rather than guessed (#626).
-        axes = self._stored_axes(ndim)
+        # An undescribed axis is named and typed first, so that it sorts
+        # into its conventional place in the stored order.
+        axes = describe_axes(self._stored_axes(ndim))
         images = list(self.images or [])
         if not images:
             return axes

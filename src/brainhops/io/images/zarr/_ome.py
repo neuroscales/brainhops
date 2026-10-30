@@ -934,6 +934,50 @@ def build_ome(
     return ome
 
 
+def describe_axes(axes: tx.Sequence[Axis]) -> tx.List[Axis]:
+    """Return the axes in brainhops order, with every undescribed axis
+    named and typed after the OME convention.
+
+    The writer of a pyramid calls this function before it sorts the axes
+    into the stored order, because that sort groups the axes by type.
+    An axis that has neither a name nor a type would otherwise sort with
+    the axes of unknown type, between the channels and the spatial axes,
+    even when it later takes the name `z`. Once named and typed here,
+    such an axis sorts into its conventional place, so that a plain
+    image is stored as `t, c, z, y, x`.
+
+    The conventional name of an axis is the one of its position in the
+    stored order, counted from the end, as
+    [`name_undescribed_axes`][] chooses it. An axis that already has a
+    name or a type keeps it.
+
+    Parameters
+    ----------
+    axes : sequence of Axis
+        Axes in brainhops order.
+
+    Returns
+    -------
+    list of Axis
+        The same axes, in the same order, with the undescribed axes
+        named and typed.
+    """
+    perm = _axisorder.to_storage(axes)
+    stored = _axisorder.permute(list(axes), perm)
+    json_axes = [axis_to_json(axis) for axis in stored]
+    name_undescribed_axes(json_axes)
+    described = list(axes)
+    for position, (axis, entry) in enumerate(zip(stored, json_axes)):
+        changes = {}  # type: tx.Dict[str, tx.Any]
+        if getattr(axis, "name", None) != entry["name"]:
+            changes["name"] = entry["name"]
+        if getattr(axis, "type", None) is None and "type" in entry:
+            changes["type"] = entry["type"]
+        if changes:
+            described[perm[position]] = replace(axis, **changes)
+    return described
+
+
 def name_undescribed_axes(json_axes: tx.List[tx.Dict[str, tx.Any]]) -> None:
     """Name the axes that have no name, so that every name is distinct.
 
