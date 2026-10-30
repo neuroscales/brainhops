@@ -12,24 +12,28 @@ __all__ = [
     "as_node",
     "check_ome",
     "opened_node",
+    "read_back",
     "reads_inside",
     "reads_store",
     "store_chunks",
     "store_location",
     "write_array",
     "write_into",
+    "written_plan",
     "ZarrNodeReaderWriter",
     "ZarrProxy",
 ]
 
 from ._data import (
     ZarrProxy,
+    read_back,
     reads_inside,
     reads_store,
     store_chunks,
     store_location,
     write_array,
     write_into,
+    written_plan,
 )
 from ._ome_rules import check_ome
 from ._parsers import (
