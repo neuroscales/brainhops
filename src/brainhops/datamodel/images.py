@@ -41,6 +41,14 @@ from ._frames import (
     with_components,
 )
 from ._indexing import index2transform
+from ._multiscale import (
+    PyramidLayout,
+    build_pyramid,
+    downsampled_matrix,
+    geometry_matrix,
+    level_matches,
+    pop_pyramid_options,
+)
 from ._resolution import match_resolution
 from ._transformations.compute.multiscale import (
     nearest_resolution_index,
@@ -51,15 +59,7 @@ from .base import DataModelBase
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry
 from .metadata import Metadata
-from .multiscale import (
-    Multiscale,
-    PyramidLayout,
-    build_pyramid,
-    downsampled_matrix,
-    geometry_matrix,
-    level_matches,
-    pop_pyramid_options,
-)
+from .multiscale import Multiscale
 from .systems import CoordinateSystem
 from .transformations import (
     Affine,
