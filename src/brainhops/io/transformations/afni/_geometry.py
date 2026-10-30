@@ -27,6 +27,7 @@ from brainhops.io.common.afni._internal_api import (
     afni_geometry_from_matrix,
     afni_voxel_to_dicom,
 )
+from brainhops.io.common.nifti._internal_api import header_voxel_to_ras
 
 
 def nifti_cardinal_matrix(real: np.ndarray) -> np.ndarray:
@@ -197,7 +198,8 @@ def nifti_matrix(header: tx.Any) -> tx.Optional[np.ndarray]:
 
     AFNI prefers the qform when its code is set, then the sform
     (`thd_niftiread.c`, unless `NIFTI_FORM_PRIORITY` says otherwise).
-    A header with neither code falls back to the best affine of nibabel.
+    A header with neither code gets the default grid that brainhops
+    decodes for every NIfTI file, as `NiftiImage` describes it.
     A nibabel image, or a NIfTI record, is read through its header, and
     `None` is returned for anything else.
     """
@@ -211,4 +213,4 @@ def nifti_matrix(header: tx.Any) -> tx.Optional[np.ndarray]:
     sform, scode = header.get_sform(coded=True)
     if scode and sform is not None:
         return np.asarray(sform, dtype=np.float64)
-    return np.asarray(header.get_best_affine(), dtype=np.float64)
+    return header_voxel_to_ras(header)

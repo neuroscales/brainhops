@@ -21,6 +21,7 @@ from brainhops.io.common.nifti._internal_api import (
     apply_like,
     apply_overrides,
     header_of,
+    header_voxel_to_ras,
     keep_given_fields,
     record_image,
     split_options,
@@ -302,7 +303,7 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
         header = header_of(self)
         if header is None:
             return None
-        return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
+        return _read_only(np.linalg.inv(header_voxel_to_ras(header))[:-1])
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -349,10 +350,13 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
 class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
     """Affine from voxel to RAS space, stored in the header of a NIfTI file.
 
-    The matrix of an affine read from a file is the best affine of the
-    header, which is the sform when its code is set and the qform
-    otherwise. Setting the matrix stores it in `rawdata`, which then
-    takes precedence over the header.
+    The matrix of an affine read from a file is the grid that a
+    [`NiftiImage`][brainhops.io.images.nifti.NiftiImage] of the same
+    file decodes: the sform when its code is set, and otherwise the
+    qform when its code is set. When both codes are zero, the matrix is
+    the default grid that `NiftiImage` describes, which is centred on
+    the middle of the image and flips the first axis. Setting the matrix
+    stores it in `rawdata`, which then takes precedence over the header.
     """
 
     HINTS = ("nifti",)
@@ -373,7 +377,7 @@ class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
         header = header_of(self)
         if header is None:
             return None
-        return _read_only(header.get_best_affine()[:-1])
+        return _read_only(header_voxel_to_ras(header)[:-1])
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None

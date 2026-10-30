@@ -40,6 +40,7 @@ from brainhops.io.common.nifti._internal_api import (
     NiftiObject,
     embed_nifti_affine,
     header_of,
+    header_voxel_to_ras,
     nifti_intent,
     nifti_intent_name,
     nifti_shape,
@@ -253,8 +254,10 @@ class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
 
         The affine has shape `(ndim, ndim + 1)`. The header stores a
         voxel-to-RAS affine, so its first two rows are negated. ITK writes the
-        same matrix to the sform and the qform. A field without metadata has
-        no grid of its own, and its voxel-to-RAS affine is the identity.
+        same matrix to the sform and the qform. A header whose codes are both
+        zero gets the default grid that `NiftiImage` decodes for it. A field
+        without metadata has no grid of its own, and its voxel-to-RAS affine
+        is the identity.
         """
         ndim = self._ndim()
         if ndim is None:
@@ -266,7 +269,7 @@ class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
         if header is None:
             vox2ras = np.eye(4)
         else:
-            vox2ras = np.asarray(header.get_best_affine(), dtype=np.float64)
+            vox2ras = header_voxel_to_ras(header)
         vox2lps = _RAS_LPS @ vox2ras
         columns = [*range(ndim), _NIFTI_NDIM]
         return ndim, vox2lps[:ndim][:, columns]

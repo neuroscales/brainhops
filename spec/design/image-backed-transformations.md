@@ -4,10 +4,13 @@ This memo is agreed and is partly implemented. The `from_image` field of
 `MrtrixWarpFull` is renamed (#629). Every transformation stored as a
 NIfTI image now keeps its stored state in a `NiftiImage`: the two NIfTI
 fields (#632), and the fields of NiftyReg, ITK, SPM and FNIRT and the
-AFNI NIfTI warp. These formats still decode their grid apart from the
-image, because the two decoders disagree on a file whose sform and qform
-codes are both zero (#631). The AFNI BRIK warp and the MRtrix warps are
-not moved yet.
+AFNI NIfTI warp. The NIfTI fields and the fields of ITK and SPM take
+their grid from the decoder that `NiftiImage` uses, which gives a
+default grid to a file whose sform and qform codes are both zero (#631).
+The AFNI NIfTI warp uses the same default grid, but it prefers the
+qform to the sform, as AFNI does. NiftyReg and FNIRT read the forms of
+the header as those tools read them. The AFNI BRIK warp and the MRtrix
+warps are not moved yet.
 
 Many transformations are stored in an image file. A displacement field
 in a NIfTI file, an AFNI warp and an MRtrix warp are images whose
