@@ -31,6 +31,7 @@ from brainhops.datamodel.transformations import (
 from brainhops.errors import (
     ConversionError,
     UnrepresentableTransformationError,
+    WriterError,
 )
 from brainhops.io.base import FileFormat
 from brainhops.io.base._base import (
@@ -40,7 +41,6 @@ from brainhops.io.base._base import (
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     TextFileWriter,
-    WriterError,
     WriterNotImplementedError,
 )
 
@@ -663,11 +663,16 @@ def test_an_image_read_from_nifti_is_written_as_zarr(tmp_path) -> None:  # noqa:
 
 
 @needs_zarr
-def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: ANN001
-    # .ome.zarr asks for an OME-Zarr pyramid; plain Zarr is not substituted.
-    with pytest.raises(WriterError, match="OmeZarrImage"):
-        io.save(_image(), tmp_path / "image.ome.zarr")
-    assert not (tmp_path / "image.ome.zarr").exists()
+def test_a_single_image_is_written_as_a_one_level_ome_zarr(tmp_path) -> None:  # noqa: ANN001, E501
+    # .ome.zarr asks for an OME-Zarr pyramid, which holds a single image
+    # as its only level, and plain Zarr is not substituted (#624).
+    from brainhops.io.images.zarr import OmeZarrImage
+
+    io.save(_image(), tmp_path / "image.ome.zarr")
+    back = io.images.load(tmp_path / "image.ome.zarr")
+    assert isinstance(back, OmeZarrImage)
+    assert back.nscales == 1
+    assert np.array_equal(np.asarray(back.images[0].data), DATA)
 
 
 @needs_nibabel

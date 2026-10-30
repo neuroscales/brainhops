@@ -9,12 +9,10 @@ import inside the package. The rules are explained in
 """
 
 __all__ = [
-    "consolidate_through",
+    "consolidate_nifti",
     "coordinates_intent",
-    "data_image",
     "field_to_disk",
     "field_to_model",
-    "image_with",
     "intent_overrides",
     "NiftiImageBackedTransformation",
     "RAS",
@@ -22,10 +20,8 @@ __all__ = [
 
 from ._base import (
     NiftiImageBackedTransformation,
-    consolidate_through,
+    consolidate_nifti,
     coordinates_intent,
-    data_image,
-    image_with,
     intent_overrides,
 )
 from ._converters import RAS

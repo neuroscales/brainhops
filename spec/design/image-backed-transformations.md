@@ -1,16 +1,21 @@
 # Transformations stored as images
 
-This memo is agreed and is partly implemented. The `from_image` field of
+This memo is agreed and is implemented. The `from_image` field of
 `MrtrixWarpFull` is renamed (#629). Every transformation stored as a
-NIfTI image now keeps its stored state in a `NiftiImage`: the two NIfTI
+NIfTI image keeps its stored state in a `NiftiImage`: the two NIfTI
 fields (#632), and the fields of NiftyReg, ITK, SPM and FNIRT and the
-AFNI NIfTI warp. The NIfTI fields and the fields of ITK and SPM take
-their grid from the decoder that `NiftiImage` uses, which gives a
-default grid to a file whose sform and qform codes are both zero (#631).
-The AFNI NIfTI warp uses the same default grid, but it prefers the
-qform to the sform, as AFNI does. NiftyReg and FNIRT read the forms of
-the header as those tools read them. The AFNI BRIK warp and the MRtrix
-warps are not moved yet.
+AFNI NIfTI warp. The AFNI BRIK warp keeps its stored state in an
+`AfniImage`, and the MRtrix warps keep theirs in an `MrtrixImage`
+(#644). The part of the base that does not depend on NIfTI is the
+internal class `ImageBackedTransformation`, in
+`io/transformations/base/_image_backed.py`, which takes the image class
+as its class attribute `IMAGE`. The NIfTI fields and the fields of ITK
+and SPM take their grid from nibabel's `get_best_affine()`, as
+`NiftiImage` does, so a file whose sform and qform codes are both zero
+gets the same default grid in the image and in the transformation
+(#631, #641). The AFNI NIfTI warp uses the same default grid, but it
+prefers the qform to the sform, as AFNI does. NiftyReg and FNIRT read
+the forms of the header as those tools read them.
 
 Many transformations are stored in an image file. A displacement field
 in a NIfTI file, an AFNI warp and an MRtrix warp are images whose
@@ -153,7 +158,9 @@ image format, even where its own encoder did otherwise before. For
 NIfTI, the qform code is 2 and the qform is set from the sform, and
 assigned data is stored with the type in `metadata.dtype`, as step 2 of
 the precedence on write in [Format records](format-records.md)
-requires.
+requires. For MRtrix, assigned data is stored with its own type, and an
+axis after the spatial ones that has no size in the record gets a size
+of one rather than `nan`.
 
 ### Scope
 

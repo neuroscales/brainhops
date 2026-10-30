@@ -13,6 +13,7 @@ __all__ = [
     "apply_overrides",
     "best_affine",
     "embed_nifti_affine",
+    "has_nifti_magic",
     "header_of",
     "image_with_geometry",
     "keep_given_fields",
@@ -26,11 +27,11 @@ __all__ = [
     "NIFTI_INTENT_NAME_NIFTYREG",
     "NIFTI_INTENT_NONE",
     "NIFTI_INTENT_VECTOR",
+    "NIFTI_AXES",
     "nifti_shape",
     "nifti_to_axes",
     "nifti_to_unit",
     "NIFTI_XCODES",
-    "NIBABEL_OPTIONS",
     "NiftiObject",
     "NiftiProxy",
     "record_image",
@@ -45,6 +46,7 @@ __all__ = [
 ]
 
 from ._constants import (
+    NIFTI_AXES,
     NIFTI_FIELD_INTENTS,
     NIFTI_INTENT_DISPVECT,
     NIFTI_INTENT_NAME_ITK_COORDINATES,
@@ -56,6 +58,7 @@ from ._constants import (
     NIFTI_XCODES,
 )
 from ._data import NiftiProxy
+from ._files import has_nifti_magic
 from ._geometry import (
     embed_nifti_affine,
     image_with_geometry,
@@ -80,6 +83,5 @@ from ._header import (
     stored_parts,
     written_nifti,
 )
-from ._parsers import NIBABEL_OPTIONS
 from ._raw import sniffed_header
 from ._units import nifti_to_unit

@@ -47,6 +47,7 @@ from brainhops.io.common.zarr._internal_api import (
     ZarrProxy,
     absolute_location,
     as_node,
+    check_ome,
     reads_inside,
     store_chunks,
     store_location,
@@ -275,8 +276,9 @@ class OmeZarrField(
         Raises
         ------
         WriterError
-            If the node is a plain array, or if the field has no OME metadata
-            or no resolution levels.
+            If the node is a plain array, if the field has no OME metadata
+            or no resolution levels, or if its OME metadata breaks a rule
+            of OME-NGFF.
         """
         # Each level is written at the dataset path named by the metadata, and
         # the metadata is re-emitted unchanged.
@@ -296,6 +298,7 @@ class OmeZarrField(
             raise WriterError(
                 "This OME-Zarr field has no resolution levels to write."
             )
+        check_ome(ome)
         try:
             normalized = ome.to_version("0.6")
         except Exception:

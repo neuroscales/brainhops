@@ -267,8 +267,10 @@ from brainhops.io.transformations.trakem2._xform import (
 try:
     import nibabel as nb
 
+    from brainhops.io.common.analyze._files import analyze_files
     from brainhops.io.common.mgh._data import MghProxy
     from brainhops.io.common.nifti._data import NiftiProxy
+    from brainhops.io.images.analyze import AnalyzeImage, AnalyzeMetadata
     from brainhops.io.images.freesurfer.mgh import MghImage, MghMetadata
     from brainhops.io.images.freesurfer.mgh._views import (
         image_to_disk as _mgh_to_disk,
@@ -3356,6 +3358,57 @@ if minc_needs is not None:
             cut=_hdf5_cut, source=_write_minc2
         )
 
+# Analyze files cannot be written, so the checks write them with nibabel,
+# which writes the header file and the image file of the pair, and stores
+# the voxels as floats, which are not scaled. The metadata reads the
+# header file alone, so a copy without data is the header file beside an
+# empty image file. The record is compared through the bytes of its
+# header, since the metadata cannot write bytes.
+
+
+def _write_analyze(path: tx.Any, data: tx.Any) -> None:
+    stored = np.asarray(data, dtype="float32")
+    nb.AnalyzeImage(stored, np.eye(4)).to_filename(str(path))
+
+
+def _analyze_cut(source: tx.Any, target: tx.Any) -> None:
+    """Copy the header file of an Analyze pair beside an empty image file.
+
+    Either path may name the header file or the image file of its pair.
+    """
+    header, _ = analyze_files(source)
+    new_header, new_image = analyze_files(target)
+    shutil.copyfile(str(header), str(new_header))
+    _write_header(str(new_image), b"")
+
+
+def _analyze_edit_record(record: tx.Any) -> tx.Any:
+    header = record.header.copy()
+    header["descrip"] = b"edited"
+    return replace(record, header=header)
+
+
+if nb is not None:
+    EXEMPLARS[AnalyzeImage] = Exemplar(
+        metadata=AnalyzeMetadata,
+        suffix=".hdr",
+        proxies=(NiftiProxy,),
+        to_model=image_to_model,
+        to_disk=image_to_disk,
+        sample=lambda: np.arange(24, dtype="float32").reshape(2, 3, 4),
+        edit_record=_analyze_edit_record,
+        record_edited=lambda raw: raw.header["descrip"].item() == b"edited",
+        geometry=_nifti_geometry,
+        change_geometry=_nifti_change_geometry,
+        foreign=lambda data: _ForeignImage(
+            data, rawdata="rawdata", metadata=_ForeignMetadata(raw="record")
+        ),
+        cut=_analyze_cut,
+        header=lambda metadata: metadata.raw.header.binaryblock,
+        source=_write_analyze,
+        header_file=lambda path: analyze_files(path)[0],
+    )
+
 # A plain Zarr array is a directory store, which holds the document of the
 # array and its chunks. It stores no geometry, so the data stands in for the
 # geometry, as for FNIRT, and an image whose transformations are not the
@@ -4543,6 +4596,7 @@ NOT_MIGRATED: tx.Tuple[str, ...] = (
 RAWDATA: tx.FrozenSet[str] = frozenset(
     (
         "brainhops.io.images.afni.AfniImage",
+        "brainhops.io.images.analyze.AnalyzeImage",
         "brainhops.io.images.bdv.BdvImage",
         "brainhops.io.images.freesurfer.mgh.MghImage",
         "brainhops.io.images.imaris.ImarisImage",
@@ -4790,6 +4844,24 @@ if PILImage is not None:
                 sample=lambda: np.full((6, 4), 128, dtype="uint8"),
                 cut=_jpeg_cut,
             ),
+        )
+    )
+
+# The checks may name either file of an Analyze pair, and both files of
+# the pair may be gzipped.
+if nb is not None:
+    VARIANTS.append(
+        (
+            "AnalyzeImage-img",
+            AnalyzeImage,
+            EXEMPLARS[AnalyzeImage]._replace(suffix=".img"),
+        )
+    )
+    VARIANTS.append(
+        (
+            "AnalyzeImage-gz",
+            AnalyzeImage,
+            EXEMPLARS[AnalyzeImage]._replace(suffix=".hdr.gz"),
         )
     )
 

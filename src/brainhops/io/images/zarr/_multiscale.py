@@ -27,10 +27,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+from brainhops.errors import WriterError
 
 # io
 from brainhops.io.base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base.parsers import Confidence
 from brainhops.io.common.zarr import StoreLike, ZarrMetadata, ZarrRaw
 from brainhops.io.common.zarr._internal_api import (
     ZarrNodeReaderWriter,
@@ -607,6 +608,26 @@ class OmeZarrImage(
         )
 
     def _write_axes(self, ndim: int) -> tx.List[Axis]:
+        # An axis whose unit is unknown takes the unit of the axis of the
+        # same name in the world of the geometry, when that world knows
+        # it. Otherwise the unit is left out rather than guessed (#626).
+        axes = self._stored_axes(ndim)
+        images = list(self.images or [])
+        if not images:
+            return axes
+        world = getattr(images[0].transformation, "output", None)
+        units = {
+            getattr(axis, "name", None): getattr(axis, "unit", None)
+            for axis in (getattr(world, "axes", None) or ())
+        }
+        return [
+            replace(axis, unit=units[axis.name])
+            if axis.unit is None and units.get(axis.name) is not None
+            else axis
+            for axis in axes
+        ]
+
+    def _stored_axes(self, ndim: int) -> tx.List[Axis]:
         axes = self.axes
         if axes and (axes.is_variadic or axes.ndim == ndim):
             # OME-Zarr cannot store `...`, so an open axis list is closed to
@@ -623,10 +644,16 @@ class OmeZarrImage(
             if len(store_axes) == ndim:
                 perm = _axisorder.to_canonical(store_axes)
                 return _axisorder.permute(store_axes, perm)
-        return _default_canonical_axes(ndim)
+        return default_canonical_axes(ndim)
 
 
-def _default_canonical_axes(ndim: int) -> tx.List[Axis]:
+def default_canonical_axes(ndim: int) -> tx.List[Axis]:
+    """Return the axes that a pyramid without axes is written under.
+
+    The axes are `x`, `y` and `z` in space, then `t` in time and `c` for
+    the channels, in the brainhops order, and the axes beyond these five
+    are channels named `dim<i>`.
+    """
     spatial = [
         SpaceAxis(name=name) for name in ("x", "y", "z")[: min(3, ndim)]
     ]

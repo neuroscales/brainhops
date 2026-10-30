@@ -36,9 +36,12 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Transformation,
 )
+from brainhops.datamodel.units import Unit
 
 # io
-from brainhops.io.base.parsers import ParserContentError, WriterError
+from brainhops.errors import WriterError
+from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.common.zarr._internal_api import check_ome
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
 from brainhops.io.transformations.zarr._internal_api import to_axis
@@ -758,18 +761,27 @@ def common_transformations(
 
 
 def axis_to_json(axis: Axis) -> tx.Dict[str, tx.Any]:
-    """Return the OME-Zarr JSON description of one axis."""
+    """Return the OME-Zarr JSON description of one axis.
+
+    The description holds the name of the axis, and its type, its unit
+    and whether it is discrete whenever the axis knows them. An unknown
+    unit is left out rather than replaced by a default.
+    """
     entry = {}  # type: tx.Dict[str, tx.Any]
     name = getattr(axis, "name", None)
     type_ = getattr(axis, "type", None)
     unit = getattr(axis, "unit", None)
     entry["name"] = name if isinstance(name, str) else ""
     if isinstance(type_, str):
-        entry["type"] = type_
-    if unit is not None:
-        value = getattr(unit, "value", unit)
-        if isinstance(value, str):
-            entry["unit"] = value
+        entry["type"] = str(getattr(type_, "value", type_))
+    # A unit of the data model is written by its full name, such as
+    # `millimeter`, which is how OME-NGFF spells its units.
+    value = unit.name if isinstance(unit, Unit) else unit
+    if isinstance(value, str):
+        entry["unit"] = value
+    discrete = getattr(axis, "discrete", None)
+    if isinstance(discrete, bool):
+        entry["discrete"] = discrete
     return entry
 
 
@@ -882,6 +894,7 @@ def build_ome(
         OME-NGFF version to produce.
     """
     json_axes = [axis_to_json(axis) for axis in axes]
+    name_undescribed_axes(json_axes)
     level_output = INTRINSIC_SYSTEM if commons else WORLD_SYSTEM
     if commons:
         systems = [{"name": INTRINSIC_SYSTEM, "axes": json_axes}]
@@ -921,6 +934,48 @@ def build_ome(
     return ome
 
 
+def name_undescribed_axes(json_axes: tx.List[tx.Dict[str, tx.Any]]) -> None:
+    """Name the axes that have no name, so that every name is distinct.
+
+    OME-NGFF needs a distinct name for every axis. An axis without one,
+    such as an axis that closes `...`, takes the conventional name and
+    type of its position in the stored order `t, c, z, y, x`, counted
+    from the end, as `default_canonical_axes` gives them. When that
+    name is already used, the axis takes the next conventional name that
+    is still free. When all five are used, the axis is named `dim<i>`
+    after its stored position, and its type is left unset. An axis that
+    has a name keeps it, and an axis that has a type keeps that type.
+    """
+    # The pyramid module imports this one, so it is imported when used.
+    from brainhops.io.images.zarr._multiscale import default_canonical_axes
+
+    canonical = default_canonical_axes(5)
+    stored = _axisorder.permute(canonical, _axisorder.to_storage(canonical))
+    conventions = [axis_to_json(axis) for axis in reversed(stored)]
+    taken = {entry["name"] for entry in json_axes if entry["name"]}
+    count = len(json_axes)
+    # The axes are named from the end, so that an axis at a conventional
+    # position takes its own name before an axis further from the end.
+    for index, entry in reversed(list(enumerate(json_axes))):
+        if entry["name"]:
+            continue
+        position = count - 1 - index
+        free = [
+            convention
+            for convention in conventions[position:] + conventions[:position]
+            if convention["name"] not in taken
+        ]
+        if free:
+            entry["name"] = free[0]["name"]
+            entry.setdefault("type", free[0]["type"])
+        else:
+            name = "dim" + str(index)
+            while name in taken:
+                name = "_" + name
+            entry["name"] = name
+        taken.add(entry["name"])
+
+
 def write_multiscale(
     node: ZarrGroup,
     axes: tx.Sequence[Axis],
@@ -931,9 +986,17 @@ def write_multiscale(
 ) -> None:
     """Write the OME metadata of a pyramid onto a group.
 
-    The arguments are those of [`build_ome`][].
+    The arguments are those of [`build_ome`][]. The metadata is checked
+    against the rules of OME-NGFF before it is written.
+
+    Raises
+    ------
+    WriterError
+        If the metadata breaks a rule of OME-NGFF.
     """
-    node.ome = build_ome(axes, levels, commons, name, version)
+    ome = build_ome(axes, levels, commons, name, version)
+    check_ome(ome)
+    node.ome = ome
 
 
 def _other_group(space: tx.Any) -> bool:
