@@ -21,6 +21,7 @@ from brainhops._core.errors import (
     policy_action,
 )
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import (
     ConversionReport,
     metadata_loss_policy,
@@ -82,7 +83,14 @@ def save(
        instance of, and takes every field that data model has
        (`NiftiImage` and `ZarrImage` are file-backed
        `SingleScaleImage`s). `obj` is converted to it, which neither
-       loses nor changes anything.
+       loses nor changes anything. A `SingleScaleImage` that no
+       candidate holds as it is, because no candidate stores a single
+       image, is written as a pyramid of one level in a candidate that
+       is a file-backed `MultiScaleImage`, as `OmeZarrImage(images=[obj])`
+       writes it. A name that ends with `.ome.zarr` therefore writes an
+       image as OME-Zarr, while a name that ends with `.zarr` still asks
+       for a plain Zarr array, which refuses an image that has a
+       geometry.
     4. **A format a transformation converts to.** A transformation is
        instead converted to every candidate, with the same
        converters as `obj.to(Format, **conversion)`. A converter returns
@@ -292,6 +300,15 @@ def save(
             dropped,
             kwargs,
         )
+    elif not holders and _is_one_level(obj, claimed):
+        pyramids = [
+            (fmt, match)
+            for fmt, match in claimed
+            if data_model_of(fmt) is MultiScaleImage
+        ]
+        report = _write_first(
+            file, name, obj, pyramids, _one_level, reasons, kwargs
+        )
     else:
         report = _write_first(file, name, obj, holders, _copy, reasons, kwargs)
     if report is not None:
@@ -336,6 +353,25 @@ def _save_as_it_is(
 def _copy(obj: tx.Any, fmt: type) -> tx.Any:
     """`obj` copied into `fmt`, a file-backed version of its data model."""
     return fmt.from_instance(obj)
+
+
+def _is_one_level(
+    obj: tx.Any, claimed: tx.List[tx.Tuple[type, tx.Any]]
+) -> bool:
+    """Whether `obj` is written as a pyramid of one level.
+
+    This is the case for a single-scale image when no candidate format
+    stores a single-scale image, so that a format that does, such as a
+    plain Zarr array, keeps the choice that the file name gives it.
+    """
+    return isinstance(obj, SingleScaleImage) and not any(
+        data_model_of(fmt) is SingleScaleImage for fmt, _ in claimed
+    )
+
+
+def _one_level(obj: SingleScaleImage, fmt: type) -> tx.Any:
+    """Return `obj` as the only level of a pyramid of the format `fmt`."""
+    return fmt(images=[obj])
 
 
 def _convert(

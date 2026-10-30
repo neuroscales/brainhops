@@ -2087,3 +2087,53 @@ def test_the_base_writer_refuses_streams_and_bytes() -> None:
         writer.to_fileobj(BytesIO())
     with pytest.raises(WriterError):
         writer.to_bytes()
+
+
+# ---- saving an image built in memory ---------------------------------
+
+
+def test_save_writes_a_single_scale_image_as_ome_zarr(
+    tmp_path: Path,
+) -> None:
+    from brainhops import io
+
+    data = np.arange(60, dtype="float32").reshape(3, 4, 5)
+    affine = _diag_affine([2, 3, 4], [1, 2, 3])
+    image = SingleScaleImage(data=data, transformations=[affine])
+    path = str(tmp_path / "img.ome.zarr")
+
+    io.save(image, path)
+    back = images.load(path)
+
+    assert isinstance(back, OmeZarrImage)
+    assert back.nscales == 1
+    assert np.array_equal(np.asarray(back.images[0].data), data)
+    np.testing.assert_allclose(
+        _world_matrix(back.images[0].transformation), _world_matrix(affine)
+    )
+
+
+def test_save_writes_a_multiscale_image_as_ome_zarr(tmp_path: Path) -> None:
+    from brainhops import io
+
+    pyramid = _small_pyramid()
+    image = MultiScaleImage(images=list(pyramid.images))
+    path = str(tmp_path / "img.ome.zarr")
+
+    io.save(image, path)
+
+    assert images.load(path).nscales == 2
+
+
+def test_save_refuses_an_image_with_a_geometry_in_plain_zarr(
+    tmp_path: Path,
+) -> None:
+    from brainhops import io
+
+    image = SingleScaleImage(
+        data=np.zeros((3, 4, 5), "float32"),
+        transformations=[_diag_affine([2, 2, 2], [0, 0, 0])],
+    )
+
+    with pytest.raises(WriterError):
+        io.save(image, str(tmp_path / "img.zarr"))
