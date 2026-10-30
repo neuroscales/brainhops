@@ -114,6 +114,24 @@ class PyramidLayout(tx.NamedTuple):
     """Whether the scales hold a field of displacements or coordinates."""
 
 
+class ScalePlan(tx.NamedTuple):
+    """The coarser scales that a pyramid is asked to have.
+
+    [`plan_scales`][] returns a plan from the options of
+    [`Multiscale.with_scales`][], and [`next_scale`][] builds the scales
+    of a plan one at a time.
+    """
+
+    factors: tx.List[tx.Tuple[int, ...]]
+    """The factor of each axis of each coarser scale from the finest."""
+
+    mode: str
+    """How a coarse voxel is computed, one of the modes of `with_scales`."""
+
+    align: str
+    """How the voxels of a coarse scale lie over those of the finest."""
+
+
 class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
     """Mixin for a pyramid of scales, finest first.
 
@@ -137,6 +155,16 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
     When it is true, a conversion to this class from a single-scale
     object builds as many scales as `with_scales()` builds, unless
     `nscales=` says otherwise. The formats of OME-Zarr set it.
+    """
+
+    WRITES_SCALES: tx.ClassVar[bool] = False
+    """Whether the writer builds the coarser scales of a single scale.
+
+    When it is true, `io.save` gives the options of a pyramid to the
+    writer of this class rather than to the conversion, when it saves a
+    single scale. The writer then writes the finest scale, and builds
+    each coarser scale from the scales that it has written, read back
+    from the store. The formats of OME-Zarr set it.
     """
 
     # --- attributes ---------------------------------------------------
@@ -319,6 +347,41 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         IndexError
             If a position that a factor gives is out of range.
         """
+        if (
+            scales is not None
+            and not isinstance(scales, (Integral, str, bytes, Mapping))
+            and isinstance(scales, Iterable)
+        ):
+            scales = list(scales)
+            if scales and not any(_is_factor(item) for item in scales):
+                if factor is not None:
+                    raise TypeError(
+                        "`factor` gives the step of the rules, which a "
+                        "sequence of scales replaces."
+                    )
+                self._check_scales(scales)
+                return self._adopt_scales(scales)
+        plan = self._plan_scales(scales, factor, mode, align, min_size, strict)
+        kept = 0
+        for index, level in enumerate(plan.factors, start=1):
+            if index >= self.nscales:
+                break
+            if not self._keeps_scale(index, level, align):
+                break
+            kept = index
+        return self._build_scales(plan.factors, mode, align, kept)
+
+    def _plan_scales(
+        self,
+        scales: tx.Union[None, int, tx.Sequence[FactorLike]],
+        factor: tx.Optional[FactorLike],
+        mode: str,
+        align: str,
+        min_size: int,
+        strict: bool,
+    ) -> "ScalePlan":
+        # Return the factors of the coarser scales that the options of
+        # `with_scales` ask for, other than a list of scales.
         if scales is not None and not isinstance(scales, Integral):
             if isinstance(scales, (str, bytes, Mapping)) or not isinstance(
                 scales, Iterable
@@ -340,11 +403,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
                     "`factor` gives the step of the rules, which a sequence "
                     "of scales or of factors replaces."
                 )
-            factors = [_is_factor(item) for item in items]
-            if not any(factors):
-                self._check_scales(items)
-                return self._adopt_scales(items)
-            if not all(factors):
+            if not all(_is_factor(item) for item in items):
                 raise TypeError(
                     "The sequence of scales mixes factors and scales. Give "
                     "the factors of the coarser scales, or the list of all "
@@ -370,14 +429,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             )
         check_mode(mode, field=layout.field, align=align)
         check_align(align)
-        kept = 0
-        for index, level in enumerate(requested, start=1):
-            if index >= self.nscales:
-                break
-            if not self._keeps_scale(index, level, align):
-                break
-            kept = index
-        return self._build_scales(requested, mode, align, kept)
+        return ScalePlan(list(requested), mode, align)
 
     # --- hooks --------------------------------------------------------
 
@@ -668,6 +720,84 @@ def build_pyramid(
             "conversion keeps its scales. Give `nscales=` to build them."
         )
     return obj
+
+
+def plan_scales(obj: tx.Any, options: tx.Mapping[str, tx.Any]) -> ScalePlan:
+    """Return the coarser scales that the options of a pyramid ask for.
+
+    A writer that builds the scales of a pyramid while it writes them
+    calls this function first, and then [`next_scale`][] for each
+    coarser scale.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        A multiscale object that holds its finest scale only.
+    options : mapping
+        The options of [`PYRAMID_OPTIONS`][], as
+        [`pop_pyramid_options`][] took them out. `nscales=` takes the
+        place of the argument `scales` of
+        [`Multiscale.with_scales`][], and gives a number of scales or
+        their factors.
+
+    Returns
+    -------
+    ScalePlan
+        The factors, the mode and the alignment of the coarser scales.
+
+    Raises
+    ------
+    TypeError
+        If an option is not one of a pyramid, or if the options are
+        wrong, as [`Multiscale.with_scales`][] says.
+    ValueError
+        If the options are wrong, as [`Multiscale.with_scales`][] says.
+    """
+    options = dict(options)
+    unknown = sorted(set(options) - set(PYRAMID_OPTIONS))
+    if unknown:
+        raise TypeError(
+            f"{', '.join(unknown)} are not options of a pyramid, which are "
+            f"{', '.join(PYRAMID_OPTIONS)}."
+        )
+    return obj._plan_scales(
+        options.get("nscales"),
+        options.get("factor"),
+        options.get("mode", DEFAULT_MODE),
+        options.get("align", DEFAULT_ALIGN),
+        options.get("min_size", MIN_SIZE),
+        options.get("strict", False),
+    )
+
+
+def next_scale(obj: tx.Any, plan: ScalePlan) -> tx.Any:
+    """Return a pyramid with the next coarser scale of a plan.
+
+    A writer that builds the scales of a pyramid while it writes them
+    gives this function the scales that it has written, read back from
+    the store. The new scale is computed as
+    [`Multiscale.with_scales`][] computes it: from the scale before it
+    when its factors are multiples of those of that scale, and from the
+    finest scale otherwise, or always in the mode `"nearest"`. Its
+    placement is that of the same scale in the pyramid that
+    `with_scales` builds.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The scales already built, finest first.
+    plan : ScalePlan
+        The plan that [`plan_scales`][] returned.
+
+    Returns
+    -------
+    Multiscale
+        A copy of `obj` with one more scale.
+    """
+    count = obj.nscales
+    return obj._build_scales(
+        plan.factors[:count], plan.mode, plan.align, count - 1
+    )
 
 
 def geometry_matrix(transform: tx.Any, ndim: int) -> tx.Optional[np.ndarray]:

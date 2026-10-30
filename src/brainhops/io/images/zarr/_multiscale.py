@@ -8,6 +8,10 @@ from bagof.magic import Inherit, replace
 from brainhops._core.backends import array_backend, is_dask
 from brainhops._core.path import Path, replace_directory
 from brainhops._core.properties import smartproperty
+from brainhops.datamodel._internal_api import (
+    next_scale,
+    pop_pyramid_options,
+)
 
 # datamodel
 from brainhops.datamodel.axes import (
@@ -41,6 +45,7 @@ from brainhops.io.common.zarr._internal_api import (
     reads_inside,
     store_chunks,
     store_location,
+    written_plan,
 )
 from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
@@ -110,6 +115,10 @@ class OmeZarrImage(
     # An image converted or saved from a single scale is written with
     # its coarser scales, as `with_scales()` builds them.
     BUILDS_SCALES = True
+
+    # A single scale saved with the options of a pyramid is written with
+    # coarser scales built from the store, as `to_node()` builds them.
+    WRITES_SCALES = True
 
     # ---- attributes --------------------------------------------------
 
@@ -410,13 +419,22 @@ class OmeZarrImage(
         version : str, optional
             OME-NGFF version. By default, the source version or 0.6 is used.
         **kwargs : Any
-            Passed to the creation of each level array.
+            Passed to the creation of each level array, except the
+            options of a pyramid (`nscales=`, `factor=`, `mode=`,
+            `align=`, `min_size=` and `strict=`). Given to a pyramid
+            that holds a single level, as `io.save` gives them, these
+            options build its coarser levels as
+            [`with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales]
+            builds them, except that each level is computed from the
+            levels already written, read back from the store.
 
         Raises
         ------
         WriterError
-            If `node` is an array, if a level is missing or empty, or if
-            the axes or transformations cannot be written.
+            If `node` is an array, if a level is missing or empty, if
+            the axes or transformations cannot be written, or if the
+            options of a pyramid are given to a pyramid of several
+            levels or are wrong.
         UnrepresentableTransformationError
             If the levels are rotated, sheared or flipped in different
             ways, so that their geometries cannot be split into the
@@ -424,6 +442,7 @@ class OmeZarrImage(
             dataset holds and a placement that every level shares. This
             error is a kind of `WriterError`.
         """
+        pyramid = pop_pyramid_options(kwargs)
         node = as_node(node)
         if not isinstance(node, ZarrGroup):
             raise WriterError(
@@ -441,14 +460,66 @@ class OmeZarrImage(
                 raise WriterError(
                     f"Level {index} of this multiscale image has no data."
                 )
+        plan = written_plan(self, pyramid)
         ndim = len(images[0].data.shape)
         axes = self._write_axes(ndim)
         storage_perm = _axisorder.to_storage(axes)
         storage_axes = _axisorder.permute(axes, storage_perm)
+        canonical_perm = [storage_perm.index(axis) for axis in range(ndim)]
         # One chunk shape for all levels, reordered to the stored axis order.
         stored_chunks = (
             None if chunks is None else tuple(chunks[p] for p in storage_perm)
         )
+
+        # Every level is stored with one chunk shape, and one shard
+        # shape when the levels are sharded, capped at the shape of the
+        # level, so that several chunks of a finer level make one chunk
+        # of a coarser level. The shape is `chunks`, or else the chunks
+        # of the finest level when it is a lazy array of a chunked store
+        # or a Dask array, or else the chunks that abczarr chooses for
+        # the finest level.
+        common = stored_chunks
+        if common is None:
+            native = store_chunks(getattr(images[0], "data", None))
+            if native is not None and len(native) == len(storage_perm):
+                common = tuple(native[p] for p in storage_perm)
+        shards = kwargs.get("shards")
+        count = len(images) if plan is None else len(plan.factors) + 1
+        arrays = []  # type: tx.List[tx.Any]
+        for index in range(count):
+            if index == len(images):
+                # The next level of the plan is built from the levels
+                # just written, read back from the store.
+                written = [
+                    _level(array, canonical_perm, image.transformation)
+                    for array, image in zip(arrays, images)
+                ]
+                built = next_scale(replace(self, images=written), plan)
+                images.append(built.images[-1])
+            xp = array_backend(images[index].data)
+            stored = xp.transpose(images[index].data, storage_perm)
+            options = dict(kwargs)
+            if common is not None:
+                level_chunks = tuple(
+                    min(int(size), int(n))
+                    for size, n in zip(common, stored.shape)
+                )
+                options["chunks"] = level_chunks
+                if shards is not None:
+                    options["shards"] = tuple(
+                        min(int(shard), -(-int(n) // size) * size)
+                        for shard, n, size in zip(
+                            shards, stored.shape, level_chunks
+                        )
+                    )
+                if is_dask(stored):
+                    # Each block of a Dask array is then written into
+                    # chunks of its own.
+                    stored = stored.rechunk(level_chunks)
+            array = node.create_array(str(index), data=stored, **options)
+            if common is None:
+                common = tuple(int(size) for size in array.chunks)
+            arrays.append(array)
 
         geometries = [image.transformation for image in images]
         datasets = [
@@ -481,50 +552,8 @@ class OmeZarrImage(
                 output = getattr(images[0].transformation, "output", None)
                 placements = [replace(shared, output=output)]
             moved_placement = True
-
-        # Every level is stored with one chunk shape, and one shard
-        # shape when the levels are sharded, capped at the shape of the
-        # level, so that several chunks of a finer level make one chunk
-        # of a coarser level. The shape is `chunks`, or else the chunks
-        # of the finest level when it is a lazy array of a chunked store
-        # or a Dask array, or else the chunks that abczarr chooses for
-        # the finest level.
-        common = stored_chunks
-        if common is None:
-            native = store_chunks(getattr(images[0], "data", None))
-            if native is not None and len(native) == len(storage_perm):
-                common = tuple(native[p] for p in storage_perm)
-        shards = kwargs.get("shards")
-        levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
-        rich = False
-        for index, image in enumerate(images):
-            data = image.data
-            entry = datasets[index]
-            rich = rich or _map.needs_rich_version(entry)
-            xp = array_backend(data)
-            stored = xp.transpose(data, storage_perm)
-            options = dict(kwargs)
-            if common is not None:
-                level_chunks = tuple(
-                    min(int(size), int(n))
-                    for size, n in zip(common, stored.shape)
-                )
-                options["chunks"] = level_chunks
-                if shards is not None:
-                    options["shards"] = tuple(
-                        min(int(shard), -(-int(n) // size) * size)
-                        for shard, n, size in zip(
-                            shards, stored.shape, level_chunks
-                        )
-                    )
-                if is_dask(stored):
-                    # Each block of a Dask array is then written into
-                    # chunks of its own.
-                    stored = stored.rechunk(level_chunks)
-            array = node.create_array(str(index), data=stored, **options)
-            if common is None:
-                common = tuple(int(size) for size in array.chunks)
-            levels.append((str(index), entry))
+        levels = [(str(index), entry) for index, entry in enumerate(datasets)]
+        rich = any(_map.needs_rich_version(entry) for entry in datasets)
 
         # Placements are written once as common transformations instead of
         # being folded into the levels, so a round trip keeps them apart.

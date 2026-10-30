@@ -1905,6 +1905,34 @@ its status.
      Dask level is rechunked to them before it is written. The levels
      are written one after the other.
 
+     A pyramid is built in one of two ways (#638). A pyramid built in
+     memory, by `with_scales` or by a conversion such as
+     `image.to(OmeZarrImage, nscales=4)`, holds its levels, lazily for
+     a Dask array, and the writer writes them as they are, with one
+     store per level. Its coarse levels are computed from the graph
+     that built them, so each level reads the finest level again. A
+     single scale saved to OME-Zarr, by `io.save(image, path,
+     nscales=4)` or by the `save` of a format object of one level given
+     these options, is built by the writer instead: `io.save` gives the
+     options of the pyramid to the writer of a format whose
+     `WRITES_SCALES` is true rather than to the conversion
+     (`_split_pyramid` in `io/base/_save.py`). The writer writes the
+     finest level, and builds each coarser level with `next_scale`
+     (`datamodel/multiscale.py`), which calls the same `_build_scales`
+     as `with_scales` on the levels already written, read back from the
+     store. The level is computed from the level before it, or from the
+     finest level in the mode `"nearest"` and when its factors are not
+     multiples of those of that level, so the placement and the
+     metadata are those of the pyramid built in memory, and the finest
+     level is read once with a memory bounded by a few chunks. The
+     values are the same, except that a level of an integer type that a
+     mode averages is computed from the level before it once rounded,
+     rather than from its values in double precision, which may change
+     a value by one. The options of a pyramid given to the writer of a
+     pyramid of several levels are refused, since that pyramid is
+     written as it is. Saving a single scale to OME-Zarr still builds a
+     full pyramid by default, and `nscales=1` keeps one level.
+
      A NumPy or CuPy array is computed as a whole, one pass after the
      other. A Dask array would make each pass a layer of the graph,
      whose halos along its axis give each task several dependencies, so

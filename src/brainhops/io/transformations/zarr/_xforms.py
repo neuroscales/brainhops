@@ -39,6 +39,8 @@ from brainhops.datamodel._internal_api import (
     PyramidLayout,
     field_scale,
     level_matches,
+    next_scale,
+    pop_pyramid_options,
     vector_axis,
 )
 from brainhops.datamodel.axes import AxisList, CoordinateAxis, SpaceAxis
@@ -75,6 +77,7 @@ from brainhops.io.common.zarr._internal_api import (
     store_chunks,
     store_location,
     write_into,
+    written_plan,
 )
 from brainhops.io.transformations.base import TransformationFormat
 
@@ -114,6 +117,10 @@ class OmeZarrField(
     # A field converted from a single scale is written with its coarser
     # scales, as `with_scales()` builds them.
     BUILDS_SCALES = True
+
+    # A single scale saved with the options of a pyramid is written with
+    # coarser scales built from the store, as `to_node()` builds them.
+    WRITES_SCALES = True
     EXTENSIONS = ".zarr", ".ome.zarr"
 
     raw_levels: tx.Optional[tx.List[ArrayProtocol]] = None
@@ -330,7 +337,13 @@ class OmeZarrField(
             The group that receives the levels and the metadata.
         **kwargs : Any
             Options of the creation of each level array, such as
-            `chunks`.
+            `chunks`, and the options of a pyramid (`nscales=`,
+            `factor=`, `mode=`, `align=`, `min_size=` and `strict=`).
+            Given to a field that holds a single level, as `io.save`
+            gives them, the options of a pyramid build its coarser
+            levels as `with_scales` builds them, except that each level
+            is computed from the levels already written, read back from
+            the store.
 
         Returns
         -------
@@ -342,23 +355,31 @@ class OmeZarrField(
         WriterError
             If the node is a plain array, if the field has no resolution
             levels, if its OME metadata cannot be built, as [`to_ome`][]
-            explains, or if its OME metadata breaks a rule of OME-NGFF.
+            explains, if its OME metadata breaks a rule of OME-NGFF, or
+            if the options of a pyramid are given to a field of several
+            levels or are wrong.
         """
         # Each level is written at the dataset path named by the
         # metadata, which is re-emitted unchanged when it was read, and
         # built from the levels otherwise.
+        pyramid = pop_pyramid_options(kwargs)
         node = as_node(node)
         if not isinstance(node, abczarr.ZarrGroup):
             raise WriterError(
                 "An OME-Zarr field is written into a group, not a plain array."
             )
-        ome = self.to_ome()
+        field = self
+        plan = written_plan(self, pyramid)
+        if plan is not None:
+            # The metadata is built again from the levels that are built.
+            field = replace(self, ome=None)
+        ome = field.to_ome()
         if ome is None:
             raise WriterError(
                 "This OME-Zarr field has no OME metadata, so there is nothing "
                 "to write."
             )
-        raw_levels = self.raw_levels or []
+        raw_levels = list(self.raw_levels or [])
         if not raw_levels:
             raise WriterError(
                 "This OME-Zarr field has no resolution levels to write."
@@ -378,7 +399,16 @@ class OmeZarrField(
         # level.
         common = kwargs.get("chunks") or store_chunks(raw_levels[0])
         shards = kwargs.get("shards")
-        for index, array in enumerate(raw_levels):
+        count = len(raw_levels) if plan is None else len(plan.factors) + 1
+        targets = []  # type: tx.List[tx.Any]
+        for index in range(count):
+            if index == len(raw_levels):
+                # The next level of the plan is built from the levels
+                # just written, read back from the store.
+                written = [_level_proxy(target) for target in targets]
+                field = next_scale(replace(field, raw_levels=written), plan)
+                raw_levels.append(field.raw_levels[-1])
+            array = raw_levels[index]
             dataset_path = (
                 str(datasets[index].path)
                 if index < len(datasets)
@@ -406,6 +436,10 @@ class OmeZarrField(
             if common is None:
                 common = tuple(int(size) for size in target.chunks)
             write_into(target, array)
+            targets.append(target)
+        if plan is not None:
+            ome = field.to_ome()
+            check_ome(ome)
         node.ome = ome
         return node
 

@@ -18,6 +18,7 @@ __all__ = [
     "store_location",
     "write_array",
     "write_into",
+    "written_plan",
     "ZarrNodeReaderWriter",
     "ZarrProxy",
 ]
@@ -30,6 +31,7 @@ from ._data import (
     store_location,
     write_array,
     write_into,
+    written_plan,
 )
 from ._ome_rules import check_ome
 from ._parsers import (
