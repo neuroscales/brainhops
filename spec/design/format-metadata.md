@@ -551,6 +551,16 @@ memo), decides them when it is written.
   by the metadata. `preferred_storage` (`brainhops.io.metadata._storage`)
   keeps the scaling when the values fit it, and otherwise stores the
   values without a scaling and reports the scaling as approximated.
+- The `labels` property of an image (#634) says whether the image is a
+  label map. It is stored on the image, because a table of label names
+  and colours has no place in the vocabulary, and because a value given
+  by the caller must win over the metadata. When no value is stored,
+  the property is derived from `intent`: the intents `label` and
+  `neuroname` give `True`, another intent gives `False`, and no intent
+  gives `None`. A multi-scale image without a value of its own takes
+  the value of its finest level. When a NIfTI image whose `labels` is
+  true is written without a label intent, the intent `label` is written.
+  This is implemented.
 
 The forwarding of the save options and the use of `metadata.dtype` by
 the writers are part of the wiring of pass 5a (#287). The metadata half,

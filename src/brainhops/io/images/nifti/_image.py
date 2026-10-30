@@ -13,6 +13,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
 # datamodel
+from brainhops.datamodel.enums import IntentEnum
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._internal_api import apply_loss_policy
@@ -342,6 +343,12 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
             If metadata is lost under the `"raise"` policy.
         """
         fields, overrides = split_options(options)
+        # A label map whose intent is not given is written with the
+        # intent `label`, which is how NIfTI marks a label map.
+        if self.labels and "intent" not in fields:
+            intent = None if self.metadata is None else self.metadata.intent
+            if intent not in (IntentEnum.label, IntentEnum.neuroname):
+                fields["intent"] = IntentEnum.label
         report = ConversionReport(source="NiftiImage", target="NiftiImage")
         requested = requested_fields(self.metadata, fields)
         metadata = metadata_to_write(
