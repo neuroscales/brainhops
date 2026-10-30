@@ -17,61 +17,45 @@ from collections import OrderedDict
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import Inherit, KwOnly, NoRepr, replace
+from bagof.magic import Inherit, KwOnly, NoRepr
 
 # internals
 from brainhops._core import affines as _affines
 from brainhops._core import path
 from brainhops._core.properties import smartproperty
-from brainhops._core.proxy import ArrayProxy
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition
-from brainhops.datamodel.metadata import ConversionReport
-from brainhops.datamodel.metadata._internal_api import (
-    apply_loss_policy,
-    takes_error_policy,
-)
+from brainhops.datamodel.metadata._internal_api import takes_error_policy
 from brainhops.io.base._base import register_format
-from brainhops.io.base._internal_api import declined, no_options, sniffed_raw
+from brainhops.io.base._internal_api import declined, sniffed_raw
 from brainhops.io.base.parsers import (
-    BinaryFileReader,
     BinaryFileWriter,
     Confidence,
     ParserContentError,
     UnrepresentableTransformationError,
     WriterError,
-    WriterNotImplementedError,
 )
 from brainhops.io.common.mrtrix import MrtrixMetadata, MrtrixRaw
 from brainhops.io.common.mrtrix._internal_api import (
     DECLINE_MESSAGE,
-    OPTION_OWNER,
-    MrtrixProxy,
-    dtype_to_mrtrix,
-    file_entry,
-    keeps_storage,
-    merged_keyval,
     mrtrix_bytes,
-    placed_record,
     read_mrtrix,
     reads_from,
-    split_voxel_to_scanner,
-    stored_voxels,
-    stores_as_recorded,
-    whole_file,
     write_mrtrix,
     writer_options,
-    writer_strides,
     written_files,
 )
-from brainhops.io.metadata._internal_api import (
-    metadata_options,
-    metadata_to_write,
-    requested_fields,
+from brainhops.io.images.mrtrix import MrtrixImage
+from brainhops.io.metadata._internal_api import metadata_options
+from brainhops.io.transformations.base._internal_api import (
+    ImageBackedTransformation,
+    consolidate_through,
+    data_image,
+    image_with,
 )
-from brainhops.io.transformations.base.affines import RASToVoxel
+from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import (
     COORDINATE_HINTS,
     DISPLACEMENT_HINTS,
@@ -135,26 +119,31 @@ on. A larger warp is subsampled with a regular step."""
 
 
 class MrtrixWarp(
-    BinaryFileReader, BinaryFileWriter, MrtrixTransformationFormat
+    BinaryFileWriter, ImageBackedTransformation, MrtrixTransformationFormat
 ):
     """A warp stored in an MRtrix image.
 
-    A warp holds the header of its file as
+    A warp keeps its file in a private
+    [`MrtrixImage`][brainhops.io.images.mrtrix.MrtrixImage], as it was
+    read or as the warp was last consolidated, and `rawdata` and
+    `metadata` read that image, as
+    [`ImageBackedTransformation`][brainhops.io.transformations.base._image_backed.ImageBackedTransformation]
+    describes. The metadata is
     [`MrtrixMetadata`][brainhops.io.common.mrtrix.MrtrixMetadata], whose
-    record is an [`MrtrixRaw`][brainhops.io.common.mrtrix.MrtrixRaw], and
-    the values of the file in `rawdata`. When the warp is read from a
-    file, `rawdata` is a lazy array that reads the values only when they
-    are needed, as for an MRtrix image: an uncompressed local file is
-    memory-mapped. Each concrete format decodes its `data`, and the chain
-    of the data model, from `rawdata` and from the record, and caches what it
+    record is an [`MrtrixRaw`][brainhops.io.common.mrtrix.MrtrixRaw].
+    When the warp is read from a file, `rawdata` is a lazy array that
+    reads the values only when they are needed, as for an MRtrix image.
+    Each concrete format decodes its `data`, and the chain of the data
+    model, from `rawdata` and from the record, and caches what it
     decodes.
 
-    `rawdata` and the record describe the file as it was read, or as the warp
-    was last consolidated. Values and chains that are assigned are pending
-    until [`consolidate`][] encodes them into a copy, or until the warp is
-    written, which writes such a copy and leaves the warp as it was. The
-    record of the metadata is the base of the header that is written, so
-    its free-form keys, such as `command_history`, are kept.
+    Values and chains that are assigned are pending until
+    [`consolidate`][] encodes them through the image into a copy, or
+    until the warp is written, which writes such a copy and leaves the
+    warp as it was. The record of the metadata is the base of the header
+    that is written, so its free-form keys, such as `command_history`,
+    are kept, and a warp that is read and written again without changes
+    is copied byte for byte.
 
     This class is abstract and is not registered as a format, so it never
     takes part in dispatch. [`MrtrixCoordinateField`][],
@@ -169,15 +158,7 @@ class MrtrixWarp(
     # (`"mrtrix.field.coord"`).
     HINTS = ("field",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mih")
-
-    rawdata: NoRepr[tx.Optional[ArrayProtocol]] = None
-    """The values of the file as it stores them, or `None` without values.
-
-    After a read, `rawdata` is a lazy array, which presents the values in the
-    axis order of the header and applies its intensity scaling when it is
-    read. `rawdata` describes the file as it was read, or as the warp was last
-    consolidated, so assigning `data` leaves it as it is.
-    """
+    IMAGE = MrtrixImage
 
     # --- reading ------------------------------------------------------
 
@@ -227,111 +208,7 @@ class MrtrixWarp(
             return declined(error, DECLINE_MESSAGE, failure)
         return cls._score_header(raw, file)
 
-    @classmethod
-    def from_filename(
-        cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
-    ) -> tx.Self:
-        """Read a warp from the path of a `.mif`, `.mif.gz` or `.mih` file.
-
-        The record is read from the header, and the lazy array reads the
-        values when they are needed.
-
-        Parameters
-        ----------
-        filename : path-like
-            The file of the warp, or of its header.
-        mmap : bool, default=True
-            Whether the lazy array memory-maps local data that is not
-            compressed.
-        **kwargs : Any
-            Refused, since the warp has no other option.
-
-        Returns
-        -------
-        Self
-            The warp, whose values are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        ParserExistsError
-            If the file or the data file that its header names does not
-            exist.
-        ParserContentError
-            If the file is not an MRtrix image, or its data is too short.
-        """
-        no_options(kwargs, OPTION_OWNER)
-        raw, proxy = read_mrtrix(filename, mmap=mmap)
-        return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
-
-    @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
-    ) -> tx.Self:
-        """Read a warp from an open MRtrix file, gzipped or not.
-
-        The record is read at once, and the lazy array reads the values
-        from the stream when they are needed, so the stream must stay open
-        while the data may be read. A separate data file is found from the
-        name of the stream.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream of the file, open in binary mode.
-        mmap : bool, default=False
-            Accepted for the readers of paths, and without effect: the
-            values of a stream are never memory-mapped.
-        **kwargs : Any
-            Refused, since the warp has no other option.
-
-        Returns
-        -------
-        Self
-            The warp, whose values are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        ParserContentError
-            If the stream is not an MRtrix image, or its header names a
-            separate data file and the stream has no name.
-        """
-        no_options(kwargs, OPTION_OWNER)
-        raw, proxy = read_mrtrix(file, mmap=False)
-        return cls(rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw))
-
     # --- writing ------------------------------------------------------
-
-    def _consolidate(self, *, inplace: bool = False, **options) -> tx.Self:
-        """Encode the pending state into `rawdata` and the record.
-
-        Each concrete format implements this method, on which the writers
-        rely.
-
-        Parameters
-        ----------
-        inplace : bool, default=False
-            Whether to change this warp rather than a copy.
-        **options : Any
-            The writer options of the concrete format.
-
-        Returns
-        -------
-        Self
-            The consolidated copy, or this warp with `inplace=True`.
-
-        Raises
-        ------
-        WriterNotImplementedError
-            Always, since the base does not know what to encode.
-        """
-        raise WriterNotImplementedError(
-            f"{type(self).__name__} does not know how to write itself to "
-            f"MRtrix."
-        )
 
     @takes_error_policy
     def to_bytes(self, **kwargs) -> bytes:
@@ -476,15 +353,8 @@ class MrtrixCoordinateField(
         return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
-
-    metadata = smartproperty("metadata", invalidates="transformations")
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata drops the chain decoded from the previous
-    header.
-    """
 
     # --- reading ------------------------------------------------------
 
@@ -527,7 +397,7 @@ class MrtrixCoordinateField(
 
     # --- chain --------------------------------------------------------
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of transformations that the field encodes.
 
@@ -553,73 +423,37 @@ class MrtrixCoordinateField(
     def _consolidate(
         self,
         *,
-        inplace: bool = False,
-        layout: tx.Optional[tx.Union[str, tx.Sequence[int]]] = None,
-        datatype: tx.Optional[tx.Any] = None,
-        scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        **fields: tx.Any,
+        **options: tx.Any,
     ) -> tx.Self:
-        """Encode the pending coordinates or chain into `rawdata` and a record.
+        """Encode the pending coordinates or chain through the image.
 
-        A field whose chain was not assigned keeps its stored coordinates,
-        assigned or read, under the geometry of its record. A field whose
-        chain was assigned is encoded from the chain, whose grid replaces
-        the geometry of the record. The record of the metadata is the base
-        of the new record, as for an MRtrix image, so its free-form keys
-        are kept and `keyval` is merged into them last. The values are
-        stored with the options, or else with the layout of the base when
-        it has as many axes, the floating type of the values (or
-        `Float32`) and no scaling. A lazy array that the options do not
-        change is copied as the file stores it.
-
-        The kind of warp is recorded in the header key
-        `brainhops_field_type`, and a `command_history` line names
-        brainhops, unless it is already the last one, so that the file is
-        read back as a field of coordinates. When
-        this encoding gives the record of the metadata, the metadata is
-        kept. An `input` or `output` that was assigned must be scanner
-        RAS, which is what the file stores. A field that has a record
-        storing its values as they are stored, and nothing pending,
-        consolidated without options, is left as it is: the copy shares
-        `rawdata` and the metadata.
-
-        The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an
-        MRtrix image holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, under the error policy of
-        the call.
+        A field whose chain was not assigned keeps its coordinates,
+        assigned or read, under the geometry of its record. A field
+        whose chain was assigned is encoded from the chain, whose grid
+        replaces the geometry of the record. The image stores the
+        values as an MRtrix image stores its data, and the kind of warp
+        is recorded in the header key `brainhops_field_type`, with a
+        `command_history` line that names brainhops unless it is
+        already the last one, so that the file is read back as a field
+        of coordinates. An `input` or `output` that was assigned must
+        be scanner RAS, which is what the file stores.
 
         Parameters
         ----------
-        inplace : bool, default=False
-            Whether to change this field rather than a copy.
-        layout : str or sequence of int, optional
-            Strides, in the MRtrix spelling (`"-0,-1,+2,+3"`) or as signed
-            one-based integers.
-        datatype : str or dtype, optional
-            MRtrix type (`"Float32LE"`) or NumPy type.
-        scaling : (offset, scale), optional
-            Intensity scaling to store.
         keyval : mapping, optional
             Header keys merged into those of the base, after the keys
             that record the kind of warp. A value of `None` removes a
             key. The keys that the other options, the data and the
             geometry decide are refused.
-        **fields : Any
-            Fields of the metadata to override.
-
-        Returns
-        -------
-        Self
-            The consolidated copy, or this field with `inplace=True`.
+        **options : Any
+            The other options of
+            [`MrtrixImage.consolidate`][brainhops.io.images.mrtrix.MrtrixImage.consolidate],
+            such as `layout`, `datatype` and `scaling`, and the fields
+            of the metadata.
 
         Raises
         ------
-        TypeError
-            If a keyword names no field of the metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no coordinates, if its chain is not a grid
             and a field of coordinates, or if `keyval` sets a key that
@@ -628,62 +462,14 @@ class MrtrixCoordinateField(
             If the chain, or an assigned `input` or `output`, does not map
             scanner RAS to scanner RAS.
         """
-        report = ConversionReport(
-            source="MrtrixCoordinateField", target="MrtrixCoordinateField"
-        )
-        requested = requested_fields(self.metadata, fields)
-        metadata = metadata_to_write(
-            self.metadata, MrtrixMetadata, fields, report
-        )
-        apply_loss_policy(report, stacklevel=2)
-        if not requested:
-            metadata = self.metadata
         what = "An MRtrix deformation"
-        options = dict(
-            layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
-        )
-        declared = self._input is not None or self._output is not None
-        if declared:
-            _check_ras(self.input, self.output, what)
-        if (
-            self._data is None
-            and self._transformations is None
-            and not declared
-            and all(value is None for value in options.values())
-            and self.metadata is not None
-            and self.metadata.raw is not None
-            and stores_as_recorded(self.rawdata, self.metadata.raw)
-        ):
-            if not inplace:
-                return replace(self, metadata=metadata)
-            if requested:
-                self.metadata = metadata
-            return self
+        _check_endpoints(self, what)
         if self._transformations is None:
-            source = _stored(self)
-            vox2ras = _vox2ras(self)
+            image = data_image(self, warp_to_disk)
         else:
-            vox2ras, source = _coordinate_parts(self.transformations, what)
-        options["keyval"] = _typed_keyval(_record(self), keyval, _DEFORMATION)
-        record, raw = _encoded(_record(self), source, vox2ras, options)
-        metadata = _consolidated_metadata(metadata, record)
-        if not inplace:
-            return replace(
-                self,
-                rawdata=raw,
-                metadata=metadata,
-                data=None,
-                transformations=None,
-                input=None,
-                output=None,
-            )
-        self.rawdata = raw
-        self.metadata = metadata
-        self.data = None
-        self.transformations = None
-        self.input = None
-        self.output = None
-        return self
+            vox2ras, values = _coordinate_parts(self.transformations, what)
+            image = image_with(self, warp_to_disk(values), vox2ras)
+        return _consolidate_warp(self, image, _DEFORMATION, keyval, options)
 
 
 @register_format
@@ -765,15 +551,8 @@ class MrtrixDisplacementField(
         return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
-
-    metadata = smartproperty("metadata", invalidates="transformations")
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata drops the chain decoded from the previous
-    header.
-    """
 
     # --- reading ------------------------------------------------------
 
@@ -810,7 +589,7 @@ class MrtrixDisplacementField(
 
     # --- chain --------------------------------------------------------
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of transformations that the field encodes.
 
@@ -848,57 +627,32 @@ class MrtrixDisplacementField(
     def _consolidate(
         self,
         *,
-        inplace: bool = False,
-        layout: tx.Optional[tx.Union[str, tx.Sequence[int]]] = None,
-        datatype: tx.Optional[tx.Any] = None,
-        scaling: tx.Optional[tx.Sequence[float]] = None,
         keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        **fields: tx.Any,
+        **options: tx.Any,
     ) -> tx.Self:
-        """Encode pending displacements or a chain into `rawdata` and a record.
+        """Encode pending displacements or a chain through the image.
 
         The encoding is that of `MrtrixCoordinateField._consolidate`,
         with RAS displacements in place of RAS coordinates, and with
         `brainhops_field_type: displacement` in the header. A chain that
-        was assigned is split into its grid and its displacements, rotated
-        back into RAS millimetres.
-
-        The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an
-        MRtrix image holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, under the error policy of
-        the call.
+        was assigned is split into its grid and its displacements,
+        rotated back into RAS millimetres.
 
         Parameters
         ----------
-        inplace : bool, default=False
-            Whether to change this field rather than a copy.
-        layout : str or sequence of int, optional
-            Strides, in the MRtrix spelling (`"-0,-1,+2,+3"`) or as signed
-            one-based integers.
-        datatype : str or dtype, optional
-            MRtrix type (`"Float32LE"`) or NumPy type.
-        scaling : (offset, scale), optional
-            Intensity scaling to store.
         keyval : mapping, optional
             Header keys merged into those of the base, after the keys
             that record the kind of warp. A value of `None` removes a
             key. The keys that the other options, the data and the
             geometry decide are refused.
-        **fields : Any
-            Fields of the metadata to override.
-
-        Returns
-        -------
-        Self
-            The consolidated copy, or this field with `inplace=True`.
+        **options : Any
+            The other options of
+            [`MrtrixImage.consolidate`][brainhops.io.images.mrtrix.MrtrixImage.consolidate],
+            such as `layout`, `datatype` and `scaling`, and the fields
+            of the metadata.
 
         Raises
         ------
-        TypeError
-            If a keyword names no field of the metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
         WriterError
             If the field has no displacements, if its chain is not a grid
             around a displacement field, or if `keyval` sets a key that
@@ -907,67 +661,19 @@ class MrtrixDisplacementField(
             If the chain, or an assigned `input` or `output`, does not map
             scanner RAS to scanner RAS.
         """
-        report = ConversionReport(
-            source="MrtrixDisplacementField", target="MrtrixDisplacementField"
-        )
-        requested = requested_fields(self.metadata, fields)
-        metadata = metadata_to_write(
-            self.metadata, MrtrixMetadata, fields, report
-        )
-        apply_loss_policy(report, stacklevel=2)
-        if not requested:
-            metadata = self.metadata
         what = "An MRtrix displacement"
-        options = dict(
-            layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
-        )
-        declared = self._input is not None or self._output is not None
-        if declared:
-            _check_ras(self.input, self.output, what)
-        if (
-            self._data is None
-            and self._transformations is None
-            and not declared
-            and all(value is None for value in options.values())
-            and self.metadata is not None
-            and self.metadata.raw is not None
-            and stores_as_recorded(self.rawdata, self.metadata.raw)
-        ):
-            if not inplace:
-                return replace(self, metadata=metadata)
-            if requested:
-                self.metadata = metadata
-            return self
+        _check_endpoints(self, what)
         if self._transformations is None:
-            source = _stored(self)
-            vox2ras = _vox2ras(self)
+            image = data_image(self, warp_to_disk)
         else:
             chain = tuple(self.transformations or ())
             if chain:
                 _check_ras(chain[0].input, chain[-1].output, what)
-            vox2ras, source = split_ras_displacement_chain(
+            vox2ras, values = split_ras_displacement_chain(
                 chain, what, ndim=_NDIM
             )
-        options["keyval"] = _typed_keyval(_record(self), keyval, _DISPLACEMENT)
-        record, raw = _encoded(_record(self), source, vox2ras, options)
-        metadata = _consolidated_metadata(metadata, record)
-        if not inplace:
-            return replace(
-                self,
-                rawdata=raw,
-                metadata=metadata,
-                data=None,
-                transformations=None,
-                input=None,
-                output=None,
-            )
-        self.rawdata = raw
-        self.metadata = metadata
-        self.data = None
-        self.transformations = None
-        self.input = None
-        self.output = None
-        return self
+            image = image_with(self, warp_to_disk(values), vox2ras)
+        return _consolidate_warp(self, image, _DISPLACEMENT, keyval, options)
 
 
 @register_format
@@ -1063,15 +769,8 @@ class MrtrixWarpFull(
         return warp_to_model(self.rawdata)
 
     _metadata: NoRepr[tx.Optional[MrtrixMetadata]] = Inherit(
-        "metadata", default=None
+        "metadata", default=None, var=True
     )
-
-    metadata = smartproperty("metadata", invalidates="transformations")
-    """The metadata of the file, which holds its header, or `None`.
-
-    Assigning other metadata drops the chain decoded from the previous
-    header.
-    """
 
     # --- reading ------------------------------------------------------
 
@@ -1090,72 +789,6 @@ class MrtrixWarpFull(
         if all(key in header.keyval for key in _LINEAR):
             return Confidence.CERTAIN
         return Confidence.LIKELY
-
-    @classmethod
-    def from_filename(
-        cls, filename: path.FilenameLike, mmap: bool = True, **kwargs
-    ) -> "MrtrixWarpFull":
-        """Read a warpfull file from the path of a `.mif` or `.mih` file.
-
-        Parameters
-        ----------
-        filename : path-like
-            The file of the warps, or of their header.
-        mmap : bool, default=True
-            Whether the lazy array memory-maps local data that is not
-            compressed.
-        **kwargs : Any
-            The options `from_index` and `midway`. Any other option is
-            refused.
-
-        Returns
-        -------
-        MrtrixWarpFull
-            The warps, which are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        """
-        options = _warpfull_options(kwargs)
-        raw, proxy = read_mrtrix(filename, mmap=mmap)
-        return cls(
-            rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw), **options
-        )
-
-    @classmethod
-    def from_fileobj(
-        cls, file: tx.BinaryIO, mmap: bool = False, **kwargs
-    ) -> "MrtrixWarpFull":
-        """Read a warpfull file from an open MRtrix file.
-
-        Parameters
-        ----------
-        file : BinaryIO
-            The stream of the file, which must stay open while the warps
-            may be read.
-        mmap : bool, default=False
-            Accepted for the readers of paths, and without effect.
-        **kwargs : Any
-            The options `from_index` and `midway`. Any other option is
-            refused.
-
-        Returns
-        -------
-        MrtrixWarpFull
-            The warps, which are read lazily.
-
-        Raises
-        ------
-        TypeError
-            If another option is given.
-        """
-        options = _warpfull_options(kwargs)
-        raw, proxy = read_mrtrix(file, mmap=False)
-        return cls(
-            rawdata=proxy, metadata=MrtrixMetadata.from_raw(raw), **options
-        )
 
     @classmethod
     def from_warps(
@@ -1216,12 +849,10 @@ class MrtrixWarpFull(
         for key, linear in zip(_LINEAR, (linear1, linear2)):
             values[key] = _format_linear(_linear_matrix(linear))
         values.update(keyval or {})
-        options = writer_options({"keyval": values})
-        grid = np.asarray(vox2ras, dtype=np.float64)
-        record, raw = _encoded(None, warps, grid, options)
+        grid = [VoxelToRAS(matrix=np.asarray(vox2ras, dtype=np.float64)[:3])]
+        image = MrtrixImage(data=warps, transformations=grid)
         return cls(
-            rawdata=raw,
-            metadata=MrtrixMetadata.from_raw(record),
+            image=image.consolidate(keyval=values),
             from_index=from_index,
             midway=midway,
         )
@@ -1270,7 +901,7 @@ class MrtrixWarpFull(
         """Warp 3: image-2 points (after `linear2⁻¹`) to midway points."""
         return _midway_warp(self, 3)
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, invalidated_by="_image")
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of the map that `from_index` and `midway` select.
 
@@ -1295,84 +926,24 @@ class MrtrixWarpFull(
 
     # --- writing ------------------------------------------------------
 
-    def _consolidate(
-        self,
-        *,
-        inplace: bool = False,
-        layout: tx.Optional[tx.Union[str, tx.Sequence[int]]] = None,
-        datatype: tx.Optional[tx.Any] = None,
-        scaling: tx.Optional[tx.Sequence[float]] = None,
-        keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]] = None,
-        **fields: tx.Any,
-    ) -> "MrtrixWarpFull":
-        """Encode the pending warps into `rawdata` and a record.
+    def _consolidate(self, **options: tx.Any) -> "MrtrixWarpFull":
+        """Encode the pending warps through the image.
 
-        The warps, assigned or read, are stored under the geometry of the
-        record, whose linear transforms and other keys are kept, and
-        `keyval` is merged into them last. The values are stored as for
-        `MrtrixCoordinateField._consolidate`. A warpfull object that
-        has a record storing its warps as they are stored, and nothing
-        pending, consolidated without options, is left as it is.
+        The warps, assigned or read, are stored under the geometry of
+        the record, whose linear transforms and other keys are kept.
         `from_index` and `midway` select what is decoded, and are not
-        written.
-
-        The metadata is consolidated first (step 2 of the precedence on
-        write), with the fields given by keyword. The record of an
-        MRtrix image holds no field of the vocabulary yet, so a field
-        that is set is reported as lost, once, under the error policy of
-        the call.
-
-        Parameters
-        ----------
-        inplace : bool, default=False
-            Whether to change this object rather than a copy.
-        layout : str or sequence of int, optional
-            Strides, in the MRtrix spelling (`"-0,-1,+2,+3,+4"`) or as
-            signed one-based integers.
-        datatype : str or dtype, optional
-            MRtrix type (`"Float32LE"`) or NumPy type.
-        scaling : (offset, scale), optional
-            Intensity scaling to store.
-        keyval : mapping, optional
-            Header keys merged into those of the base, such as `linear1`
-            and `linear2`. A value of `None` removes a key. The keys that
-            the other options, the data and the geometry decide are
-            refused.
-        **fields : Any
-            Fields of the metadata to override.
-
-        Returns
-        -------
-        MrtrixWarpFull
-            The consolidated copy, or this object with `inplace=True`.
+        written. A chain, an `input` or an `output` that was assigned is
+        refused, because the file holds the pieces of the chain and not
+        the chain.
 
         Raises
         ------
-        TypeError
-            If a keyword names no field of the metadata.
-        MetadataLossError
-            If metadata is lost under the `"raise"` policy.
         WriterError
-            If there are no warps, if they do not have the shape
-            `(X, Y, Z, 3, 4)`, or if `keyval` sets a key that the data or
-            the geometry decide.
+            If there are no warps, or if they do not have the shape
+            `(X, Y, Z, 3, 4)`.
         UnrepresentableTransformationError
-            If a chain, an `input` or an `output` was assigned, since the
-            file holds the pieces of the chain and not the chain.
+            If a chain, an `input` or an `output` was assigned.
         """
-        report = ConversionReport(
-            source="MrtrixWarpFull", target="MrtrixWarpFull"
-        )
-        requested = requested_fields(self.metadata, fields)
-        metadata = metadata_to_write(
-            self.metadata, MrtrixMetadata, fields, report
-        )
-        apply_loss_policy(report, stacklevel=2)
-        if not requested:
-            metadata = self.metadata
-        options = dict(
-            layout=layout, datatype=datatype, scaling=scaling, keyval=keyval
-        )
         if (
             self._transformations is not None
             or self._input is not None
@@ -1384,33 +955,16 @@ class MrtrixWarpFull(
                 "cannot be split into them. Assign the warps as data, or "
                 "build the file with MrtrixWarpFull.from_warps."
             )
-        if (
-            self._data is None
-            and all(value is None for value in options.values())
-            and self.metadata is not None
-            and self.metadata.raw is not None
-            and stores_as_recorded(self.rawdata, self.metadata.raw)
-        ):
-            if not inplace:
-                return replace(self, metadata=metadata)
-            if requested:
-                self.metadata = metadata
-            return self
-        source = _stored(self)
-        shape = tuple(int(d) for d in source.shape)
+        image = data_image(self, warp_to_disk)
+        return consolidate_through(self, image, {}, {"data": None}, **options)
+
+    def _check_stored(self, image: MrtrixImage) -> None:
+        shape = tuple(int(d) for d in image.shape)
         if len(shape) != 5 or shape[3:] != (_NDIM, _NWARPS):
             raise WriterError(
                 f"An MRtrix warpfull holds an array of shape (X, Y, Z, 3, 4), "
                 f"not {shape}."
             )
-        record, raw = _encoded(_record(self), source, _vox2ras(self), options)
-        metadata = _consolidated_metadata(metadata, record)
-        if not inplace:
-            return replace(self, rawdata=raw, metadata=metadata, data=None)
-        self.rawdata = raw
-        self.metadata = metadata
-        self.data = None
-        return self
 
 
 # ----------------------------------------------------------------------
@@ -1600,23 +1154,6 @@ def _content_kind(header: MrtrixRaw, file: tx.IO) -> tx.Optional[str]:
     return None
 
 
-def _warpfull_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
-    """Return the reader options of a warpfull file, refusing others.
-
-    Raises
-    ------
-    TypeError
-        If an option other than `from_index` and `midway` is given.
-    """
-    options = {
-        name: kwargs.pop(name)
-        for name in ("from_index", "midway")
-        if name in kwargs
-    }
-    no_options(kwargs, OPTION_OWNER)
-    return options
-
-
 # ----------------------------------------------------------------------
 #   DECODING
 # ----------------------------------------------------------------------
@@ -1777,23 +1314,6 @@ def _check_ras(
     )
 
 
-def _stored(xform: MrtrixWarp) -> ArrayProtocol:
-    """Return the values that a warp stores, pending or read.
-
-    Raises
-    ------
-    WriterError
-        If the warp has no values.
-    """
-    if xform._data is not None:
-        return warp_to_disk(xform._data)
-    if xform.rawdata is None:
-        raise WriterError(
-            "This warp has no values, so there is nothing to write."
-        )
-    return xform.rawdata
-
-
 def _coordinate_parts(
     chain: tx.Sequence[_xforms.Transformation], what: str
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
@@ -1835,81 +1355,6 @@ def _coordinate_parts(
     return np.linalg.inv(ras2vox), coordinates
 
 
-def _encoded(
-    held: tx.Optional[MrtrixRaw],
-    source: ArrayProtocol,
-    vox2ras: np.ndarray,
-    options: tx.Mapping[str, tx.Any],
-) -> tx.Tuple[MrtrixRaw, ArrayProtocol]:
-    """Return the record and the values that consolidating a warp stores.
-
-    The values are stored as the options say, or else with the layout of
-    the held record when it has as many axes, their floating type (or
-    `Float32`) and no scaling. A lazy array that the options do not change
-    is copied as the file stores it. The `vox` and `transform` of the held
-    record are kept as they are stored when the grid and the shape are
-    those of the record, exactly, and the grid is otherwise split into
-    unit direction cosines and voxel sizes. The axes after the spatial ones
-    have no physical size: they keep the sizes of the held record when it
-    has as many axes, and are `nan` otherwise, as MRtrix leaves a new
-    axis. The free-form keys of the held record are kept, with `keyval`
-    merged last, and the held record is returned when the encoding
-    changes nothing.
-    """
-    layout, datatype = options["layout"], options["datatype"]
-    scaling = options["scaling"]
-    merged = merged_keyval(held, options["keyval"])
-    whole = whole_file(source)
-    if whole is not None and keeps_storage(
-        whole.record, layout, datatype, scaling
-    ):
-        shape, strides = whole.record.dim, whole.record.layout
-        stored_type, stored_scaling = (
-            whole.record.datatype,
-            whole.record.scaling,
-        )
-    else:
-        if isinstance(source, ArrayProxy) and isinstance(
-            source.root, MrtrixProxy
-        ):
-            # A lazy array is read here rather than through `data`, so that
-            # no cached view of the old file outlives a write over that file.
-            source = np.asarray(source)
-        shape = tuple(int(d) for d in source.shape)
-        strides = writer_strides(layout, held, len(shape))
-        if datatype is None:
-            dtype = np.dtype(getattr(source, "dtype", np.float32))
-            datatype = dtype if dtype.kind == "f" else np.float32
-        stored_type = dtype_to_mrtrix(datatype)
-        stored_scaling = None if scaling is None else tuple(scaling)
-    ndim = len(shape)
-    if (
-        held is not None
-        and tuple(held.dim) == tuple(shape)
-        and np.array_equal(held.voxel_to_scanner(), vox2ras)
-    ):
-        vox, transform = held.vox, held.transform
-    else:
-        transform, spatial = split_voxel_to_scanner(vox2ras)
-        vox = list(spatial)
-        if held is not None and held.ndim == ndim and len(held.vox) == ndim:
-            vox += list(held.vox[_NDIM:])
-        else:
-            vox += [math.nan] * (ndim - _NDIM)
-    record = MrtrixRaw(
-        dim=shape,
-        vox=vox,
-        layout=strides,
-        datatype=stored_type,
-        transform=transform,
-        scaling=stored_scaling,
-        file=file_entry(held, None),
-        keyval=merged,
-    )
-    record = placed_record(record, held)
-    return record, stored_voxels(record, source)
-
-
 def _typed_keyval(
     held: tx.Optional[MrtrixRaw],
     keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]],
@@ -1938,21 +1383,38 @@ def _typed_keyval(
     return typed
 
 
-def _consolidated_metadata(
-    metadata: tx.Optional[MrtrixMetadata], record: MrtrixRaw
-) -> MrtrixMetadata:
-    """Return the metadata that holds the record of a consolidation.
+def _check_endpoints(xform: MrtrixWarp, what: str) -> None:
+    """Refuse an assigned `input` or `output` that is not scanner RAS.
 
-    `metadata` is the consolidated metadata of the warp, which is kept
-    when the record is its own. Otherwise the metadata is copied to hold
-    the new record, so the metadata held before is never changed, and a
-    warp without metadata gets new metadata.
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If an endpoint was assigned and either endpoint is not `RASmm`.
     """
-    if metadata is None:
-        return MrtrixMetadata.from_raw(record)
-    if record is metadata.raw:
-        return metadata
-    return replace(metadata, raw=record)
+    if xform._input is not None or xform._output is not None:
+        _check_ras(xform.input, xform.output, what)
+
+
+def _consolidate_warp(
+    xform: MrtrixWarp,
+    image: MrtrixImage,
+    kind: str,
+    keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]],
+    options: tx.Dict[str, tx.Any],
+) -> MrtrixWarp:
+    """Consolidate a 4-D warp through the image of its pending state.
+
+    The header keys that record the kind of warp are given to the image
+    when it is encoded again, merged with `keyval`. Keys that the caller
+    gives are an option of the call, so the image is then encoded again.
+    """
+    typed = _typed_keyval(_record(xform), keyval, kind)
+    if keyval is not None:
+        options["keyval"] = typed
+    changes = dict(data=None, transformations=None, input=None, output=None)
+    return consolidate_through(
+        xform, image, {"keyval": typed}, changes, **options
+    )
 
 
 def _linear_matrix(linear: tx.Any) -> np.ndarray:
