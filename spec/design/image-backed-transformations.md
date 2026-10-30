@@ -167,23 +167,26 @@ into a template method of a shared base class. That change is
 independent of this memo, and it would help the image formats and the
 formats that keep plain fields as well.
 
-## Points to settle
+## Consequences for existing formats
 
 `MrtrixWarpFull` has a public field named `from_image`
 (`io/transformations/mrtrix/_warps.py:1025`), which is the `-from`
-option of MRtrix and also an option of its reader. A class method
-of the same name cannot exist beside it, so the field must be renamed
-before `from_image` is added. No release has users yet, so the rename
-needs no deprecation.
+option of MRtrix and also an option of its reader. A class method of
+the same name cannot exist beside it, so the field is renamed before
+`from_image` is added. No release has users yet, so the rename needs no
+deprecation.
 
-`AfniNiftiWarp` is stored as a NIfTI file, but its `to_image()` returns
-an `AfniImage`, which is the dataset that AFNI itself writes. Under
-this memo, `to_image()` returns the stored image, a `NiftiImage`. The
-conversion to an AFNI dataset needs another name, or should become a
-conversion between formats.
+`AfniNiftiWarp` is stored as a NIfTI file, and an `AfniImage` only
+reads AFNI datasets (`.HEAD` and `.BRIK` files), so the stored image of
+`AfniNiftiWarp` is a `NiftiImage`, which its `to_image()` returns.
+Today, `AfniNiftiWarp.to_image()` returns an `AfniImage`, the dataset
+that AFNI itself writes. That result stays available as a conversion
+between formats: the warp is converted to an `AfniBrikWarp`, which the
+converters of `io/transformations/afni/_converters.py` already do, and
+the `to_image()` of that warp returns the `AfniImage`.
 
 The grid of a field and the transformations of its image are decoded
-from the same header. The transformation should take its grid from the
+from the same header. The transformation takes its grid from the
 decoder that the image uses, rather than decode the sform and the qform
 again.
 
@@ -193,7 +196,7 @@ again.
 2. Move the two NIfTI fields to a stored `NiftiImage`, add `from_image`
    and `to_image`, and check that a file read and saved again is still
    copied byte for byte.
-3. Move the AFNI warps, and settle the name of the conversion of
-   `AfniNiftiWarp` to an AFNI dataset.
+3. Move the AFNI warps, so that `AfniNiftiWarp.to_image()` returns a
+   `NiftiImage`.
 4. Move the other formats of the table, if the first two steps make the
    code shorter without awkward forwarding.
