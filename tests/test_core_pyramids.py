@@ -12,16 +12,19 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
+from brainhops._core import pyramids
 from brainhops._core.pyramids import (
     ALIGNMENTS,
     BLOCK_MODES,
     FIELD_MODES,
     MODES,
+    VOTE_MODES,
     check_mode,
     default_factors,
     downsample,
     level_map,
     rescale_vectors,
+    vote,
 )
 
 
@@ -142,14 +145,16 @@ _LABELS = np.array(
     "mode, expected",
     [
         ("nearest", [[1, 2], [5, 7]]),
-        ("mode", [[1, 2], [5, 7]]),
+        ("mode", [[1, 2], [5, 6]]),
+        ("vote_binomial", [[1, 2], [5, 6]]),
+        ("vote_gaussian", [[1, 2], [5, 6]]),
         ("max", [[3, 2], [6, 7]]),
         ("min", [[1, 2], [5, 6]]),
     ],
 )
 def test_the_modes_that_keep_values(mode: str, expected: list) -> None:
-    # The window [[7, 6], [6, 7]] ties, and the mode keeps the value of
-    # its first voxel.
+    # The window [[7, 6], [6, 7]] ties, and the votes keep the smaller
+    # label, 6, even when it is not the label of the first voxel.
     (level,) = downsample(_LABELS, [(2, 2)], mode)
 
     assert level.dtype == np.uint16
@@ -184,6 +189,136 @@ def test_the_block_modes_need_the_exact_alignment() -> None:
         for align in ("edges", "centers"):
             with pytest.raises(ValueError, match="exact"):
                 check_mode(mode, align=align)
+
+
+def test_the_votes_take_every_alignment() -> None:
+    for mode in VOTE_MODES:
+        for align in ALIGNMENTS:
+            assert check_mode(mode, align=align) == mode
+
+
+# ---- votes among labels ------------------------------------------------
+
+
+def _parcels(shape: tx.Tuple[int, ...], count: int, seed: int) -> np.ndarray:
+    # Return a label map of `count` labels with ragged boundaries: each
+    # voxel takes the label of the nearest of `count` random seeds, in a
+    # metric that a random field of small values perturbs.
+    rng = np.random.default_rng(seed)
+    grid = np.stack(np.meshgrid(*map(np.arange, shape), indexing="ij"), -1)
+    seeds = rng.random((count, len(shape))) * np.array(shape)
+    distances = ((grid[..., None, :] - seeds) ** 2).sum(-1)
+    distances += rng.random(distances.shape) * 4
+    return (np.argmin(distances, -1) * 5 + 3).astype("int16")
+
+
+@pytest.mark.parametrize("factors", [(2, 2), (3, 3), (2, 3), (4, 2)])
+def test_a_vote_with_the_box_kernel_equals_the_mode(factors: tuple) -> None:
+    # Under "exact", the mean of the indicator of a label over a window
+    # is the fraction of the window that the label covers, so a vote
+    # whose scores are these means keeps the labels of "mode", which
+    # counts the values of each window, ties included.
+    labels = np.random.default_rng(8).integers(0, 4, (24, 24)) * 3
+
+    def smooth(indicator: np.ndarray) -> np.ndarray:
+        (level,) = downsample(indicator, [factors], "mean")
+        return level
+
+    (expected,) = downsample(labels, [factors], "mode")
+
+    np.testing.assert_array_equal(vote(labels, smooth), expected)
+
+
+def test_a_tie_goes_to_the_smallest_label() -> None:
+    labels = np.array([[9, 4], [4, 9]], dtype="uint8")
+    for mode in VOTE_MODES:
+        (level,) = downsample(labels, [(2, 2)], mode)
+        assert level.tolist() == [[4]]
+
+
+@pytest.mark.parametrize("align", ALIGNMENTS)
+@pytest.mark.parametrize("mode", VOTE_MODES)
+def test_each_vote_of_a_dask_array_equals_the_numpy_one(
+    mode: str, align: str
+) -> None:
+    # The labels and their type are kept on both packages, and each
+    # chunk of a Dask level is one task.
+    da = pytest.importorskip("dask.array")
+    labels = _parcels((37, 30), 12, seed=9)
+    factors = [(2, 2), (4, 4), (8, 4)]
+
+    expected = downsample(labels, factors, mode, align=align)
+    lazy = downsample(
+        da.from_array(labels, chunks=(9, 11)), factors, mode, align=align
+    )
+
+    finer = None  # type: tx.Any
+    for level, reference in zip(lazy, expected):
+        assert isinstance(level, da.Array)
+        assert level.dtype == np.int16
+        assert reference.dtype == np.int16
+        assert set(np.unique(reference)) <= set(np.unique(labels))
+        if finer is not None:
+            assert _tasks(level) - _tasks(finer) == level.npartitions
+        np.testing.assert_array_equal(level.compute(), reference)
+        finer = level
+
+
+@pytest.mark.parametrize("align", ALIGNMENTS)
+@pytest.mark.parametrize("mode", ["vote_binomial", "vote_gaussian"])
+def test_a_chunk_votes_only_among_its_own_labels(
+    mode: str, align: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each call of `vote` smooths the indicator of each label of the
+    # block that it is given, and of no other label, and the block of
+    # a chunk holds fewer labels than the whole image.
+    da = pytest.importorskip("dask.array")
+    labels = (np.arange(48)[:, None] // 8) * 10 + np.arange(48) // 8
+    calls = []  # type: tx.List[tx.Tuple[int, int]]
+
+    def counted(block: tx.Any, smooth: tx.Callable) -> tx.Any:
+        smoothed = []  # type: tx.List[int]
+
+        def counting(indicator: tx.Any) -> tx.Any:
+            smoothed.append(1)
+            return smooth(indicator)
+
+        result = vote(block, counting)
+        calls.append((len(np.unique(block)), len(smoothed)))
+        return result
+
+    monkeypatch.setattr(pyramids, "vote", counted)
+    lazy = da.from_array(labels, chunks=16)
+    (level,) = downsample(lazy, [(2, 2)], mode, align=align)
+    level.compute(scheduler="synchronous")
+
+    assert len(calls) == level.npartitions
+    assert all(present == visited for present, visited in calls)
+    assert max(visited for _, visited in calls) < len(np.unique(labels))
+
+
+def test_a_vote_keeps_a_thin_line_where_labels_mix() -> None:
+    # A line one voxel wide crosses a region where 20 labels mix, so
+    # that the line holds the highest score of the coarse voxels that
+    # it crosses. A smooth vote keeps it in every column, while
+    # "nearest" keeps only the voxels of the line that fall on its
+    # grid, which leaves gaps along the line.
+    labels = np.random.default_rng(10).integers(2, 22, (64, 64))
+    columns = np.arange(64)
+    labels[np.round(columns / 3 + 10).astype(int), columns] = 1
+
+    def kept(mode: str) -> float:
+        (level,) = downsample(labels, [(2, 2)], mode)
+        return float((level == 1).any(axis=0).mean())
+
+    assert kept("vote_binomial") == 1.0
+    assert kept("vote_gaussian") == 1.0
+    assert kept("nearest") < 0.5
+
+
+def test_a_vote_refuses_the_linear_edge() -> None:
+    with pytest.raises(ValueError, match="repeat"):
+        downsample(_LABELS, [(2, 2)], "vote_gaussian", "linear", "centers")
 
 
 def test_an_averaged_integer_level_keeps_its_type() -> None:
