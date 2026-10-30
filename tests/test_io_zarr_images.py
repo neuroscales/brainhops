@@ -2568,18 +2568,82 @@ def test_writer_skips_a_conventional_name_that_is_taken(
 def test_axes_beyond_the_conventions_are_named_by_position() -> None:
     # The schema of OME-NGFF 0.6 holds at most five axes, so the fallback
     # is checked on the helper that names the axes.
-    from brainhops.io.images.zarr._ome import name_undescribed_axes
+    from brainhops.datamodel.axes import Axis
+    from brainhops.io.images.zarr._ome import describe_axes
 
-    axes = [{"name": ""} for _ in range(3)] + [
-        {"name": name, "type": "space"} for name in ("z", "y", "x")
+    axes = describe_axes([*_spatial_axes(), Axis(), Axis(), Axis()])
+
+    assert axes[3:] == [
+        TimeAxis(name="t"),
+        ChannelAxis(name="c"),
+        Axis(name="dim5"),
     ]
-    name_undescribed_axes(axes)
 
-    assert axes[:3] == [
-        {"name": "dim0"},
+
+@pytest.mark.parametrize(
+    ("ndim", "stored"),
+    [(1, ["x"]), (2, ["y", "x"])],
+)
+def test_writer_names_open_axes_in_brainhops_order(
+    tmp_path: Path, ndim: int, stored: tx.List[str]
+) -> None:
+    # The axes of `...` are named `x`, `y`, ... in brainhops order, and
+    # the store holds them in the reverse order.
+    axes = _written_axes(tmp_path, [...], ndim)
+
+    assert [axis["name"] for axis in axes] == stored
+    assert all(axis["type"] == "space" for axis in axes)
+
+
+def _saved_and_loaded(
+    tmp_path: Path, name: str, data: np.ndarray, axes: tx.List[tx.Any]
+) -> tx.Any:
+    path = str(tmp_path / name)
+    image = SingleScaleImage(data)
+    OmeZarrImage(images=[image], axes=axes).save(path)
+    return path, images.load(path)
+
+
+def test_writer_types_open_axes_before_sorting_them(
+    tmp_path: Path,
+) -> None:
+    # The two axes that close `...` take the types of time and channel,
+    # so they are stored first, and the data moves with them.
+    data = np.arange(2 * 3 * 4 * 5 * 6, dtype="float32")
+    data = data.reshape((2, 3, 4, 5, 6))
+    typed = [*_spatial_axes(), TimeAxis(name="t"), ChannelAxis(name="c")]
+    open_path, read_open = _saved_and_loaded(
+        tmp_path, "open.zarr", data, [*_spatial_axes(), ...]
+    )
+    typed_path, read_typed = _saved_and_loaded(
+        tmp_path, "typed.zarr", data, typed
+    )
+
+    assert _written_systems(open_path)[0]["axes"][:2] == [
         {"name": "t", "type": "time"},
         {"name": "c", "type": "channel"},
     ]
+    assert _stored_axis_names(open_path) == ["t", "c", "z", "y", "x"]
+    stored = np.asarray(abczarr.open(open_path, mode="r")["0"][...])
+    assert np.array_equal(stored, data.transpose(3, 4, 2, 1, 0))
+    assert _written_systems(open_path) == _written_systems(typed_path)
+    assert np.array_equal(
+        np.asarray(read_open.images[0].data),
+        np.asarray(read_typed.images[0].data),
+    )
+    assert np.array_equal(np.asarray(read_open.images[0].data), data)
+
+
+def test_writer_sorts_an_open_axis_after_an_explicit_channel(
+    tmp_path: Path,
+) -> None:
+    # Without a type, the axis that closes `...` would sort between the
+    # channel and the spatial axes while being named `z`.
+    given = [SpaceAxis(name="x"), SpaceAxis(name="y"), ChannelAxis(name="c")]
+    axes = _written_axes(tmp_path, [*given, ...], 4)
+
+    assert [axis["name"] for axis in axes] == ["c", "z", "y", "x"]
+    assert axes[1]["type"] == "space"
 
 
 # ---- pyramids built from one level (#625) ------------------------------
