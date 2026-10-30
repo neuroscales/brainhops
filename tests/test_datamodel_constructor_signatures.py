@@ -299,6 +299,9 @@ IMAGES: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.images.afni._image": {
         "AfniImage": ("data", "transformations"),
     },
+    "brainhops.io.images.analyze._image": {
+        "AnalyzeImage": ("data", "transformations"),
+    },
     "brainhops.io.images.base._base": {
         "ImageFormat": (),
     },
