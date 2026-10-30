@@ -19,6 +19,7 @@ from brainhops.datamodel._transformations import (  # noqa: E402
     tangents as _tangents,
 )
 from brainhops.errors import ParserContentError, WriterError  # noqa: E402
+from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinateField,
     NiftiRASDisplacementField,
@@ -703,3 +704,151 @@ def test_a_velocity_is_written_in_the_encoding_of_the_format(
         np.asarray(integrated.to_nibabel().dataobj),
         np.asarray(kept.to_nibabel().dataobj),
     )
+
+
+# ----------------------------------------------------------------------
+#   THE STORED IMAGE
+# ----------------------------------------------------------------------
+# A NIfTI field keeps its file in a NiftiImage, and the data and the
+# chain that are assigned to it are pending
+# (spec/design/image-backed-transformations.md).
+
+FIELD_CLASSES = [NiftiRASCoordinateField, NiftiRASDisplacementField]
+
+
+def _intent(cls: type) -> int:
+    return VECTOR if cls is NiftiRASCoordinateField else DISPVECT
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_a_field_read_and_saved_is_copied_byte_for_byte(
+    cls: type,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = _write(tmp_path / "in.nii", _ramp(), _intent(cls))
+    field = cls.from_filename(source)
+    target = tmp_path / "out.nii"
+    field.save(target)
+    assert target.read_bytes() == source.read_bytes()
+    assert field.to_bytes() == source.read_bytes()
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_from_image_is_the_constructor_with_an_image(
+    cls: type,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = _write(tmp_path / "in.nii", _ramp(), _intent(cls))
+    image = NiftiImage.from_filename(source)
+    field = cls.from_image(image)
+    assert type(field) is cls
+    assert field.rawdata is image.rawdata
+    assert field.metadata is image.metadata
+    built = cls(image=image)
+    assert built.rawdata is image.rawdata
+    np.testing.assert_array_equal(
+        np.asarray(field.data), np.asarray(built.data)
+    )
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_the_keywords_of_the_constructor_apply_in_order(
+    cls: type,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    image = NiftiImage.from_filename(
+        _write(tmp_path / "in.nii", _ramp(), _intent(cls))
+    )
+    other = NiftiImage.from_filename(
+        _write(tmp_path / "other.nii", _ramp() + 1, _intent(cls))
+    )
+    # `rawdata` and `metadata` override the parts of `image`.
+    field = cls(image=image, rawdata=other.rawdata)
+    assert field.rawdata is other.rawdata
+    assert field.metadata is image.metadata
+    field = cls(image=image, metadata=other.metadata)
+    assert field.rawdata is image.rawdata
+    assert field.metadata is other.metadata
+    # Without `image`, the image is built from `rawdata` and `metadata`.
+    field = cls(rawdata=other.rawdata, metadata=image.metadata)
+    assert field.rawdata is other.rawdata
+    assert field.metadata is image.metadata
+    # The data of the model are pending, and take precedence over the
+    # image, which they never reach.
+    data = _ramp() + 2
+    field = cls(image=image, rawdata=other.rawdata, data=data)
+    assert field.data is data
+    assert field.rawdata is other.rawdata
+    np.testing.assert_array_equal(
+        np.asarray(field.to_image().data)[:, :, :, 0], data
+    )
+    assert field.rawdata is other.rawdata
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_assigning_rawdata_or_metadata_replaces_the_image(
+    cls: type,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = _write(tmp_path / "in.nii", _ramp(), _intent(cls))
+    field = cls.from_filename(source)
+    image = field.to_image()
+    field.rawdata = field_raw = _ramp()[:, :, :, None, :] + 1
+    assert field.rawdata is field_raw
+    assert field.metadata is image.metadata
+    # The image that was returned before is not changed.
+    assert image.rawdata is not field_raw
+    np.testing.assert_array_equal(np.asarray(field.data), _ramp() + 1)
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_to_image_returns_what_a_file_holds(
+    cls: type,
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = _write(tmp_path / "in.nii", _ramp(), _intent(cls))
+    field = cls.from_filename(source)
+    image = field.to_image()
+    assert type(image) is NiftiImage
+    assert image.rawdata is field.rawdata
+    assert image.to_bytes() == source.read_bytes()
+    # Pending data are encoded into the image, and the field keeps them
+    # pending.
+    field.data = _ramp() * 2
+    image = field.to_image()
+    assert image.rawdata is not field.rawdata
+    np.testing.assert_allclose(np.asarray(image.data)[:, :, :, 0], _ramp() * 2)
+    assert int(image.metadata.raw.header["intent_code"]) == _intent(cls)
+    assert field.data is not None
+    assert cls.from_filename(source).to_image() is not field.to_image()
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_an_image_of_another_class_is_refused(cls: type) -> None:
+    from brainhops.datamodel.images import SingleScaleImage
+
+    image = SingleScaleImage(np.zeros((*SHAPE, 1, 3), "float32"))
+    with pytest.raises(TypeError, match="NiftiImage"):
+        cls(image=image)
+    with pytest.raises(TypeError, match="NiftiImage"):
+        cls.from_image(image)
+
+
+@pytest.mark.parametrize("cls", FIELD_CLASSES)
+def test_an_image_with_pending_data_is_consolidated(cls: type) -> None:
+    vectors = _ramp()[:, :, :, None, :]
+    image = NiftiImage(vectors)
+    field = cls(image=image)
+    # The image itself is not changed, and the field holds what its file
+    # holds, with a header.
+    assert image.metadata is None
+    assert field.metadata is not None
+    assert field.metadata.raw is not None
+    np.testing.assert_array_equal(np.asarray(field.rawdata), vectors)
+    np.testing.assert_array_equal(np.asarray(field.data), _ramp())
+    # Data assigned to an image that was read are pending in the image.
+    read = NiftiImage.from_bytes(cls(image=image).to_bytes())
+    read.data = vectors + 1
+    field = cls(image=read)
+    assert field.rawdata is not read.rawdata
+    np.testing.assert_array_equal(np.asarray(field.data), _ramp() + 1)

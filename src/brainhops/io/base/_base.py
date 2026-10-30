@@ -943,10 +943,14 @@ def takes_over(cls: type, name: str) -> bool:
     transformation model declares `_data` itself, and its own
     `from_instance` converts the data of another class, so a
     transformation format does not take `data` over.
+
+    The field `_<name>` may also be a value that the constructor takes
+    and does not keep. A NIfTI field takes `metadata` over in this way,
+    because it stores the metadata in its image.
     """
     if not any(
         field.name == "_" + name and field.public_name == name
-        for field in fields(cls)
+        for field in fields(cls, var=None)
     ):
         return False
     for klass in cls.__mro__:

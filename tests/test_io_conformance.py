@@ -5335,8 +5335,11 @@ def test_no_format_holds_its_arrays_in_raw() -> None:
     for cls in FileFormat._REGISTRY:
         if not cls.__module__.startswith("brainhops."):
             continue
-        names = {field.name for field in fields(cls)}
-        names |= {field.public_name for field in fields(cls)}
+        # A format that stores its file in an image takes `rawdata` as
+        # a value that its constructor does not keep, so the values that
+        # the constructor takes are checked too.
+        names = {field.name for field in fields(cls, var=None)}
+        names |= {field.public_name for field in fields(cls, var=None)}
         assert not hasattr(cls, "raw"), cls
         assert not names & {"raw", "_raw"}, cls
         assert ("rawdata" in names) == (cls in holders), cls
@@ -5363,8 +5366,15 @@ def test_01_no_parser_state(cls: type, exemplar: Exemplar) -> None:
     # as `data`, which is pending until the object is consolidated.
     allowed = names(data_model_of(cls)) | {"rawdata", "metadata", "data"}
     allowed |= exemplar.options
+    # A format that stores its file in an image takes that image, an
+    # image format such as a NiftiImage, as `image`, which is not the
+    # nibabel image of the removed parsers.
+    state = _PARSER_STATE
+    if hasattr(cls, "to_image"):
+        allowed |= {"image"}
+        state = state - {"image"}
     assert names(cls) <= allowed
-    assert not names(cls) & _PARSER_STATE
+    assert not names(cls) & state
     assert names(exemplar.metadata) <= names(Metadata) | {"raw"}
     assert not names(exemplar.metadata) & _PARSER_STATE
 

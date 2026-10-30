@@ -106,9 +106,11 @@ def test_a_transformation_of_the_data_model_holds_generic_metadata() -> None:
 def test_a_format_takes_the_metadata_of_the_root_over(
     cls: type, metadata_class: type
 ) -> None:
-    # One field is known as `metadata`: the private field of the format,
-    # which keeps the place of the field of the root.
-    named = [f for f in fields(cls) if f.public_name == "metadata"]
+    # One field is known as `metadata`: the private field of the
+    # format, which keeps the place of the field of the root. A format
+    # that stores its file in an image takes the metadata as a value
+    # that its constructor does not keep, so such values are listed too.
+    named = [f for f in fields(cls, var=None) if f.public_name == "metadata"]
     assert [f.name for f in named] == ["_metadata"]
     parameter = inspect.signature(cls).parameters["metadata"]
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY

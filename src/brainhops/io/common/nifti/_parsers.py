@@ -32,7 +32,7 @@ from ._raw import NiftiRaw, sniffed_header
 
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
-_NIBABEL_OPTIONS = ("mmap", "keep_file_open")
+NIBABEL_OPTIONS = ("mmap", "keep_file_open")
 """The reader options that a NIfTI format accepts, as nibabel's readers."""
 
 
@@ -387,7 +387,7 @@ def _mmap_option(kwargs: tx.Mapping[str, tx.Any]) -> bool:
     ValueError
         If `mmap` is not one of `True`, `False`, `"c"` and `"r"`.
     """
-    unknown = [name for name in kwargs if name not in _NIBABEL_OPTIONS]
+    unknown = [name for name in kwargs if name not in NIBABEL_OPTIONS]
     if unknown:
         raise TypeError(
             f"Unknown NIfTI reader option(s): {', '.join(unknown)}"

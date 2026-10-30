@@ -29,6 +29,7 @@ __all__ = [
     "nifti_to_axes",
     "nifti_to_unit",
     "NIFTI_XCODES",
+    "NIBABEL_OPTIONS",
     "NiftiObject",
     "NiftiProxy",
     "record_image",
@@ -79,5 +80,6 @@ from ._header import (
     stored_parts,
     written_nifti,
 )
+from ._parsers import NIBABEL_OPTIONS
 from ._raw import sniffed_header
 from ._units import nifti_to_unit
