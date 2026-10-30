@@ -205,8 +205,8 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
         assert block.degree == degree
         assert block.store == store
         # The array is what the field stores: values or B-spline coefficients.
-        assert block.displacement.data is block.field
-        assert block.field.shape[-1] == 3
+        assert block.displacement.data is block.data
+        assert block.data.shape[-1] == 3
 
 
 # ----------------------------------------------------------------------
@@ -233,7 +233,7 @@ def test_warp_field_is_decoded_in_itks_own_layout(
     assert isinstance(block, itk.ItkDisplacementBase)
 
     expected = np.load(data_dir / f"{name}_expected.npy")
-    field = np.asarray(block.field)
+    field = np.asarray(block.data)
     assert field.shape == expected.shape
     np.testing.assert_allclose(field, expected)
     assert block.interleaved is interleaved
@@ -402,7 +402,7 @@ def test_warp_block_computes(name: str) -> None:
         np.asarray(result[0].matrix), affines.inv(vox2lps)
     )
     assert isinstance(result[-1], xforms.DisplacementField)
-    assert np.asarray(result[-1].field).shape == np.asarray(block.field).shape
+    assert np.asarray(result[-1].data).shape == np.asarray(block.data).shape
     assert result[-1].degree == block.degree
     assert result[-1].store == block.store
     assert result.input == block.input
@@ -456,7 +456,7 @@ def test_warp_block_grid_is_read_at_its_own_dimensionality() -> None:
     assert shape == (3, 4)
     np.testing.assert_allclose(vox2lps, [[0.0, -5.0, 10.0], [2.0, 0.0, 20.0]])
     assert np.asarray(block.voxel2lps.matrix).shape == (2, 3)
-    assert np.asarray(block.field).shape == (3, 4, 2)
+    assert np.asarray(block.data).shape == (3, 4, 2)
     assert block.input == block.output
     assert len(block.input.axes) == 2
 
@@ -519,11 +519,11 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
     assert isinstance(block, itk.ItkDisplacementBase)
 
     assert block.input == block.output
-    assert not hasattr(block, "_cache_field")
+    assert not hasattr(block, "_cache_data")
 
     # Asking for the chain decodes the field.
     assert len(block) == 3
-    assert hasattr(block, "_cache_field")
+    assert hasattr(block, "_cache_data")
 
 
 def _write_h5_warp_without_parameters(

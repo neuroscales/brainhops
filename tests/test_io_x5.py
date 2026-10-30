@@ -563,7 +563,7 @@ def test_bspline_agrees_with_the_itk_reader(tmp_path: Path) -> None:
     vox2lps = block.voxel2lps.to(xforms.Affine).homogeneous_matrix
     flip = np.diag([-1.0, -1.0, 1.0, 1.0])
     vox2ras = flip @ vox2lps
-    coeffs = np.asarray(block.field) @ (flip[:3, :3] @ vox2lps[:3, :3]).T
+    coeffs = np.asarray(block.data) @ (flip[:3, :3] @ vox2lps[:3, :3]).T
     path = _write_x5(
         tmp_path / "itk.x5",
         [_bspline(transform=coeffs, additional_parameters=vox2ras)],

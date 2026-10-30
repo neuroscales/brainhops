@@ -468,7 +468,7 @@ def test_itk_h5_field_is_read_in_its_hdf5_chunks(tmp_path: Path) -> None:
     h5py = pytest.importorskip("h5py")
     source = Path(__file__).parent / "data" / "itk_displacement3d.h5"
     with backend("numpy"):
-        expected = np.asarray(io.transformations.load(source)[-1].field)
+        expected = np.asarray(io.transformations.load(source)[-1].data)
     # The same file, with its parameters stored in chunks of 8 slices of
     # the slowest axis of the buffer, which is the third axis of the field.
     path = tmp_path / "chunked.h5"
@@ -481,7 +481,7 @@ def test_itk_h5_field_is_read_in_its_hdf5_chunks(tmp_path: Path) -> None:
         chunk = 8 * expected.shape[0] * expected.shape[1] * 3
         new.create_dataset(name, data=parameters, chunks=(chunk,))
     with backend("dask"):
-        field = io.transformations.load(path)[-1].field
-    assert isinstance(field, da.Array)
-    assert field.chunksize[2] == 8
-    np.testing.assert_allclose(field.compute(), expected)
+        data = io.transformations.load(path)[-1].data
+    assert isinstance(data, da.Array)
+    assert data.chunksize[2] == 8
+    np.testing.assert_allclose(data.compute(), expected)
