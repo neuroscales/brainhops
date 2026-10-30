@@ -668,7 +668,7 @@ def test_the_four_warps(warpfull) -> None:  # noqa: ANN001
         )
 
 
-def test_the_full_warp_from_image_1(warpfull) -> None:  # noqa: ANN001
+def test_the_full_warp_from_index_1(warpfull) -> None:  # noqa: ANN001
     """`compute_full_deformation(warp, template, from=1)`: image-2
     points go through `linear2⁻¹`, `mid_to_im2`, `im1_to_mid` and
     `linear1` to image-1 points."""
@@ -680,8 +680,8 @@ def test_the_full_warp_from_image_1(warpfull) -> None:  # noqa: ANN001
     np.testing.assert_allclose(_apply(warp, POINTS), expected, atol=1e-4)
 
 
-def test_the_full_warp_from_image_2(warpfull) -> None:  # noqa: ANN001
-    warp = io.load(warpfull, from_image=2)
+def test_the_full_warp_from_index_2(warpfull) -> None:  # noqa: ANN001
+    warp = io.load(warpfull, from_index=2)
     inverse1 = np.linalg.inv(_homogeneous(LINEAR1))
     expected = _affine(
         LINEAR2, _affine(inverse1, POINTS) + OFFSETS[1] + OFFSETS[2]
@@ -689,12 +689,12 @@ def test_the_full_warp_from_image_2(warpfull) -> None:  # noqa: ANN001
     np.testing.assert_allclose(_apply(warp, POINTS), expected, atol=1e-4)
 
 
-@pytest.mark.parametrize("from_image", [1, 2])
-def test_the_midway_warps(warpfull, from_image) -> None:  # noqa: ANN001
+@pytest.mark.parametrize("from_index", [1, 2])
+def test_the_midway_warps(warpfull, from_index) -> None:  # noqa: ANN001
     """`compute_midway_deformation`: `linear` after warp 0 (or 2)."""
-    warp = io.load(warpfull, from_image=from_image, midway=True)
+    warp = io.load(warpfull, from_index=from_index, midway=True)
     linear, offset = (
-        (LINEAR1, OFFSETS[0]) if from_image == 1 else (LINEAR2, OFFSETS[2])
+        (LINEAR1, OFFSETS[0]) if from_index == 1 else (LINEAR2, OFFSETS[2])
     )
     expected = _affine(linear, POINTS + offset)
     np.testing.assert_allclose(_apply(warp, POINTS), expected, atol=1e-4)

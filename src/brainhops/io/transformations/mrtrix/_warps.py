@@ -1004,10 +1004,10 @@ class MrtrixWarpFull(
     - by default, the whole map from image 2 to image 1, which warps
       image 1 onto image 2 (`-from 1`): `linear2⁻¹`, `mid_to_im2`,
       `im1_to_mid`, `linear1`;
-    - with `from_image=2`, the map from image 1 to image 2 (`-from 2`):
+    - with `from_index=2`, the map from image 1 to image 2 (`-from 2`):
       `linear1⁻¹`, `mid_to_im1`, `im2_to_mid`, `linear2`;
     - with `midway=True`, the map from the midway space to image 1 (or 2
-      with `from_image=2`), which warps that image to the midway space
+      with `from_index=2`), which warps that image to the midway space
       (`-midway_space`): `im1_to_mid` then `linear1`.
 
     The pieces are available on their own: `linear1`, `linear2`,
@@ -1015,18 +1015,19 @@ class MrtrixWarpFull(
 
     The file holds the pieces, which a chain cannot be split back into, so
     the warps are written from `data`, and the linear transforms and every
-    other header key from the record, whatever `from_image` and `midway`
+    other header key from the record, whatever `from_index` and `midway`
     are. An assigned chain is refused when the file is written. A new file
     is built with [`from_warps`][].
     """
 
     HINTS = ("warpfull", "warp_full")
 
-    from_image: int = 1
+    from_index: int = 1
     """
-    Which image the warp moves: `1`, the default, maps image-2 points
-    (or midway points, with `midway`) to image-1 points, and `2` maps
-    the other way. This is the `-from` option of MRtrix.
+    The index, 1 or 2, of the image that the warp moves: `1`, the
+    default, maps image-2 points (or midway points, with `midway`) to
+    image-1 points, and `2` maps the other way. This is the `-from`
+    option of MRtrix.
     """
 
     midway: bool = False
@@ -1104,7 +1105,7 @@ class MrtrixWarpFull(
             Whether the lazy array memory-maps local data that is not
             compressed.
         **kwargs : Any
-            The options `from_image` and `midway`. Any other option is
+            The options `from_index` and `midway`. Any other option is
             refused.
 
         Returns
@@ -1137,7 +1138,7 @@ class MrtrixWarpFull(
         mmap : bool, default=False
             Accepted for the readers of paths, and without effect.
         **kwargs : Any
-            The options `from_image` and `midway`. Any other option is
+            The options `from_index` and `midway`. Any other option is
             refused.
 
         Returns
@@ -1165,7 +1166,7 @@ class MrtrixWarpFull(
         linear2: tx.Optional[tx.Any] = None,
         *,
         keyval: tx.Optional[tx.Mapping[str, str]] = None,
-        from_image: int = 1,
+        from_index: int = 1,
         midway: bool = False,
     ) -> "MrtrixWarpFull":
         """Build a warpfull file from its parts.
@@ -1189,8 +1190,8 @@ class MrtrixWarpFull(
             image 2. It defaults to the identity.
         keyval : mapping, optional
             Other header keys.
-        from_image : int, default=1
-            Which image the warp moves.
+        from_index : int, default=1
+            The index, 1 or 2, of the image that the warp moves.
         midway : bool, default=False
             Whether the warp stops at the midway space.
 
@@ -1221,7 +1222,7 @@ class MrtrixWarpFull(
         return cls(
             rawdata=raw,
             metadata=MrtrixMetadata.from_raw(record),
-            from_image=from_image,
+            from_index=from_index,
             midway=midway,
         )
 
@@ -1271,18 +1272,18 @@ class MrtrixWarpFull(
 
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
-        """The chain of the map that `from_image` and `midway` select.
+        """The chain of the map that `from_index` and `midway` select.
 
         The chain is decoded on first access and cached, as `mrtransform
         -warp_full [-from N] [-midway_space]` composes it (see the class
         docstring). A chain can be assigned, but a file cannot hold it, so
         it is refused when the warps are consolidated or written.
         """
-        if self.from_image not in (1, 2):
+        if self.from_index not in (1, 2):
             raise ValueError(
-                f"from_image must be 1 or 2, not {self.from_image!r}"
+                f"from_index must be 1 or 2, not {self.from_index!r}"
             )
-        if self.from_image == 1:
+        if self.from_index == 1:
             to_mid, from_mid = self.im1_to_mid, self.mid_to_im2
             linear, other = self.linear1, self.linear2
         else:
@@ -1312,7 +1313,7 @@ class MrtrixWarpFull(
         `MrtrixCoordinateField._consolidate`. A warpfull object that
         has a record storing its warps as they are stored, and nothing
         pending, consolidated without options, is left as it is.
-        `from_image` and `midway` select what is decoded, and are not
+        `from_index` and `midway` select what is decoded, and are not
         written.
 
         The metadata is consolidated first (step 2 of the precedence on
@@ -1605,11 +1606,11 @@ def _warpfull_options(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:
     Raises
     ------
     TypeError
-        If an option other than `from_image` and `midway` is given.
+        If an option other than `from_index` and `midway` is given.
     """
     options = {
         name: kwargs.pop(name)
-        for name in ("from_image", "midway")
+        for name in ("from_index", "midway")
         if name in kwargs
     }
     no_options(kwargs, OPTION_OWNER)

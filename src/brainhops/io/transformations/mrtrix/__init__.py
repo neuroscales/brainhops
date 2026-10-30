@@ -174,7 +174,7 @@ The object is the map that `mrtransform -warp_full` applies
 (`compute_full_deformation`, in `compose.h`). By default, it is the map
 from image 2 to image 1, which warps image 1 onto image 2 (`-from 1`):
 `linear2⁻¹`, `mid_to_im2`, `im1_to_mid` and `linear1`. The reading
-options `from_image=2` and `midway=True` select the other maps (`-from
+options `from_index=2` and `midway=True` select the other maps (`-from
 2` and `-midway_space`), and the warps and the linear transforms are
 also available one by one. A chain cannot be split back into these
 pieces, so a warpfull file is written from its warps and its record, and
