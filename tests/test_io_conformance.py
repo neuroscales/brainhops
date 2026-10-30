@@ -6309,7 +6309,7 @@ def test_p01_pyramid_shape(cls: type, exemplar: PyramidExemplar) -> None:
     level = _level_exemplar(exemplar)
     assert issubclass(cls, MultiScaleImage)
     assert "level" in level.options
-    allowed = {"images", "transformations", "rawdata", "metadata"}
+    allowed = {"images", "transformations", "rawdata", "metadata", "labels"}
     assert _init_names(cls) <= allowed | exemplar.options
     names = {field.name for field in fields(cls)} | _init_names(cls)
     assert not names & (_PARSER_STATE | {"_node", "_slide", "_source"})

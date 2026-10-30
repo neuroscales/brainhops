@@ -345,6 +345,27 @@ def adopt_scales(obj: tx.Any, scales: tx.Sequence[tx.Any]) -> tx.Any:
     )
 
 
+def _default_mode(obj: tx.Any) -> str:
+    """Return the mode in which the scales of an object are computed.
+
+    A label map, whose `labels` is true, takes the mode `"mode"`, the
+    most frequent value of the voxels that a coarse voxel covers, so
+    that labels are not averaged. Any other object takes the mode
+    `"mean"`.
+
+    Parameters
+    ----------
+    obj : Multiscale
+        The multiscale object whose scales are built.
+
+    Returns
+    -------
+    str
+        The mode of the scales.
+    """
+    return "mode" if getattr(obj, "labels", None) else DEFAULT_MODE
+
+
 def plan_scales(obj: tx.Any, options: tx.Mapping[str, tx.Any]) -> ScalePlan:
     """Return the coarser scales that the options of a pyramid ask for.
 
@@ -385,7 +406,9 @@ def plan_scales(obj: tx.Any, options: tx.Mapping[str, tx.Any]) -> ScalePlan:
         )
     scales = options.get("nscales")
     factor = options.get("factor")
-    mode = options.get("mode", DEFAULT_MODE)
+    mode = options.get("mode")
+    if mode is None:
+        mode = _default_mode(obj)
     align = options.get("align", DEFAULT_ALIGN)
     min_size = options.get("min_size", MIN_SIZE)
     strict = options.get("strict", False)

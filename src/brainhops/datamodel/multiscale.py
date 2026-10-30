@@ -34,7 +34,6 @@ from bagof.magic import NotKwOnly
 # core
 from brainhops._core.pyramids import (
     DEFAULT_ALIGN,
-    DEFAULT_MODE,
     MIN_SIZE,
 )
 
@@ -146,7 +145,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         scales: None = None,
         *,
         factor: tx.Optional[FactorLike] = None,
-        mode: str = DEFAULT_MODE,
+        mode: tx.Optional[str] = None,
         align: str = DEFAULT_ALIGN,
         min_size: int = MIN_SIZE,
         strict: bool = False,
@@ -158,7 +157,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         scales: int,
         *,
         factor: tx.Optional[FactorLike] = None,
-        mode: str = DEFAULT_MODE,
+        mode: tx.Optional[str] = None,
         align: str = DEFAULT_ALIGN,
         min_size: int = MIN_SIZE,
         strict: bool = False,
@@ -169,7 +168,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         self,
         scales: tx.Sequence[FactorLike],
         *,
-        mode: str = DEFAULT_MODE,
+        mode: tx.Optional[str] = None,
         align: str = DEFAULT_ALIGN,
     ) -> tx.Self: ...
 
@@ -183,7 +182,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         ] = None,
         *,
         factor: tx.Optional[FactorLike] = None,
-        mode: str = DEFAULT_MODE,
+        mode: tx.Optional[str] = None,
         align: str = DEFAULT_ALIGN,
         min_size: int = MIN_SIZE,
         strict: bool = False,
@@ -252,9 +251,12 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             The factor of each axis at each step of the rules, in a form
             that `FactorLike` describes. By default, 2 for the spatial
             axes. It is refused with a sequence of `scales`.
-        mode : str, default="mean"
+        mode : str, optional
             How a coarse voxel is computed from the voxels that it
             covers, one of [`MODES`][brainhops._core.pyramids.MODES].
+            By default, `"mode"`, the most frequent value, for an object
+            whose `labels` is true, so that labels are not averaged, and
+            `"mean"` otherwise.
         align : {"exact", "edges", "centers"}, default="exact"
             How the voxels of a coarse scale are laid over those of the
             finest scale. `"exact"` crops each axis to a multiple of `f`
@@ -327,6 +329,6 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             if not keeps_scale(self, index, level, align):
                 break
             kept = index
-        return build_scales(self, plan.factors, mode, align, kept)
+        return build_scales(self, plan.factors, plan.mode, align, kept)
 
     # --- hooks --------------------------------------------------------

@@ -61,7 +61,7 @@ from ._transformations.compute.multiscale import (
 from ._transformations.compute.separable import pull_separable
 from .axes import Axis, AxisList, AxisSequence, SpaceAxis, TensorAxis
 from .base import DataModelBase
-from .enums import BoundaryLike, InterpolationLike
+from .enums import BoundaryLike, IntentEnum, InterpolationLike
 from .geometry import Geometry
 from .metadata import Metadata
 from .multiscale import Multiscale
@@ -72,6 +72,47 @@ from .transformations import (
     Identity,
     Transformation,
 )
+
+__all__ = [
+    "Image",
+    "Label",
+    "LabelTable",
+    "LabelsLike",
+    "MultiScaleImage",
+    "SingleScaleImage",
+]
+
+
+class Label(tx.NamedTuple):
+    """The name and the colour of one value of a label map.
+
+    A label map is an image whose values are integers that each stand
+    for a region or a class, such as a segmentation or an atlas. A
+    [`LabelTable`][] gives a `Label` to each value whose name is known.
+
+    !!! example
+        ```pycon
+        >>> Label("hippocampus", (220, 216, 20, 255))
+        Label(name='hippocampus', color=(220, 216, 20, 255))
+        ```
+    """
+
+    name: str
+    """The name of the region or class."""
+
+    color: tx.Optional[tx.Tuple[int, int, int, int]] = None
+    """The colour as red, green, blue and alpha values from 0 to 255,
+    or `None` when the colour is not known."""
+
+
+LabelTable: tx.TypeAlias = tx.Dict[int, Label]
+"""A table from the values of a label map to their [`Label`][]."""
+
+LabelsLike: tx.TypeAlias = tx.Union[bool, LabelTable, None]
+"""The values that the `labels` property of an image can take."""
+
+# The intents that state that the values of an image are labels.
+_LABEL_INTENTS = (IntentEnum.label, IntentEnum.neuroname)
 
 
 class Image(
@@ -94,6 +135,36 @@ class Image(
 
     metadata: NoRepr[tx.Optional[Metadata]] = None
     """What describes the image beyond its data and geometry."""
+
+    _labels: NoRepr[LabelsLike] = None
+    """Whether the image is a label map, as it was given (see
+    `labels`)."""
+
+    @smartproperty
+    def labels(self) -> LabelsLike:
+        """Whether the image is a label map, and the names of its labels.
+
+        A label map is an image whose values are integers that each
+        stand for a region or a class, such as a segmentation. Code that
+        resamples an image reads this property to avoid averaging
+        labels. The property takes one of four values.
+
+        - `None` when it is not known whether the image is a label map.
+        - `False` when the image is known not to be a label map.
+        - `True` when the image is a label map whose names are not known.
+        - A [`LabelTable`][] when the names of the labels are known. The
+          table is never empty.
+
+        A value given to the constructor or assigned to the property is
+        returned as it is. Otherwise the value is derived from the
+        `intent` field of the metadata: the intents `label` and
+        `neuroname` give `True`, any other intent gives `False`, and an
+        image without an intent gives `None`. A multi-scale image that
+        was given no value takes the value of its finest level. Assigning
+        `None` restores the derived value. The data are never read to
+        find the values that they hold.
+        """
+        return _labels_from_metadata(self.metadata)
 
     # --- conversions --------------------------------------------------
 
@@ -143,7 +214,9 @@ class Image(
         if isinstance(self, SingleScaleImage) and issubclass(
             target, MultiScaleImage
         ):
-            pyramid = MultiScaleImage(images=[self], metadata=self.metadata)
+            pyramid = MultiScaleImage(
+                images=[self], metadata=self.metadata, labels=self._labels
+            )
             converted = target.from_instance(pyramid, **fields)
             return build_pyramid(
                 converted, pyramid_options, default=target.BUILDS_SCALES
@@ -270,7 +343,7 @@ class Image(
         self.transformations = transformations
 
 
-GeometryLike: tx.TypeAlias = tx.Union[Image, Geometry, Transformation]
+_GeometryLike: tx.TypeAlias = tx.Union[Image, Geometry, Transformation]
 
 
 class SingleScaleImage(Image):
@@ -441,8 +514,8 @@ class SingleScaleImage(Image):
 
     def reslice(
         self,
-        geometry: tx.Optional[GeometryLike] = None,
-        degree: InterpolationLike = 1,
+        geometry: tx.Optional[_GeometryLike] = None,
+        degree: tx.Optional[InterpolationLike] = None,
         bound: BoundaryLike = "reflect",
         coeff: bool = False,
         copy: bool = False,
@@ -469,9 +542,11 @@ class SingleScaleImage(Image):
             transformation keeps the current shape.
             By default, the image is resampled onto its ow geometry.
 
-        degree : int, default=1
+        degree : int, optional
             Spline degree, from 0 (nearest neighbour) up to 7.
-            A degree of 1 gives linear interpolation.
+            A degree of 1 gives linear interpolation. By default, the
+            degree is 0 for a label map, whose `labels` is true, so that
+            labels are not averaged, and 1 otherwise.
 
         bound : str or float, default="reflect"
             Boundary condition, which says how the data continues beyond
@@ -542,6 +617,8 @@ class SingleScaleImage(Image):
             map of the voxels, and `"reslice"` is appended to `history`.
             The metadata keeps its class and its record.
         """
+        if degree is None:
+            degree = 0 if self.labels else 1
         opt = dict(
             degree=degree,
             bound=bound,
@@ -599,6 +676,7 @@ class SingleScaleImage(Image):
             transformations=[target],
             metadata=metadata,
             frames=frames,
+            labels=self._labels,
         )
         if reframe is False:
             return resliced
@@ -806,6 +884,7 @@ class SingleScaleImage(Image):
             transformations=transformations,
             metadata=self.metadata,
             frames=self._frames,
+            labels=self._labels,
         )
 
     def __getitem__(self, index: CartesianIndex) -> "SingleScaleImage":
@@ -868,6 +947,7 @@ class SingleScaleImage(Image):
             transformations=transformations,
             metadata=metadata,
             frames=frames,
+            labels=self._labels,
         )
 
 
@@ -901,6 +981,16 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
     def data(self) -> ArrayProtocol:
         """The data of the highest-resolution level."""
         return self.images[0].data
+
+    @smartproperty
+    def labels(self) -> LabelsLike:
+        # A pyramid without a value of its own takes the value of its
+        # finest level, and then the value given by its own metadata.
+        if self.images:
+            value = self.images[0].labels
+            if value is not None:
+                return value
+        return _labels_from_metadata(self.metadata)
 
     # --- conversion to another backend -------------------------------
 
@@ -984,8 +1074,8 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
 
     def reslice(
         self,
-        geometry: tx.Optional[GeometryLike] = None,
-        degree: InterpolationLike = 1,
+        geometry: tx.Optional[_GeometryLike] = None,
+        degree: tx.Optional[InterpolationLike] = None,
         bound: BoundaryLike = "reflect",
         coeff: bool = False,
         copy: bool = False,
@@ -1005,9 +1095,10 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             The target geometry, interpreted as in
             [`SingleScaleImage.reslice`][].
 
-        degree : int, default=1
+        degree : int, optional
             Spline degree, from 0 (nearest neighbour) up to 7. A degree of 1
-            gives linear interpolation.
+            gives linear interpolation. By default, the degree is 0 for a
+            label map, whose `labels` is true, and 1 otherwise.
 
         bound : str or float, default="reflect"
             Boundary condition, which says how the data continues beyond
@@ -1063,6 +1154,8 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         SingleScaleImage
             The resliced image.
         """
+        if degree is None:
+            degree = 0 if self.labels else 1
         opt = dict(
             degree=degree,
             bound=bound,
@@ -1079,7 +1172,11 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
                 include="affine", on_error=None
             ),
         )
-        return self.to_singlescale(level).reslice(geometry, **opt)
+        resliced = self.to_singlescale(level).reslice(geometry, **opt)
+        if self._labels is not None:
+            # A value set on the pyramid itself is kept in the result.
+            resliced.labels = self._labels
+        return resliced
 
     def __call__(self, transform: Transformation) -> "MultiScaleImage":
         """Apply a transformation to the pyramid lazily, without reslicing.
@@ -1096,11 +1193,20 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             images=self.images,
             transformations=transformations,
             metadata=self.metadata,
+            labels=self._labels,
         )
 
 
+def _labels_from_metadata(metadata: tx.Optional[Metadata]) -> LabelsLike:
+    """Return the `labels` value that the intent of some metadata gives."""
+    intent = None if metadata is None else metadata.intent
+    if intent is None:
+        return None
+    return intent in _LABEL_INTENTS
+
+
 def _get_geometry(
-    image: "MultiScaleImage", geometry: tx.Optional[GeometryLike] = None
+    image: "MultiScaleImage", geometry: tx.Optional[_GeometryLike] = None
 ) -> Geometry:
     if geometry is None:
         geometry = image.geometry
@@ -1113,7 +1219,7 @@ def _get_geometry(
 
 def _get_voxel2world(
     image: "MultiScaleImage",
-    geometry: tx.Optional[GeometryLike] = None,
+    geometry: tx.Optional[_GeometryLike] = None,
 ) -> Transformation:
     """Return the voxel-to-world transformation of the reslicing target."""
     if geometry is None:
