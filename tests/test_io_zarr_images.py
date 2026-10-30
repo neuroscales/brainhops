@@ -2568,18 +2568,31 @@ def test_writer_skips_a_conventional_name_that_is_taken(
 def test_axes_beyond_the_conventions_are_named_by_position() -> None:
     # The schema of OME-NGFF 0.6 holds at most five axes, so the fallback
     # is checked on the helper that names the axes.
-    from brainhops.io.images.zarr._ome import name_undescribed_axes
+    from brainhops.datamodel.axes import Axis
+    from brainhops.io.images.zarr._ome import describe_axes
 
-    axes = [{"name": ""} for _ in range(3)] + [
-        {"name": name, "type": "space"} for name in ("z", "y", "x")
-    ]
-    name_undescribed_axes(axes)
+    axes = describe_axes([*_spatial_axes(), Axis(), Axis(), Axis()])
 
-    assert axes[:3] == [
-        {"name": "dim0"},
-        {"name": "t", "type": "time"},
-        {"name": "c", "type": "channel"},
+    assert axes[3:] == [
+        TimeAxis(name="t"),
+        ChannelAxis(name="c"),
+        Axis(name="dim5"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("ndim", "stored"),
+    [(1, ["x"]), (2, ["y", "x"])],
+)
+def test_writer_names_open_axes_in_brainhops_order(
+    tmp_path: Path, ndim: int, stored: tx.List[str]
+) -> None:
+    # The axes of `...` are named `x`, `y`, ... in brainhops order, and
+    # the store holds them in the reverse order.
+    axes = _written_axes(tmp_path, [...], ndim)
+
+    assert [axis["name"] for axis in axes] == stored
+    assert all(axis["type"] == "space" for axis in axes)
 
 
 def _saved_and_loaded(

@@ -191,11 +191,10 @@ def test_the_pyramid_axes_are_an_axis_list() -> None:
     written = _pyramid(None)._write_axes(3)
     assert [axis.name for axis in written] == ["x", "y", "z"]
     # The axes that close `...` take the conventional names and types
-    # of their stored positions, counted from the end, so the last axis
-    # is `x`.
+    # in brainhops order, so that the first axis is `x`.
     assert _pyramid([...])._write_axes(2) == [
-        SpaceAxis(name="y"),
         SpaceAxis(name="x"),
+        SpaceAxis(name="y"),
     ]
 
 

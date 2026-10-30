@@ -894,7 +894,6 @@ def build_ome(
         OME-NGFF version to produce.
     """
     json_axes = [axis_to_json(axis) for axis in axes]
-    name_undescribed_axes(json_axes)
     level_output = INTRINSIC_SYSTEM if commons else WORLD_SYSTEM
     if commons:
         systems = [{"name": INTRINSIC_SYSTEM, "axes": json_axes}]
@@ -935,21 +934,25 @@ def build_ome(
 
 
 def describe_axes(axes: tx.Sequence[Axis]) -> tx.List[Axis]:
-    """Return the axes in brainhops order, with every undescribed axis
-    named and typed after the OME convention.
+    """Return the axes with every undescribed axis named and typed after
+    the OME convention.
 
-    The writer of a pyramid calls this function before it sorts the axes
-    into the stored order, because that sort groups the axes by type.
-    An axis that has neither a name nor a type would otherwise sort with
-    the axes of unknown type, between the channels and the spatial axes,
-    even when it later takes the name `z`. Once named and typed here,
-    such an axis sorts into its conventional place, so that a plain
-    image is stored as `t, c, z, y, x`.
+    OME-NGFF needs a distinct name for every axis. An undescribed axis,
+    such as an axis that closes `...`, has neither a name nor a type. The
+    writer of a pyramid calls this function before it sorts the axes
+    into the stored order, because that sort groups the axes by type,
+    so that each undescribed axis sorts into its conventional place.
 
-    The conventional name of an axis is the one of its position in the
-    stored order, counted from the end, as
-    [`name_undescribed_axes`][] chooses it. An axis that already has a
-    name or a type keeps it.
+    The conventional names are those of `default_canonical_axes`, in
+    brainhops order: `x`, `y` and `z` in space, then `t` in time and `c`
+    for the channels. The names that the other axes already use are
+    removed, and the remaining names are given, with their types, to
+    the undescribed axes in their brainhops order. When the five names
+    are exhausted, an undescribed axis is named `dim<i>` after its
+    position, and its type is left unset. An axis that has a name keeps
+    it. An axis that has a type but no name keeps its type and takes the
+    first free conventional name of that type, or `dim<i>` when there is
+    none.
 
     Parameters
     ----------
@@ -959,65 +962,38 @@ def describe_axes(axes: tx.Sequence[Axis]) -> tx.List[Axis]:
     Returns
     -------
     list of Axis
-        The same axes, in the same order, with the undescribed axes
-        named and typed.
-    """
-    perm = _axisorder.to_storage(axes)
-    stored = _axisorder.permute(list(axes), perm)
-    json_axes = [axis_to_json(axis) for axis in stored]
-    name_undescribed_axes(json_axes)
-    described = list(axes)
-    for position, (axis, entry) in enumerate(zip(stored, json_axes)):
-        changes = {}  # type: tx.Dict[str, tx.Any]
-        if getattr(axis, "name", None) != entry["name"]:
-            changes["name"] = entry["name"]
-        if getattr(axis, "type", None) is None and "type" in entry:
-            changes["type"] = entry["type"]
-        if changes:
-            described[perm[position]] = replace(axis, **changes)
-    return described
-
-
-def name_undescribed_axes(json_axes: tx.List[tx.Dict[str, tx.Any]]) -> None:
-    """Name the axes that have no name, so that every name is distinct.
-
-    OME-NGFF needs a distinct name for every axis. An axis without one,
-    such as an axis that closes `...`, takes the conventional name and
-    type of its position in the stored order `t, c, z, y, x`, counted
-    from the end, as `default_canonical_axes` gives them. When that
-    name is already used, the axis takes the next conventional name that
-    is still free. When all five are used, the axis is named `dim<i>`
-    after its stored position, and its type is left unset. An axis that
-    has a name keeps it, and an axis that has a type keeps that type.
+        The same axes, in the same order, with every axis named.
     """
     # The pyramid module imports this one, so it is imported when used.
     from brainhops.io.images.zarr._multiscale import default_canonical_axes
 
-    canonical = default_canonical_axes(5)
-    stored = _axisorder.permute(canonical, _axisorder.to_storage(canonical))
-    conventions = [axis_to_json(axis) for axis in reversed(stored)]
-    taken = {entry["name"] for entry in json_axes if entry["name"]}
-    count = len(json_axes)
-    # The axes are named from the end, so that an axis at a conventional
-    # position takes its own name before an axis further from the end.
-    for index, entry in reversed(list(enumerate(json_axes))):
-        if entry["name"]:
+    def name_of(axis: Axis) -> str:
+        name = getattr(axis, "name", None)
+        return name if isinstance(name, str) else ""
+
+    taken = {name_of(axis) for axis in axes} - {""}
+    free = [
+        axis for axis in default_canonical_axes(5) if axis.name not in taken
+    ]
+    described = []
+    for index, axis in enumerate(axes):
+        if name_of(axis):
+            described.append(axis)
             continue
-        position = count - 1 - index
-        free = [
-            convention
-            for convention in conventions[position:] + conventions[:position]
-            if convention["name"] not in taken
-        ]
-        if free:
-            entry["name"] = free[0]["name"]
-            entry.setdefault("type", free[0]["type"])
+        type_ = getattr(axis, "type", None)
+        matches = [c for c in free if type_ is None or c.type == type_]
+        if matches:
+            convention = matches[0]
+            free.remove(convention)
+            name = convention.name
+            described.append(replace(axis, name=name, type=convention.type))
         else:
             name = "dim" + str(index)
             while name in taken:
                 name = "_" + name
-            entry["name"] = name
-        taken.add(entry["name"])
+            described.append(replace(axis, name=name))
+        taken.add(name)
+    return described
 
 
 def write_multiscale(
