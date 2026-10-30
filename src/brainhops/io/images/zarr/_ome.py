@@ -893,17 +893,7 @@ def build_ome(
         OME-NGFF version to produce.
     """
     json_axes = [axis_to_json(axis) for axis in axes]
-    # OME-NGFF needs a distinct name for every axis, so an axis that has
-    # none, such as an axis that closes `...`, is named after its stored
-    # position, as `_default_canonical_axes` names its extra axes.
-    taken = {entry["name"] for entry in json_axes if entry["name"]}
-    for index, entry in enumerate(json_axes):
-        if not entry["name"]:
-            name = "dim" + str(index)
-            while name in taken:
-                name = "_" + name
-            taken.add(name)
-            entry["name"] = name
+    name_undescribed_axes(json_axes)
     level_output = INTRINSIC_SYSTEM if commons else WORLD_SYSTEM
     if commons:
         systems = [{"name": INTRINSIC_SYSTEM, "axes": json_axes}]
@@ -941,6 +931,48 @@ def build_ome(
     if version != NORMALIZED_VERSION:
         ome = ome.to_version(version)
     return ome
+
+
+def name_undescribed_axes(json_axes: tx.List[tx.Dict[str, tx.Any]]) -> None:
+    """Name the axes that have no name, so that every name is distinct.
+
+    OME-NGFF needs a distinct name for every axis. An axis without one,
+    such as an axis that closes `...`, takes the conventional name and
+    type of its position in the stored order `t, c, z, y, x`, counted
+    from the end, as `default_canonical_axes` gives them. When that
+    name is already used, the axis takes the next conventional name that
+    is still free. When all five are used, the axis is named `dim<i>`
+    after its stored position, and its type is left unset. An axis that
+    has a name keeps it, and an axis that has a type keeps that type.
+    """
+    # The pyramid module imports this one, so it is imported when used.
+    from brainhops.io.images.zarr._multiscale import default_canonical_axes
+
+    canonical = default_canonical_axes(5)
+    stored = _axisorder.permute(canonical, _axisorder.to_storage(canonical))
+    conventions = [axis_to_json(axis) for axis in reversed(stored)]
+    taken = {entry["name"] for entry in json_axes if entry["name"]}
+    count = len(json_axes)
+    # The axes are named from the end, so that an axis at a conventional
+    # position takes its own name before an axis further from the end.
+    for index, entry in reversed(list(enumerate(json_axes))):
+        if entry["name"]:
+            continue
+        position = count - 1 - index
+        free = [
+            convention
+            for convention in conventions[position:] + conventions[:position]
+            if convention["name"] not in taken
+        ]
+        if free:
+            entry["name"] = free[0]["name"]
+            entry.setdefault("type", free[0]["type"])
+        else:
+            name = "dim" + str(index)
+            while name in taken:
+                name = "_" + name
+            entry["name"] = name
+        taken.add(entry["name"])
 
 
 def write_multiscale(

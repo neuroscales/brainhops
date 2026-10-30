@@ -2303,3 +2303,54 @@ def test_writer_checks_the_metadata_it_writes(
 
 def _ome_with_two_physical_systems() -> tx.Any:
     return _ome(["physical", "physical"], _SCALE)
+
+
+# ---- names of the axes that have none --------------------------------
+
+
+def _written_axes(tmp_path: Path, axes: tx.List[tx.Any], ndim: int) -> tx.Any:
+    shape = (2,) * ndim
+    image = SingleScaleImage(np.zeros(shape, "float32"))
+    path = str(tmp_path / "img.ome.zarr")
+    OmeZarrImage(images=[image], axes=axes).save(path)
+    return _written_systems(path)[0]["axes"]
+
+
+def test_writer_gives_open_axes_the_conventional_names(
+    tmp_path: Path,
+) -> None:
+    axes = _written_axes(tmp_path, [*_spatial_axes(), ...], 5)
+
+    assert axes[:2] == [
+        {"name": "t", "type": "time"},
+        {"name": "c", "type": "channel"},
+    ]
+    assert [axis["name"] for axis in axes[2:]] == ["z", "y", "x"]
+
+
+def test_writer_skips_a_conventional_name_that_is_taken(
+    tmp_path: Path,
+) -> None:
+    given = [*_spatial_axes(), TimeAxis(name="t"), ...]
+    axes = _written_axes(tmp_path, given, 5)
+
+    names = [axis["name"] for axis in axes]
+    assert sorted(names) == ["c", "t", "x", "y", "z"]
+    assert {"name": "c", "type": "channel"} in axes
+
+
+def test_axes_beyond_the_conventions_are_named_by_position() -> None:
+    # The schema of OME-NGFF 0.6 holds at most five axes, so the fallback
+    # is checked on the helper that names the axes.
+    from brainhops.io.images.zarr._ome import name_undescribed_axes
+
+    axes = [{"name": ""} for _ in range(3)] + [
+        {"name": name, "type": "space"} for name in ("z", "y", "x")
+    ]
+    name_undescribed_axes(axes)
+
+    assert axes[:3] == [
+        {"name": "dim0"},
+        {"name": "t", "type": "time"},
+        {"name": "c", "type": "channel"},
+    ]
