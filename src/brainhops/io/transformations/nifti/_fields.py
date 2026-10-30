@@ -28,7 +28,6 @@ from brainhops.io.common.nifti._internal_api import (
     NIFTI_INTENT_VECTOR,
     NiftiObject,
     header_of,
-    header_voxel_to_ras,
     nifti_intent,
     nifti_intent_name,
     nifti_shape,
@@ -356,7 +355,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
         header = header_of(self)
         if header is None:
             return np.eye(4)
-        return header_voxel_to_ras(header)
+        return np.asarray(header.get_best_affine(), dtype=np.float64)
 
     def _ras_vectors(self) -> ArrayProtocol:
         """

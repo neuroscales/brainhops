@@ -1298,8 +1298,9 @@ its status.
     (4411bec), as a rule for every image format: a header field that the
     data or `dtype=` decide cannot be overridden, and the writer refuses
     it with `WriterError`.
-77. The FSL helper `best_affine`, for an `MghImage`, goes through
-    `MGHHeader.get_best_affine()`. For a flag-0 file that gives the
+77. The helper `best_affine` (`io/common/nifti/_header.py`), which the
+    FSL geometry uses, goes through `MGHHeader.get_best_affine()` for an
+    `MghImage`. For a flag-0 file that gives the
     stored geometry that the reader ignores, which was already wrong
     before pass 3a. The fix is to prefer `record.vox2ras` when the
     record is an `MghRaw`. Status: open.
@@ -1480,10 +1481,10 @@ its status.
      keeps the record too. Writing the same object with its geometry
      encoded again needs a different list or a writer option. Status:
      accepted.
-110. Some readers of the record do not see what is pending. The FSL
-     helpers `best_affine` and `_pixdim`
-     (`io/transformations/fsl/_affines.py`) read `metadata.raw` of a NIfTI
-     image, so after `img.transformations = ...` they still give the
+110. Some readers of the record do not see what is pending. The helpers
+     `best_affine` (`io/common/nifti/_header.py`) and `_pixdim`
+     (`io/transformations/fsl/_affines.py`), which the FSL geometry uses,
+     read `metadata.raw` of a NIfTI image, so after `img.transformations = ...` they still give the
      geometry of the file. `NiftiImage.system` is decoded from the
      header, so it ignores pending data of another number of dimensions.
      Status: open.

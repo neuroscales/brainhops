@@ -9,12 +9,10 @@ the world space of that image. In the 0-based indices of the data model, an
 integer index is the centre of a voxel (see #201).
 """
 
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
 from brainhops.datamodel import systems as _systems
-from brainhops.io.common.nifti._internal_api import header_voxel_to_ras
 
 _SpaceLike = tx.Union[str, _systems.CoordinateSystem, None]
 _BaseLike = tx.Union[int, tx.Tuple[int, int]]
@@ -190,12 +188,10 @@ def image_to_world(
     """
     Return the voxel-to-world matrix of an image and its world space.
 
-    For a `nibabel` image or header, the world space is RAS. A NIfTI header
-    is decoded as `NiftiImage` decodes it, so a header whose sform and qform
-    codes are both zero gets the same default grid, and another header, such
-    as that of an MGH file, gives the affine that nibabel chooses for its
-    format. For a brainhops image, the transformation must be an affine, and
-    the world space is its output.
+    For a `nibabel` image or header, the world space is RAS, and the matrix
+    is the one that nibabel's `get_best_affine()` chooses for the header.
+    For a brainhops image, the transformation must be an affine, and the
+    world space is its output.
     """
     xform = getattr(image, "transformations", None)
     if xform is not None and not hasattr(image, "get_best_affine"):
@@ -208,21 +204,11 @@ def image_to_world(
             )
         output = xform.output or _systems.CoordinateSystem3D()
         return np.asarray(matrix, dtype=np.float64), output
-    header = image
-    if not hasattr(image, "get_best_affine"):
-        header = getattr(image, "header", None)
-    if isinstance(header, nb.Nifti1Header):
-        matrix = header_voxel_to_ras(header)
-    elif hasattr(header, "get_best_affine"):
-        matrix = header.get_best_affine()
-    elif getattr(image, "affine", None) is not None:
-        matrix = image.affine
-    else:
-        raise ValueError(
-            "Cannot find the voxel-to-world affine of the image: pass a "
-            "nibabel image or header, or a brainhops image."
-        )
-    return np.asarray(matrix, dtype=np.float64), _systems.RASCoordinateSystem()
+    # A nibabel image or header needs nibabel, which is optional, so the
+    # helper is imported only here.
+    from brainhops.io.common.nifti._internal_api import best_affine
+
+    return best_affine(image), _systems.RASCoordinateSystem()
 
 
 # ----------------------------------------------------------------------

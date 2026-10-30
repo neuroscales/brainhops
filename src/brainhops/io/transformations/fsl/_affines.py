@@ -1,14 +1,10 @@
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.common.nifti._internal_api import (
-    header_of,
-    header_voxel_to_ras,
-)
+from brainhops.io.common.nifti._internal_api import best_affine, header_of
 
 from ._systems import FslCoordinateSystem
 
@@ -49,29 +45,6 @@ class ScaledMmToScaledMm(_xforms.Affine):
 # ----------------------------------------------------------------------
 #   IMAGE GEOMETRY
 # ----------------------------------------------------------------------
-
-
-def best_affine(obj: tx.Any) -> np.ndarray:
-    """Return the voxel-to-world (RAS) affine of a nibabel image or header.
-
-    A NIfTI header is decoded as `NiftiImage` decodes it, so a header
-    whose sform and qform codes are both zero gets the same default
-    grid. Another header, such as that of an MGH file, gives the affine
-    that nibabel chooses for its format.
-    """
-    if isinstance(obj, nb.Nifti1Header):
-        return header_voxel_to_ras(obj)
-    if hasattr(obj, "get_best_affine"):
-        return np.asarray(obj.get_best_affine(), dtype=np.float64)
-    header = header_of(obj)
-    if header is not None:
-        return best_affine(header)
-    if getattr(obj, "affine", None) is not None:
-        return np.asarray(obj.affine, dtype=np.float64)
-    raise ValueError(
-        "Cannot determine the voxel-to-world affine of the image. Pass a "
-        "nibabel image or header, or an object that exposes one."
-    )
 
 
 def spatial_shape(obj: tx.Any) -> tx.Tuple[int, ...]:

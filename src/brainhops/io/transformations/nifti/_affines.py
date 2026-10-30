@@ -21,7 +21,6 @@ from brainhops.io.common.nifti._internal_api import (
     apply_like,
     apply_overrides,
     header_of,
-    header_voxel_to_ras,
     keep_given_fields,
     record_image,
     split_options,
@@ -303,7 +302,7 @@ class NiftiRASToVoxel(_NiftiAffine, RASToVoxel):
         header = header_of(self)
         if header is None:
             return None
-        return _read_only(np.linalg.inv(header_voxel_to_ras(header))[:-1])
+        return _read_only(np.linalg.inv(header.get_best_affine())[:-1])
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None
@@ -377,7 +376,7 @@ class NiftiVoxelToRAS(_NiftiAffine, VoxelToRAS):
         header = header_of(self)
         if header is None:
             return None
-        return _read_only(header_voxel_to_ras(header)[:-1])
+        return _read_only(header.get_best_affine()[:-1])
 
     _metadata: NoRepr[tx.Optional[NiftiMetadata]] = Inherit(
         "metadata", default=None

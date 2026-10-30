@@ -1,11 +1,11 @@
 """Tests for the default grid of a NIfTI file whose codes are both zero.
 
 When the sform code and the qform code of a NIfTI file are both zero,
-the header does not say where the voxels lie. brainhops then uses one
-default grid, chosen in issue #631, for the image and for every
-transformation stored in a NIfTI file. The default grid scales each
-axis by its voxel size, centres the image with the translation
-`-zoom * (shape - 1) / 2`, and flips the first axis, as nibabel does.
+the header does not say where the voxels lie. brainhops then uses the
+default grid of nibabel's `get_best_affine()`, chosen in issue #631, for
+the image and for every transformation stored in a NIfTI file. The
+default grid scales each axis by its voxel size, centres the image with
+the translation `-zoom * (shape - 1) / 2`, and flips the first axis.
 """
 
 import numpy as np
@@ -15,15 +15,13 @@ nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.transformations import Affine  # noqa: E402
-from brainhops.io.common.nifti._header import (  # noqa: E402
-    header_voxel_to_ras,
-)
+from brainhops.io.common.nifti._header import best_affine  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.afni._geometry import (  # noqa: E402
     nifti_matrix,
 )
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
-    best_affine,
+    ImageGeometry,
 )
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
     ItkNiftiDisplacementField,
@@ -82,11 +80,10 @@ def _save(path, nii: nb.Nifti1Image) -> str:  # noqa: ANN001
 
 
 # ----------------------------------------------------------------------
-#   THE SHARED DECODER
+#   THE RULE OF NIBABEL
 # ----------------------------------------------------------------------
 
-
-@pytest.mark.parametrize(
+_GRIDS = pytest.mark.parametrize(
     ("shape", "zooms"),
     [
         ((4, 5, 1), (2.0, 3.0, 4.0)),
@@ -96,17 +93,44 @@ def _save(path, nii: nb.Nifti1Image) -> str:  # noqa: ANN001
     ],
     ids=["single-slice", "2d", "5d", "zero-and-negative-zooms"],
 )
+
+
+@_GRIDS
 @pytest.mark.parametrize("cls", [nb.Nifti1Header, nb.Nifti2Header])
-def test_a_header_without_codes_decodes_to_the_default_grid(
+def test_nibabel_decodes_a_header_without_codes_to_the_default_grid(
     cls: type, shape: tuple, zooms: tuple
 ) -> None:
-    """The default grid is centred and flips the first axis."""
+    """The default grid is centred and flips the first axis.
+
+    brainhops relies on nibabel's `get_best_affine()` for the default
+    grid, so this test pins the rule that nibabel follows.
+    """
     header = cls()
     header.set_data_shape(shape)
     header["pixdim"][1 : len(zooms) + 1] = zooms
-    matrix = header_voxel_to_ras(header)
+    assert np.array_equal(header.get_best_affine(), _default(shape, zooms))
+    matrix = best_affine(header)
     assert matrix.dtype == np.float64
     assert np.array_equal(matrix, _default(shape, zooms))
+
+
+@_GRIDS
+@pytest.mark.parametrize("cls", [nb.Nifti1Image, nb.Nifti2Image])
+def test_a_nifti_affine_reads_the_grid_of_nibabel(
+    tmp_path,  # noqa: ANN001
+    cls: type,
+    shape: tuple,
+    zooms: tuple,
+) -> None:
+    """The affine stored in a file of any shape is nibabel's grid."""
+    nii = cls(np.zeros(shape, dtype="float32"), None)
+    nii.header["pixdim"][1 : len(zooms) + 1] = zooms
+    nii.header.set_sform(None, code=0)
+    nii.header.set_qform(None, code=0)
+    path = _save(tmp_path / "image.nii", nii)
+    expected = nb.load(path).header.get_best_affine()
+    affine = NiftiVoxelToRAS.from_filename(path)
+    assert np.array_equal(affine.matrix, expected[:3])
 
 
 def test_the_sform_comes_before_the_qform() -> None:
@@ -115,20 +139,41 @@ def test_the_sform_comes_before_the_qform() -> None:
     sform = np.diag([1.0, 2.0, 3.0, 1.0])
     sform[:3, 3] = [4.0, 5.0, 6.0]
     header.set_qform(np.diag([7.0, 7.0, 7.0, 1.0]), code=1)
-    assert np.allclose(header_voxel_to_ras(header), header.get_qform())
+    assert np.allclose(best_affine(header), header.get_qform())
     header.set_sform(sform, code=2)
-    assert np.array_equal(header_voxel_to_ras(header), sform)
+    assert np.array_equal(best_affine(header), sform)
 
 
-def test_a_single_slice_is_centred_on_its_voxel() -> None:
+def test_a_single_slice_is_centred_on_its_voxel(tmp_path) -> None:  # noqa: ANN001
     """The centre of the image is the world origin."""
-    header = nb.Nifti1Header()
-    header.set_data_shape(SHAPE)
-    header.set_zooms(ZOOMS)
+    data = np.zeros(SHAPE, dtype="float32")
+    image = io.load(_save(tmp_path / "image.nii", _uncoded(data)))
     centre = (np.asarray(SHAPE) - 1) / 2
-    world = header_voxel_to_ras(header) @ [*centre, 1.0]
+    matrix = np.asarray(image.transformation.homogeneous_matrix)
+    world = matrix @ [*centre, 1.0]
     assert np.allclose(world[:3], 0.0)
     assert centre[2] == 0.0
+
+
+def test_the_helper_reads_a_record_or_falls_back_on_the_affine(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """The helper reads a record, an affine, or refuses the object.
+
+    A `NiftiImage` is read through the header of its record, an object
+    without a header is read through its affine, and an object with
+    neither is refused.
+    """
+    data = np.zeros(SHAPE, dtype="float32")
+    image = io.load(_save(tmp_path / "image.nii", _uncoded(data)))
+    assert np.array_equal(best_affine(image), DEFAULT)
+
+    class _WithAffine:
+        affine = np.diag([2.0, 3.0, 4.0, 1.0])
+
+    assert np.array_equal(best_affine(_WithAffine()), _WithAffine.affine)
+    with pytest.raises(ValueError):
+        best_affine(object())
 
 
 # ----------------------------------------------------------------------
@@ -276,6 +321,8 @@ def test_the_other_nifti_readers_use_the_default_grid() -> None:
     assert np.array_equal(nifti_matrix(nii), DEFAULT)
     assert np.array_equal(best_affine(nii), DEFAULT)
     assert np.array_equal(best_affine(nii.header), DEFAULT)
+    assert np.array_equal(ImageGeometry(nii).vox2ras, DEFAULT)
+    assert np.array_equal(ImageGeometry(nii.header).vox2ras, DEFAULT)
     assert np.array_equal(image_to_world(nii)[0], DEFAULT)
     assert np.array_equal(image_to_world(nii.header)[0], DEFAULT)
 
@@ -285,6 +332,7 @@ def test_a_header_of_another_format_keeps_its_own_affine() -> None:
     mgh = nb.MGHImage(np.zeros(SHAPE, dtype="float32"), np.eye(4))
     expected = mgh.header.get_best_affine()
     assert np.array_equal(best_affine(mgh), expected)
+    assert np.array_equal(ImageGeometry(mgh).vox2ras, expected)
     assert np.array_equal(image_to_world(mgh)[0], expected)
 
 

@@ -215,40 +215,47 @@ def header_of(obj: tx.Any) -> tx.Any:
     return getattr(obj, "header", None)
 
 
-def header_voxel_to_ras(header: nb.Nifti1Header) -> np.ndarray:
-    """Return the voxel-to-RAS matrix that a NIfTI header describes.
+def best_affine(obj: tx.Any) -> np.ndarray:
+    """Return the voxel-to-RAS matrix of a nibabel image or header.
 
-    Every reader of brainhops that needs the grid of a NIfTI file, such
-    as `NiftiImage` and the transformations stored in a NIfTI file,
-    decodes it with this function, so that they all place the voxels at
-    the same world coordinates.
-
-    The matrix is the sform when the sform code is not zero, and
-    otherwise the qform when the qform code is not zero. When both codes
-    are zero, the header does not say where the voxels lie, and the
-    matrix is a default grid. The default grid scales each of the first
-    three axes by its voxel size (`pixdim`, as stored, even when it is
-    zero or negative) and centres the grid: the translation is
-    `-zoom * (shape - 1) / 2`, so the centre of an axis that has a
-    single voxel is the centre of that voxel. The first axis is flipped,
-    because NIfTI descends from the Analyze format, which stores images
-    in the radiological convention. An image with fewer than three axes
-    is completed with axes of one voxel of size one. The choice of this
-    default is explained in issue #631. nibabel computes the same
-    default in `get_best_affine()`, so this function returns the result
-    of that method, and SPM centres the grid at the same point.
+    The readers that take a nibabel image or header from the caller, such
+    as the FSL geometry and the matrix conventions, place the voxels in
+    world space with this function. The matrix is the one that nibabel's
+    `get_best_affine()` returns for the header, so a NIfTI header whose
+    sform and qform codes are both zero gets the default grid that
+    [`NiftiImage`][brainhops.io.images.nifti.NiftiImage] describes, and
+    the header of another format, such as MGH, gets the matrix that
+    nibabel chooses for that format. An object without a header that
+    nibabel can decode falls back on its `affine` attribute.
 
     Parameters
     ----------
-    header : nibabel.Nifti1Header
-        The header to read. A NIfTI-2 header is accepted too.
+    obj : Any
+        A nibabel header, a nibabel image, or an object that holds a
+        header in its record, such as a `NiftiImage`.
 
     Returns
     -------
     numpy.ndarray
         The `(4, 4)` voxel-to-RAS matrix, in double precision.
+
+    Raises
+    ------
+    ValueError
+        If the object has neither a header that nibabel can decode nor
+        an affine.
     """
-    return np.asarray(header.get_best_affine(), dtype=np.float64)
+    if hasattr(obj, "get_best_affine"):
+        return np.asarray(obj.get_best_affine(), dtype=np.float64)
+    header = header_of(obj)
+    if hasattr(header, "get_best_affine"):
+        return np.asarray(header.get_best_affine(), dtype=np.float64)
+    if getattr(obj, "affine", None) is not None:
+        return np.asarray(obj.affine, dtype=np.float64)
+    raise ValueError(
+        "Cannot determine the voxel-to-world affine of the image. Pass a "
+        "nibabel image or header, or an object that exposes one."
+    )
 
 
 def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
@@ -461,12 +468,12 @@ def written_nifti(raw: ArrayProtocol, record: NiftiRaw) -> NiftiObject:
         image_cls = nb.Nifti2Image
     # nibabel copies the header, and an image built without an affine keeps
     # the geometry of the header as it is, codes of zero included. The
-    # affine of the image is then the grid that the header describes, as
-    # nibabel sets it when it reads a file. nibabel resets the scaling,
-    # which is set again, so that a proxy is written unscaled with the
-    # scaling that its file stored.
+    # affine of the image is then the best affine of the header, as nibabel
+    # sets it when it reads a file. nibabel resets the scaling, which is
+    # set again, so that a proxy is written unscaled with the scaling that
+    # its file stored.
     image = image_cls(raw, None, header)
-    image._affine = header_voxel_to_ras(image.header)
+    image._affine = image.header.get_best_affine()
     image.header["scl_slope"] = header["scl_slope"]
     image.header["scl_inter"] = header["scl_inter"]
     return image

@@ -40,7 +40,6 @@ from brainhops.io.common.nifti._internal_api import (
     NiftiObject,
     embed_nifti_affine,
     header_of,
-    header_voxel_to_ras,
     nifti_intent,
     nifti_intent_name,
     nifti_shape,
@@ -269,7 +268,7 @@ class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
         if header is None:
             vox2ras = np.eye(4)
         else:
-            vox2ras = header_voxel_to_ras(header)
+            vox2ras = np.asarray(header.get_best_affine(), dtype=np.float64)
         vox2lps = _RAS_LPS @ vox2ras
         columns = [*range(ndim), _NIFTI_NDIM]
         return ndim, vox2lps[:ndim][:, columns]

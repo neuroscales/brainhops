@@ -50,7 +50,6 @@ from brainhops.io.common.nifti._internal_api import (
     NIFTI_INTENT_NONE,
     NIFTI_XCODES,
     NiftiObject,
-    header_voxel_to_ras,
     image_with_geometry,
     keep_given_fields,
     nifti_intent,
@@ -111,9 +110,10 @@ class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
     translation `-zoom * (shape - 1) / 2`, so the centre of an axis
     that has a single voxel is the centre of that voxel. It also flips
     the first axis, because NIfTI descends from the Analyze format,
-    which stores images in the radiological convention. nibabel gives
-    the same default, and every transformation stored in a NIfTI file
-    reads its grid in the same way (issue #631). The default grid is
+    which stores images in the radiological convention. This default is
+    the rule of nibabel's `get_best_affine()`, which every
+    transformation stored in a NIfTI file also uses to read its grid
+    (issue #631). The default grid is
     not stored in the file: an image that is read and written again,
     with or without new data of the same shape, keeps both codes zero.
     A grid is written into the sform only when the transformations
@@ -428,11 +428,11 @@ def _nifti_to_transformations(
     `"talairach"`, `"mni"` and `"template"`. A form whose code is zero is
     not set and is omitted, along with its entry named after the code.
     When the qform and the sform have the same code, the fourth entry is
-    omitted. As a result, the last transformation is the grid that
-    [`header_voxel_to_ras`][] decodes, named after its code. When both
-    codes are zero, that grid is the default grid that
-    [`header_voxel_to_ras`][] describes, and it is the only
-    voxel-to-RAS transformation, named `"unknown"` after the code zero.
+    omitted. As a result, the last transformation is the affine that
+    nibabel's `get_best_affine()` returns, named after its code. When
+    both codes are zero, that affine is the default grid that
+    [`NiftiImage`][] describes, and it is the only voxel-to-RAS
+    transformation, named `"unknown"` after the code zero.
 
     The NIfTI affine applies to the spatial axes. When there are other
     axes, each voxel-to-RAS transformation is a `Sequence` made of a
@@ -625,9 +625,9 @@ def _nifti_to_transformations(
         xforms.append(sform)
 
     # --- named & best affines -----------------------------------------
-    # The last transformation is the grid that the shared NIfTI decoder
-    # returns, named after the code of its form, or "unknown" for the
-    # default grid of a header whose codes are both zero. It is rebuilt
+    # The last transformation is nibabel's best affine, named after the
+    # code of its form, or "unknown" for the default grid of a header
+    # whose codes are both zero. It is rebuilt
     # under that name rather than renamed, so that the world space is
     # named consistently in every step of a sequence.
     if sform is not None:
@@ -638,7 +638,7 @@ def _nifti_to_transformations(
         best_name = NIFTI_XCODES[0]
     if sform is not None and qform is not None and scode != qcode:
         xforms.append(_coded_affine(qmatrix, qname))
-    xforms.append(_coded_affine(header_voxel_to_ras(header), best_name))
+    xforms.append(_coded_affine(header.get_best_affine(), best_name))
 
     return xforms
 
