@@ -1918,7 +1918,7 @@ its status.
      `WRITES_SCALES` is true rather than to the conversion
      (`_split_pyramid` in `io/base/_save.py`). The writer writes the
      finest level, and builds each coarser level with `next_scale`
-     (`datamodel/multiscale.py`), which calls the same `_build_scales`
+     (`datamodel/_multiscale.py`), which calls the same `_build_scales`
      as `with_scales` on the levels already written, read back from the
      store. The levels are read back as Dask arrays whose blocks are the
      chunks of the store, whatever the backend setting (`read_back` in
