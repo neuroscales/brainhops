@@ -2580,3 +2580,287 @@ def test_axes_beyond_the_conventions_are_named_by_position() -> None:
         {"name": "t", "type": "time"},
         {"name": "c", "type": "channel"},
     ]
+
+
+# ---- pyramids built from one level (#625) ------------------------------
+
+
+def _single_level(data: tx.Any, axes: tx.Optional[list] = None) -> tx.Any:
+    # An oblique image with voxels of about 1 x 1 x 3, along x, y and z.
+    linear = _oblique_linear() @ np.diag([2.0, 2.0, 2.0])
+    origin = [-12.0, 30.0, 7.5]
+    matrix = np.concatenate([linear, np.array(origin)[:, None]], axis=1)
+    if data.ndim == 4:
+        matrix = np.eye(4, 5)
+        matrix[:3, :3], matrix[:3, 4] = linear, origin
+    image = SingleScaleImage(data, transformations=[Affine(matrix=matrix)])
+    return OmeZarrImage(images=[image], axes=axes or _spatial_axes())
+
+
+def _built_data() -> np.ndarray:
+    rng = np.random.default_rng(5)
+    return rng.random((40, 36, 12)).astype("float32")
+
+
+def _downsampled_world(
+    pyramid: tx.Any,
+    scales: tx.Sequence[float],
+    shifts: tx.Optional[tx.Sequence[float]] = None,
+) -> tx.Any:
+    # The world geometry of a level whose voxel `i` lies at the voxel
+    # `scales * i + shifts` of the finest level of `pyramid`. By
+    # default, the shift is `(f - 1) / 2`, which is the rule of OME-NGFF
+    # 0.6 and of the alignment "exact".
+    matrix = _world_of_level(pyramid, 0)
+    linear, origin = matrix[:, :3], matrix[:, 3]
+    scales = np.asarray(scales, dtype=float)
+    if shifts is None:
+        shifts = (scales - 1) / 2
+    columns = linear @ np.diag(scales)
+    shifted = origin + linear @ np.asarray(shifts, dtype=float)
+    return np.concatenate([columns, shifted[:, None]], axis=1)
+
+
+def test_with_scales_builds_an_oblique_pyramid(tmp_path: Path) -> None:
+    pyramid = _single_level(_built_data()).with_scales(min_size=4)
+    path = str(tmp_path / "built.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    # The voxels of about 1 x 1 x 3 make z wait for two steps, until the
+    # voxels of x and y are 4 long. An axis is halved while it has more
+    # than 4 voxels, and the alignment "exact" drops the last voxel of
+    # an odd axis.
+    shapes = [tuple(level.data.shape) for level in back.images]
+    assert shapes == [
+        (40, 36, 12),
+        (20, 18, 12),
+        (10, 9, 12),
+        (5, 4, 6),
+        (2, 4, 3),
+    ]
+    _check_lean_datasets(path)
+    cumulative = ([1, 1, 1], [2, 2, 1], [4, 4, 1], [8, 8, 2], [16, 8, 4])
+    for index, factors in enumerate(cumulative):
+        np.testing.assert_array_equal(
+            np.asarray(back.images[index].data),
+            np.asarray(pyramid.images[index].data),
+        )
+        np.testing.assert_allclose(
+            _world_of_level(back, index),
+            _downsampled_world(pyramid, factors),
+            atol=1e-12,
+        )
+
+
+@pytest.mark.parametrize(
+    "align, count, scale, shift",
+    [
+        ("exact", 13, 3.0, 1.0),
+        ("edges", 14, 40 / 14, (40 / 14 - 1) / 2),
+        ("centers", 14, 3.0, 0.0),
+    ],
+)
+def test_each_alignment_is_written_as_a_scale_and_a_translation(
+    tmp_path: Path, align: str, count: int, scale: float, shift: float
+) -> None:
+    pyramid = _single_level(_built_data()).with_scales([{"x": 3}], align=align)
+    path = str(tmp_path / "aligned.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    assert tuple(back.images[1].data.shape) == (count, 36, 12)
+    _check_lean_datasets(path)
+    np.testing.assert_allclose(
+        _world_of_level(back, 1),
+        _downsampled_world(pyramid, [scale, 1, 1], [shift, 0, 0]),
+        atol=1e-12,
+    )
+
+
+def test_an_image_converts_to_an_ome_pyramid(tmp_path: Path) -> None:
+    image = _single_level(_built_data()).images[0]
+
+    counted = image.to(OmeZarrImage, nscales=3, min_size=4)
+    explicit = image.to(OmeZarrImage, nscales=[2, {"x": 4, "y": 4, "z": 2}])
+
+    assert isinstance(counted, OmeZarrImage)
+    assert counted.nscales == 3
+    assert tuple(explicit.images[2].data.shape) == (10, 9, 6)
+    path = str(tmp_path / "converted.zarr")
+    explicit.save(path)
+    _check_lean_datasets(path)
+    np.testing.assert_allclose(
+        _world_of_level(images.load(path), 2),
+        _downsampled_world(explicit, [4, 4, 2]),
+        atol=1e-12,
+    )
+
+
+def test_an_image_converts_to_a_full_ome_pyramid_by_default() -> None:
+    data = np.random.default_rng(7).random((130, 100, 40)).astype("float32")
+    image = SingleScaleImage(data)
+
+    built = image.to(OmeZarrImage)
+
+    assert [tuple(level.data.shape) for level in built.images] == [
+        (130, 100, 40),
+        (65, 50, 20),
+        (32, 25, 20),
+    ]
+    assert image.to(OmeZarrImage, nscales=1).nscales == 1
+
+
+def test_save_builds_the_scales_of_a_single_scale_image(
+    tmp_path: Path,
+) -> None:
+    from brainhops import io
+
+    data = np.random.default_rng(8).random((96, 80, 40)).astype("float32")
+    image = SingleScaleImage(data)
+
+    io.save(image, str(tmp_path / "full.ome.zarr"))
+    io.save(image, str(tmp_path / "one.ome.zarr"), nscales=1)
+    io.save(image, str(tmp_path / "max.ome.zarr"), nscales=2, mode="max")
+
+    assert images.load(str(tmp_path / "full.ome.zarr")).nscales == 3
+    assert images.load(str(tmp_path / "one.ome.zarr")).nscales == 1
+    coarse = images.load(str(tmp_path / "max.ome.zarr")).images[1]
+    expected = data.reshape(48, 2, 40, 2, 20, 2).max(axis=(1, 3, 5))
+    np.testing.assert_array_equal(np.asarray(coarse.data), expected)
+
+
+def test_a_conversion_that_keeps_the_scales_refuses_their_options() -> None:
+    pyramid = _single_level(_built_data()).with_scales(2, min_size=4)
+
+    with pytest.raises(TypeError, match="nscales"):
+        pyramid.to(OmeZarrImage, mode="max")
+
+
+def test_the_axes_of_a_pyramid_are_selected_by_their_names() -> None:
+    from brainhops.datamodel.axes import TimeAxis
+
+    axes = _spatial_axes() + [TimeAxis(name="t")]
+    data = np.zeros((40, 36, 12, 6), "float32")
+    pyramid = _single_level(data, axes)
+
+    by_default = pyramid.with_scales([2])
+    by_name = pyramid.with_scales([{"x": 2, "t": 2}])
+
+    assert tuple(by_default.images[1].data.shape) == (20, 18, 6, 6)
+    assert tuple(by_name.images[1].data.shape) == (20, 36, 12, 3)
+
+
+def test_a_binomial_pyramid_cancels_the_highest_frequency() -> None:
+    data = np.ones((64, 4, 4), "float32")
+    data[1::2] = -1.0
+    pyramid = OmeZarrImage(
+        images=[SingleScaleImage(data)], axes=_spatial_axes()
+    )
+
+    built = pyramid.with_scales(2, mode="binomial", min_size=2)
+
+    coarse = np.asarray(built.images[1].data)
+    assert coarse.shape == (32, 2, 2)
+    np.testing.assert_allclose(coarse[1:-1], 0.0, atol=1e-6)
+
+
+@pytest.mark.parametrize("mode", ["nearest", "mode"])
+def test_a_label_pyramid_keeps_its_labels(tmp_path: Path, mode: str) -> None:
+    labels = np.random.default_rng(6).integers(0, 4, (40, 36, 12)) * 7
+    pyramid = _single_level(labels.astype("uint16"))
+
+    built = pyramid.with_scales(3, mode=mode, min_size=4)
+    path = str(tmp_path / "labels.zarr")
+    built.save(path)
+    back = images.load(path)
+
+    # Under the alignment "exact", a coarse voxel lies at the centre of
+    # its window, whatever the mode.
+    for index in range(1, back.nscales):
+        coarse = np.asarray(back.images[index].data)
+        assert coarse.dtype == np.uint16
+        assert set(np.unique(coarse)) <= set(np.unique(labels))
+        factors = [2**index, 2**index, 1]
+        np.testing.assert_allclose(
+            _world_of_level(back, index),
+            _downsampled_world(pyramid, factors),
+            atol=1e-12,
+        )
+
+
+def test_with_scales_keeps_a_dask_array_lazy(tmp_path: Path) -> None:
+    da = pytest.importorskip("dask.array")
+    data = _built_data()
+    lazy = da.from_array(data, chunks=(20, 18, 6))
+
+    built = _single_level(lazy).with_scales(2, min_size=4)
+    expected = _single_level(data).with_scales(2, min_size=4)
+
+    coarse = built.images[1].data
+    assert isinstance(coarse, da.Array)
+    layers = [name.split("-")[0] for name in coarse.dask.layers]
+    assert "rechunk" not in layers
+    path = str(tmp_path / "lazy.zarr")
+    built.save(path)
+    back = images.load(path)
+    for index in range(back.nscales):
+        np.testing.assert_allclose(
+            np.asarray(back.images[index].data),
+            np.asarray(expected.images[index].data),
+            rtol=1e-6,
+        )
+
+
+@pytest.mark.parametrize("lazy", [False, True])
+def test_every_level_is_written_with_the_chunks_of_the_finest(
+    tmp_path: Path, lazy: bool
+) -> None:
+    # The chunks of the finest level apply to every level, and shrink to
+    # the shape of a level that is smaller than them.
+    data = np.random.default_rng(9).random((130, 100, 40)).astype("float32")
+    if lazy:
+        da = pytest.importorskip("dask.array")
+        data = da.from_array(data, chunks=(32, 32, 20))
+        options = {}  # type: tx.Dict[str, tx.Any]
+    else:
+        options = {"chunks": (32, 32, 20)}
+    path = str(tmp_path / "chunks.ome.zarr")
+
+    SingleScaleImage(data).to(OmeZarrImage).save(path, **options)
+
+    group = abczarr.open(path, mode="r")
+    assert tuple(group["0"].chunks) == (20, 32, 32)
+    for index in range(1, 3):
+        array = group[str(index)]
+        expected = [min(c, n) for c, n in zip((20, 32, 32), array.shape)]
+        assert list(array.chunks) == expected
+
+
+def test_with_scales_keeps_the_scales_that_match(tmp_path: Path) -> None:
+    pyramid = _oblique_pyramid(placed=True)
+
+    built = pyramid.with_scales([(2, 2, 1)])
+
+    assert built.nscales == 2
+    assert built.images[0] is pyramid.images[0]
+    assert built.images[1] is pyramid.images[1]
+    assert list(built.transformations) == list(pyramid.transformations)
+    np.testing.assert_allclose(
+        _world_of_level(built, 1), _world_of_level(pyramid, 1), atol=1e-12
+    )
+
+
+def test_with_scales_keeps_an_integer_type() -> None:
+    data = (_built_data() * 255).astype("uint8")
+
+    built = _single_level(data).with_scales(min_size=4)
+
+    assert all(level.data.dtype == np.uint8 for level in built.images)
+
+
+def test_with_scales_refuses_a_pyramid_without_data() -> None:
+    with pytest.raises(ValueError):
+        OmeZarrImage(images=[], axes=_spatial_axes()).with_scales()

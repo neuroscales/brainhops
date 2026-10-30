@@ -90,6 +90,42 @@ whose module `ngff_transform_to_itk_transform` states that both OME and
 ITK put the centre of a voxel at its integer index. Whether every writer
 of versions 0.4 and 0.5 follows it is not verified.
 
+## Building a pyramid
+
+The writer writes the levels that a pyramid holds, and nothing more. An
+image that has a single resolution gets its coarser levels when it is
+converted to `OmeZarrImage`, which happens when it is saved under a name
+that ends with `.ome.zarr`. By default, the conversion builds as many
+levels as the rules of
+[`Multiscale.with_scales`][brainhops.datamodel.multiscale.Multiscale.with_scales]
+allow, by averaging blocks of 2 voxels along each spatial axis until the
+axes have 32 voxels or fewer. The keyword `nscales=` takes the values of
+the argument of `with_scales`, as in `image.to(OmeZarrImage, nscales=4)`
+or `image.to(OmeZarrImage, nscales=[2, 4])`, and `nscales=1` keeps the
+single level. The keywords `factor=`, `mode=`, `align=`, `min_size=` and
+`strict=` are those of `with_scales`, which `OmeZarrImage` inherits from
+[`MultiScaleImage`][brainhops.datamodel.images.MultiScaleImage], and
+which builds the levels of a pyramid afterwards. The axes are those that
+the writer stores, so they are selected by the names of `axes`.
+
+With the default alignment `"exact"`, a level is placed by the rule of
+version 0.6 for a level downsampled by a factor `f`, which puts its
+voxel `i` at the base voxel `f * i + (f - 1) / 2`. The alignments
+`"edges"` and `"centers"` place it by the actual scale of each axis, as
+[`brainhops._core.pyramids`][] explains, and every level is still
+written as a scale and a translation.
+[`OmeZarrField`][brainhops.io.transformations.zarr.OmeZarrField] builds
+the levels of a field in the same way, and builds its metadata again
+when it is written.
+
+Every level is written with the chunks of the finest level, which shrink
+to the shape of a level that is smaller. These chunks are those given to
+`save`, or else those of the store or of the Dask array that the finest
+level reads, or else those that the writer chooses for the finest level.
+A coarser level that is a Dask array is rechunked to them before it is
+written, and the shards, when the levels are sharded, follow the same
+rule.
+
 ## Limitations
 
 The draft type `inverseOf` was removed before version 0.6 and is

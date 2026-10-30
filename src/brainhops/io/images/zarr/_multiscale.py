@@ -5,7 +5,7 @@ from abczarr.ome.v0_6.images import Multiscale
 from bagof.magic import Inherit, replace
 
 # core
-from brainhops._core.backends import array_backend
+from brainhops._core.backends import array_backend, is_dask
 from brainhops._core.path import Path, replace_directory
 from brainhops._core.properties import smartproperty
 
@@ -106,6 +106,10 @@ class OmeZarrImage(
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
+
+    # An image converted or saved from a single scale is written with
+    # its coarser scales, as `with_scales()` builds them.
+    BUILDS_SCALES = True
 
     # ---- attributes --------------------------------------------------
 
@@ -395,10 +399,14 @@ class OmeZarrImage(
         node : ZarrGroup
             Group that receives the levels and the metadata.
         chunks : sequence of int, optional
-            Chunk shape of every level, in the brainhops axis order. By
-            default, a level whose data is a lazy array of a chunked
-            store, or a Dask array, keeps its chunks, and abczarr
-            chooses the chunks of any other level.
+            Chunk shape of every level, in the brainhops axis order,
+            capped at the shape of each level. By default, the chunks of
+            the finest level when it is a lazy array of a chunked store
+            or a Dask array, and otherwise the chunks that abczarr
+            chooses for the finest level. A Dask array is rechunked to
+            the chunk shape of its level, so that each of its blocks is
+            written into chunks of its own. A shard shape given as
+            `shards` is capped in the same way.
         version : str, optional
             OME-NGFF version. By default, the source version or 0.6 is used.
         **kwargs : Any
@@ -474,6 +482,19 @@ class OmeZarrImage(
                 placements = [replace(shared, output=output)]
             moved_placement = True
 
+        # Every level is stored with one chunk shape, and one shard
+        # shape when the levels are sharded, capped at the shape of the
+        # level, so that several chunks of a finer level make one chunk
+        # of a coarser level. The shape is `chunks`, or else the chunks
+        # of the finest level when it is a lazy array of a chunked store
+        # or a Dask array, or else the chunks that abczarr chooses for
+        # the finest level.
+        common = stored_chunks
+        if common is None:
+            native = store_chunks(getattr(images[0], "data", None))
+            if native is not None and len(native) == len(storage_perm):
+                common = tuple(native[p] for p in storage_perm)
+        shards = kwargs.get("shards")
         levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
         rich = False
         for index, image in enumerate(images):
@@ -483,16 +504,26 @@ class OmeZarrImage(
             xp = array_backend(data)
             stored = xp.transpose(data, storage_perm)
             options = dict(kwargs)
-            if stored_chunks is not None:
-                options["chunks"] = stored_chunks
-            else:
-                # A level whose data is a lazy array of a chunked store,
-                # or a Dask array, keeps its chunks, so that each of its
-                # blocks is written into chunks of its own.
-                native = store_chunks(getattr(image, "data", None))
-                if native is not None and len(native) == len(storage_perm):
-                    options["chunks"] = tuple(native[p] for p in storage_perm)
-            node.create_array(str(index), data=stored, **options)
+            if common is not None:
+                level_chunks = tuple(
+                    min(int(size), int(n))
+                    for size, n in zip(common, stored.shape)
+                )
+                options["chunks"] = level_chunks
+                if shards is not None:
+                    options["shards"] = tuple(
+                        min(int(shard), -(-int(n) // size) * size)
+                        for shard, n, size in zip(
+                            shards, stored.shape, level_chunks
+                        )
+                    )
+                if is_dask(stored):
+                    # Each block of a Dask array is then written into
+                    # chunks of its own.
+                    stored = stored.rechunk(level_chunks)
+            array = node.create_array(str(index), data=stored, **options)
+            if common is None:
+                common = tuple(int(size) for size in array.chunks)
             levels.append((str(index), entry))
 
         # Placements are written once as common transformations instead of
@@ -587,6 +618,12 @@ class OmeZarrImage(
                 **kwargs,
             ),
         )
+
+    def _pyramid_axes(self, ndim: int) -> AxisList:
+        # The scales that `with_scales` builds downsample the axes that
+        # the writer stores, which a pyramid built from scratch takes
+        # from `axes`.
+        return AxisList(self._write_axes(ndim))
 
     def _write_axes(self, ndim: int) -> tx.List[Axis]:
         # An axis whose unit is unknown takes the unit of the axis of the

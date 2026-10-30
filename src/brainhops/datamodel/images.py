@@ -8,10 +8,11 @@ from bagof.hints.numpy import DTypeLike
 from bagof.magic import Forget, NoRepr, NotKwOnly, replace
 
 from brainhops._core.affines import axis_scales
-from brainhops._core.backends import BackendLike, DeviceLike
+from brainhops._core.backends import BackendLike, DeviceLike, to_backend
 from brainhops._core.compare import ComparesByIdMixin
 from brainhops._core.magic import smart_replace
 from brainhops._core.properties import alias, smartproperty
+from brainhops._core.pyramids import downsample, level_geometry
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
 from brainhops.datamodel.metadata._internal_api import (
     Indexed,
@@ -45,14 +46,23 @@ from ._transformations.compute.multiscale import (
     nearest_resolution_index,
 )
 from ._transformations.compute.separable import pull_separable
-from .axes import AxisSequence, TensorAxis
+from .axes import Axis, AxisList, AxisSequence, SpaceAxis, TensorAxis
 from .base import DataModelBase
 from .enums import BoundaryLike, InterpolationLike
 from .geometry import Geometry
 from .metadata import Metadata
-from .multiscale import Multiscale
+from .multiscale import (
+    Multiscale,
+    PyramidLayout,
+    build_pyramid,
+    downsampled_matrix,
+    geometry_matrix,
+    level_matches,
+    pop_pyramid_options,
+)
 from .systems import CoordinateSystem
 from .transformations import (
+    Affine,
     CartesianField,
     Identity,
     Transformation,
@@ -114,13 +124,25 @@ class Image(
         **fields,
     ) -> tx.Any:
         target = type(self) if cls is None else cls
+        # `nscales=` and the options of `with_scales` build the scales
+        # of a pyramid.
+        pyramid_options = pop_pyramid_options(fields)
+        if pyramid_options and not issubclass(target, MultiScaleImage):
+            names = ", ".join(f"{key}=" for key in sorted(pyramid_options))
+            raise TypeError(
+                f"{names} build the scales of a multiscale image, which a "
+                f"{target.__name__} is not."
+            )
 
         # --- single-scale to multi-scale ------------------------------
         if isinstance(self, SingleScaleImage) and issubclass(
             target, MultiScaleImage
         ):
             pyramid = MultiScaleImage(images=[self], metadata=self.metadata)
-            return target.from_instance(pyramid, **fields)
+            converted = target.from_instance(pyramid, **fields)
+            return build_pyramid(
+                converted, pyramid_options, default=target.BUILDS_SCALES
+            )
 
         # --- multi-scale to single-scale ------------------------------
         if isinstance(self, MultiScaleImage) and issubclass(
@@ -129,7 +151,8 @@ class Image(
             return target.from_instance(self.to_singlescale(0), **fields)
 
         # --- edit fields only -----------------------------------------
-        return super().to(cls, copy=copy, **fields)
+        converted = super().to(cls, copy=copy, **fields)
+        return build_pyramid(converted, pyramid_options)
 
     # --- array API ----------------------------------------------------
 
@@ -912,6 +935,151 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         for i in range(len(self.images)):
             yield self.to_singlescale(i)
 
+    # --- scales built from the finest level ---------------------------
+
+    def _pyramid_axes(self, ndim: int) -> AxisList:
+        # The axes of the arrays of the levels, which only resolve the
+        # names that a factor gives. Without known axes, the first three
+        # axes are the spatial axes x, y and z, as in the brainhops
+        # order, and the other axes have no name. These names are never
+        # stored.
+        axes = self.images[0]._array_axes()
+        if axes is None or len(axes) != ndim or Ellipsis in list(axes):
+            spatial = min(3, ndim)
+            return AxisList(
+                [SpaceAxis(name=name) for name in "xyz"[:spatial]]
+                + [Axis() for _ in range(ndim - spatial)]
+            )
+        return AxisList(list(axes))
+
+    def _finest_level(self) -> SingleScaleImage:
+        # The finest level, which must hold data.
+        images = list(self.images or [])
+        if not images or images[0].data is None:
+            raise ValueError(
+                "This multiscale image has no finest level with data, so no "
+                "coarser level can be built from it."
+            )
+        return images[0]
+
+    def _pyramid_layout(self) -> PyramidLayout:
+        finest = self._finest_level()
+        shape = tuple(int(n) for n in finest.data.shape)
+        ndim = len(shape)
+        axes = self._pyramid_axes(ndim)
+        spatial = tuple(
+            position
+            for position, axis in enumerate(axes)
+            if getattr(axis, "type", None) == "space"
+        )
+        matrix = geometry_matrix(finest.transformation, ndim)
+        sizes = np.ones(ndim)
+        if matrix is not None:
+            placements = list(self.transformations or [])
+            world = (
+                geometry_matrix(placements[-1], ndim) if placements else None
+            )
+            if world is not None:
+                matrix = world[:, :-1] @ matrix
+            sizes = np.asarray(axis_scales(matrix))
+        return PyramidLayout(
+            axes=axes,
+            shape=shape,
+            sizes=tuple(float(size) for size in sizes),
+            spatial=spatial,
+        )
+
+    def _keeps_scale(
+        self, index: int, factors: tx.Tuple[int, ...], align: str
+    ) -> bool:
+        finest, level = self.images[0], self.images[index]
+        if finest.data is None or level.data is None:
+            return False
+        ndim = len(finest.data.shape)
+        matrices = [
+            geometry_matrix(image.transformation, ndim)
+            for image in (finest, level)
+        ]
+        if any(matrix is None for matrix in matrices):
+            return False
+        return level_matches(
+            matrices[0],
+            matrices[1],
+            finest.data.shape,
+            level.data.shape,
+            factors,
+            align,
+        )
+
+    def _build_scales(
+        self,
+        factors: tx.Sequence[tx.Tuple[int, ...]],
+        mode: str,
+        align: str,
+        kept: int,
+    ) -> tx.Self:
+        finest = self._finest_level()
+        data = to_backend(finest.data)
+        ndim = len(data.shape)
+        geometry = finest.transformation
+        matrix = geometry_matrix(geometry, ndim)
+        if matrix is None:
+            raise ValueError(
+                "The finest level of this image is not placed by an affine, "
+                "so the placement of a coarser level cannot be computed."
+            )
+        levels = list(self.images[: kept + 1])  # type: tx.List[tx.Any]
+        previous = None
+        if kept:
+            previous = (factors[kept - 1], to_backend(levels[kept].data))
+        arrays = downsample(
+            data,
+            factors[kept:],
+            mode,
+            edge="repeat",
+            align=align,
+            previous=previous,
+        )
+        for level, array in zip(factors[kept:], arrays):
+            _, scales, shifts = level_geometry(align, data.shape, level)
+            placement = Affine(
+                matrix=downsampled_matrix(matrix, scales, shifts),
+                input=getattr(geometry, "input", None),
+                output=getattr(geometry, "output", None),
+            )
+            levels.append(
+                SingleScaleImage(data=array, transformations=[placement])
+            )
+        return replace(self, images=levels)
+
+    def _check_scales(self, scales: tx.Sequence[SingleScaleImage]) -> None:
+        if not all(isinstance(level, SingleScaleImage) for level in scales):
+            raise TypeError(
+                "The scales of a multiscale image are single-scale images."
+            )
+        ndim = len(scales[0].shape)
+        if any(len(level.shape) != ndim for level in scales):
+            raise ValueError(
+                "The scales of a multiscale image have the same number of "
+                "axes."
+            )
+        outputs = [
+            getattr(level.transformation, "output", None) for level in scales
+        ]
+        known = [output for output in outputs if output is not None]
+        if any(output != known[0] for output in known):
+            raise ValueError(
+                "The scales of a multiscale image map their voxels onto the "
+                "same space, but these scales map them onto "
+                f"{[getattr(output, 'name', None) for output in outputs]}."
+            )
+        _check_fine_to_coarse(
+            [geometry_matrix(level.transformation, ndim) for level in scales]
+        )
+
+    def _adopt_scales(self, scales: tx.Sequence[SingleScaleImage]) -> tx.Self:
+        return replace(self, images=list(scales))
+
     @property
     def geometry(self) -> Geometry:
         """The geometry of the highest-resolution level.
@@ -1180,6 +1348,30 @@ def _source_axes(sub2full: Transformation) -> tx.List[tx.Optional[int]]:
         rows = np.flatnonzero(column)
         sources.append(int(rows[0]) if len(rows) else None)
     return sources
+
+
+def _check_fine_to_coarse(
+    matrices: tx.Sequence[tx.Optional[np.ndarray]],
+) -> None:
+    """Refuse scales that are not ordered from fine to coarse.
+
+    The size of a voxel along each axis is the length of the column of
+    that axis in the matrix of a scale. It must not decrease from a
+    scale to the next. A scale that is not placed by an affine is not
+    compared.
+    """
+    known = [
+        (index, np.asarray(axis_scales(matrix)))
+        for index, matrix in enumerate(matrices)
+        if matrix is not None
+    ]
+    for (before, coarse), (after, finer) in zip(known, known[1:]):
+        if bool((finer < coarse * (1 - 1e-9)).any()):
+            raise ValueError(
+                f"The scales are ordered from fine to coarse, but the voxels "
+                f"of scale {after} ({finer.tolist()}) are smaller than those "
+                f"of scale {before} ({coarse.tolist()}) along some axis."
+            )
 
 
 def _single_multi_swap(other: Image, cls: tx.Type[Image]) -> bool:

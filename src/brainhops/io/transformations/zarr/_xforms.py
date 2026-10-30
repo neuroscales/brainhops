@@ -20,16 +20,28 @@ import abczarr
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
-from bagof.magic import Forget, KwOnly
+from bagof.magic import Forget, KwOnly, replace
 
 # core
+from brainhops._core.affines import axis_scales
 from brainhops._core.affines import inv as _affine_inv
-from brainhops._core.backends import array_backend, to_backend, to_numpy
+from brainhops._core.backends import (
+    array_backend,
+    is_dask,
+    to_backend,
+    to_numpy,
+)
 from brainhops._core.path import Path, replace_directory
+from brainhops._core.pyramids import downsample, level_geometry
 
 # datamodel
-from brainhops.datamodel._internal_api import vector_axis
-from brainhops.datamodel.axes import AxisList
+from brainhops.datamodel._internal_api import (
+    PyramidLayout,
+    field_scale,
+    level_matches,
+    vector_axis,
+)
+from brainhops.datamodel.axes import AxisList, CoordinateAxis, SpaceAxis
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
@@ -98,6 +110,10 @@ class OmeZarrField(
     """
 
     HINTS = "ome", "ome-zarr"
+
+    # A field converted from a single scale is written with its coarser
+    # scales, as `with_scales()` builds them.
+    BUILDS_SCALES = True
     EXTENSIONS = ".zarr", ".ome.zarr"
 
     raw_levels: tx.Optional[tx.List[ArrayProtocol]] = None
@@ -170,6 +186,12 @@ class OmeZarrField(
         built = [self._level(index) for index in range(count)]
         self._scales = built
         return built
+
+    @property
+    def nscales(self) -> int:
+        # The number of levels is that of the arrays, which builds no
+        # scale.
+        return len(self.raw_levels or [])
 
     def to_ome(self) -> tx.Any:
         """Return the OME metadata to write.
@@ -348,24 +370,41 @@ class OmeZarrField(
             normalized = ome
         multiscales = getattr(normalized, "multiscales", None) or []
         datasets = list(multiscales[0].datasets) if multiscales else []
+        # Every level is stored with one chunk shape, and one shard
+        # shape when the levels are sharded, capped at the shape of the
+        # level, as the levels of an image are: `chunks`, or else the
+        # chunks of the finest level when it is a lazy array or a Dask
+        # array, or else the chunks that abczarr chooses for the finest
+        # level.
+        common = kwargs.get("chunks") or store_chunks(raw_levels[0])
+        shards = kwargs.get("shards")
         for index, array in enumerate(raw_levels):
             dataset_path = (
                 str(datasets[index].path)
                 if index < len(datasets)
                 else str(index)
             )
+            shape = tuple(int(n) for n in array.shape)
             # An array on a GPU is copied to memory, one block at a time
             # for a Dask array, since Zarr writes arrays from memory.
             options = dict(kwargs)
-            chunks = store_chunks(array)
-            if chunks is not None:
-                options.setdefault("chunks", chunks)
+            if common is not None:
+                chunks = tuple(
+                    min(int(size), n) for size, n in zip(common, shape)
+                )
+                options["chunks"] = chunks
+                if shards is not None:
+                    options["shards"] = tuple(
+                        min(int(shard), -(-n // size) * size)
+                        for shard, n, size in zip(shards, shape, chunks)
+                    )
+                if is_dask(array):
+                    array = array.rechunk(chunks)
             target = node.create_array(
-                dataset_path,
-                shape=tuple(int(n) for n in array.shape),
-                dtype=array.dtype,
-                **options,
+                dataset_path, shape=shape, dtype=array.dtype, **options
             )
+            if common is None:
+                common = tuple(int(size) for size in target.chunks)
             write_into(target, array)
         node.ome = ome
         return node
@@ -417,6 +456,152 @@ class OmeZarrField(
             lambda name: self.to_node(
                 abczarr.open_group(name, mode="w"), **kwargs
             ),
+        )
+
+    # --- scales built from the finest level ---
+    # The method `with_scales` of
+    # `MultiscaleField` call these hooks. A field of this format stores
+    # its levels as arrays of vectors in world units, so the vectors of
+    # a coarser level are not rescaled, and the metadata is built again
+    # from the levels when the field is written.
+
+    def _pyramid_layout(self) -> PyramidLayout:
+        raw_levels = list(self.raw_levels or [])
+        if not raw_levels:
+            raise ValueError(
+                "This OME-Zarr field has no level, so no coarser level can be "
+                "built from it."
+            )
+        shape = tuple(int(n) for n in raw_levels[0].shape)
+        ndim = len(shape)
+        vector = self._vector_axis
+        vector = ndim - 1 if vector is None else vector % ndim
+        spatial = tuple(axis for axis in range(ndim) if axis != vector)
+        if self.axes and len(self.axes) == ndim:
+            axes = AxisList(list(self.axes))
+        else:
+            axes = AxisList(
+                [SpaceAxis() for _ in spatial] + [CoordinateAxis()]
+            )
+        sizes = [1.0] * ndim
+        matrix = _map.affine_matrix(self._placements()[0], len(spatial))
+        if matrix is not None:
+            for axis, size in zip(spatial, axis_scales(matrix)):
+                sizes[axis] = float(size)
+        return PyramidLayout(
+            axes=axes,
+            shape=shape,
+            sizes=tuple(sizes),
+            spatial=spatial,
+            fixed=(vector,),
+            field=True,
+        )
+
+    def _keeps_scale(
+        self, index: int, factors: tx.Tuple[int, ...], align: str
+    ) -> bool:
+        layout = self._pyramid_layout()
+        raw_levels = list(self.raw_levels or [])
+        transforms = list(self.level_transforms or [])
+        count = len(layout.spatial)
+        level = transforms[index] if index < len(transforms) else None
+        matrix = _map.affine_matrix(level or Identity(), count)
+        if matrix is None or len(raw_levels[index].shape) != len(layout.shape):
+            return False
+        shapes = [
+            [int(raw.shape[axis]) for axis in layout.spatial]
+            for raw in (raw_levels[0], raw_levels[index])
+        ]
+        return level_matches(
+            np.eye(count, count + 1),
+            matrix,
+            shapes[0],
+            shapes[1],
+            [factors[axis] for axis in layout.spatial],
+            align,
+        )
+
+    def _build_scales(
+        self,
+        factors: tx.Sequence[tx.Tuple[int, ...]],
+        mode: str,
+        align: str,
+        kept: int,
+    ) -> tx.Self:
+        layout = self._pyramid_layout()
+        raw_levels = list(self.raw_levels[: kept + 1])
+        transforms = list(self.level_transforms or [])[: kept + 1]
+        transforms += [Identity()] * (kept + 1 - len(transforms))
+        finest_shape = [raw_levels[0].shape[axis] for axis in layout.spatial]
+        for level in factors[kept:]:
+            _, scales, shifts = level_geometry(
+                align, finest_shape, [level[axis] for axis in layout.spatial]
+            )
+            transforms.append(
+                Affine(
+                    matrix=np.concatenate(
+                        [np.diag(scales), shifts[:, None]], axis=1
+                    )
+                )
+            )
+        previous = None
+        if kept:
+            previous = (factors[kept - 1], to_backend(raw_levels[kept]))
+        # The vectors are stored in world units, which do not depend on
+        # the grid, so the modes only average them.
+        coarser = downsample(
+            to_backend(raw_levels[0]),
+            factors[kept:],
+            mode,
+            edge="linear",
+            align=align,
+            previous=previous,
+        )
+        return replace(
+            self,
+            raw_levels=raw_levels + coarser,
+            voxel2world=self._placements()[0],
+            level_transforms=transforms,
+            ome=None,
+        )
+
+    def _adopt_scales(self, scales: tx.Sequence[Sequence]) -> tx.Self:
+        parts = [field_scale(scale) for scale in scales]
+        if parts[0].kind != self._kind:
+            raise ValueError(
+                f"This OME-Zarr field holds {self._kind}s, but the scales "
+                f"that it is given hold {parts[0].kind}s."
+            )
+        ndim = int(parts[0].field.data.ndim)
+        vector = self._vector_axis
+        vector = ndim - 1 if vector is None else vector % ndim
+        grids = [np.asarray(_affine_inv(part.world2voxel)) for part in parts]
+        raw_levels = []
+        for part, grid2world in zip(parts, grids):
+            values = to_backend(part.field.field)
+            if part.kind == "displacement":
+                # The level stores its displacements in world units.
+                linear = array_backend(values).asarray(grid2world[:, :-1].T)
+                values = values @ linear
+            raw_levels.append(
+                array_backend(values).moveaxis(values, -1, vector)
+            )
+        finest2world = grids[0]
+        world2finest = np.asarray(_affine_inv(finest2world))
+        transforms = [Identity()]  # type: tx.List[Transformation]
+        for grid2world in grids[1:]:
+            linear = world2finest[:, :-1] @ grid2world[:, :-1]
+            shift = world2finest[:, :-1] @ grid2world[:, -1]
+            shift = shift + world2finest[:, -1]
+            transforms.append(
+                Affine(matrix=np.concatenate([linear, shift[:, None]], 1))
+            )
+        return replace(
+            self,
+            raw_levels=raw_levels,
+            voxel2world=Affine(matrix=finest2world),
+            level_transforms=transforms,
+            ome=None,
         )
 
     # --- level construction ---

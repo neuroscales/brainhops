@@ -603,8 +603,8 @@ def _check_geometry(
         if not transformation.is_identity(compute=True):
             raise UnrepresentableTransformationError(
                 "A plain Zarr array stores no geometry, so the "
-                "transformations of this image cannot be written. Write a "
-                "pyramid of one level with OmeZarrImage, which stores them, "
+                "transformations of this image cannot be written. Write an "
+                "OME-Zarr pyramid with OmeZarrImage, which stores them, "
                 "or assign `image.transformations = []` to write the data "
                 "alone."
             )

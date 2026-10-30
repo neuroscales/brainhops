@@ -33,7 +33,13 @@ field interpolated with another degree than 1 is sampled at its nodes.
 Both are losses: the converter raises a `LossyConversionError`, and
 `t.to(OmeZarrField, on_loss="ignore")` returns the sampled field. The
 arrays are built with the operations of their backend, so a Dask array
-stays lazy until the field is written.
+stays lazy until the field is written. The conversion then builds
+the coarser levels of a pyramid from that level, as many as the rules
+of the method `with_scales` of the field allow, and the keyword
+`nscales=` takes the values of the argument of that method, as in
+`t.to(OmeZarrField, nscales=3)`, while `nscales=1` keeps the single
+level. The keywords `factor=`, `mode=`, `align=`, `min_size=` and
+`strict=` are those of `with_scales`.
 
 A field that is already of this format is changed by the rules of its
 family, which keep its type.
@@ -49,7 +55,12 @@ from brainhops._core.backends import array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._internal_api import converter, smart_replace
+from brainhops.datamodel._internal_api import (
+    build_pyramid,
+    converter,
+    pop_pyramid_options,
+    smart_replace,
+)
 from brainhops.datamodel.transformations import Affine, Identity
 
 # io
@@ -77,13 +88,15 @@ _SPACE = ("x", "y", "z")
 """The names of the spatial axes, which are those of the RAS world."""
 
 
-@register_converter(FIELD_SOURCES, OmeZarrField)
+@register_converter(FIELD_SOURCES + (_xforms.MultiscaleField,), OmeZarrField)
 def _(
     t: _xforms.Transformation, cls: tx.Type[OmeZarrField], **kwargs
 ) -> OmeZarrField:
-    # One level of coordinates or of displacements in RAS millimetres, on
-    # a grid along the world axes. What loses is reported.
+    # One level of coordinates or of displacements in RAS millimetres,
+    # on a grid along the world axes, and the coarser levels that the
+    # options of `PYRAMID_OPTIONS` ask for. What loses is reported.
     cls = OmeZarrField
+    pyramid = pop_pyramid_options(kwargs)
     format_options(t, cls, kwargs)
     _, field, _ = split_field_chain(t, RAS, RAS, cls)
     if isinstance(field, _xforms.CoordinateField):
@@ -97,14 +110,17 @@ def _(
         parts = displacements_of(cardinal_parts(parts, t, RAS, RAS, cls))
         values = _world_vectors(parts)
     values, scale, translation = _along_world(values, parts.grid2world)
-    return held(_field(values, kind, scale, translation), parts)
+    field = _field(values, kind, scale, translation)
+    return held(build_pyramid(field, pyramid, default=True), parts)
 
 
 @converter
 def _(t: OmeZarrField, cls: tx.Type[OmeZarrField], **kwargs) -> OmeZarrField:
     # A transformation that is already in this format is changed by the
-    # rules of any chain, and these rules keep its type.
-    return smart_replace(t, cls, **kwargs)
+    # rules of any chain, and these rules keep its type. The options of
+    # `PYRAMID_OPTIONS` build its levels.
+    pyramid = pop_pyramid_options(kwargs)
+    return build_pyramid(smart_replace(t, cls, **kwargs), pyramid)
 
 
 # ----------------------------------------------------------------------
