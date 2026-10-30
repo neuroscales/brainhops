@@ -8,7 +8,9 @@ the file as it is stored, in `rawdata`. The two classes of the header
 are defined in [`brainhops.io.common.nifti`][] and exported here as
 well. An affine keeps its matrix in the header, and the `data` of a
 field is a lazy array of its file, which reads the voxels only when a
-computation needs them. A field that is read and written again without
+computation needs them. A field keeps its header and its array in a
+[`NiftiImage`][brainhops.io.images.nifti.NiftiImage], through which it
+is read and written. A field that is read and written again without
 changes is written as its file stored it.
 
 ## Fields of RAS displacements and of RAS coordinates
