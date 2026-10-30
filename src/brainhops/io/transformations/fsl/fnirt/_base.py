@@ -63,7 +63,7 @@ from brainhops.io.transformations.fsl._internal_api import (
     pop_aliased,
     stored_repr,
 )
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti import NiftiBackedTransformation
 from brainhops.io.transformations.nifti._internal_api import (
     check_single_field,
     consolidated_metadata,
@@ -127,7 +127,7 @@ _ImageLike = tx.Union[NiftiObject, Image]
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
-    NiftiBasedTransformation,
+    NiftiBackedTransformation,
     _xforms.DerivedSequence,
 ):
     """Non-linear transformation stored in an FSL FNIRT NIfTI file.

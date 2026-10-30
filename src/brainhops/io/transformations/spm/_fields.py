@@ -37,7 +37,7 @@ from brainhops.io.transformations.base.fields import (
     homogeneous_matrix,
 )
 from brainhops.io.transformations.nifti import (
-    NiftiBasedTransformation,
+    NiftiBackedTransformation,
     NiftiRASCoordinateField,
     NiftiRASToVoxel,
 )
@@ -50,7 +50,7 @@ from brainhops.io.transformations.nifti._internal_api import (
 
 
 @register_format
-class SpmCoordinateField(NiftiBasedTransformation, _xforms.DerivedSequence):
+class SpmCoordinateField(NiftiBackedTransformation, _xforms.DerivedSequence):
     """
     Field of RAS coordinates written by SPM.
 

@@ -35,7 +35,7 @@ brainhops included, would misread a grid written with it.
 """
 
 __all__ = [
-    "NiftiBasedTransformation",
+    "NiftiBackedTransformation",
     "NiftiMetadata",
     "NiftiRASCoordinateField",
     "NiftiRASDisplacementField",
@@ -47,7 +47,7 @@ __all__ = [
 from brainhops.io.common.nifti import NiftiMetadata, NiftiRaw
 
 from ._affines import NiftiRASToVoxel, NiftiVoxelToRAS
-from ._base import NiftiBasedTransformation
+from ._base import NiftiBackedTransformation
 from ._fields import NiftiRASCoordinateField, NiftiRASDisplacementField
 
 # The converters into these formats register themselves when this module

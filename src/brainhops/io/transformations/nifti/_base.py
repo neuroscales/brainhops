@@ -40,7 +40,7 @@ _NiftiHeader = tx.Union[nb.Nifti1Header, nb.Nifti2Header]
 _NibabelImage = tx.Union[nb.Nifti1Image, nb.Nifti2Image]
 
 
-class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
+class NiftiBackedTransformation(NiftiReaderWriter, TransformationFormat):
     """A transformation stored in a NIfTI file.
 
     A NIfTI transformation holds the header of its file as
@@ -128,7 +128,7 @@ class NiftiBasedTransformation(NiftiReaderWriter, TransformationFormat):
         )
 
 
-class NiftiImageBackedTransformation(NiftiBasedTransformation):
+class NiftiImageBackedTransformation(NiftiBackedTransformation):
     """A transformation whose file is a NIfTI image, which it keeps.
 
     A field of displacements or of coordinates is stored as a NIfTI
@@ -462,7 +462,7 @@ def nibabel_parts(
 
 
 def consolidated_metadata(
-    xform: NiftiBasedTransformation, record: NiftiRaw
+    xform: NiftiBackedTransformation, record: NiftiRaw
 ) -> NiftiMetadata:
     """Return the metadata that holds the record of a consolidation.
 

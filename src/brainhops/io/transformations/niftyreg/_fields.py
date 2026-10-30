@@ -66,7 +66,7 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
     voxel_grid_coordinates,
 )
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti import NiftiBackedTransformation
 from brainhops.io.transformations.nifti._internal_api import (
     check_single_field,
     consolidated_metadata,
@@ -265,7 +265,7 @@ def _extensions_of(
 # ----------------------------------------------------------------------
 
 
-class NiftyRegField(NiftyRegTransformationFormat, NiftiBasedTransformation):
+class NiftyRegField(NiftyRegTransformationFormat, NiftiBackedTransformation):
     """
     NiftyReg transformation stored in a NIfTI file.
 

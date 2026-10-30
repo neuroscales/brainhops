@@ -51,7 +51,7 @@ from brainhops.io.transformations.base._internal_api import (
     held,
     register_converter,
 )
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti import NiftiBackedTransformation
 from brainhops.io.transformations.nifti._internal_api import (
     check_single_field,
     consolidated_metadata,
@@ -91,7 +91,7 @@ _NIFTI_NUMS = re.compile(r"NIfTI_nums\s*=\s*[\"']([^\"']*)[\"']")
 @register_format
 class AfniNiftiWarp(
     AfniWarpFormat,
-    NiftiBasedTransformation,
+    NiftiBackedTransformation,
     _xforms.DerivedSequence,
 ):
     """

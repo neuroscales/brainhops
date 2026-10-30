@@ -253,7 +253,7 @@ PACKAGES: tx.Dict[str, Package] = {
     "brainhops.io.transformations.nifti": Package(
         names=frozenset(
             {
-                "NiftiBasedTransformation",
+                "NiftiBackedTransformation",
                 "NiftiMetadata",
                 "NiftiRASCoordinateField",
                 "NiftiRASDisplacementField",

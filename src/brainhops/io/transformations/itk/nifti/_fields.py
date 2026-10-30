@@ -67,7 +67,7 @@ from brainhops.io.transformations.base.fields import (
 
 # this_format
 from brainhops.io.transformations.itk._internal_api import make_system
-from brainhops.io.transformations.nifti import NiftiBasedTransformation
+from brainhops.io.transformations.nifti import NiftiBackedTransformation
 from brainhops.io.transformations.nifti._internal_api import (
     consolidated_metadata,
 )
@@ -160,7 +160,7 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ItkNiftiField(NiftiBasedTransformation, _xforms.DerivedSequence):
+class ItkNiftiField(NiftiBackedTransformation, _xforms.DerivedSequence):
     """
     Base class of the fields stored in ITK NIfTI vector images.
 

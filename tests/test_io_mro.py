@@ -39,7 +39,7 @@ NIFTI_FORMATS = [
 ]
 
 # Methods that each NIfTI format specializes, in `NiftiReaderWriter`, which
-# both `NiftiImage` and `NiftiBasedTransformation` list first, or in the
+# both `NiftiImage` and `NiftiBackedTransformation` list first, or in the
 # formats below them. The generic `from_file`, `from_bytes` and
 # `sniff_bytes` of the ladder reach them.
 SPECIALIZED = [
@@ -153,7 +153,7 @@ def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noq
 
 
 def test_loading_a_nifti_field_keeps_the_array_lazy(tmp_path) -> None:  # noqa: ANN001
-    """NiftiBasedTransformation.from_file keeps a NIfTI proxy as well."""
+    """NiftiBackedTransformation.from_file keeps a NIfTI proxy as well."""
     import numpy as np
 
     from brainhops.io.common.nifti._data import NiftiProxy
