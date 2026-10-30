@@ -45,7 +45,6 @@ from brainhops.io.common.nifti._internal_api import (
     nifti_shape,
 )
 from brainhops.io.transformations.base._internal_api import (
-    consolidate_through,
     data_image,
     image_with,
 )
@@ -60,6 +59,7 @@ from brainhops.io.transformations.base.fields import (
 from brainhops.io.transformations.itk._internal_api import make_system
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
+    consolidate_nifti,
     intent_overrides,
 )
 
@@ -337,7 +337,7 @@ class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
             and stored
             and self._transformations is None
         ):
-            return consolidate_through(
+            return consolidate_nifti(
                 self,
                 data_image(self, itk_field_to_disk),
                 {},
@@ -362,7 +362,7 @@ class ItkNiftiField(NiftiImageBackedTransformation, _xforms.DerivedSequence):
         vox2ras = _RAS_LPS @ embed_nifti_affine(vox2lps)
         image = image_with(self, itk_field_to_disk(vectors), vox2ras)
         intent = intent_overrides(NIFTI_INTENT_VECTOR, self.INTENT_NAME)
-        return consolidate_through(self, image, intent, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
 
     def _encoded(self) -> tx.Tuple[ArrayProtocol, np.ndarray]:
         """Return the LPS vectors and the voxel-to-LPS affine of the chain.

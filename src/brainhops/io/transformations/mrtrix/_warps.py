@@ -956,15 +956,10 @@ class MrtrixWarpFull(
                 "build the file with MrtrixWarpFull.from_warps."
             )
         image = data_image(self, warp_to_disk)
-        return consolidate_through(self, image, {}, {"data": None}, **options)
-
-    def _check_stored(self, image: MrtrixImage) -> None:
-        shape = tuple(int(d) for d in image.shape)
-        if len(shape) != 5 or shape[3:] != (_NDIM, _NWARPS):
-            raise WriterError(
-                f"An MRtrix warpfull holds an array of shape (X, Y, Z, 3, 4), "
-                f"not {shape}."
-            )
+        changes = {"data": None}
+        return consolidate_through(
+            self, image, {}, changes, check=_check_warpfull, **options
+        )
 
 
 # ----------------------------------------------------------------------
@@ -1381,6 +1376,22 @@ def _typed_keyval(
     }
     typed.update(keyval or {})
     return typed
+
+
+def _check_warpfull(image: MrtrixImage) -> None:
+    """Refuse an image that does not hold the four warps of a warpfull.
+
+    Raises
+    ------
+    WriterError
+        If the image does not have the shape `(X, Y, Z, 3, 4)`.
+    """
+    shape = tuple(int(d) for d in image.shape)
+    if len(shape) != 5 or shape[3:] != (_NDIM, _NWARPS):
+        raise WriterError(
+            f"An MRtrix warpfull holds an array of shape (X, Y, Z, 3, 4), "
+            f"not {shape}."
+        )
 
 
 def _check_endpoints(xform: MrtrixWarp, what: str) -> None:

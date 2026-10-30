@@ -9,6 +9,7 @@ import inside the package. The rules are explained in
 """
 
 __all__ = [
+    "consolidate_nifti",
     "coordinates_intent",
     "field_to_disk",
     "field_to_model",
@@ -19,6 +20,7 @@ __all__ = [
 
 from ._base import (
     NiftiImageBackedTransformation,
+    consolidate_nifti,
     coordinates_intent,
     intent_overrides,
 )

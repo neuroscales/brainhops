@@ -38,7 +38,6 @@ from brainhops.io.images.nifti._internal_api import (
     image_to_model,
 )
 from brainhops.io.transformations.base._internal_api import (
-    consolidate_through,
     data_image,
 )
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
@@ -54,6 +53,7 @@ from brainhops.io.transformations.fsl._internal_api import (
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
+    consolidate_nifti,
     field_to_model,
     intent_overrides,
 )
@@ -322,7 +322,7 @@ class FnirtWarpField(
             intent = intent_overrides(FSL_FNIRT_DISPLACEMENT_FIELD)
         elif self._is_coeff():
             intent = {name: header[name] for name in _SPLINE_FIELDS}
-        return consolidate_through(
+        return consolidate_nifti(
             self,
             data_image(self, image_to_disk),
             intent,

@@ -30,6 +30,7 @@ from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base._internal_api import (
     ImageBackedTransformation,
+    consolidate_through,
 )
 
 # this format
@@ -129,9 +130,8 @@ class NiftiImageBackedTransformation(
     [`ImageBackedTransformation`][brainhops.io.transformations.base._image_backed.ImageBackedTransformation]
     describes, and reads, consolidates and writes through that image.
     The readers take the options of the nibabel readers, `mmap` and
-    `keep_file_open`. A consolidated image whose array holds a field
-    for each of several volumes is refused, because the data model does
-    not support such a batch of fields yet.
+    `keep_file_open`. A concrete subclass consolidates through
+    [`consolidate_nifti`][].
 
     A concrete subclass takes the `metadata` field of its data model
     over with
@@ -144,13 +144,36 @@ class NiftiImageBackedTransformation(
 
     _rawdata: NoRepr[tx.Optional[ArrayProtocol]] = Inherit("rawdata", var=True)
 
-    def _check_stored(self, image: NiftiImage) -> None:
-        check_single_field(image.rawdata, WriterError)
-
 
 # ----------------------------------------------------------------------
 #   HELPERS OF THE CONCRETE FORMATS
 # ----------------------------------------------------------------------
+
+
+def consolidate_nifti(
+    xform: NiftiImageBackedTransformation,
+    image: NiftiImage,
+    intent: tx.Mapping[str, tx.Any],
+    changes: tx.Mapping[str, tx.Any],
+    **options: tx.Any,
+) -> NiftiImageBackedTransformation:
+    """Consolidate a NIfTI field through the image of its pending state.
+
+    The call is that of
+    [`consolidate_through`][brainhops.io.transformations.base._image_backed.consolidate_through],
+    and the consolidated image is refused when its array holds a field
+    for each of several volumes, because the data model does not
+    support such a batch of fields yet.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data, or if its array holds a field for each
+        of several volumes.
+    """
+    return consolidate_through(
+        xform, image, intent, changes, check=_check_single, **options
+    )
 
 
 def nibabel_parts(
@@ -219,3 +242,7 @@ def coordinates_intent(
     if intent == (NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING):
         return {}
     return intent_overrides(NIFTI_INTENT_VECTOR, NIFTI_INTENT_NAME_MAPPING)
+
+
+def _check_single(image: NiftiImage) -> None:
+    check_single_field(image.rawdata, WriterError)

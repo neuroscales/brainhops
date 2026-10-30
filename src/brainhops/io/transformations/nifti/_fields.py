@@ -34,7 +34,6 @@ from brainhops.io.common.nifti._internal_api import (
 )
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.base._internal_api import (
-    consolidate_through,
     data_image,
     image_with,
 )
@@ -49,6 +48,7 @@ from brainhops.io.transformations.base.fields import (
 # this format
 from ._base import (
     NiftiImageBackedTransformation,
+    consolidate_nifti,
     coordinates_intent,
     intent_overrides,
 )
@@ -164,7 +164,7 @@ class NiftiRASCoordinateField(
             image = data_image(self, field_to_disk)
         intent = coordinates_intent(header_of(self))
         changes = {"data": None, "store": StoreEnum.values}
-        return consolidate_through(self, image, intent, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
 
 
 @register_format
@@ -459,7 +459,7 @@ StationaryVelocityField], integrated with `steps` squaring steps
                 log=log,
             )
             image = image_with(self, field_to_disk(vectors), vox2ras)
-        return consolidate_through(self, image, intent, changes, **options)
+        return consolidate_nifti(self, image, intent, changes, **options)
 
     def to_nibabel(
         self,

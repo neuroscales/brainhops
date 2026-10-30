@@ -30,7 +30,6 @@ from brainhops.io.common.nifti._internal_api import (
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
-    consolidate_through,
     data_image,
     format_options,
     held,
@@ -39,6 +38,7 @@ from brainhops.io.transformations.base._internal_api import (
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
+    consolidate_nifti,
     field_to_disk,
     field_to_model,
 )
@@ -374,7 +374,7 @@ class AfniNiftiWarp(
             # AFNI writes its grids in millimetres.
             intent = {"xyzt_units": _NIFTI_UNITS_MM}
         stored = self.metadata
-        xform = consolidate_through(self, image, intent, changes, **options)
+        xform = consolidate_nifti(self, image, intent, changes, **options)
         if xform.metadata is not stored:
             xform.metadata = _with_afni_extension(xform.metadata)
         return xform

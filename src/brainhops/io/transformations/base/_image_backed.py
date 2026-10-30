@@ -247,24 +247,6 @@ class ImageBackedTransformation(BinaryFileReader, TransformationFormat):
         """
         return self.consolidate()._image
 
-    def _check_stored(self, image: tx.Any) -> None:
-        """Refuse a consolidated image that the file cannot hold.
-
-        [`consolidate_through`][] calls this method on the image that it
-        is about to store. A format whose files hold arrays of a fixed
-        shape overrides it, and the base accepts any image.
-
-        Parameters
-        ----------
-        image : Any
-            The consolidated image.
-
-        Raises
-        ------
-        WriterError
-            In an override, if the file cannot hold the image.
-        """
-
 
 # ----------------------------------------------------------------------
 #   HELPERS OF THE CONCRETE FORMATS
@@ -319,6 +301,7 @@ def consolidate_through(
     changes: tx.Mapping[str, tx.Any],
     *,
     inplace: bool = False,
+    check: tx.Optional[tx.Callable[[tx.Any], None]] = None,
     **options: tx.Any,
 ) -> ImageBackedTransformation:
     """Consolidate a transformation through the image of its pending state.
@@ -334,10 +317,12 @@ def consolidate_through(
     encoded again, and the options of the call override them. An option
     whose value is `None` counts as not given. A transformation that has
     an image and nothing pending, consolidated without options,
-    therefore keeps its image, and it is still saved byte for byte. The
-    consolidated image is checked by the `_check_stored` method of the
-    transformation. The consolidated transformation then holds that
-    image and receives the fields in `changes`, such as `data=None`.
+    therefore keeps its image, and it is still saved byte for byte. A
+    format whose files hold arrays of a fixed shape gives a function as
+    `check`, which receives the consolidated image and raises
+    `WriterError` when the file cannot hold it. The consolidated
+    transformation then holds that image and receives the fields in
+    `changes`, such as `data=None`.
 
     Returns
     -------
@@ -371,7 +356,8 @@ def consolidate_through(
     options = {**intent, **options}
     image = image.consolidate(on_loss=report, **options)
     apply_loss_policy(report, stacklevel=3)
-    xform._check_stored(image)
+    if check is not None:
+        check(image)
     if not inplace:
         return replace(xform, image=image, **changes)
     xform._image = image
