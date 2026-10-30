@@ -239,6 +239,7 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             pyramid.with_scales(4, factor={"z": 1, None: 2})
             pyramid.with_scales([2, 4, {"x": 8, "y": 8, "z": 4}])
             pyramid.with_scales(3, mode="mode")  # labels
+            pyramid.with_scales(3, mode="vote_gaussian")  # smooth labels
             ```
 
         Parameters
@@ -262,8 +263,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
             edges of the field of view, with `ceil(n / f)` voxels, and
             `"centers"` keeps the centres of the first and the last
             voxels, and both pull the voxels by interpolation after
-            smoothing them. The modes `"mode"`, `"max"` and `"min"`
-            take `"exact"` only.
+            smoothing them. The modes `"max"` and `"min"` take
+            `"exact"` only.
         min_size : int, default=32
             The number of voxels at or below which the rules stop
             downsampling an axis.

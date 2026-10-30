@@ -1839,10 +1839,11 @@ its status.
      `s` and `t`. Every scale is written as a scale and a translation.
 
      The modes are `"mean"`, the default, `"binomial"`, `"gaussian"`,
-     `"nearest"`, `"mode"`, `"max"` and `"min"`. The filters follow one
-     principle: a voxel has a Gaussian profile whose full width at half
-     maximum (FWHM) is 1 voxel, and a scale downsampled by `s` ends with
-     a FWHM of `s` fine voxels. The filter adds a FWHM of
+     `"nearest"`, `"mode"`, `"vote_binomial"`, `"vote_gaussian"`,
+     `"max"` and `"min"`. The filters follow one principle: a voxel
+     has a Gaussian profile whose full width at half maximum (FWHM) is
+     1 voxel, and a scale downsampled by `s` ends with a FWHM of `s`
+     fine voxels. The filter adds a FWHM of
      `sqrt(s ** 2 - 1)`, because Gaussian widths add in quadrature,
      which is a standard deviation of `sqrt(s ** 2 - 1) / (2 * sqrt(2 *
      log(2)))`, about 0.74 for `s = 2`. A FWHM of `s - 1` was suggested,
@@ -1856,21 +1857,79 @@ its status.
      `(1, 3, 3, 1) / 8` for `"exact"` and `f = 2`, and `(1, 2, 1) / 4`
      before a pull at `s = 2`. `"nearest"` picks the voxel
      `f * i + (f - 1) // 2` with `"exact"`, which is half a fine voxel
-     from the centre of the coarse voxel when `f` is even. `"mode"`,
-     `"max"` and `"min"` reduce the windows of `"exact"` and are refused
-     with the other alignments. A `"mode"` computed from the scale
-     before it is the most frequent of the values that that scale kept.
-     A field takes `"mean"`, `"binomial"`, `"gaussian"` and `"nearest"`,
-     and refuses the other three, which compare its vectors component
-     by component. Each mode is a `Mode` of `_core/pyramids.py`, which
-     pairs a kernel with a reduction, so that a vote among labels can be
-     added. A `"laplacian"` mode, a vote among labels, a property that
-     marks an image as labels, and the detection of labels are not
-     implemented, so the caller gives a label image a label mode. An
-     averaged scale of an integer type is rounded back to its type. The
-     edges are extended by repeating the voxel at the edge for an image,
-     and by continuing the line through the voxels at the edge for a
-     field, so that an affine field stays exact.
+     from the centre of the coarse voxel when `f` is even. `"max"` and
+     `"min"` reduce the windows of `"exact"` and are refused with the
+     other alignments. A field takes `"mean"`, `"binomial"`,
+     `"gaussian"` and `"nearest"`, and refuses the other modes, which
+     compare its vectors component by component or vote among them.
+     Each mode is a `Mode` of `_core/pyramids.py`, which pairs a kernel
+     with a reduction and says whether the mode votes. A `"laplacian"`
+     mode, a property that marks an image as labels (#634), and the
+     detection of labels are not implemented, so the caller gives a
+     label image a label mode. An averaged scale of an integer type is
+     rounded back to its type. The edges are extended by repeating the
+     voxel at the edge for an image, and by continuing the line through
+     the voxels at the edge for a field, so that an affine field stays
+     exact.
+
+     The votes among labels (#635) are `"mode"`, `"vote_binomial"` and
+     `"vote_gaussian"`. The indicator of a label is 1 at the voxels of
+     the label and 0 elsewhere. A vote smooths the indicator of each
+     label with the box kernel of `"mean"`, the binomial kernel or the
+     Gaussian kernel, pulls it with B-splines of degree 1 under
+     `"edges"` and `"centers"`, and keeps the label of the highest
+     score, so the votes work with every alignment. The function `vote`
+     of `_core/pyramids.py` takes the labels and a function that maps
+     the indicator of a label to its scores, so that the upsampling of
+     label maps in resampling, which is not implemented, can reuse it.
+     It finds the labels with `unique` on the block that it is given,
+     which is the region of one chunk for a Dask array, and keeps a
+     running best score and best label while it loops over them, so it
+     never builds the one-hot array, and it holds two arrays of the
+     output shape whatever the number of labels. Scores within `1e-9`
+     tie, and a tie goes to the smallest label. A scale keeps the
+     labels and their type. A vote refuses the edge `"linear"`, which
+     would add labels that the array does not hold. A vote keeps a
+     label only where the label wins, so a structure thinner than half
+     a coarse voxel disappears when a single other label surrounds it,
+     where `"nearest"` keeps the voxels of the structure that it
+     happens to pick. Where several labels mix around such a structure,
+     a vote keeps it along its whole length, where `"nearest"` keeps
+     pieces of it.
+
+     A mode that averages is named after its reduction (`"mean"`) or
+     its kernel (`"binomial"`, `"gaussian"`), and these names are taken.
+     The votes are therefore named after the reduction and then the
+     kernel, and the vote with the box kernel keeps the name of the
+     statistic that it computes, `"mode"`, as `"mean"` is the average
+     with the box kernel. A kernel given as a separate option was not
+     chosen, because every caller would have to pass it, from
+     `with_scales` to `io.save`. Under `"exact"`, `"mode"` keeps a
+     reduction that counts the equal voxels of each window instead of
+     looping over the labels. It gives the labels of the vote with the
+     box kernel, ties included, which a test checks, and it costs less
+     for the small windows of a scale computed from the scale before
+     it. Under `"edges"` and `"centers"`, `"mode"` is the vote with the
+     box kernel.
+
+     A vote is computed from the scale before it, as the other modes
+     except `"nearest"` are, so a coarse scale votes among the labels
+     that the scale before it kept. On a parcellation of 40 labels and
+     128 x 128 x 96 voxels, with `"exact"`, the chained
+     `"vote_gaussian"` differs from a vote from the finest scale at
+     5.0 % of the coarse voxels for a factor of 4 and at 9.8 % for a
+     factor of 8, all along the boundaries between labels. The fraction
+     of the fine voxels whose label is that of their coarse voxel is
+     75.8 % instead of 76.3 % for a factor of 4, and 56.6 % instead of
+     57.5 % for a factor of 8. For `"mode"`, the differences are 8.1 %
+     and 15.5 % of the voxels, and the fractions drop by 1.2 and 1.8
+     percentage points. The chained votes cost 2 to 50 times less on
+     NumPy (0.8 s instead of 1.9 s for `"vote_gaussian"`, and 0.1 s
+     instead of 5.1 s for `"mode"`), and a vote from the finest scale
+     would make each chunk of a Dask scale read a region of the finest
+     scale `f ** d` times as large as the chunk, for `d` downsampled
+     axes. The votes are therefore chained, with one task per chunk of
+     a scale.
 
      The values of a field follow one rule after any mode
      (`rescale_vectors`). Values in the voxels of the grid of the field
@@ -1962,8 +2021,9 @@ its status.
      private names of that vendored module, so `_core/pyramids.py`
      holds its own short version of them. The `ndimage` packages are
      not used, since they have no Dask version. Status: implemented,
-     with the defaults, the FWHM in quadrature and the rule of
-     `"centers"` open for review.
+     with the defaults, the FWHM in quadrature, the rule of
+     `"centers"`, and the names and the chaining of the votes open for
+     review.
 140. MNI transform files (#222) are parsed in one pass, so the matrices
      of their linear transforms live in the record, as for LTA. The
      displacements of a grid transform live in a separate MINC volume,

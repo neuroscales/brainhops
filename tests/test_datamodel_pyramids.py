@@ -329,7 +329,9 @@ def test_a_level_of_multiples_is_computed_from_the_level_before() -> None:
     )
 
 
-@pytest.mark.parametrize("mode", ["nearest", "mode", "max", "min"])
+@pytest.mark.parametrize(
+    "mode", ["nearest", "mode", "vote_binomial", "vote_gaussian", "max", "min"]
+)
 def test_a_label_mode_keeps_the_labels_of_an_image(mode: str) -> None:
     labels = np.random.default_rng(4).integers(0, 6, (16, 16, 8)) * 10
     pyramid = MultiScaleImage(
@@ -344,11 +346,28 @@ def test_a_label_mode_keeps_the_labels_of_an_image(mode: str) -> None:
     np.testing.assert_allclose(_matrix(built.images[1])[:, -1], 0.5)
 
 
-@pytest.mark.parametrize("mode", ["mode", "max", "min"])
+@pytest.mark.parametrize("mode", ["max", "min"])
 @pytest.mark.parametrize("align", ["edges", "centers"])
 def test_a_block_mode_needs_the_exact_alignment(mode: str, align: str) -> None:
     with pytest.raises(ValueError, match="exact"):
         _image().with_scales(2, mode=mode, align=align)
+
+
+@pytest.mark.parametrize("mode", ["mode", "vote_binomial", "vote_gaussian"])
+@pytest.mark.parametrize("align", ["edges", "centers"])
+def test_a_vote_keeps_the_labels_under_every_alignment(
+    mode: str, align: str
+) -> None:
+    labels = np.random.default_rng(5).integers(0, 6, (17, 15, 8)) * 10
+    pyramid = MultiScaleImage(
+        images=[SingleScaleImage(labels.astype("uint8"))]
+    )
+
+    built = pyramid.with_scales(2, mode=mode, align=align, min_size=4)
+
+    coarse = np.asarray(built.images[1].data)
+    assert coarse.dtype == np.uint8
+    assert set(np.unique(coarse)) <= set(np.unique(labels))
 
 
 def test_an_unknown_mode_or_alignment_is_refused() -> None:
@@ -594,8 +613,9 @@ def test_the_vector_axis_of_a_field_is_never_downsampled() -> None:
         field.with_scales([{-1: 2}])
     with pytest.raises(ValueError, match="vectors"):
         field.with_scales(factor={3: 2})
-    with pytest.raises(ValueError, match="field"):
-        field.with_scales(2, mode="mode")
+    for mode in ("mode", "vote_binomial", "vote_gaussian"):
+        with pytest.raises(ValueError, match="field"):
+            field.with_scales(2, mode=mode)
 
 
 def test_the_key_none_never_reaches_the_vector_axis_of_a_field() -> None:
