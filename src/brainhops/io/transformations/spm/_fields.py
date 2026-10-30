@@ -14,6 +14,11 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.common.nifti import NiftiMetadata
 from brainhops.io.common.nifti._internal_api import NiftiObject, header_of
+from brainhops.io.transformations.base._internal_api import (
+    consolidate_through,
+    data_image,
+    image_with,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel
 from brainhops.io.transformations.base.fields import (
     RASCoordinateField,
@@ -25,12 +30,9 @@ from brainhops.io.transformations.nifti import (
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
-    consolidate_through,
     coordinates_intent,
-    data_image,
     field_to_disk,
     field_to_model,
-    image_with,
 )
 
 

@@ -33,6 +33,11 @@ from brainhops.io.common.nifti._internal_api import (
     nifti_shape,
 )
 from brainhops.io.images.nifti import NiftiImage
+from brainhops.io.transformations.base._internal_api import (
+    consolidate_through,
+    data_image,
+    image_with,
+)
 from brainhops.io.transformations.base.fields import (
     COORDINATE_HINTS,
     DISPLACEMENT_HINTS,
@@ -44,10 +49,7 @@ from brainhops.io.transformations.base.fields import (
 # this format
 from ._base import (
     NiftiImageBackedTransformation,
-    consolidate_through,
     coordinates_intent,
-    data_image,
-    image_with,
     intent_overrides,
 )
 from ._views import field_to_disk, field_to_model

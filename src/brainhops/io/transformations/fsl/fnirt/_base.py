@@ -37,6 +37,10 @@ from brainhops.io.images.nifti._internal_api import (
     image_to_disk,
     image_to_model,
 )
+from brainhops.io.transformations.base._internal_api import (
+    consolidate_through,
+    data_image,
+)
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 
 # this format
@@ -50,8 +54,6 @@ from brainhops.io.transformations.fsl._internal_api import (
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
-    consolidate_through,
-    data_image,
     field_to_model,
     intent_overrides,
 )

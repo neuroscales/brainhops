@@ -30,17 +30,17 @@ from brainhops.io.common.nifti._internal_api import (
 from brainhops.io.images.nifti import NiftiImage
 from brainhops.io.transformations.base._internal_api import (
     FIELD_SOURCES,
+    consolidate_through,
+    data_image,
     format_options,
     held,
+    image_with,
     register_converter,
 )
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
-    consolidate_through,
-    data_image,
     field_to_disk,
     field_to_model,
-    image_with,
 )
 
 # this format

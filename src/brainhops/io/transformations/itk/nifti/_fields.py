@@ -44,6 +44,11 @@ from brainhops.io.common.nifti._internal_api import (
     nifti_intent_name,
     nifti_shape,
 )
+from brainhops.io.transformations.base._internal_api import (
+    consolidate_through,
+    data_image,
+    image_with,
+)
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.base.fields import (
     COORDINATE_HINTS,
@@ -55,9 +60,6 @@ from brainhops.io.transformations.base.fields import (
 from brainhops.io.transformations.itk._internal_api import make_system
 from brainhops.io.transformations.nifti._internal_api import (
     NiftiImageBackedTransformation,
-    consolidate_through,
-    data_image,
-    image_with,
     intent_overrides,
 )
 
