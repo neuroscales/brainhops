@@ -14,6 +14,7 @@ from brainhops._core.magic import smart_replace
 from brainhops._core.properties import alias, smartproperty
 from brainhops._core.pyramids import downsample, level_geometry
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
+from brainhops.datamodel._transformations.concrete import TransformationField
 from brainhops.datamodel.metadata._internal_api import (
     Indexed,
     Reframed,
@@ -1216,6 +1217,12 @@ def _labels_from_metadata(metadata: tx.Optional[Metadata]) -> LabelsLike:
         return None
     return intent in _LABEL_INTENTS
 
+def _is_affine(xform: Transformation) -> bool:
+    if xform.is_kind("affine"):
+        return True
+    if isinstance(xform, TransformationField):
+        return False  # never reclassify a field, even a constant one
+    return xform.is_kind("affine", compute=True)
 
 def _affine_only_geometry(image: "Image") -> Geometry:
     """Return the geometry that `reslice` targets when none is given.
@@ -1237,7 +1244,7 @@ def _affine_only_geometry(image: "Image") -> Geometry:
     own = image.geometry
     transformation = own.transformation
     try:
-        affine_only = transformation.with_only("affine")
+        affine_only = transformation.with_only(_is_affine)
     except ValueError:
         return own
     if affine_only is transformation:
