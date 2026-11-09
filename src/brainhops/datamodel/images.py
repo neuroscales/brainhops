@@ -14,6 +14,7 @@ from brainhops._core.magic import smart_replace
 from brainhops._core.properties import alias, smartproperty
 from brainhops._core.pyramids import downsample, level_geometry
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
+from brainhops.datamodel._transformations.concrete import TransformationField
 from brainhops.datamodel.metadata._internal_api import (
     Indexed,
     Reframed,
@@ -540,7 +541,15 @@ class SingleScaleImage(Image):
             The target voxel-to-world geometry. An image or a geometry
             also determines the output shape, whereas a bare
             transformation keeps the current shape.
-            By default, the image is resampled onto its ow geometry.
+            By default, the image is resampled onto its own grid, placed
+            by the affine part of its preferred transformation: the
+            affine parts of the chain, such as the voxel-to-world map and
+            the affine registrations applied with `image(transform)`, are
+            composed, and the parts that are not affine, such as
+            displacement fields, are left out. The output grid thus
+            follows the transformed image, exactly when every part is
+            affine and approximately otherwise, and the nonlinear parts
+            are only applied to the data.
 
         degree : int, optional
             Spline degree, from 0 (nearest neighbour) up to 7.
@@ -1093,7 +1102,9 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         ----------
         geometry : Image or Geometry or Transformation, optional
             The target geometry, interpreted as in
-            [`SingleScaleImage.reslice`][].
+            [`SingleScaleImage.reslice`][]. By default, the grid of the
+            highest-resolution level, placed by the affine part of the
+            preferred transformation, as in [`SingleScaleImage.reslice`][].
 
         degree : int, optional
             Spline degree, from 0 (nearest neighbour) up to 7. A degree of 1
@@ -1166,6 +1177,8 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             reframe=reframe,
             frame=frame,
         )
+        if geometry is None:
+            geometry = _affine_only_geometry(self)
         level = nearest_resolution_index(
             _level_voxel_sizes(self),
             _get_voxel2world(self, geometry).to_affine(
@@ -1205,11 +1218,50 @@ def _labels_from_metadata(metadata: tx.Optional[Metadata]) -> LabelsLike:
     return intent in _LABEL_INTENTS
 
 
+def _is_affine(xform: Transformation) -> bool:
+    if xform.is_kind("affine"):
+        return True
+    if isinstance(xform, TransformationField):
+        return False  # never reclassify a field, even a constant one
+    return xform.is_kind("affine", compute=True)
+
+
+def _affine_only_geometry(image: "Image") -> Geometry:
+    """Return the geometry that `reslice` targets when none is given.
+
+    The grid of the image is kept, and its voxel-to-world transformation
+    is the affine part of the preferred transformation: every affine part
+    of the chain, such as the voxel-to-world map of the file and the
+    affine registrations applied with `image(transform)`, is kept and
+    composed, and every part that is not affine, such as a displacement
+    field, is dropped. The output grid therefore follows the transformed
+    image, exactly when the chain is affine and approximately otherwise.
+    Nonlinear parts are not approximated: they are left to the reslicing
+    itself.
+
+    When the chain has no part to drop, the preferred transformation is
+    used as it is. When no affine map can be extracted, the geometry of
+    the image is used, as before.
+    """
+    own = image.geometry
+    transformation = own.transformation
+    try:
+        affine_only = transformation.with_only(_is_affine)
+    except ValueError:
+        return own
+    if affine_only is transformation:
+        return own
+    affine = affine_only.to_affine()
+    if affine is None:
+        return own
+    return Geometry((own.grid, affine))
+
+
 def _get_geometry(
     image: "MultiScaleImage", geometry: tx.Optional[_GeometryLike] = None
 ) -> Geometry:
     if geometry is None:
-        geometry = image.geometry
+        return _affine_only_geometry(image)
     if isinstance(geometry, Image):
         geometry = geometry.geometry
     if not isinstance(geometry, Geometry):
@@ -1223,7 +1275,7 @@ def _get_voxel2world(
 ) -> Transformation:
     """Return the voxel-to-world transformation of the reslicing target."""
     if geometry is None:
-        return image.geometry.transformation
+        return _affine_only_geometry(image).transformation
     if isinstance(geometry, Image):
         return geometry.geometry.transformation
     if isinstance(geometry, Geometry):
