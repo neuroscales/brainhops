@@ -60,6 +60,8 @@ from .simplify import simplify as _simplify
 from .utils import axis_list
 from .utils import with_endpoints as _with_endpoints
 
+from .utils import same_space
+
 NONE = SimplifyPolicy.none
 NUMERIC = SimplifyPolicy.numeric
 
@@ -338,7 +340,7 @@ def _(
 def _(
     first: Identity, second: Transformation, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if first.input is None or first.input == second.input:
+    if first.input is None or same_space(first.input, second.input):
         return second
     return replace(second, input=first.input)
 
@@ -347,7 +349,7 @@ def _(
 def _(
     first: Transformation, second: Identity, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if second.output is None or second.output == first.output:
+    if second.output is None or same_space(second.output, first.output):
         return first
     return replace(first, output=second.output)
 
