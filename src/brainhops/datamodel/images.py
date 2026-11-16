@@ -1218,42 +1218,11 @@ def _labels_from_metadata(metadata: tx.Optional[Metadata]) -> LabelsLike:
     return intent in _LABEL_INTENTS
 
 
-def _is_affine(xform: Transformation) -> bool:
-    if xform.is_kind("affine"):
-        return True
-    if isinstance(xform, TransformationField):
-        return False  # never reclassify a field, even a constant one
-    return xform.is_kind("affine", compute=True)
-
-
 def _affine_only_geometry(image: "Image") -> Geometry:
-    """Return the geometry that `reslice` targets when none is given.
-
-    The grid of the image is kept, and its voxel-to-world transformation
-    is the affine part of the preferred transformation: every affine part
-    of the chain, such as the voxel-to-world map of the file and the
-    affine registrations applied with `image(transform)`, is kept and
-    composed, and every part that is not affine, such as a displacement
-    field, is dropped. The output grid therefore follows the transformed
-    image, exactly when the chain is affine and approximately otherwise.
-    Nonlinear parts are not approximated: they are left to the reslicing
-    itself.
-
-    When the chain has no part to drop, the preferred transformation is
-    used as it is. When no affine map can be extracted, the geometry of
-    the image is used, as before.
-    """
+    """Get geometry with only affines from image"""
     own = image.geometry
     transformation = own.transformation
-    try:
-        affine_only = transformation.with_only(_is_affine)
-    except ValueError:
-        return own
-    if affine_only is transformation:
-        return own
-    affine = affine_only.to_affine()
-    if affine is None:
-        return own
+    affine = transformation.to_affine(include="affine")
     return Geometry((own.grid, affine))
 
 
