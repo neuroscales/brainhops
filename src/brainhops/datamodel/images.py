@@ -14,7 +14,6 @@ from brainhops._core.magic import smart_replace
 from brainhops._core.properties import alias, smartproperty
 from brainhops._core.pyramids import downsample, level_geometry
 from brainhops._core.typing import ArrayProtocol, CartesianIndex, Clip, Shape
-from brainhops.datamodel._transformations.concrete import TransformationField
 from brainhops.datamodel.metadata._internal_api import (
     Indexed,
     Reframed,
@@ -541,15 +540,7 @@ class SingleScaleImage(Image):
             The target voxel-to-world geometry. An image or a geometry
             also determines the output shape, whereas a bare
             transformation keeps the current shape.
-            By default, the image is resampled onto its own grid, placed
-            by the affine part of its preferred transformation: the
-            affine parts of the chain, such as the voxel-to-world map and
-            the affine registrations applied with `image(transform)`, are
-            composed, and the parts that are not affine, such as
-            displacement fields, are left out. The output grid thus
-            follows the transformed image, exactly when every part is
-            affine and approximately otherwise, and the nonlinear parts
-            are only applied to the data.
+            By default, the image is resampled onto its ow geometry.
 
         degree : int, optional
             Spline degree, from 0 (nearest neighbour) up to 7.
@@ -1102,9 +1093,7 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
         ----------
         geometry : Image or Geometry or Transformation, optional
             The target geometry, interpreted as in
-            [`SingleScaleImage.reslice`][]. By default, the grid of the
-            highest-resolution level, placed by the affine part of the
-            preferred transformation, as in [`SingleScaleImage.reslice`][].
+            [`SingleScaleImage.reslice`][].
 
         degree : int, optional
             Spline degree, from 0 (nearest neighbour) up to 7. A degree of 1
@@ -1177,8 +1166,6 @@ class MultiScaleImage(Image, Multiscale[SingleScaleImage]):
             reframe=reframe,
             frame=frame,
         )
-        if geometry is None:
-            geometry = _affine_only_geometry(self)
         level = nearest_resolution_index(
             _level_voxel_sizes(self),
             _get_voxel2world(self, geometry).to_affine(
@@ -1218,19 +1205,11 @@ def _labels_from_metadata(metadata: tx.Optional[Metadata]) -> LabelsLike:
     return intent in _LABEL_INTENTS
 
 
-def _affine_only_geometry(image: "Image") -> Geometry:
-    """Get geometry with only affines from image"""
-    own = image.geometry
-    transformation = own.transformation
-    affine = transformation.to_affine(include="affine")
-    return Geometry((own.grid, affine))
-
-
 def _get_geometry(
     image: "MultiScaleImage", geometry: tx.Optional[_GeometryLike] = None
 ) -> Geometry:
     if geometry is None:
-        return _affine_only_geometry(image)
+        geometry = image.geometry
     if isinstance(geometry, Image):
         geometry = geometry.geometry
     if not isinstance(geometry, Geometry):
@@ -1244,7 +1223,7 @@ def _get_voxel2world(
 ) -> Transformation:
     """Return the voxel-to-world transformation of the reslicing target."""
     if geometry is None:
-        return _affine_only_geometry(image).transformation
+        return image.geometry.transformation
     if isinstance(geometry, Image):
         return geometry.geometry.transformation
     if isinstance(geometry, Geometry):

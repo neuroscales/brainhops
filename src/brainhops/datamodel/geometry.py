@@ -3,6 +3,10 @@
 __all__ = ["Geometry"]
 
 
+import itertools
+from math import ceil, floor
+
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Factory, NoRepr, NotKwOnly
 
@@ -11,6 +15,7 @@ from brainhops._core.typing import CartesianIndex, Shape
 from ._indexing import index2transform
 from .base import DataModelBase
 from .transformations import (
+    Affine,
     CartesianField,
     Identity,
     ImmutableSequence,
@@ -18,6 +23,7 @@ from .transformations import (
     Sequence,
     SimplifyLike,
     Transformation,
+    Translation,
 )
 
 if tx.TYPE_CHECKING:
@@ -26,6 +32,19 @@ if tx.TYPE_CHECKING:
 
 def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
     return (CartesianField(), Identity())
+
+def _round_tol(
+    value: float, func: tx.Callable[[float], int], tol: float = 1e-6
+) -> int:
+    """Round `value` with `func`, or to the nearest integer when it is close.
+
+    A coordinate that should be a whole number may be off by a rounding
+    error, such as `-8e-16` for `0`, which `floor` would take to `-1`.
+    """
+    nearest = round(value)
+    if abs(nearest - value) < tol:
+        return int(nearest)
+    return int(func(value))
 
 
 class _GeometryFields(DataModelBase):
@@ -290,6 +309,127 @@ class Geometry(_GeometryFields, ImmutableSequence):
             output=self.output,
         )
 
+    def affine_only_geometry(
+        self,
+        include: tx.Optional[
+            tx.Tuple[tx.Literal["scale", "translation", "rotation", "skew"], ...]
+        ] = None,
+    ) -> tx.Self:
+        """Return this geometry, placed by the affine parts of its map only.
+
+        The voxel-to-world transformation of the result is the affine part
+        of the transformation of this geometry: its affine parts, such as
+        the voxel-to-world map of a file and the affine registrations
+        applied with `image(transform)`, are composed, and the parts that
+        are not affine, such as displacement fields, are left out.
+        Nonlinear parts are not approximated. The geometry itself is not
+        changed.
+
+        Reslicing an image onto the result applies the nonlinear parts to
+        the data, on a grid that follows the transformed image: exactly
+        when every part is affine, and approximately otherwise. The result
+        has a purely affine voxel-to-world transformation, which formats
+        such as NIfTI can store.
+
+        With `include`, the affine is split as
+
+        ```text
+        A · x = T · R · Z · S · x
+        ```
+
+        where `S` is a shear (upper triangular, with ones on its
+        diagonal), `Z` a positive scale, `R` a rotation, which also
+        carries axis swaps and flips, and `T` a translation. Only the parts
+        named in `include` are kept, in that order. The parts that are
+        left out are then applied to the data when an image is resliced
+        onto the result: leaving out the rotation, for example, gives a
+        grid aligned with the world axes, onto which the image is rotated.
+        The grid is resized, and its origin moved by whole voxels, so that
+        it holds the centre of every voxel of this grid.
+
+        !!! example
+            ```pycon
+            >>> moved = image(affine)(warp)
+            >>> resliced = moved.reslice(moved.geometry.affine_only_geometry())
+            >>>
+            >>> # Keep the voxel size and position, but align with the world
+            >>> aligned = moved.geometry.affine_only_geometry(
+            ...     ("scale", "translation")
+            ... )
+            >>> resliced = moved.reslice(aligned)
+            ```
+
+        Parameters
+        ----------
+        include : tuple of {"scale", "translation", "rotation", "skew"}, optional
+            The parts of the affine that the result keeps. By default, the
+            whole affine is kept and the grid of this geometry is used as
+            it is, which is the same as naming all four parts.
+
+            - Leaving out `"scale"` gives voxels of one world unit, such as
+              1 mm for NIfTI, and so resamples an image whose voxels are of
+              another size: an image with voxels of 0.001 mm becomes a
+              thousand times coarser.
+            - Leaving out `"translation"` has no effect on where the grid
+              lies, because the grid is moved to cover the image, which
+              puts a translation back into the result.
+
+        Returns
+        -------
+        Geometry
+            A grid in the voxel system of this geometry, with a
+            voxel-to-world transformation that ends in the world system of
+            this geometry.
+
+        Raises
+        ------
+        ConversionError
+            If the affine part of the transformation cannot be computed as
+            an affine.
+        ValueError
+            If `include` is given and the linear part of the affine is not
+            invertible, so that it cannot be split into its parts.
+        """
+        affine = self.transformation.to_affine(include="affine")
+        if include is None:
+            return Geometry((self.grid, affine))
+
+        affine = affine.compute().to(Affine)
+        rotation, scaling, skew, translation = affine.decompose_affine()
+
+        # The kept parts, in the order of the decomposition: shear first,
+        # then scale, then rotation, then translation.
+        kept = Identity()
+        if "skew" in include:
+            kept = skew @ kept
+        if "scale" in include:
+            kept = scaling @ kept
+        if "rotation" in include:
+            kept = rotation @ kept
+        if "translation" in include:
+            kept = translation @ kept
+
+        # Where the corners of this grid land in the voxels of the new grid.
+        old_to_new = (kept.inverse() @ affine).compute().to(Affine)
+        matrix = np.asarray(old_to_new.matrix)
+        corners = np.array(
+            list(itertools.product(*[(0, n - 1) for n in self.grid.shape])),
+            dtype=float,
+        )
+        new_corners = corners @ matrix[:, :-1].T + matrix[:, -1]
+
+        # A grid starts at voxel 0, so its origin is moved to the lowest
+        # corner, and it holds every voxel up to the highest one.
+        low = [_round_tol(v, floor) for v in new_corners.min(axis=0)]
+        high = [_round_tol(v, ceil) for v in new_corners.max(axis=0)]
+        shape = tuple(hi - lo + 1 for lo, hi in zip(low, high))
+        vox2world = (kept @ Translation(translation=low)).compute().to(Affine)
+        vox2world = vox2world.to(input=affine.input, output=affine.output)
+
+        grid = CartesianField(
+            shape=shape, input=self.grid.input, output=self.grid.output
+        )
+        return Geometry((grid, vox2world))
 
 def _is_index(value: tx.Optional[float], size: int) -> bool:
     """Return whether a coordinate is the index of a sample of an axis."""
