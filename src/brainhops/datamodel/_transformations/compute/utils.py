@@ -28,6 +28,16 @@ def get_ndim(
     return default if ndim is None else ndim
 
 
+def same_space(
+    a: tx.Optional["CoordinateSystem"],
+    b: tx.Optional["CoordinateSystem"],
+) -> bool:
+    """Return whether two systems describe the same space, names aside."""
+    if a is None or b is None:
+        return a is b
+    return type(a) is type(b) and get_axes(a) == get_axes(b)
+
+
 def systems_disagree(
     source: tx.Optional["CoordinateSystem"],
     target: tx.Optional["CoordinateSystem"],
@@ -48,7 +58,7 @@ def systems_disagree(
     )
     if source_axes.is_variadic or target_axes.is_variadic:
         return not source_axes.compatible_with(target_axes)
-    return source != target
+    return not same_space(source, target)
 
 
 def boundary_disagrees(

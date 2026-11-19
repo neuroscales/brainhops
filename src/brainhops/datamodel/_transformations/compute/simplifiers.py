@@ -57,7 +57,7 @@ from .check import is_kind
 from .prune import may_prune, prune_chain
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
-from .utils import axis_list
+from .utils import axis_list, same_space
 from .utils import with_endpoints as _with_endpoints
 
 NONE = SimplifyPolicy.none
@@ -338,7 +338,7 @@ def _(
 def _(
     first: Identity, second: Transformation, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if first.input is None or first.input == second.input:
+    if first.input is None or same_space(first.input, second.input):
         return second
     return replace(second, input=first.input)
 
@@ -347,7 +347,7 @@ def _(
 def _(
     first: Transformation, second: Identity, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if second.output is None or second.output == first.output:
+    if second.output is None or same_space(second.output, first.output):
         return first
     return replace(first, output=second.output)
 
