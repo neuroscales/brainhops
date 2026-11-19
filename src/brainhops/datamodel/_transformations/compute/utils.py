@@ -27,6 +27,7 @@ def get_ndim(
         ndim = get_axes(t.output).ndim
     return default if ndim is None else ndim
 
+
 def same_space(
     a: tx.Optional["CoordinateSystem"],
     b: tx.Optional["CoordinateSystem"],
@@ -35,6 +36,7 @@ def same_space(
     if a is None or b is None:
         return a is b
     return type(a) is type(b) and get_axes(a) == get_axes(b)
+
 
 def systems_disagree(
     source: tx.Optional["CoordinateSystem"],
