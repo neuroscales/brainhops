@@ -57,10 +57,8 @@ from .check import is_kind
 from .prune import may_prune, prune_chain
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
-from .utils import axis_list
+from .utils import axis_list, same_space
 from .utils import with_endpoints as _with_endpoints
-
-from .utils import same_space
 
 NONE = SimplifyPolicy.none
 NUMERIC = SimplifyPolicy.numeric
