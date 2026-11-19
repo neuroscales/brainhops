@@ -33,6 +33,7 @@ if tx.TYPE_CHECKING:
 def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
     return (CartesianField(), Identity())
 
+
 def _round_tol(
     value: float, func: tx.Callable[[float], int], tol: float = 1e-6
 ) -> int:
@@ -312,7 +313,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
     def affine_only_geometry(
         self,
         include: tx.Optional[
-            tx.Tuple[tx.Literal["scale", "translation", "rotation", "skew"], ...]
+            tx.Tuple[
+                tx.Literal["scale", "translation", "rotation", "skew"], ...
+            ]
         ] = None,
     ) -> tx.Self:
         """Return this geometry, placed by the affine parts of its map only.
@@ -430,6 +433,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
             shape=shape, input=self.grid.input, output=self.grid.output
         )
         return Geometry((grid, vox2world))
+
 
 def _is_index(value: tx.Optional[float], size: int) -> bool:
     """Return whether a coordinate is the index of a sample of an axis."""
