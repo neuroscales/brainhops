@@ -752,11 +752,21 @@ class Affine(_CompactTransformation, polymorphic=True):
             return None
         return affine_inv(self.matrix)
 
-    def decompose_affine(self):
-        """Return `(R, Z, S, t)` with `affine[:n, :n] == R @ Z @ S`.
+    def decompose_affine(
+        self,
+    ) -> tx.Tuple["Linear", "Scaling", "Linear", "Translation"]:
+        """
+        Decompose affine into component parts
 
-        `affine` is an `(n, n+1)` or `(n+1, n+1)` matrix whose linear part is
-        invertible.
+        Return `(R, Z, S, t)` with `affine[:n, :n] == R @ Z @ S`.
+
+        Returns
+        -------
+        Linear: Rotation transformation,
+        Scaling: Scaling transformation,
+        Linear: Sheer transformation,
+        Translation: translation transformation
+        Sheer, and Translation transformations
         """
         affine = np.asarray(self.matrix, dtype=float)
         n = affine.shape[1] - 1

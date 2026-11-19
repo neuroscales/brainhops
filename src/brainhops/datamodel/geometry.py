@@ -37,10 +37,8 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 def _round_tol(
     value: float, func: tx.Callable[[float], int], tol: float = 1e-6
 ) -> int:
-    """Round `value` with `func`, or to the nearest integer when it is close.
-
-    A coordinate that should be a whole number may be off by a rounding
-    error, such as `-8e-16` for `0`, which `floor` would take to `-1`.
+    """
+    round value if within tolerance of int. otherwise use func (floor/ceil)
     """
     nearest = round(value)
     if abs(nearest - value) < tol:
@@ -364,7 +362,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
         Parameters
         ----------
-        include : tuple of {"scale", "translation", "rotation", "skew"}, optional
+        include : tuple of
+            {"scale", "translation", "rotation", "skew"},
+            optional
             The parts of the affine that the result keeps. By default, the
             whole affine is kept and the grid of this geometry is used as
             it is, which is the same as naming all four parts.
