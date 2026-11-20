@@ -16,6 +16,7 @@ __all__ = [
 from numbers import Integral, Real
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import Forget, InitVar, NotKwOnly
 
@@ -750,6 +751,43 @@ class Affine(_CompactTransformation, polymorphic=True):
         if self.matrix is None:
             return None
         return affine_inv(self.matrix)
+
+    def decompose_affine(
+        self,
+    ) -> tx.Tuple["Linear", "Scaling", "Linear", "Translation"]:
+        """
+        Decompose affine into component parts
+
+        Return `(R, Z, S, t)` with `affine[:n, :n] == R @ Z @ S`.
+
+        Returns
+        -------
+        Linear: Rotation transformation,
+        Scaling: Scaling transformation,
+        Linear: Sheer transformation,
+        Translation: translation transformation
+        """
+        affine = np.asarray(self.matrix, dtype=float)
+        n = affine.shape[1] - 1
+        linear, t = affine[:n, :n], affine[:n, n].copy()
+
+        Q, upper = np.linalg.qr(linear)
+        signs = np.sign(np.diag(upper))
+        if (signs == 0).any():
+            raise ValueError(
+                "The linear part of the affine is not invertible."
+            )
+        R = Q * signs  # flip columns so the scales are positive
+        upper = signs[:, None] * upper
+        Z = np.diag(np.diag(upper))
+        S = np.linalg.solve(Z, upper)  # unit upper triangular shear
+
+        return (
+            Linear(matrix=R),
+            Scaling(scale=np.diag(upper)),
+            Linear(matrix=S),
+            Translation(translation=t),
+        )
 
 
 @kinds.Linear
