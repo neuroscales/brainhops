@@ -766,7 +766,6 @@ class Affine(_CompactTransformation, polymorphic=True):
         Scaling: Scaling transformation,
         Linear: Sheer transformation,
         Translation: translation transformation
-        Sheer, and Translation transformations
         """
         affine = np.asarray(self.matrix, dtype=float)
         n = affine.shape[1] - 1
